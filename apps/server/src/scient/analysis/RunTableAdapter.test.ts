@@ -119,7 +119,7 @@ describe("choosing what runs a file", () => {
     ]);
     expect((await inspect(adapter)).alternatives).toEqual([
       { executablePath: "/c/11/bin/java", label: "Java 11.0.32", version: "11.0.32" },
-      { executablePath: "/usr/bin/java", label: "java", version: null },
+      { executablePath: "/usr/bin/java", label: "system java", version: null },
     ]);
   });
 

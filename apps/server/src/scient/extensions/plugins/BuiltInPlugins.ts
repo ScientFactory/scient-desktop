@@ -84,6 +84,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
     components: [
       tools("compute", [
         "scient_compute_run",
+        "scient_compute_run_file",
         "scient_compute_output",
         "scient_compute_sessions",
         "scient_compute_variables",

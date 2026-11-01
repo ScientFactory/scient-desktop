@@ -15,6 +15,7 @@ import {
 import { makeComputeNotebookOutputs } from "../../../scient/compute/ComputeNotebookOutputs.ts";
 import * as ComputeSessionService from "../../../scient/compute/ComputeSessionService.ts";
 import * as NotebookStore from "../../../scient/notebook/NotebookStore.ts";
+import { AnalysisService } from "../../../scient/analysis/AnalysisService.ts";
 import type { ComputeOutputResourceRef } from "@scientfactory/compute";
 
 export interface ComputeOutputBytes {
@@ -37,6 +38,12 @@ export interface ComputeMcpGatewayShape extends ComputeRpcGateway {
   readonly editNotebook: NotebookStore.NotebookStore["Service"]["edit"];
   readonly recordNotebookRun: NotebookStore.NotebookStore["Service"]["recordRun"];
   readonly flushNotebook: NotebookStore.NotebookStore["Service"]["flush"];
+  /** The same runs the app's Run button starts, for files in languages without a session. */
+  readonly getFileRun: AnalysisService["Service"]["getRun"];
+  readonly inspectFileRuntimes: AnalysisService["Service"]["inspectRuntimes"];
+  readonly startFileRun: AnalysisService["Service"]["startRun"];
+  readonly subscribeFileRuns: AnalysisService["Service"]["subscribeRuns"];
+  readonly readFile: WorkspaceFileSystem.WorkspaceFileSystem["Service"]["readFile"];
 }
 
 export class ComputeMcpGateway extends Context.Service<ComputeMcpGateway, ComputeMcpGatewayShape>()(
@@ -67,6 +74,8 @@ export const ComputeMcpGatewayLive = Layer.effect(
       return Option.isSome(bytes) ? { mediaType: resolved.mediaType, bytes: bytes.value } : null;
     });
     const notebooks = yield* NotebookStore.NotebookStore;
+    const fileRuns = yield* AnalysisService;
+    const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
     return ComputeMcpGateway.of({
       ...rpc,
       readOutput,
@@ -76,6 +85,11 @@ export const ComputeMcpGatewayLive = Layer.effect(
       editNotebook: notebooks.edit,
       recordNotebookRun: notebooks.recordRun,
       flushNotebook: notebooks.flush,
+      getFileRun: fileRuns.getRun,
+      inspectFileRuntimes: fileRuns.inspectRuntimes,
+      startFileRun: fileRuns.startRun,
+      subscribeFileRuns: fileRuns.subscribeRuns,
+      readFile: workspaceFiles.readFile,
     });
   }),
 );

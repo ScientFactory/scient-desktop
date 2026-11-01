@@ -1,11 +1,14 @@
 import { ChevronDown } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
+import { useClientSettings } from "~/hooks/useSettings";
+import { formatTimestamp } from "~/timestampFormat";
 import { useComputeContextStore, type ComputeContextId } from "./computeContextStore";
 import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 
-/** Session feed or a MATLAB batch run; Run fresh runs already appear in the feed. */
+/** Session feed or a MATLAB run; Run fresh runs already appear in the feed. */
 export function ComputeResultPicker({ contextId }: { readonly contextId: ComputeContextId }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const bindings = useComputeContextStore((state) => state.bindings);
   const selected = useComputeFilePresentationStore(
     (state) => state.presentations[contextId]?.resultsContextId ?? contextId,
@@ -18,7 +21,10 @@ export function ComputeResultPicker({ contextId }: { readonly contextId: Compute
     { contextId, label: "Session" },
     ...batches.map((binding, index) => ({
       contextId: binding.contextId,
-      label: `Batch ${index + 1}`,
+      label:
+        binding.startedAt === undefined
+          ? `Run ${index + 1}`
+          : formatTimestamp(binding.startedAt, timestampFormat),
     })),
   ];
   return (

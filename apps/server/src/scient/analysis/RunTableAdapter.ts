@@ -15,6 +15,7 @@ import {
   COMPUTE_LANGUAGE_CATALOG,
   COMPUTE_RUN_TABLE,
   computeRunnableTools,
+  isSystemTool,
   type ComputeRunCommand,
   type ComputeRunRoute,
 } from "@t3tools/contracts";
@@ -142,7 +143,12 @@ function alternatives(
     return [
       {
         executablePath: tool.executable,
-        label: tool.version === null ? tool.name : `${label} ${tool.version}`,
+        label:
+          tool.version !== null
+            ? `${label} ${tool.version}`
+            : isSystemTool(tool.executable)
+              ? `system ${tool.name}`
+              : tool.name,
         version: tool.version,
       },
     ];

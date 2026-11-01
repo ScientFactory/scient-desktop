@@ -110,6 +110,31 @@ const ScientComputeRunTool = Tool.make("scient_compute_run", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, operation("compute.run"));
 
+const ScientComputeRunFileTool = Tool.make("scient_compute_run_file", {
+  description:
+    "Run a project file the way the user's Run button does, in a language without a session, such as C, C++, Java, Rust, JavaScript or gnuplot. Returns its output and the files it made, and the user sees the run under the file. For Python, R, Julia, SQL and MATLAB use scient_compute_run. If it is still going, call again with `run` to read it.",
+  parameters: Schema.Struct({
+    path: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096)).annotate({
+      description: "The file, relative to the project root.",
+    }),
+    run: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+    waitSeconds: Schema.optional(WaitSeconds),
+  }),
+  success: Schema.Struct({
+    runtime: Schema.String,
+    run: ComputeToolRun,
+    wrote: Schema.Array(Schema.String),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Run a project file in Scient Compute")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, operation("compute.runFile"));
+
 const ScientComputeSessionsTool = Tool.make("scient_compute_sessions", {
   description:
     "List the live Scient Compute sessions in this project: the user's file sessions and agent sessions, with their latest runs.",
@@ -242,7 +267,7 @@ export const ComputeToolLanguage = Schema.Struct({
   name: Schema.String,
   /** What Settings shows under the name; empty when nothing is known to be missing. */
   status: Schema.String,
-  /** `scient_compute_run`, or `shell` for a tool Compute cannot run yet. */
+  /** `scient_compute_run`, `scient_compute_run_file`, or `shell` for a tool Compute cannot run. */
   use: Schema.String,
   /** The runtime this project uses by default. */
   default: Schema.NullOr(Schema.String),
@@ -392,6 +417,7 @@ const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
 export const ScientComputeToolkit = Toolkit.make(
   ScientComputeRunTool,
   ScientComputeOutputTool,
+  ScientComputeRunFileTool,
   ScientComputeSessionsTool,
   ScientComputeVariablesTool,
   ScientComputeControlTool,

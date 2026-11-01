@@ -278,8 +278,12 @@ function newestFirst(left: string | null | undefined, right: string | null | und
   return 0;
 }
 
-/** The copy a computer came with, which nobody chose. */
 const SYSTEM_TOOL = /^\/(?:System\/Cryptexes\/App\/)?(?:usr\/)?s?bin\/|^[a-z]:\\windows\\/iu;
+
+/** The copy a computer came with, which nobody chose. */
+export function isSystemTool(executable: string): boolean {
+  return SYSTEM_TOOL.test(executable);
+}
 
 /**
  * What Run can start for a language, best first: the commands in the table's order and, for each,
@@ -301,6 +305,6 @@ export function computeRunnableTools<
     if (first === undefined) return [];
     const newest = (found: ReadonlyArray<Tool>) =>
       [...found].sort((left, right) => newestFirst(left.version, right.version));
-    return SYSTEM_TOOL.test(first.executable) ? newest([first, ...rest]) : [first, ...newest(rest)];
+    return isSystemTool(first.executable) ? newest([first, ...rest]) : [first, ...newest(rest)];
   });
 }

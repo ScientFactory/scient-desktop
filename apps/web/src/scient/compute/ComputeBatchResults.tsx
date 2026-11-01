@@ -8,7 +8,7 @@ import { AnalysisRunId, AnalysisSourceRevision } from "@t3tools/contracts";
 import { useClientSettings } from "~/hooks/useSettings";
 import { formatTimestamp } from "~/timestampFormat";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
-import { randomUUID } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import type {
   AnalysisRunSnapshot,
   AnalysisRunSummary,
@@ -20,8 +20,8 @@ import type {
 } from "@t3tools/contracts";
 import {
   ChevronDown,
-  ChevronUp,
   CircleAlert,
+  Ellipsis,
   FolderDown,
   LoaderCircle,
   Play,
@@ -32,7 +32,14 @@ import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -53,6 +60,7 @@ import {
   artifactDisplayStatus,
   runForArtifactDisplay,
 } from "../analysis/analysisArtifactPresentation";
+import { splitRunOutputLinks } from "./computeRunOutputLinks";
 
 export interface ComputeBatchSource {
   readonly environmentId: EnvironmentId;
@@ -143,16 +151,69 @@ function statusLabel(
   }
 }
 
+/** Enough of a failed run for an agent to start from; it can read the rest by the run's ID. */
+const MAXIMUM_ASKED_OUTPUT = 4000;
+
+type RunAlternative = NonNullable<AnalysisRuntimeProfile["alternatives"]>[number];
+
+/** A run that did not finish well says why, and what can be done about it. */
+function RunOutcome(props: {
+  readonly run: AnalysisRunSnapshot;
+  readonly runtimeLabel: string;
+  readonly alternative: RunAlternative | null;
+  readonly canRetry: boolean;
+  readonly onTryWith: (alternative: RunAlternative) => void;
+  readonly onAsk: (run: AnalysisRunSnapshot) => void;
+}) {
+  const { run } = props;
+  const failed = run.receipt.status === "failed";
+  if (!failed && run.receipt.status !== "cancelled" && run.receipt.status !== "lost") return null;
+  // A diagnostic already offers the same help for the error it describes.
+  const offersHelp = failed && run.diagnostics.length === 0;
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 px-3 py-1.5">
+      <span className={cn("min-w-40 flex-1 text-xs", failed && "text-destructive")}>
+        {run.receipt.failureMessage ?? statusLabel(run, props.runtimeLabel)}
+      </span>
+      {offersHelp && props.alternative !== null ? (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!props.canRetry}
+          onClick={() => props.onTryWith(props.alternative!)}
+        >
+          Try with {props.alternative.label}
+        </Button>
+      ) : null}
+      {offersHelp ? (
+        <Button size="xs" variant="outline" onClick={() => props.onAsk(run)}>
+          Ask agent
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function RunOutputView(props: {
   readonly run: AnalysisRunSnapshot;
   readonly runtimeLabel: string;
   readonly threadRef: ScopedThreadRef;
+  readonly alternative: RunAlternative | null;
+  readonly canRetry: boolean;
+  readonly onTryWith: (alternative: RunAlternative) => void;
+  readonly onAskAboutRun: (run: AnalysisRunSnapshot) => void;
+  readonly onRevealCode?: (() => void) | undefined;
   readonly onAskAboutDiagnostic: (
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
   ) => void;
 }) {
   const segments = outputSegments(props.run.receipt.output);
+  const { cwd, relativePath } = props.run.source;
+  const open = (path: string, line?: number) => {
+    if (path === relativePath) props.onRevealCode?.();
+    useRightPanelStore.getState().openFile(props.threadRef, path, line);
+  };
   const output = (
     <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
       {segments.length > 0
@@ -161,115 +222,101 @@ function RunOutputView(props: {
               key={segment.firstSequence}
               className={segment.stream === "stderr" ? "text-destructive" : undefined}
             >
-              {segment.text}
+              {withOccurrenceKeys(
+                splitRunOutputLinks(segment.text, { cwd, relativePath }),
+                (piece) => piece.text,
+              ).map(({ key, value: piece }) =>
+                piece.link === undefined ? (
+                  <span key={key}>{piece.text}</span>
+                ) : (
+                  <button
+                    key={key}
+                    type="button"
+                    className="cursor-pointer text-start underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                    onClick={() => open(piece.link!.relativePath, piece.link!.line)}
+                  >
+                    {piece.text}
+                  </button>
+                ),
+              )}
             </span>
           ))
         : emptyAnalysisRunOutputLabel(props.run.receipt.status)}
     </pre>
   );
   return (
-    <ScrollArea className="max-h-64 min-h-24">
-      <div className="space-y-2 p-3">
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span>{statusLabel(props.run, props.runtimeLabel)}</span>
-          <ScientTooltip content={props.run.source.cwd}>
-            <span className="max-w-[50%] truncate font-mono">{props.run.source.cwd}</span>
-          </ScientTooltip>
-        </div>
-        {props.run.diagnostics.map((diagnostic) => (
-          <div
-            key={diagnostic.diagnosticId}
-            className="space-y-1 rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs"
-          >
-            <div className="flex items-start gap-2">
-              <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-destructive">
-                  {diagnostic.code ? `${diagnostic.code}: ` : ""}
-                  {diagnostic.message}
-                </p>
-                {diagnostic.relativePath ? (
-                  <button
-                    type="button"
-                    className="mt-1 font-mono text-muted-foreground underline-offset-2 hover:underline"
-                    onClick={() =>
-                      useRightPanelStore
-                        .getState()
-                        .openFile(
-                          props.threadRef,
-                          diagnostic.relativePath!,
-                          diagnostic.line ?? undefined,
-                        )
-                    }
-                  >
-                    {diagnostic.relativePath}
-                    {diagnostic.line ? `:${diagnostic.line}` : ""}
-                  </button>
-                ) : null}
-                {diagnostic.frames.length > 0 ? (
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-[11px] text-muted-foreground">
-                      Stack frames
-                    </summary>
-                    <div className="mt-1 flex flex-col items-start gap-0.5">
-                      {withOccurrenceKeys(diagnostic.frames.slice(0, 20), diagnosticFrameKey).map(
-                        ({ key, value: frame }) =>
-                          frame.relativePath ? (
-                            <ScientTooltip
-                              key={key}
-                              content={`${frame.relativePath}${frame.line ? `:${frame.line}` : ""}`}
-                            >
-                              <button
-                                type="button"
-                                className="max-w-full truncate font-mono text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-                                onClick={() =>
-                                  useRightPanelStore
-                                    .getState()
-                                    .openFile(
-                                      props.threadRef,
-                                      frame.relativePath!,
-                                      frame.line ?? undefined,
-                                    )
-                                }
+    <div className="flex min-h-0 flex-1 flex-col">
+      <RunOutcome
+        run={props.run}
+        runtimeLabel={props.runtimeLabel}
+        alternative={props.alternative}
+        canRetry={props.canRetry}
+        onTryWith={props.onTryWith}
+        onAsk={props.onAskAboutRun}
+      />
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-2 p-3">
+          {props.run.writtenFiles !== undefined && props.run.writtenFiles.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+              <span className="text-muted-foreground">Wrote</span>
+              {props.run.writtenFiles.map((path) => (
+                <button
+                  key={path}
+                  type="button"
+                  className="cursor-pointer font-mono underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                  onClick={() => open(path)}
+                >
+                  {path}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {props.run.diagnostics.map((diagnostic) => (
+            <div
+              key={diagnostic.diagnosticId}
+              className="space-y-1 rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs"
+            >
+              <div className="flex items-start gap-2">
+                <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-destructive">
+                    {diagnostic.code ? `${diagnostic.code}: ` : ""}
+                    {diagnostic.message}
+                  </p>
+                  {diagnostic.relativePath ? (
+                    <button
+                      type="button"
+                      className="mt-1 font-mono text-muted-foreground underline-offset-2 hover:underline"
+                      onClick={() =>
+                        useRightPanelStore
+                          .getState()
+                          .openFile(
+                            props.threadRef,
+                            diagnostic.relativePath!,
+                            diagnostic.line ?? undefined,
+                          )
+                      }
+                    >
+                      {diagnostic.relativePath}
+                      {diagnostic.line ? `:${diagnostic.line}` : ""}
+                    </button>
+                  ) : null}
+                  {diagnostic.frames.length > 0 ? (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[11px] text-muted-foreground">
+                        Stack frames
+                      </summary>
+                      <div className="mt-1 flex flex-col items-start gap-0.5">
+                        {withOccurrenceKeys(diagnostic.frames.slice(0, 20), diagnosticFrameKey).map(
+                          ({ key, value: frame }) =>
+                            frame.relativePath ? (
+                              <ScientTooltip
+                                key={key}
+                                content={`${frame.relativePath}${frame.line ? `:${frame.line}` : ""}`}
                               >
-                                {frame.functionName ? `${frame.functionName} · ` : ""}
-                                {frame.relativePath}
-                                {frame.line ? `:${frame.line}` : ""}
-                              </button>
-                            </ScientTooltip>
-                          ) : (
-                            <span key={key} className="font-mono text-[11px] text-muted-foreground">
-                              {frame.functionName ?? "External MATLAB frame"}
-                              {frame.line ? `:${frame.line}` : ""}
-                            </span>
-                          ),
-                      )}
-                    </div>
-                  </details>
-                ) : null}
-                {diagnostic.related.length > 0 ? (
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-[11px] text-muted-foreground">
-                      {diagnostic.related.length} related cause
-                      {diagnostic.related.length === 1 ? "" : "s"}
-                    </summary>
-                    <div className="mt-1 space-y-1 text-[11px] text-muted-foreground">
-                      {withOccurrenceKeys(
-                        diagnostic.related,
-                        (related) => `${related.code ?? "cause"}:${related.message}`,
-                      ).map(({ key, value: related }) => (
-                        <div key={key} className="space-y-0.5">
-                          <p>
-                            {related.code ? `${related.code}: ` : ""}
-                            {related.message}
-                          </p>
-                          {withOccurrenceKeys(related.frames.slice(0, 5), diagnosticFrameKey).map(
-                            ({ key: frameKey, value: frame }) =>
-                              frame.relativePath ? (
                                 <button
-                                  key={frameKey}
                                   type="button"
-                                  className="block max-w-full truncate font-mono underline-offset-2 hover:underline"
+                                  className="max-w-full truncate font-mono text-[11px] text-muted-foreground underline-offset-2 hover:underline"
                                   onClick={() =>
                                     useRightPanelStore
                                       .getState()
@@ -284,44 +331,93 @@ function RunOutputView(props: {
                                   {frame.relativePath}
                                   {frame.line ? `:${frame.line}` : ""}
                                 </button>
-                              ) : null,
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                ) : null}
+                              </ScientTooltip>
+                            ) : (
+                              <span
+                                key={key}
+                                className="font-mono text-[11px] text-muted-foreground"
+                              >
+                                {frame.functionName ?? "External MATLAB frame"}
+                                {frame.line ? `:${frame.line}` : ""}
+                              </span>
+                            ),
+                        )}
+                      </div>
+                    </details>
+                  ) : null}
+                  {diagnostic.related.length > 0 ? (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[11px] text-muted-foreground">
+                        {diagnostic.related.length} related cause
+                        {diagnostic.related.length === 1 ? "" : "s"}
+                      </summary>
+                      <div className="mt-1 space-y-1 text-[11px] text-muted-foreground">
+                        {withOccurrenceKeys(
+                          diagnostic.related,
+                          (related) => `${related.code ?? "cause"}:${related.message}`,
+                        ).map(({ key, value: related }) => (
+                          <div key={key} className="space-y-0.5">
+                            <p>
+                              {related.code ? `${related.code}: ` : ""}
+                              {related.message}
+                            </p>
+                            {withOccurrenceKeys(related.frames.slice(0, 5), diagnosticFrameKey).map(
+                              ({ key: frameKey, value: frame }) =>
+                                frame.relativePath ? (
+                                  <button
+                                    key={frameKey}
+                                    type="button"
+                                    className="block max-w-full truncate font-mono underline-offset-2 hover:underline"
+                                    onClick={() =>
+                                      useRightPanelStore
+                                        .getState()
+                                        .openFile(
+                                          props.threadRef,
+                                          frame.relativePath!,
+                                          frame.line ?? undefined,
+                                        )
+                                    }
+                                  >
+                                    {frame.functionName ? `${frame.functionName} · ` : ""}
+                                    {frame.relativePath}
+                                    {frame.line ? `:${frame.line}` : ""}
+                                  </button>
+                                ) : null,
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+                </div>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => props.onAskAboutDiagnostic(diagnostic, props.run.receipt.runId)}
+                >
+                  Ask agent
+                </Button>
               </div>
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => props.onAskAboutDiagnostic(diagnostic, props.run.receipt.runId)}
-              >
-                Ask agent
-              </Button>
             </div>
-          </div>
-        ))}
-        {props.run.diagnostics.length > 0 ? (
-          <details>
-            <summary className="cursor-pointer text-[11px] text-muted-foreground">
-              Raw {props.runtimeLabel} output
-            </summary>
-            <div className="pt-2">{output}</div>
-          </details>
-        ) : (
-          output
-        )}
-        {props.run.receipt.outputTruncated ? (
-          <p className="text-xs text-muted-foreground">
-            Output was truncated at the run capture limit.
-          </p>
-        ) : null}
-        {props.run.receipt.failureMessage ? (
-          <p className="text-xs text-destructive">{props.run.receipt.failureMessage}</p>
-        ) : null}
-      </div>
-    </ScrollArea>
+          ))}
+          {props.run.diagnostics.length > 0 ? (
+            <details>
+              <summary className="cursor-pointer text-[11px] text-muted-foreground">
+                Raw {props.runtimeLabel} output
+              </summary>
+              <div className="pt-2">{output}</div>
+            </details>
+          ) : (
+            output
+          )}
+          {props.run.receipt.outputTruncated ? (
+            <p className="text-xs text-muted-foreground">
+              Output was truncated at the run capture limit.
+            </p>
+          ) : null}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -331,6 +427,11 @@ function PersistedRunOutput(props: {
   readonly runId: AnalysisRunSnapshot["receipt"]["runId"];
   readonly runtimeLabel: string;
   readonly threadRef: ScopedThreadRef;
+  readonly alternative: RunAlternative | null;
+  readonly canRetry: boolean;
+  readonly onTryWith: (alternative: RunAlternative) => void;
+  readonly onAskAboutRun: (run: AnalysisRunSnapshot) => void;
+  readonly onRevealCode?: (() => void) | undefined;
   readonly onAskAboutDiagnostic: (
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
@@ -359,6 +460,11 @@ function PersistedRunOutput(props: {
         run={run}
         runtimeLabel={props.runtimeLabel}
         threadRef={props.threadRef}
+        alternative={props.alternative}
+        canRetry={props.canRetry}
+        onTryWith={props.onTryWith}
+        onAskAboutRun={props.onAskAboutRun}
+        onRevealCode={props.onRevealCode}
         onAskAboutDiagnostic={props.onAskAboutDiagnostic}
       />
     );
@@ -484,7 +590,9 @@ export function useComputeBatchRun(
     !isStarting &&
     !isCancelling;
 
-  const start = (): Promise<AnalysisRunSnapshot | null> => {
+  const start = (alternative?: {
+    readonly executablePath: string;
+  }): Promise<AnalysisRunSnapshot | null> => {
     if (pendingStart.current) return pendingStart.current;
     const submitted = submittedRunRef.current;
     const current =
@@ -514,6 +622,7 @@ export function useComputeBatchRun(
           relativePath: source.relativePath,
           sourceRevision: AnalysisSourceRevision.make(source.sourceRevision),
           runtimeId: profile.id,
+          ...(alternative === undefined ? {} : { executablePath: alternative.executablePath }),
         },
       });
       if (result._tag === "Success") {
@@ -521,7 +630,7 @@ export function useComputeBatchRun(
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to confirm batch run",
+              title: "Unable to confirm this run",
               description: "The server returned a different run. The requested owner is retained.",
             }),
           );
@@ -559,7 +668,7 @@ export function useComputeBatchRun(
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to confirm batch run",
+            title: "Unable to confirm this run",
             description:
               "Check the connection before trying again. The run remains owned by this tab.",
           }),
@@ -656,7 +765,10 @@ export interface ComputeBatchResultsProps {
   readonly model: ComputeBatchRunModel;
   /** The parent toolbar may own Run; stopping an owned batch remains available here. */
   readonly showRunControls?: boolean;
+  /** Chooses between this file's session and its runs. Without one, its runs are listed here. */
   readonly resultPicker?: ReactNode;
+  /** A line in this file was opened from the output, so the code has to be in view. */
+  readonly onRevealCode?: () => void;
 }
 
 function reportFailure(
@@ -672,6 +784,7 @@ export function ComputeBatchResults({
   model,
   showRunControls = false,
   resultPicker,
+  onRevealCode,
 }: ComputeBatchResultsProps) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const props = model.source;
@@ -701,7 +814,6 @@ export function ComputeBatchResults({
     reportFailure: false,
   });
   const promoteRun = useAtomCommand(analysisEnvironment.promoteRun, { reportFailure: false });
-  const [expanded, setExpanded] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [operation, setOperation] = useState<"cleanup-run" | "cleanup-project" | "promote" | null>(
     null,
@@ -724,13 +836,11 @@ export function ComputeBatchResults({
       right.receipt.startedAt.localeCompare(left.receipt.startedAt),
     );
   })();
-  const targetRunId = model.isOwned ? model.runId : (selectedRunId ?? model.runId);
+  const targetRunId = selectedRunId ?? model.runId;
+  // With nothing asked for, the file's latest run shows, including one from before this tab.
   const selectedRun =
-    (targetRunId === null
-      ? model.isOwned
-        ? null
-        : runs[0]
-      : runs.find((run) => run.receipt.runId === targetRunId)) ?? null;
+    (targetRunId === null ? runs[0] : runs.find((run) => run.receipt.runId === targetRunId)) ??
+    null;
   const awaitingOwnedRun =
     model.runId !== null && !runs.some((run) => run.receipt.runId === model.runId);
   const selectedLiveRun =
@@ -800,7 +910,6 @@ export function ComputeBatchResults({
     const runIdToExpand = analysisRunIdToAutoExpand(streamedRuns, previousObserved);
     if (!runIdToExpand) return;
     setSelectedRunId(runIdToExpand);
-    setExpanded(true);
   }, [streamedRunValue, streamedRuns, model.runId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets and reloads run history from the environment when a new terminal run appears in the stream
@@ -903,12 +1012,26 @@ export function ComputeBatchResults({
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
   ) => {
-    const store = useComposerDraftStore.getState();
-    const current = store.getComposerDraft(props.threadRef)?.prompt ?? "";
     const location = diagnostic.relativePath
       ? `${diagnostic.relativePath}${diagnostic.line ? `:${diagnostic.line}` : ""}`
       : props.relativePath;
-    const request = `Please diagnose and fix this ${props.runtimeLabel} error in ${location}. Scient analysis run ID: ${runId}; diagnostic ID: ${diagnostic.diagnosticId}.\n\n${diagnostic.code ? `${diagnostic.code}: ` : ""}${diagnostic.message}`;
+    askAgent(
+      `Please diagnose and fix this ${props.runtimeLabel} error in ${location}. Scient analysis run ID: ${runId}; diagnostic ID: ${diagnostic.diagnosticId}.\n\n${diagnostic.code ? `${diagnostic.code}: ` : ""}${diagnostic.message}`,
+    );
+  };
+
+  const askAboutRun = (run: AnalysisRunSnapshot) => {
+    const output = outputSegments(run.receipt.output)
+      .map((segment) => segment.text)
+      .join("");
+    askAgent(
+      `Please diagnose and fix this ${props.runtimeLabel} failure in ${props.relativePath}. Scient analysis run ID: ${run.receipt.runId}.\n\n${run.receipt.failureMessage ?? ""}\n\n${output.slice(-MAXIMUM_ASKED_OUTPUT)}`.trim(),
+    );
+  };
+
+  const askAgent = (request: string) => {
+    const store = useComposerDraftStore.getState();
+    const current = store.getComposerDraft(props.threadRef)?.prompt ?? "";
     store.setPrompt(
       props.threadRef,
       current.trim().length > 0 ? `${current}\n\n${request}` : request,
@@ -954,7 +1077,6 @@ export function ComputeBatchResults({
     setPreviousSubmittedRunId(submittedRunId);
     if (submittedRunId) {
       setSelectedRunId(submittedRunId);
-      setExpanded(true);
       setHistoryCursor(null);
     }
   }
@@ -962,13 +1084,87 @@ export function ComputeBatchResults({
   useEffect(() => {
     if (submittedRunId) refreshRuns();
   }, [submittedRunId, refreshRuns]);
+  const shownRuntime = selectedRun?.runtime ?? profile;
+  const shownRuntimeText =
+    selectedRun === null
+      ? runtimeStatusText
+      : `${shownRuntime?.label ?? props.runtimeLabel}${shownRuntime?.version ? ` ${shownRuntime.version}` : ""}`;
+  const alternatives = profile?.alternatives ?? [];
+  // A version says what is different; a bare program name only says where it is.
+  const alternative =
+    alternatives.find(
+      (candidate) =>
+        candidate.version !== null && candidate.version !== selectedRun?.runtime.version,
+    ) ??
+    alternatives.find(
+      (candidate) => candidate.executablePath !== selectedRun?.runtime.executablePath,
+    ) ??
+    null;
+  const outputProps = {
+    runtimeLabel: props.runtimeLabel,
+    threadRef: props.threadRef,
+    alternative,
+    canRetry: model.canStart,
+    onTryWith: (candidate: RunAlternative) => void model.start(candidate),
+    onAskAboutRun: askAboutRun,
+    onRevealCode,
+    onAskAboutDiagnostic: askAboutDiagnostic,
+  };
+  const removable =
+    selectedRun?.localStorage.status === "retained" && selectedRun.localStorage.totalBytes > 0;
+  const finished =
+    selectedRun?.localStorage.status === "retained" &&
+    isTerminalAnalysisRunStatus(selectedRun.receipt.status);
+  const showHistory = resultPicker === undefined && (runs.length > 1 || historyPage?.hasMore);
   return (
     <section
-      className="shrink-0 border-t border-border bg-muted/20"
-      aria-label={`${props.runtimeLabel} batch Results`}
+      className="flex min-h-0 flex-1 flex-col bg-background"
+      aria-label={`${props.runtimeLabel} results`}
     >
-      <div className="flex min-h-10 items-center gap-2 px-3 py-1.5">
+      <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3 py-1">
         {resultPicker}
+        {showHistory ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  className="max-w-44"
+                  aria-label={`${props.runtimeLabel} runs of this file`}
+                >
+                  <span className="truncate">
+                    {selectedRun
+                      ? formatTimestamp(selectedRun.receipt.startedAt, timestampFormat)
+                      : "Runs"}
+                  </span>
+                  <ChevronDown className="size-3 shrink-0" />
+                </Button>
+              }
+            />
+            <MenuPopup align="start" side="bottom" className="max-h-64 min-w-48 overflow-y-auto">
+              <MenuRadioGroup
+                value={selectedRun?.receipt.runId ?? ""}
+                onValueChange={(runId) => setSelectedRunId(runId)}
+              >
+                {runs.map((run) => (
+                  <MenuRadioItem key={run.receipt.runId} value={run.receipt.runId} size="compact">
+                    {statusLabel(run, props.runtimeLabel)} ·{" "}
+                    {formatTimestamp(run.receipt.startedAt, timestampFormat)}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+              {historyPage?.hasMore && historyPage.nextCursor ? (
+                <MenuItem
+                  disabled={runsResult.waiting}
+                  onClick={() => setHistoryCursor(historyPage.nextCursor)}
+                >
+                  Load older runs
+                </MenuItem>
+              ) : null}
+            </MenuPopup>
+          </Menu>
+        ) : null}
         {activeRun || model.isStarting || awaitingOwnedRun ? (
           <Button
             size="xs"
@@ -1004,10 +1200,10 @@ export function ComputeBatchResults({
               ? `Set up ${props.runtimeLabel}`
               : props.sourcePending
                 ? "Saving…"
-                : `Run ${props.runtimeLabel} batch`}
+                : `Run ${props.runtimeLabel}`}
           </Button>
         ) : null}
-        <ScientTooltip content={runtimeStatusText}>
+        <ScientTooltip content={selectedRun?.source.cwd ?? runtimeStatusText}>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             {activeRun
               ? statusLabel(activeRun, props.runtimeLabel)
@@ -1015,58 +1211,41 @@ export function ComputeBatchResults({
                 ? operationStatus
                 : projectNotInitialized
                   ? "Add this folder to Scient to run it"
-                  : runtimeStatusText}
+                  : shownRuntimeText}
           </span>
         </ScientTooltip>
-        {!model.isOwned && runs.length > 1 ? (
+        {!projectNotInitialized && (finished || (storage && storage.totalBytes > 0)) ? (
           <Menu>
             <MenuTrigger
               render={
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  className="max-w-44"
-                  aria-label={`Local ${props.runtimeLabel} run history`}
-                >
-                  <span className="truncate">
-                    {selectedRun
-                      ? `${statusLabel(selectedRun, props.runtimeLabel)} · ${formatTimestamp(selectedRun.receipt.startedAt, timestampFormat)}`
-                      : "Run history"}
-                  </span>
-                  <ChevronDown className="size-3.5 shrink-0" />
+                <Button size="icon-xs" variant="ghost-muted" aria-label="More run actions">
+                  {operation === null ? <Ellipsis /> : <LoaderCircle className="animate-spin" />}
                 </Button>
               }
             />
             <MenuPopup align="end" side="bottom" className="min-w-48">
-              <MenuRadioGroup
-                value={selectedRun?.receipt.runId ?? ""}
-                onValueChange={(runId) => {
-                  setSelectedRunId(runId);
-                  setExpanded(true);
-                }}
-              >
-                {runs.map((run) => (
-                  <MenuRadioItem key={run.receipt.runId} value={run.receipt.runId} size="compact">
-                    {statusLabel(run, props.runtimeLabel)} ·{" "}
-                    {formatTimestamp(run.receipt.startedAt, timestampFormat)}
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
+              {finished ? (
+                <MenuItem disabled={busy} onClick={handlePromoteRun}>
+                  <FolderDown />
+                  Save to project
+                </MenuItem>
+              ) : null}
+              {removable ? (
+                <MenuItem
+                  disabled={busy || !isTerminalAnalysisRunStatus(selectedRun.receipt.status)}
+                  onClick={handleCleanupRun}
+                >
+                  Remove this run
+                </MenuItem>
+              ) : null}
+              {storage && storage.totalBytes > 0 ? (
+                <MenuItem disabled={busy || activeRun !== null} onClick={handleCleanupProject}>
+                  Clean up project ({formatBytes(storage.totalBytes)})
+                </MenuItem>
+              ) : null}
             </MenuPopup>
           </Menu>
         ) : null}
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label={
-            expanded
-              ? `Collapse ${props.runtimeLabel} output`
-              : `Expand ${props.runtimeLabel} output`
-          }
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? <ChevronDown /> : <ChevronUp />}
-        </Button>
       </div>
 
       {artifactRun && artifactStatus && artifactRun.localStorage.status === "retained" ? (
@@ -1080,7 +1259,7 @@ export function ComputeBatchResults({
 
       {selectedRun?.artifactReceipt.status === "failed" ? (
         <div
-          className="border-t border-warning/30 bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+          className="border-b border-warning/30 bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
           role="alert"
         >
           {selectedRun.artifactReceipt.failureMessage ??
@@ -1088,118 +1267,38 @@ export function ComputeBatchResults({
         </div>
       ) : null}
 
-      {expanded ? (
-        <div className="border-t border-border">
-          {projectNotInitialized ? (
-            <div className="p-3 text-xs text-muted-foreground">
-              Add this folder to Scient to run its files. Viewing and editing remain available.
-            </div>
-          ) : !runtimeReady ? (
-            <div className="p-3 text-xs text-muted-foreground">
-              <Link
-                to="/settings/scientific-computing"
-                search={{ environmentId: props.environmentId }}
-              >
-                Open Scientific Computing
-              </Link>
-            </div>
-          ) : null}
-          {!projectNotInitialized && selectedLiveRun ? (
-            <RunOutputView
-              run={selectedLiveRun}
-              runtimeLabel={props.runtimeLabel}
-              threadRef={props.threadRef}
-              onAskAboutDiagnostic={askAboutDiagnostic}
-            />
-          ) : !projectNotInitialized && selectedRun ? (
-            <PersistedRunOutput
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              runId={selectedRun.receipt.runId}
-              runtimeLabel={props.runtimeLabel}
-              threadRef={props.threadRef}
-              onAskAboutDiagnostic={askAboutDiagnostic}
-              storageStatus={selectedRun.localStorage.status}
-            />
-          ) : !projectNotInitialized && (model.isStarting || awaitingOwnedRun) ? (
-            <div role="status" className="p-3 text-xs text-muted-foreground">
-              {model.isStarting
-                ? `Starting ${props.runtimeLabel} batch…`
-                : "Waiting for this batch run…"}
-            </div>
-          ) : !projectNotInitialized && runtimeReady ? (
-            <div className="p-3 text-xs text-muted-foreground">
-              Run {props.runtimeLabel} batch to see output here.
-            </div>
-          ) : null}
-          {!projectNotInitialized && selectedRun?.localStorage.status === "metadata-only" ? (
-            <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-              Local output and artifact files were removed. Run metadata, diagnostics, hashes, and
-              provenance remain available.
-            </div>
-          ) : null}
-          {!projectNotInitialized &&
-          selectedRun?.localStorage.status === "retained" &&
-          isTerminalAnalysisRunStatus(selectedRun.receipt.status) ? (
-            <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-              <span className="min-w-0 flex-1">
-                Keep this run, its receipt, output, and figures with the project.
-              </span>
-              <Button size="xs" variant="ghost" disabled={busy} onClick={handlePromoteRun}>
-                {operation === "promote" ? (
-                  <LoaderCircle className="animate-spin" />
-                ) : (
-                  <FolderDown />
-                )}
-                Save to project
-              </Button>
-            </div>
-          ) : null}
-          {!projectNotInitialized && storage && storage.totalBytes > 0 ? (
-            <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-              <span className="min-w-0 flex-1">
-                Local results use {formatBytes(storage.totalBytes)} across{" "}
-                {storage.retainedRunCount}
-                {" retained run"}
-                {storage.retainedRunCount === 1 ? "" : "s"}.
-              </span>
-              {selectedRun?.localStorage.status === "retained" &&
-              selectedRun.localStorage.totalBytes > 0 ? (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={busy || !isTerminalAnalysisRunStatus(selectedRun.receipt.status)}
-                  onClick={handleCleanupRun}
-                >
-                  {operation === "cleanup-run" ? <LoaderCircle className="animate-spin" /> : null}
-                  Remove this run
-                </Button>
-              ) : null}
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={busy || activeRun !== null}
-                onClick={handleCleanupProject}
-              >
-                {operation === "cleanup-project" ? <LoaderCircle className="animate-spin" /> : null}
-                Clean up project
-              </Button>
-            </div>
-          ) : null}
-          {!projectNotInitialized && historyPage?.hasMore && historyPage.nextCursor ? (
-            <div className="border-t border-border p-2 text-center">
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={runsResult.waiting}
-                onClick={() => setHistoryCursor(historyPage.nextCursor)}
-              >
-                {runsResult.waiting ? <LoaderCircle className="animate-spin" /> : null}
-                Load older runs
-              </Button>
-            </div>
-          ) : null}
+      {projectNotInitialized ? (
+        <div className="p-3 text-xs text-muted-foreground">
+          Add this folder to Scient to run its files. Viewing and editing remain available.
         </div>
+      ) : !runtimeReady && selectedRun === null ? (
+        <div className="p-3 text-xs text-muted-foreground">
+          <Link to="/settings/scientific-computing" search={{ environmentId: props.environmentId }}>
+            Open Scientific Computing
+          </Link>
+        </div>
+      ) : null}
+      {!projectNotInitialized && selectedRun?.localStorage.status === "metadata-only" ? (
+        <div className="border-b border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+          This run's saved output was removed.
+        </div>
+      ) : null}
+      {!projectNotInitialized && selectedLiveRun ? (
+        <RunOutputView run={selectedLiveRun} {...outputProps} />
+      ) : !projectNotInitialized && selectedRun ? (
+        <PersistedRunOutput
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          runId={selectedRun.receipt.runId}
+          storageStatus={selectedRun.localStorage.status}
+          {...outputProps}
+        />
+      ) : !projectNotInitialized && (model.isStarting || awaitingOwnedRun) ? (
+        <div role="status" className="p-3 text-xs text-muted-foreground">
+          {model.isStarting ? `Starting ${props.runtimeLabel}…` : "Waiting for this run…"}
+        </div>
+      ) : !projectNotInitialized && runtimeReady ? (
+        <div className="p-3 text-xs text-muted-foreground">Run this file to see output here.</div>
       ) : null}
     </section>
   );

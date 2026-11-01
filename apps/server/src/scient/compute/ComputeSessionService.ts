@@ -3721,6 +3721,15 @@ const make = Effect.gen(function* () {
         projectId: live.projectId,
         sessionId: live.sessionId,
       });
+      const closed = {
+        ...(yield* Ref.get(live.recordRef)),
+        lostReason: shortText(
+          "Closed to make room. Run the file again to bring its variables back.",
+        ),
+      };
+      yield* persistSession("stop", closed).pipe(Effect.ignoreCause({ log: true }));
+      yield* Ref.set(live.recordRef, closed);
+      yield* publishSession(closed);
       return true;
     }
     return false;

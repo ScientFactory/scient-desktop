@@ -43,6 +43,8 @@ export interface ComputeContextBinding {
   readonly contextId: ComputeContextId;
   readonly parentContextId?: ComputeContextId | undefined;
   readonly batchRunId?: typeof AnalysisRunId.Type | undefined;
+  /** When a run was asked for, which is how a person tells runs apart. */
+  readonly startedAt?: string | undefined;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly ownerKey: string;
@@ -65,6 +67,7 @@ interface ComputeContextStoreState {
     readonly contextId: ComputeContextId;
     readonly parentContextId?: ComputeContextId;
     readonly batchRunId?: typeof AnalysisRunId.Type;
+    readonly startedAt?: string;
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
     readonly ownerKey: string;
@@ -121,6 +124,7 @@ const ComputeContextBindingFields = {
   contextId: ComputeContextId,
   parentContextId: Schema.optional(ComputeContextId),
   batchRunId: Schema.optional(AnalysisRunId),
+  startedAt: Schema.optional(Schema.String),
   environmentId: EnvironmentId,
   cwd: Schema.NonEmptyString.check(Schema.isMaxLength(MAX_COMPUTE_CONTEXT_PATH_LENGTH)),
   ownerKey: Schema.NonEmptyString.check(Schema.isMaxLength(MAX_COMPUTE_CONTEXT_OWNER_KEY_LENGTH)),
@@ -239,6 +243,7 @@ export function computeContextBindingForSurface(input: {
   readonly contextId: ComputeContextId;
   readonly parentContextId?: ComputeContextId;
   readonly batchRunId?: typeof AnalysisRunId.Type;
+  readonly startedAt?: string;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly ownerKey?: string;
@@ -248,6 +253,7 @@ export function computeContextBindingForSurface(input: {
     contextId: input.contextId,
     ...(input.parentContextId === undefined ? {} : { parentContextId: input.parentContextId }),
     ...(input.batchRunId === undefined ? {} : { batchRunId: input.batchRunId }),
+    ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
     environmentId: input.environmentId,
     cwd: input.cwd,
     ownerKey: input.ownerKey ?? input.contextId,
@@ -700,6 +706,7 @@ export function ensureComputeContext(input: {
   readonly contextId: ComputeContextId;
   readonly parentContextId?: ComputeContextId;
   readonly batchRunId?: typeof AnalysisRunId.Type;
+  readonly startedAt?: string;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly ownerKey?: string;

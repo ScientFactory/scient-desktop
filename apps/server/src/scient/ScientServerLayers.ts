@@ -193,6 +193,7 @@ export function makeScientRouteServices<
       Layer.provide(ConversationImportStagingLive),
       Layer.provide(WordFileExportLive),
       Layer.provide(ComputeMcpGatewayLive),
+      Layer.provide(AnalysisServiceLive),
       Layer.provide(NotebookRunRecorder.layer),
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(DataTables.layer),

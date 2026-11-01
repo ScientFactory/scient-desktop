@@ -11,6 +11,8 @@ import { CircleAlert, Info } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "~/components/ui/button";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { computeFigurePresentation } from "./computeFigurePresentation";
@@ -30,6 +32,21 @@ import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryActi
 import type { ComputeContextId } from "./computeContextStore";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
+
+const MAXIMUM_ASKED_ERROR = 4000;
+
+function addToComposer(threadRef: ScopedThreadRef, request: string) {
+  const store = useComposerDraftStore.getState();
+  const current = store.getComposerDraft(threadRef)?.prompt ?? "";
+  store.setPrompt(threadRef, current.trim().length > 0 ? `${current}\n\n${request}` : request);
+  toastManager.add(
+    stackedThreadToast({
+      type: "success",
+      title: "Added the error to the composer",
+      description: "Review the request, then send it to your agent.",
+    }),
+  );
+}
 type ComputeDiagnosticOutput = Extract<ComputeOutput, { readonly _tag: "diagnostic" }>;
 type DiagnosticFrame = ComputeDiagnosticOutput["diagnostic"]["frames"][number];
 
@@ -165,7 +182,21 @@ function ComputeDiagnostic(props: {
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
-            <p className="font-medium break-words text-destructive">{summary}</p>
+            <div className="flex items-start gap-2">
+              <p className="min-w-0 flex-1 font-medium break-words text-destructive">{summary}</p>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  addToComposer(
+                    props.threadRef,
+                    `Please diagnose and fix this ${props.session.languageId} error.\n\n${[summary, ...diagnostic.traceback].join("\n").slice(-MAXIMUM_ASKED_ERROR)}`,
+                  )
+                }
+              >
+                Ask agent
+              </Button>
+            </div>
             {recovery !== null ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {managed !== null && props.dependencyRecovery !== undefined ? (
