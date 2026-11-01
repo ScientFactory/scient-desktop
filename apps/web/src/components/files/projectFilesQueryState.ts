@@ -377,7 +377,8 @@ export function useProjectFileQuery(
     isNotFile,
     // A folder error overrides cached contents retained across failed refreshes.
     isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
-    authoritativeData: canReadFiles ? data : null,
+    // The file as last read, which your unsaved draft in `data` must not hide.
+    authoritativeData: canReadFiles && !isMissing ? readData : null,
     failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
     failureReason: isProjectReadFileError(cause) ? (cause.reason ?? null) : null,
     failureOsErrorCode: isProjectReadFileError(cause) ? (cause.osErrorCode ?? null) : null,

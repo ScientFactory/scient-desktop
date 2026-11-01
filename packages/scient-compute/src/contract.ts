@@ -19,6 +19,7 @@ import {
   StreamText,
 } from "./primitives.ts";
 import { ComputeDisplayOutput, ComputeMediaType } from "./representation.ts";
+import type { DataTablePage, DataTableQuery } from "./table.ts";
 
 export const ComputeSessionId = EntityId.pipe(Schema.brand("ComputeSessionId"));
 export type ComputeSessionId = typeof ComputeSessionId.Type;
@@ -42,6 +43,20 @@ export type ComputeRequestId = typeof ComputeRequestId.Type;
 
 export const ComputeLanguageId = Slug.pipe(Schema.brand("ComputeLanguageId"));
 export type ComputeLanguageId = typeof ComputeLanguageId.Type;
+
+/** "C++" → "cpp", "Wolfram Language" → "wolfram-language": a stable id from a language name. */
+export function computeLanguageIdFromName(language: string): string {
+  return (
+    language
+      .trim()
+      .toLowerCase()
+      .replace(/\+\+/gu, "pp")
+      .replace(/#/gu, "sharp")
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 64) || "kernel"
+  );
+}
 
 export const ComputeTransportKind = Slug.pipe(Schema.brand("ComputeTransportKind"));
 export type ComputeTransportKind = typeof ComputeTransportKind.Type;
@@ -250,6 +265,7 @@ export const ComputeCapability = Schema.Literals([
   "completion",
   "inspection",
   "variables",
+  "tables",
   "stdin",
 ]);
 export type ComputeCapability = typeof ComputeCapability.Type;
@@ -342,6 +358,8 @@ export const ComputeTransportEvent = Schema.Union([
     requestId: ComputeRequestId,
     generation: ComputeSessionGeneration,
     outcome: ComputeExecutionOutcome,
+    /** The kernel's number for this run, for kernels that report one. */
+    executionCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
   Schema.TaggedStruct("restarted", {
     generation: ComputeSessionGeneration,
@@ -364,6 +382,7 @@ export class ComputeTransportError extends Schema.TaggedError<ComputeTransportEr
       "restart",
       "shutdown",
       "variables",
+      "table",
       "receive",
     ]),
     message: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
@@ -371,16 +390,37 @@ export class ComputeTransportError extends Schema.TaggedError<ComputeTransportEr
   },
 ) {}
 
+/** A Jupyter kernel the bridge host starts instead of ipykernel in its own interpreter. */
+export interface ComputeKernelSpec {
+  /** Kernel command line; Jupyter substitutes `{connection_file}`. */
+  readonly argv: ReadonlyArray<string>;
+  /** The `language_info.name` the kernel reports. */
+  readonly language: string;
+  readonly interruptMode: "signal" | "message";
+  /** A kernel expression whose text/plain value is the variables JSON; absent means unsupported. */
+  readonly variablesExpression: string | null;
+  /** How long the bridge waits for this kernel to answer, for kernels slow to start. */
+  readonly startupTimeoutSeconds?: number;
+  /** An installed kernelspec's own environment and directory, as Jupyter would apply them. */
+  readonly env?: Readonly<Record<string, string>>;
+  readonly resourceDir?: string;
+  /** Another Python's ipykernel: the bridge adds its display setup, Variables and Tables. */
+  readonly pythonFeatures?: boolean;
+  /** The kernel answers `ok` for a run it stopped, so only the request tells them apart. */
+  readonly interruptedReplyIsOk?: boolean;
+}
+
 /**
  * The launched process may be a bridge host rather than the scientific runtime. Do not infer
- * runtime identity from this executable; qualify a typed transport-specific extension with the
- * first real second-language adapter.
+ * runtime identity from this executable.
  */
 export interface ComputeLaunchPlan {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
+  /** Absent means ipykernel in the bridge host's own interpreter. */
+  readonly kernel?: ComputeKernelSpec;
 }
 
 export interface ComputeTransportOpenRequest {
@@ -436,6 +476,14 @@ export interface ComputeVariablesRequest {
   readonly expectedGeneration: ComputeSessionGeneration;
 }
 
+/** One page of a tabular value in the live namespace, read without entering history. */
+export interface ComputeTableRequest {
+  readonly requestId: ComputeRequestId;
+  readonly expectedGeneration: ComputeSessionGeneration;
+  readonly name: string;
+  readonly query: DataTableQuery;
+}
+
 /**
  * Events decide asynchronous outcomes; interrupt's return only acknowledges signal delivery.
  * Expected generation on every mutation prevents stale clients from executing in or destroying a
@@ -451,6 +499,9 @@ export interface ComputeChannel {
   readonly inspectVariables: (
     request: ComputeVariablesRequest,
   ) => Effect.Effect<ComputeVariableSnapshot, ComputeTransportError>;
+  readonly inspectTable: (
+    request: ComputeTableRequest,
+  ) => Effect.Effect<DataTablePage, ComputeTransportError>;
   readonly shutdown: (
     request: ComputeShutdownRequest,
   ) => Effect.Effect<void, ComputeTransportError>;
@@ -572,6 +623,8 @@ export const ComputeRuntimeProfile = Schema.Struct({
   languageVersion: Label,
   architecture: Schema.NullOr(Label),
   displayName: Label,
+  /** Where discovery found it, as a user knows it: "conda: analysis", "pyenv", "Homebrew". */
+  origin: Schema.optional(Label),
 });
 export type ComputeRuntimeProfile = typeof ComputeRuntimeProfile.Type;
 
@@ -583,6 +636,7 @@ export const ComputeRuntimeInstallation = Schema.Struct({
   configured: Schema.optional(Schema.Boolean),
   version: Schema.NullOr(Label),
   problem: Schema.NullOr(ShortText),
+  origin: Schema.optional(Label),
 });
 export type ComputeRuntimeInstallation = typeof ComputeRuntimeInstallation.Type;
 
@@ -688,13 +742,28 @@ export class ComputeRuntimeError extends Schema.TaggedError<ComputeRuntimeError>
 export interface ComputeLanguageAdapter {
   readonly languageId: ComputeLanguageId;
   readonly transportKind: ComputeTransportKind;
-  /** Settings discovery must not spawn a runtime or import its execution bridge. */
+  /**
+   * The runtime the user chose for new sessions, if any. Automatic selection may pick any ready
+   * runtime; an explicit choice keeps its own failure. Absent means the configured executable.
+   */
+  readonly selectedExecutable?: (
+    request: ComputeDiscoveryRequest,
+  ) => Effect.Effect<string | null, ComputeRuntimeError>;
   readonly listInstallations?: (
     request: ComputeDiscoveryRequest,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInstallation>, ComputeRuntimeError>;
+  /** Listing and discovery read files only: nothing starts until someone runs or tests. */
   readonly discover: (
     request: ComputeDiscoveryRequest,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeProfile>, ComputeRuntimeError>;
+  /**
+   * What the files say about a runtime, without starting anything. Ready here means nothing is
+   * known to be missing, so it is `detected` at most. Absent means nothing is known.
+   */
+  readonly assess?: (
+    profile: ComputeRuntimeProfile,
+  ) => Effect.Effect<ComputeRuntimeVerification, ComputeRuntimeError>;
+  /** May start the runtime: this is the check a Test or a Run makes. */
   readonly verify: (
     request: ComputeLaunchRequest,
   ) => Effect.Effect<ComputeRuntimeVerification, ComputeRuntimeError>;

@@ -3,8 +3,10 @@ import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
-import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
-import { NewDocumentMenuItems } from "~/scient/documents/NewDocumentMenuItems";
+import {
+  NewDocumentMenuItems,
+  type NewDocumentChoice,
+} from "~/scient/documents/NewDocumentMenuItems";
 
 import type { Icon } from "~/components/Icons";
 
@@ -64,7 +66,7 @@ function MenuButton(props: {
 
 /** Starts a Markdown or LaTeX document in the selected folder. */
 export function NewDocumentButton(props: {
-  readonly onChoose: (format: NewDocumentFormat) => void;
+  readonly onChoose: (choice: NewDocumentChoice) => void;
 }) {
   return (
     <MenuButton

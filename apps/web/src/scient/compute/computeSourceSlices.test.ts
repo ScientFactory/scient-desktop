@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { ASSISTANT_CITATION_MAX_TEXT_LENGTH } from "@t3tools/contracts";
+
 import {
   computeActiveCell,
   computeCell,
+  computeCellQuote,
   computeFile,
   computeLineSelection,
   computeTextSelection,
@@ -17,6 +20,53 @@ it("keeps MATLAB cell markers and exact source ranges language-owned", () => {
     range: { startLine: 3, startColumn: 0, endLine: 3, endColumn: 10 },
   });
   expect(computeCell(source, 4)).toBeNull();
+});
+
+describe("the quote for a cell", () => {
+  const quoted = (source: string, line: number) => {
+    const range = computeCellQuote(source, line);
+    return range === null ? null : source.slice(range.from, range.to);
+  };
+
+  it("is the cell's code, without the blank lines around it", () => {
+    const source = "# %% one\n\nvalue = 1\nprint(value)\n\n\n# %% two\nother = 2\n";
+    expect(quoted(source, 3)).toBe("value = 1\nprint(value)");
+    expect(quoted(source, 5)).toBe("value = 1\nprint(value)");
+    expect(quoted(source, 8)).toBe("other = 2");
+  });
+
+  it("starts from the cell below a marker line that was clicked", () => {
+    expect(quoted("# %% one\nvalue = 1\n", 1)).toBe("value = 1");
+  });
+
+  it("does not exist outside a cell or for an empty one", () => {
+    expect(quoted("preamble = 1\n# %%\nvalue = 2", 1)).toBeNull();
+    expect(quoted("# %%\n\n# %%\nvalue = 2", 1)).toBeNull();
+  });
+
+  it("keeps the offsets of a file with Windows line ends", () => {
+    expect(quoted("# %% one\r\nvalue = 1\r\nprint(value)\r\n", 2)).toBe(
+      "value = 1\r\nprint(value)",
+    );
+  });
+
+  it("quotes a cell too long for one from the clicked line, in whole lines", () => {
+    const lines = Array.from({ length: 400 }, (_, index) => `value_${index} = ${"x".repeat(40)}`);
+    const source = ["# %%", ...lines, "# %%", "after = 1"].join("\n");
+    const text = quoted(source, 301)!;
+    expect(text.startsWith("value_299 = ")).toBe(true);
+    expect(text.endsWith(lines[399]!)).toBe(true);
+
+    const fromStart = quoted(source, 2)!;
+    expect(fromStart.startsWith("value_0 = ")).toBe(true);
+    expect(fromStart.length).toBeLessThanOrEqual(ASSISTANT_CITATION_MAX_TEXT_LENGTH);
+    expect(lines).toContain(fromStart.split("\n").at(-1));
+  });
+
+  it("cuts a single line longer than a quote at the limit", () => {
+    const source = `# %%\n${"x".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH + 500)}\n`;
+    expect(quoted(source, 2)).toHaveLength(ASSISTANT_CITATION_MAX_TEXT_LENGTH);
+  });
 });
 
 describe("Python editor execution slices", () => {

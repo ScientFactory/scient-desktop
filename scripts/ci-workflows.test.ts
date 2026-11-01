@@ -354,11 +354,11 @@ describe("CI workflow decisions", () => {
     ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 19],
     ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 25],
     ["docs PR", "docs/operations/development.md", "pull_request", false, 19],
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 37],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 45],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 28],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 20],
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
-    ["main push", "docs/operations/development.md", "push", false, 36],
+    ["main push", "docs/operations/development.md", "push", false, 44],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

@@ -28,6 +28,7 @@ import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 import {
   NEW_DOCUMENT_FORMATS,
   NewDocumentMenuItems,
+  type NewDocumentChoice,
 } from "~/scient/documents/NewDocumentMenuItems";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -43,7 +44,7 @@ export interface ScientSurfaceLauncherProps {
   readonly sideChatDisabledReason?: string | null | undefined;
   readonly onAddBrowser: () => void;
   readonly onAddBrowserInProfile: (profileId: string) => void;
-  readonly onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
+  readonly onAddDocuments?: ((format: NewDocumentChoice) => void) | undefined;
   readonly onAddSources: () => void;
   readonly onAddCompute: () => void;
   readonly onAddTerminal: () => void;
@@ -166,9 +167,11 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     browserDefaults.profiles[0];
   // The format a click creates follows the last one picked.
   const [documentFormat, setDocumentFormat] = useState(readDocumentFormat);
-  const createDocument = (format: NewDocumentFormat) => {
-    localStorage.setItem(DOCUMENT_FORMAT_STORAGE_KEY, format);
-    setDocumentFormat(format);
+  const createDocument = (format: NewDocumentChoice) => {
+    if (format !== "notebook") {
+      localStorage.setItem(DOCUMENT_FORMAT_STORAGE_KEY, format);
+      setDocumentFormat(format);
+    }
     props.onAddDocuments?.(format);
     props.onPicked?.();
   };

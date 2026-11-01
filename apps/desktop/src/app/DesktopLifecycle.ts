@@ -17,6 +17,9 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+// SCIENT-FORK:START — quitting stops running work, so it asks first.
+import { confirmQuitStopsRunningWork } from "../scient/quitGuard/ipc.ts";
+// SCIENT-FORK:END
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLifecycleRelaunchError>()(
   "DesktopLifecycleRelaunchError",
@@ -155,6 +158,9 @@ function handleBeforeQuit(
     void runEffect(exitIfShutdownStalled(quit, "before-quit"));
     return;
   }
+  // SCIENT-FORK:START — quitting stops running work, so it asks first.
+  if (!confirmQuitStopsRunningWork()) return;
+  // SCIENT-FORK:END
   void runEffect(
     Effect.gen(function* () {
       const state = yield* DesktopState.DesktopState;

@@ -158,9 +158,10 @@ export function makeManagedPythonRuntimeController(input: {
     return input.toolkitIds.filter((toolkitId) => selected.has(toolkitId));
   };
 
+  // Checked once at startup, never from a status read: looking starts nothing and sends nothing.
+  void input.recipes?.refresh();
+
   const readStatus = async (): Promise<ComputeManagedRuntimeStatus> => {
-    // Refresh never blocks Settings or changes an installed environment.
-    void input.recipes?.refresh();
     for (;;) {
       const operationSnapshot = operation;
       const observedRevision = revision;
@@ -184,12 +185,19 @@ export function makeManagedPythonRuntimeController(input: {
             active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION);
       const unavailableFailure =
         current !== null && !current.available
-          ? ({
-              reason: "activation-failed",
-              action: "repair",
-              summary: `${displayName} needs repair`,
-              detail: `${displayName} is unavailable. Repair it or choose an existing environment.`,
-            } satisfies ComputeManagedRuntimeFailure)
+          ? current.movedFrom !== undefined
+            ? ({
+                reason: "activation-failed",
+                action: "repair",
+                summary: `${displayName} was copied from another location`,
+                detail: `It still points to ${current.movedFrom}. Repair rebuilds it here.`,
+              } satisfies ComputeManagedRuntimeFailure)
+            : ({
+                reason: "activation-failed",
+                action: "repair",
+                summary: `${displayName} needs repair`,
+                detail: `${displayName} is unavailable. Repair it or choose an existing environment.`,
+              } satisfies ComputeManagedRuntimeFailure)
           : null;
       return {
         ...(input.configuration === undefined

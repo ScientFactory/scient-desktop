@@ -27,6 +27,7 @@ import { ContextualConfirmation } from "~/components/ui/contextual-confirmation"
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { computeScientPart } from "./computeInstallationSettingsModel";
 
 export interface ComputeManagedRuntimeFailureView {
   readonly summary: string;
@@ -75,13 +76,24 @@ export function reconcileManagedRuntimeCommandSnapshot(input: {
     : input.command;
 }
 
+// SQL runs DuckDB in Scient-managed Python; other kernel languages manage a kernel package.
+const usesManagedPython = (languageId: string) => languageId === "python" || languageId === "sql";
+
 function fallbackManagedRuntimeFailure(
   languageId: string,
   detail: string,
   retryAction: ComputeManagedRuntimeAction | null,
 ): ComputeManagedRuntimeFailureView {
   return {
-    summary: languageId === "matlab" ? "MATLAB connection failed" : "Python setup failed",
+    // A refused removal already says what to do, and nothing was being set up.
+    summary:
+      retryAction === "remove"
+        ? detail
+        : languageId === "matlab"
+          ? "MATLAB connection failed"
+          : usesManagedPython(languageId)
+            ? "Python setup failed"
+            : "Kernel setup failed",
     detail,
     retryAction,
   };
@@ -97,6 +109,9 @@ export function managedRuntimeOperationLabel(
     return operation.phase === "removing"
       ? "Removing MATLAB connection…"
       : "Preparing MATLAB connection…";
+  }
+  if (languageId !== undefined && !usesManagedPython(languageId)) {
+    return `${operation.phase === "removing" ? "Removing" : "Installing"} ${status.displayName ?? "kernel"}…`;
   }
   switch (operation.phase) {
     case "downloading": {
@@ -125,7 +140,6 @@ export function useComputeManagedRuntime(input: {
   environmentId: EnvironmentId | null;
   languageId: ComputeLanguageId;
   initialStatus: ComputeManagedRuntimeStatus | null;
-  ensureEnabled: () => Promise<boolean>;
 }) {
   const manage = useAtomCommand(computeEnvironment.manageRuntime, { reportFailure: false });
   const cancelCommand = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
@@ -133,8 +147,9 @@ export function useComputeManagedRuntime(input: {
   });
   // First-time file setup has no inventory status yet. Subscribe anyway so
   // Set up Python / Connect MATLAB can show progress on the file, not only in Settings.
+  const hasManagedPart = computeScientPart(input.languageId) !== null;
   const queried = useEnvironmentQuery(
-    input.environmentId
+    input.environmentId && hasManagedPart
       ? computeEnvironment.managedRuntime({
           environmentId: input.environmentId,
           input: { languageId: input.languageId },
@@ -183,7 +198,8 @@ export function useComputeManagedRuntime(input: {
     ? JSON.stringify([scopeKey, status.operation.operationId])
     : null;
   const cancelling = operationKey !== null && cancellationKey === operationKey;
-  const unresolved = querySnapshot === undefined && queried.error === null && status === null;
+  const unresolved =
+    hasManagedPart && querySnapshot === undefined && queried.error === null && status === null;
   const act = async (
     action: ComputeManagedRuntimeAction,
     options?: ComputeManagedRuntimeProvisionOptions,
@@ -222,12 +238,6 @@ export function useComputeManagedRuntime(input: {
       setCancellationKey(cancelledBuild);
     }
     return await (async () => {
-      const activatesManaged =
-        action === "use-managed" ||
-        (action === "install" && options?.selectionAfterInstall !== "existing");
-      if (activatesManaged && !(await input.ensureEnabled())) {
-        throw new Error("The language could not be enabled. Settings were not saved.");
-      }
       const result = await manage({
         environmentId: environmentId,
         input: {
@@ -316,7 +326,9 @@ export function useComputeManagedRuntime(input: {
           summary:
             input.languageId === "matlab"
               ? "MATLAB status unavailable"
-              : "Python status unavailable",
+              : usesManagedPython(input.languageId)
+                ? "Python status unavailable"
+                : "Kernel status unavailable",
           detail: queried.error,
           retryAction: null,
         };
@@ -428,18 +440,22 @@ export function ManagedRuntimeNotice({
               </TooltipTrigger>
               <TooltipPopup>Copy the full error</TooltipPopup>
             </Tooltip>
-            <Popover>
-              <PopoverTrigger
-                render={<Button size="icon-xs" variant="ghost-muted" aria-label="Error details" />}
-              >
-                <ChevronDown className="size-3" aria-hidden />
-              </PopoverTrigger>
-              <PopoverPopup align="end" className="w-80 max-w-[calc(100vw-2rem)]" padding="tight">
-                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
-                  {failure.detail}
-                </pre>
-              </PopoverPopup>
-            </Popover>
+            {failure.detail === failure.summary ? null : (
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button size="icon-xs" variant="ghost-muted" aria-label="Error details" />
+                  }
+                >
+                  <ChevronDown className="size-3" aria-hidden />
+                </PopoverTrigger>
+                <PopoverPopup align="end" className="w-80 max-w-[calc(100vw-2rem)]" padding="tight">
+                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
+                    {failure.detail}
+                  </pre>
+                </PopoverPopup>
+              </Popover>
+            )}
           </>
         ) : null}
       </div>
@@ -465,7 +481,7 @@ export function ManagedRuntimeNotice({
       ) : null}
       {failure ? (
         <div className="flex min-w-0 items-center gap-1 text-destructive" role="alert">
-          <span className="min-w-0 truncate">{failure.summary}</span>
+          <span className="min-w-0 break-words">{failure.summary}</span>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -486,14 +502,16 @@ export function ManagedRuntimeNotice({
             </TooltipTrigger>
             <TooltipPopup>Copy the full error</TooltipPopup>
           </Tooltip>
-          <details className="min-w-0">
-            <summary className="w-fit cursor-pointer list-none text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-              Details
-            </summary>
-            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
-              {failure.detail}
-            </pre>
-          </details>
+          {failure.detail === failure.summary ? null : (
+            <details className="min-w-0">
+              <summary className="w-fit cursor-pointer list-none text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
+                Details
+              </summary>
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
+                {failure.detail}
+              </pre>
+            </details>
+          )}
         </div>
       ) : null}
     </div>
@@ -503,6 +521,7 @@ export function ManagedRuntimeNotice({
 export function ManagedRuntimeMaintenanceMenu({
   runtime,
   connection = false,
+  kernel,
   canProvision = true,
   disabled = false,
   omitAction = null,
@@ -512,6 +531,8 @@ export function ManagedRuntimeMaintenanceMenu({
 }: {
   runtime: ComputeManagedRuntimeController;
   connection?: boolean;
+  /** A private Jupyter kernel package, such as IRkernel. */
+  kernel?: string;
   canProvision?: boolean;
   disabled?: boolean;
   omitAction?: ComputeManagedRuntimeAction | null;
@@ -523,7 +544,7 @@ export function ManagedRuntimeMaintenanceMenu({
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const status = runtime.status;
   if (!status?.installed) return null;
-  const displayName = connection ? "MATLAB connection helper" : "Scient-managed Python";
+  const displayName = connection ? "MATLAB connection helper" : (kernel ?? "Scient-managed Python");
   const busy = disabled || runtime.busy;
   const connectionAction =
     status.selection === "managed"
@@ -551,7 +572,7 @@ export function ManagedRuntimeMaintenanceMenu({
               size="icon-xs"
               variant="ghost-muted"
               disabled={busy}
-              aria-label={`More ${connection ? "MATLAB connection" : "Python runtime"} actions`}
+              aria-label={`More ${connection ? "MATLAB connection" : (kernel ?? "Python runtime")} actions`}
             />
           }
         >
@@ -570,7 +591,9 @@ export function ManagedRuntimeMaintenanceMenu({
           ) : null}
           {showRepair ? (
             <MenuItem
-              aria-label={connection ? "Rebuild MATLAB connection" : "Rebuild managed Python"}
+              aria-label={
+                connection ? "Rebuild MATLAB connection" : `Rebuild ${kernel ?? "managed Python"}`
+              }
               disabled={busy || !canProvision}
               onClick={() => void runtime.act("repair")}
             >
@@ -579,7 +602,11 @@ export function ManagedRuntimeMaintenanceMenu({
           ) : null}
           {hasNonDestructiveAction ? <MenuSeparator /> : null}
           <MenuItem
-            aria-label={connection ? "Remove MATLAB connection helper" : "Remove managed Python"}
+            aria-label={
+              connection
+                ? "Remove MATLAB connection helper"
+                : `Remove ${kernel ?? "managed Python"}`
+            }
             variant="destructive"
             disabled={busy}
             onClick={() => setConfirmRemove(true)}
@@ -596,7 +623,9 @@ export function ManagedRuntimeMaintenanceMenu({
         description={
           connection
             ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
-            : "This removes Scient’s private Python environment. System installations and project environments are untouched."
+            : kernel
+              ? `This removes Scient’s private ${kernel}. Your installation and its packages are untouched.`
+              : "This removes Scient’s private Python environment. System installations and project environments are untouched."
         }
         confirmLabel="Remove"
         destructive

@@ -35,13 +35,13 @@ describe("compute environment policy", () => {
         SCIENT_DB_PASSWORD: "secret",
         SCIENT_API_TOKEN: "token",
         T3_PAIRING_KEY: "key",
-        OPENAI_ORG_ID: "org",
+        OPENAI_API_KEY: "the user's own key",
         HOME: "/user",
       });
       expect(environment["SCIENT_DB_PASSWORD"]).toBeUndefined();
       expect(environment["SCIENT_API_TOKEN"]).toBeUndefined();
       expect(environment["T3_PAIRING_KEY"]).toBeUndefined();
-      expect(environment["OPENAI_ORG_ID"]).toBeUndefined();
+      expect(environment["OPENAI_API_KEY"]).toBe("the user's own key");
       expect(environment["HOME"]).toBe("/user");
       expect(removedKeys).toContain("SCIENT_DB_PASSWORD");
       expect(removedKeys).toContain("T3_PAIRING_KEY");
@@ -93,7 +93,7 @@ describe("compute environment policy", () => {
 
     it("does not expose any environment value in removed keys", () => {
       const { removedKeys } = sanitizeComputeEnvironment({
-        ANTHROPIC_API_KEY: "sk-very-secret",
+        CLAUDE_CODE_OAUTH_TOKEN: "sk-very-secret",
         SCIENT_DB_PASSWORD: "hunter2",
       });
       for (const key of removedKeys) {
@@ -108,7 +108,7 @@ describe("compute environment policy", () => {
       const { environment, removedKeys } = sanitizeComputeEnvironment({
         PythonPath: "/evil",
         pythonhome: "/evil",
-        Anthropic_Api_Key: "secret",
+        Claude_Code_Oauth_Token: "secret",
         scient_db_password: "secret",
         t3_pairing_key: "key",
         HOME: "/user",
@@ -119,7 +119,7 @@ describe("compute environment policy", () => {
           .sort(),
       ).toEqual(["PYTHONUNBUFFERED", "PYTHONUTF8"]);
       expect(removedKeys.toSorted()).toEqual([
-        "Anthropic_Api_Key",
+        "Claude_Code_Oauth_Token",
         "PythonPath",
         "pythonhome",
         "scient_db_password",

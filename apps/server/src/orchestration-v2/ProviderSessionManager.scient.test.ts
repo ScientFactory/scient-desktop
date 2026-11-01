@@ -71,6 +71,8 @@ import * as EffectScheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import { ComputeMcpGateway } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
+import { WorkspaceBindingResolutionError } from "../scient/projectScope/WorkspaceBinding.ts";
+import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { listScientComputeInventory } from "../mcp/toolkits/compute/handlers.ts";
 import {
   listScientSkillsForInvocation,
@@ -133,7 +135,7 @@ it.effect.each(
                 "worktree",
                 "pull-requests",
                 "documents:build",
-                "compute:inventory",
+                "compute",
                 "sources:read",
                 "sources:write",
                 "threads:read",
@@ -2827,7 +2829,7 @@ it.effect(
             "worktree",
             "pull-requests",
             "documents:build",
-            "compute:inventory",
+            "compute",
             "sources:read",
             "sources:write",
             "threads:read",
@@ -2849,11 +2851,30 @@ it.effect(
           listScientComputeInventory(),
         ).pipe(
           Effect.provideService(AgentInvocationContext, invocation),
-          Effect.provideService(ComputeMcpGateway, {
-            runtimeInventory: () => Effect.succeed({ languages: [] }),
-          }),
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ComputeMcpGateway)({
+                runtimeInventory: () => Effect.succeed({ languages: [] }),
+                inspectRuntimes: () =>
+                  Effect.succeed({
+                    contractVersion: 1 as const,
+                    scope: "environment" as const,
+                    languages: [],
+                  }),
+              }),
+              Layer.mock(WorkspaceBindingResolver)({
+                resolveThread: () =>
+                  Effect.fail(
+                    new WorkspaceBindingResolutionError({
+                      operation: "test-resolve",
+                      kind: "project-required",
+                    }),
+                  ),
+              }),
+            ),
+          ),
         );
-        assert.deepEqual(inventory, { languages: [] });
+        assert.deepEqual(inventory, { languages: [], notFound: [] });
         // The grant admits the reader; this thread simply retains no such handoff.
         const missingSummary = yield* dispatchScientOperation(
           "threads.handoff-summary.read",

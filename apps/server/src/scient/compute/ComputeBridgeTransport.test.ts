@@ -331,7 +331,7 @@ describe("jupyter bridge handshake", () => {
         const sent = bridge.sent();
         expect(sent.map((message) => message.type)).toEqual(["hello", "start-kernel"]);
         expect(sent.map((message) => message.sequence)).toEqual([0, 1]);
-        expect(sent[1]?.payload).toEqual({ workingDirectory: "/project", kernelName: null });
+        expect(sent[1]?.payload).toEqual({ workingDirectory: "/project", kernel: null });
       }),
     ),
   );
@@ -370,7 +370,7 @@ describe("jupyter bridge handshake", () => {
           expect(bridge.sent().find((message) => message.type === "start-kernel")?.payload).toEqual(
             {
               workingDirectory: "/project",
-              kernelName: null,
+              kernel: null,
               kernelPorts: ports,
             },
           );
@@ -654,6 +654,39 @@ describe("jupyter bridge output mapping", () => {
     ),
   );
 
+  it.effect("reads an image with no base64 padding, however its length falls", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, reader } = yield* harness();
+        yield* reader.next;
+        for (const extra of [0, 1, 2]) {
+          const bytes = new Uint8Array([...pngBytes(12, 9), ...new Array<number>(extra).fill(0)]);
+          yield* bridge.say({
+            type: "display",
+            payload: {
+              kind: "display-data",
+              bundle: {
+                representations: [
+                  {
+                    mediaType: "image/png",
+                    encoding: "base64",
+                    data: Buffer.from(bytes).toString("base64").replace(/=+$/u, ""),
+                  },
+                ],
+                metadataJson: null,
+              },
+              displayId: null,
+            },
+            requestId: "run-1",
+          });
+          const event = yield* reader.next;
+          if (event._tag !== "output") throw new Error("Expected output.");
+          expect(event.resources[0]?.bytes).toEqual(bytes);
+        }
+      }),
+    ),
+  );
+
   it.effect("materializes a complete rich bundle with resource bytes and display identity", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -675,7 +708,10 @@ describe("jupyter bridge output mapping", () => {
                 {
                   mediaType: "image/png",
                   encoding: "base64",
-                  data: Buffer.from(bytes).toString("base64"),
+                  // IRkernel wraps base64 into MIME-style lines.
+                  data: Buffer.from(bytes)
+                    .toString("base64")
+                    .replace(/.{1,76}/gu, "$&\n"),
                 },
               ],
               metadataJson: '{"image/png":{"width":12}}',
@@ -901,6 +937,31 @@ describe("jupyter bridge commands", () => {
           truncated: false,
         });
         expect(bridge.sent().at(-1)?.type).toBe("inspect-variables");
+      }),
+    ),
+  );
+
+  it.effect("runs after a variables read instead of refusing the run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, channel, reader } = yield* harness();
+        yield* reader.next;
+        const read = yield* channel
+          .inspectVariables({
+            requestId: request("variables-2"),
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* channel.execute({
+          requestId: request("run-after-read"),
+          expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          code: "1 + 1",
+        });
+        yield* Fiber.join(read);
+        expect(bridge.sent().map((command) => command.type)).toEqual(
+          expect.arrayContaining(["inspect-variables", "execute"]),
+        );
       }),
     ),
   );

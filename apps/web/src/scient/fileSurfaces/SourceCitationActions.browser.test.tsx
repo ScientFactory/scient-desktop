@@ -10,6 +10,7 @@ import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { MarkdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { createTestCheckpointStore } from "../markdownEditor/persistence/markdownDraftCheckpointTestkit";
+import type { SourceCaretQuote } from "./SourceCitationActions";
 import { StaticTextFileSurface } from "./StaticTextFileSurface";
 
 const threadRef = {
@@ -98,6 +99,130 @@ it("activates a read-only shadow-DOM quote after focus moves and the native rang
     document.getSelection()?.removeAllRanges();
     host.remove();
   }
+});
+
+function createLease(source: string) {
+  const target = {
+    environmentId: threadRef.environmentId,
+    cwd: "/source-citation-browser",
+    relativePath: "cells.py",
+  };
+  const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
+    debounceMs: 60_000,
+    createTransport: () => ({
+      write: async () => ({ revision: "saved" }),
+      read: async () => ({ source, revision: "initial" }),
+      classifyFailure: () => "terminal",
+      subscribe: () => () => {},
+      project: () => {},
+    }),
+  });
+  const lease = registry.acquire(target, {
+    relativePath: target.relativePath,
+    contents: source,
+    revision: "initial",
+    byteLength: source.length,
+    truncated: false,
+  })!;
+  return { target, lease };
+}
+
+const CELLS = "# %% one\nvalue = 1\nprint(value)\n\n# %% two\nother = 2\n";
+const secondCell: SourceCaretQuote = (source) => ({
+  from: source.indexOf("value = 1"),
+  to: source.indexOf("\n\n# %% two"),
+});
+
+function selectionCollapsed(host: HTMLElement) {
+  const shadowRoots = [...host.querySelectorAll("*")].flatMap((element) =>
+    element.shadowRoot ? [element.shadowRoot] : [],
+  );
+  return document.getSelection()!.getComposedRanges({ shadowRoots })[0]?.collapsed;
+}
+
+it("offers the block around a clicked caret and quotes it", async () => {
+  await using _fixture = _createFixture();
+
+  const { root } = await mount(_fixture);
+  const { target, lease } = createLease(CELLS);
+  const onCite = vi.fn<MarkdownCiteHandler>(() => true);
+  await root.rerender(
+    <MarkdownSourceSurface
+      {...target}
+      threadRef={threadRef}
+      composerDraftTarget={threadRef}
+      persistence={lease}
+      onCite={onCite}
+      caretQuote={secondCell}
+      resolvedTheme="light"
+      wordWrap={false}
+      revealRequestId={0}
+      onPostRender={() => {}}
+    />,
+  );
+  await userEvent.click(page.getByText("value", { exact: true }).first());
+  await userEvent.click(page.getByRole("button", { name: "Ask in chat", exact: true }));
+  expect(onCite).toHaveBeenCalledOnce();
+  expect(onCite.mock.calls[0]![0]).toMatchObject({
+    text: "value = 1\nprint(value)",
+    startLine: 2,
+    endLine: 3,
+  });
+});
+
+it("keeps a selection when the active range changes, since the editor is not rebuilt", async () => {
+  await using _fixture = _createFixture();
+
+  const { host, root } = await mount(_fixture);
+  const { target, lease } = createLease(CELLS);
+  // A callback that changes identity rebuilds the editor by itself.
+  const onPostRender = () => {};
+  const surface = (activeLineRange: { start: number; end: number } | null) => (
+    <MarkdownSourceSurface
+      {...target}
+      threadRef={threadRef}
+      composerDraftTarget={threadRef}
+      persistence={lease}
+      activeLineRange={activeLineRange}
+      resolvedTheme="light"
+      wordWrap={false}
+      revealRequestId={0}
+      onPostRender={onPostRender}
+    />
+  );
+  await root.rerender(surface({ start: 2, end: 3 }));
+  await userEvent.click(page.getByRole("textbox"));
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+  await expect.poll(() => selectionCollapsed(host)).toBe(false);
+  await root.rerender(surface(null));
+  await expect.poll(() => sourceRow(host, 2)?.hasAttribute("data-selected-line")).toBe(false);
+  expect(selectionCollapsed(host)).toBe(false);
+});
+
+it("runs on Cmd+Enter without the editor also inserting a line", async () => {
+  await using _fixture = _createFixture();
+
+  const { root } = await mount(_fixture);
+  const { target, lease } = createLease(CELLS);
+  const onRunShortcut = vi.fn();
+  await root.rerender(
+    <MarkdownSourceSurface
+      {...target}
+      threadRef={threadRef}
+      composerDraftTarget={threadRef}
+      persistence={lease}
+      onRunShortcut={onRunShortcut}
+      resolvedTheme="light"
+      wordWrap={false}
+      revealRequestId={0}
+      onPostRender={() => {}}
+    />,
+  );
+  await userEvent.click(page.getByRole("textbox"));
+  await userEvent.keyboard("{ControlOrMeta>}{Enter}{/ControlOrMeta}");
+  expect(onRunShortcut).toHaveBeenCalledOnce();
+  expect(lease.getSnapshot().draftSource).toBe(CELLS);
 });
 
 it("quotes the editable model's exact draft and CRLF range through the real toolbar", async () => {

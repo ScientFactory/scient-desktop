@@ -62,7 +62,6 @@ describe("managed runtime observation ownership", () => {
       environmentId: EnvironmentId.make("test"),
       languageId: ComputeLanguageId.make("python"),
       initialStatus: mocks.initialStatus,
-      ensureEnabled: async () => true,
     });
     useLayoutEffect(() => {
       _fixture.publishRuntime(current);

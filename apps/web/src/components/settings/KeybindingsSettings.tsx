@@ -99,6 +99,9 @@ import {
   SettingsSourceStrip,
   SettingsSourceStripItem,
 } from "./SettingsSourceStrip";
+// SCIENT-FORK:START — Notebook keys.
+import { NotebookShortcuts } from "../../scient/notebook/NotebookShortcuts";
+// SCIENT-FORK:END
 
 type KeybindingSection = "general" | KeyboardScope;
 
@@ -1644,6 +1647,10 @@ export function KeybindingsSettingsPanel() {
           </SettingsSourceGroup>
         </SettingsSearchTarget>
       </SettingsSection>
+
+      {/* SCIENT-FORK:START — notebook keys are fixed, so they are listed here, not bound. */}
+      <NotebookShortcuts />
+      {/* SCIENT-FORK:END */}
 
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">

@@ -1,10 +1,12 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { LoaderCircle, Maximize2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import { Button } from "~/components/ui/button";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import {
@@ -16,13 +18,15 @@ import {
   type ScientImageAction,
 } from "~/scient/images/ScientImageActionMenu";
 import { VisualCardDetails } from "~/scient/presentation/VisualCardToolbar";
+import { computeEnvironment } from "~/state/compute";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { downloadComputeNativeFigure } from "./ComputeOutputViewDownload";
 import type { ComputeFigurePresentation } from "./computeFigurePresentation";
 
 interface ComputeFigureProps {
   readonly presentation: ComputeFigurePresentation;
   readonly environmentId: EnvironmentId;
-  readonly observedProjectFile: boolean;
+  readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
 }
 
@@ -81,8 +85,9 @@ function ComputeFigurePreview(
     if (url === null) throw new Error("The image is unavailable. Reconnect and try again.");
     return url;
   };
-  const observed = props.observedProjectFile || presentation.reference._tag === "project-file";
   const nativeDownload = presentation.nativeDownload;
+  const saveOutput = useAtomCommand(computeEnvironment.saveOutput, { reportFailure: false });
+  const resource = presentation.inline.resource;
   const actions: readonly ScientImageAction[] = [
     {
       id: "float",
@@ -116,6 +121,35 @@ function ComputeFigurePreview(
             },
           },
         ]),
+    ...(resource._tag !== "compute-output"
+      ? []
+      : presentation.saveTargets.map((target) => ({
+          id: `save-${target.format}`,
+          label:
+            presentation.saveTargets.length > 1
+              ? `Save ${target.format} to project`
+              : "Save to project",
+          run: async () => {
+            const result = await saveOutput({
+              environmentId: props.environmentId,
+              input: {
+                cwd: props.cwd,
+                sessionId: resource.sessionId,
+                executionId: resource.executionId,
+                contentHash: target.contentHash,
+                kind: target.kind,
+                relativePath: target.relativePath,
+              },
+            });
+            if (result._tag !== "Success") {
+              const error = squashAtomCommandFailure(result);
+              throw error instanceof Error ? error : new Error("The figure could not be saved.");
+            }
+            toastManager.add(
+              stackedThreadToast({ type: "success", title: `Saved ${result.value.relativePath}` }),
+            );
+          },
+        }))),
   ];
   const run = (action: ScientImageAction) => {
     if (running.current || action.disabled) return;
@@ -137,59 +171,46 @@ function ComputeFigurePreview(
     })();
   };
   return (
-    <figure className="min-w-0 max-w-full">
+    <figure className="group/figure min-w-0 max-w-full">
       <div
-        data-scient-visual-card
-        className="inline-flex min-w-24 max-w-full flex-col overflow-hidden rounded-md border border-border/60 bg-white"
+        className={`relative inline-flex min-w-24 max-w-full overflow-hidden rounded-md ${loaded ? "bg-white" : "bg-muted/40"}`}
       >
-        <div
-          data-scient-compute-figure-header
-          className="flex h-6.5 min-w-0 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-1"
+        <span
+          aria-label="Figure actions"
+          role="group"
+          className="scient-visual-utility-controls absolute top-1 right-1 z-10 flex items-center rounded-md bg-background/85 opacity-0 transition-opacity group-focus-within/figure:opacity-100 group-hover/figure:opacity-100 has-[[data-popup-open]]:opacity-100"
         >
-          <span
-            className="min-w-0 flex-1 truncate px-1 text-[11px] font-medium text-muted-foreground"
-            dir="auto"
-          >
-            {presentation.inline.label}
-          </span>
-          <span
-            aria-label="Figure actions"
-            className="flex shrink-0 items-center gap-0.5"
-            role="group"
-          >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label={`Open ${presentation.inline.label} in viewer`}
-                    disabled={!loaded}
-                    onClick={openViewer}
-                    size="icon-header"
-                    type="button"
-                    variant="ghost-muted"
-                  />
-                }
-              >
-                <Maximize2 className="size-3" strokeWidth={1.5} />
-              </TooltipTrigger>
-              <TooltipPopup>Open in viewer</TooltipPopup>
-            </Tooltip>
-            <ScientImageActionMenu
-              actions={actions}
-              busy={busy}
-              run={run}
-              triggerSize="icon-header"
-              details={
-                <VisualCardDetails
-                  title={presentation.inline.label}
-                  detail={`${presentation.inline.mediaType}${loaded ? ` · ${image.width} × ${image.height}` : ""}${observed ? " · Observed project file; creator not verified" : ""}`}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={`Open ${presentation.inline.label} in viewer`}
+                  disabled={!loaded}
+                  onClick={openViewer}
+                  size="icon-header"
+                  type="button"
+                  variant="ghost-muted"
                 />
               }
-            />
-          </span>
-        </div>
+            >
+              <Maximize2 className="size-3" strokeWidth={1.5} />
+            </TooltipTrigger>
+            <TooltipPopup>Open in viewer</TooltipPopup>
+          </Tooltip>
+          <ScientImageActionMenu
+            actions={actions}
+            busy={busy}
+            run={run}
+            triggerSize="icon-header"
+            details={
+              <VisualCardDetails
+                title={presentation.inline.label}
+                detail={`${presentation.inline.mediaType}${loaded ? ` · ${image.width} × ${image.height}` : ""}`}
+              />
+            }
+          />
+        </span>
         <div
-          data-scient-compute-figure-body
           className={`relative flex min-w-0 items-center justify-center ${loaded ? "" : "h-32 w-64 max-w-full"}`}
         >
           {asset._tag === "Success" ? (
@@ -198,7 +219,7 @@ function ComputeFigurePreview(
               aria-label={`View ${presentation.inline.label}`}
               disabled={!loaded}
               onClick={openViewer}
-              className="flex max-w-full cursor-zoom-in items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
+              className="flex max-w-full cursor-zoom-in items-center justify-center outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
             >
               <img
                 key={imageKey}
@@ -231,16 +252,13 @@ function ComputeFigurePreview(
             >
               {failed ? (
                 <>
-                  <span>Figure preview unavailable</span>
+                  <span>Figure unavailable</span>
                   <Button size="xs" variant="outline" onClick={props.retry}>
                     Try again
                   </Button>
                 </>
               ) : (
-                <span className="flex items-center gap-2">
-                  <LoaderCircle className="size-3 animate-spin" />
-                  Loading figure…
-                </span>
+                <LoaderCircle className="size-3.5 animate-spin" aria-label="Loading figure" />
               )}
             </div>
           ) : null}

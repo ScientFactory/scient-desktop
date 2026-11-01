@@ -15,11 +15,19 @@ import {
 
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import type { MathInputController } from "~/scient/math/input/controller";
-import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
+import {
+  sourceMathController,
+  sourceMathOwnsEvent,
+  sourcePosition,
+} from "~/scient/math/input/sourceAdapter";
 import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
-import { SCIENT_FILE_UNSAFE_CSS } from "./StaticTextFileSurface";
+import {
+  FILE_ACTIVE_RANGE_ATTRIBUTE,
+  SCIENT_FILE_UNSAFE_CSS,
+  type FilePostRender,
+} from "./StaticTextFileSurface";
 
 /**
  * Scient behaviour of the inherited workspace file editor: external document
@@ -38,6 +46,7 @@ export function useScientFileEditorBindings<Annotation>({
   reportEditorSelectionRef,
   onEditorSelectionChange,
   onRunShortcut,
+  outsideSource,
 }: {
   editor: Editor<"file", Annotation, undefined> | null;
   relativePath: string;
@@ -53,7 +62,15 @@ export function useScientFileEditorBindings<Annotation>({
   reportEditorSelectionRef: MutableRefObject<() => void>;
   onEditorSelectionChange: ((selection: EditorSelection | null) => void) | undefined;
   onRunShortcut: ((selection: EditorSelection | null) => void) | undefined;
+  /** A new version of the file, while the editor still shows the one before it. */
+  outsideSource: string | null;
 }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- brings a new version of the file into the open editor, which holds its own text.
+  useLayoutEffect(() => {
+    if (editor !== null && outsideSource !== null) {
+      moveEditorToSource(editor, outsideSource, applyingExternal);
+    }
+  }, [applyingExternal, editor, outsideSource]);
   const reportExternalVersion = useStableCallback((version: number) =>
     externalBindings.current.onExternalVersionApplied?.(version),
   );
@@ -161,9 +178,104 @@ export function useScientFileEditorBindings<Annotation>({
         return;
       }
       event.preventDefault();
+      // The editor's own Cmd+Enter inserts a line, which would make the file differ from the save.
+      event.stopPropagation();
       onRunShortcut(editor?.getViewState().selections?.at(-1) ?? null);
     },
   };
+}
+
+/** The smallest edit from one source to another, so a caret elsewhere stays where it is. */
+export function minimalSourceEdit(previous: string, current: string) {
+  const splitsBoundary = (source: string, offset: number) => {
+    if (offset === 0 || offset === source.length) return false;
+    const before = source.charCodeAt(offset - 1);
+    const after = source.charCodeAt(offset);
+    return (
+      (before === 13 && after === 10) ||
+      (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff)
+    );
+  };
+  let start = 0;
+  while (start < previous.length && start < current.length && previous[start] === current[start])
+    start += 1;
+  while (splitsBoundary(previous, start) || splitsBoundary(current, start)) start -= 1;
+  let suffix = 0;
+  while (
+    suffix < previous.length - start &&
+    suffix < current.length - start &&
+    previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
+  )
+    suffix += 1;
+  while (
+    splitsBoundary(previous, previous.length - suffix) ||
+    splitsBoundary(current, current.length - suffix)
+  )
+    suffix -= 1;
+  return {
+    start,
+    end: previous.length - suffix,
+    text: current.slice(start, current.length - suffix),
+  };
+}
+
+/**
+ * Moves an editor to a source as the smallest edit, which keeps your place. It stays out of your
+ * undo history where that history can be rebased around it, and joins it where it cannot.
+ */
+export function moveEditorToSource<Annotation>(
+  editor: Editor<"file", Annotation, undefined>,
+  source: string,
+  applyingExternal: MutableRefObject<boolean>,
+) {
+  const previous = editor.getText();
+  if (previous === source || editor.isComposing) return;
+  const { start, end, text } = minimalSourceEdit(previous, source);
+  const prepared = editor.prepareExternalEdits(previous, [{ start, end, text }]);
+  applyingExternal.current = true;
+  applyExternalProjection(
+    () => {
+      if (prepared !== null) {
+        prepared();
+        return;
+      }
+      const range = { start: sourcePosition(previous, start), end: sourcePosition(previous, end) };
+      editor.applyEdits([{ range, newText: text }]);
+    },
+    () => {
+      applyingExternal.current = false;
+    },
+  );
+}
+
+type RenderedFile = Pick<Parameters<FilePostRender>[1], "setSelectedLines">;
+
+/**
+ * Draws the selected or active line range in place. The range stays out of the editor's options,
+ * since a change there rebuilds the editor, which collapses a drag and can lose a click.
+ */
+export function useScientFileLineRange(
+  selectedRange: SelectedLineRange | null,
+  activeLineRange: SelectedLineRange | null | undefined,
+) {
+  const rendered = useRef<{ fileContainer: HTMLElement; instance: RenderedFile } | null>(null);
+  const draw = useStableCallback((fileContainer: HTMLElement, instance: RenderedFile) => {
+    rendered.current = { fileContainer, instance };
+    const showsActiveRange = selectedRange === null && activeLineRange != null;
+    fileContainer.toggleAttribute(FILE_ACTIVE_RANGE_ATTRIBUTE, showsActiveRange);
+    instance.setSelectedLines(
+      selectedRange ?? activeLineRange ?? null,
+      showsActiveRange
+        ? { notify: false, activeLineSide: "additions", lineNumberOnly: false }
+        : { notify: false },
+    );
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the editor sets its selected lines plainly as it renders, so the range's style is drawn after that.
+  useLayoutEffect(() => {
+    if (rendered.current === null || !rendered.current.fileContainer.isConnected) return;
+    draw(rendered.current.fileContainer, rendered.current.instance);
+  });
+  return draw;
 }
 
 /** The source math input row above an editable `.tex` or Markdown source. */

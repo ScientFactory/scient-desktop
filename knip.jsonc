@@ -58,6 +58,7 @@
         "src/service-launcher.ts!",
         "src/analytics-worker.ts!",
         "src/pdf-validation-worker.ts!",
+        "src/tool-discovery-worker.ts!",
         "src/claudeHistoryWorker.ts!",
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",

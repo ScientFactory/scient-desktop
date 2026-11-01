@@ -886,8 +886,9 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         summary: "All 412 tests pass on the box.",
       });
       // Delivery validation still reads messages; choosing the observer does not need another read.
-      expect(messageReads).toHaveLength(2);
-      expect(messageReads.filter((query) => !/\bmessage_id\s+IN\b/i.test(query))).toHaveLength(1);
+      // SCIENT-FORK: the invocation policy reads the caller's shell too, which joins messages.
+      expect(messageReads).toHaveLength(3);
+      expect(messageReads.filter((query) => /\bmessage_id\s+IN\b/i.test(query))).toHaveLength(1);
       const acknowledged = yield* a.projections.getThreadRecords(parentThreadId, ["subagents"], {
         subagentIds: [delegated.taskId],
       });

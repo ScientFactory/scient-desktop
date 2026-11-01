@@ -6,7 +6,10 @@ import {
 import { analysisEnvironment } from "~/state/analysis";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { isTerminalAnalysisRunStatus } from "../analysis/analysisRunUiState";
+import {
+  analysisOperationReason,
+  isTerminalAnalysisRunStatus,
+} from "../analysis/analysisRunUiState";
 
 export interface ComputeBatchCancelInput {
   readonly environmentId: EnvironmentId;
@@ -35,6 +38,9 @@ export function useCancelComputeBatchRun() {
           isTerminalAnalysisRunStatus(result.value.receipt.status))
       );
     if (!isAtomCommandInterrupted(result)) {
+      // A run the server never admitted has nothing to stop, so it cannot hold a tab open.
+      const reason = analysisOperationReason(result);
+      if (reason === "run-not-found" || reason === "project-not-initialized") return true;
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({

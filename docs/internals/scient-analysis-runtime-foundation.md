@@ -10,7 +10,7 @@ as part of this released AnalysisRun surface.
 
 ## Decision
 
-Current local continuation: see the [execution consolidation candidate](scient-compute-session-foundation.md#execution-consolidation-candidate-2026-09-15).
+Current architecture: see [Scient Compute](scient-compute.md).
 Native MATLAB batch retains the AnalysisRun transport, records, artifact identity and promotion
 semantics described here. Its former auxiliary file panel/setup form is replaced by the common
 Compute Results location and Scientific Computing preferences. Batch is not Engine-gated.
@@ -177,7 +177,7 @@ HTML, SVG, or PDF representations can later be enabled deliberately without chan
 identity. Output-file discovery outside the private runner directory remains later work; this
 slice never infers artifacts by diffing the user's project tree.
 
-The [Scientific Artifact Studio roadmap](./scientific-artifact-studio.md) owns the cross-producer
+[Scient Compute](./scient-compute.md) owns the cross-producer
 presentation direction: typed artifact references in chat, representation selection, Plotly and
 table renderers, capability-gated MATLAB SVG/HTML, later Python/R/Julia/notebook producers, and the
 future composition workspace. Those additions extend this runtime-neutral artifact flow; they do

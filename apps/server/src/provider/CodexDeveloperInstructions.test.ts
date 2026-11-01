@@ -21,13 +21,7 @@ describe("buildCodexAdditionalContext", () => {
       new Set<McpCapability>(["preview"]),
       new Set<McpCapability>(["device"]),
       new Set<McpCapability>(["preview", "device"]),
-      new Set<McpCapability>([
-        "preview",
-        "device",
-        "compute:inventory",
-        "documents:build",
-        "skills:read",
-      ]),
+      new Set<McpCapability>(["preview", "device", "compute", "documents:build", "skills:read"]),
     ])("keeps every entry within Codex's per-entry cap with tools %j", (availability) => {
       const context = buildCodexAdditionalContext(runtime, availability);
 

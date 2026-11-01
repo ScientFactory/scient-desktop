@@ -120,7 +120,13 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.mock(GitVcsDriver.GitVcsDriver)({
+      resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+      resolveDefaultBranchName: () => Effect.succeed("main"),
+      resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+    }),
+  ),
 );
 
 /** A task delegated here always has a local child thread. */
@@ -6035,7 +6041,7 @@ describe("orchestrator MCP toolkit", () => {
             },
           });
           const wait = yield* invoke(
-            "t3_thread_wait",
+            "scient_thread_wait",
             { threadId: delegated.childThreadId, runId: queuedFollowup.runId },
             { ...invocation, thread: undefined },
           ).pipe(Effect.withTracer(tracer));
@@ -6050,7 +6056,7 @@ describe("orchestrator MCP toolkit", () => {
           expect(messageReads).toEqual([]);
           expect(transferReads).toHaveLength(0);
           const settledWait = yield* invoke(
-            "t3_thread_wait",
+            "scient_thread_wait",
             {
               threadId: delegated.childThreadId,
               runId: queuedFollowup.runId,

@@ -1,5 +1,7 @@
 import type { CSSProperties, KeyboardEvent, Ref } from "react";
 
+import { cn } from "~/lib/utils";
+
 const SEGMENT_CLASS =
   "flex h-7 cursor-pointer items-center whitespace-nowrap px-2.5 font-medium text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:text-muted-foreground disabled:hover:bg-transparent aria-disabled:cursor-default aria-disabled:hover:bg-transparent sm:text-xs";
 
@@ -10,6 +12,8 @@ export function CitationActionBar({
 }: {
   readonly ref: Ref<HTMLDivElement>;
   readonly style: CSSProperties;
+  /** Places the bar inside a surface, for an action that belongs to it. */
+  readonly className?: string;
   readonly ownerId?: string | undefined;
   readonly pdf?: boolean;
   /** Replaces "Ask in chat" when the selection cannot be asked about. */
@@ -30,7 +34,10 @@ export function CitationActionBar({
       aria-label="Ask about this selection"
       data-writing-menu-owner={props.ownerId}
       data-pdf-ask-in-chat={props.pdf ? "" : undefined}
-      className="surface-glass fixed z-50 flex max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border/60 text-foreground shadow-sm"
+      className={cn(
+        "surface-glass fixed z-50 flex max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border/60 text-foreground shadow-sm",
+        props.className,
+      )}
       style={props.style}
       onPointerDown={(event) => event.preventDefault()}
       onKeyDown={props.onKeyDown}

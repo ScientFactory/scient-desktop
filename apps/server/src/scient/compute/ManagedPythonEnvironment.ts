@@ -31,6 +31,8 @@ export type ManagedPythonGeneration = typeof ManagedPythonGeneration.Type;
 export const ManagedPythonEnvironmentRecord = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   selection: ManagedPythonSelection,
+  /** The person picked this Python, as opposed to it being selected by setting it up. */
+  chosen: Schema.optional(Schema.Boolean),
   active: ManagedPythonGeneration,
   previous: Schema.NullOr(ManagedPythonGeneration),
 });
@@ -40,6 +42,8 @@ export interface ManagedPythonEnvironmentStatus {
   readonly record: ManagedPythonEnvironmentRecord;
   readonly executable: string;
   readonly available: boolean;
+  /** Set when an unavailable environment still points into another profile's location. */
+  readonly movedFrom?: string;
 }
 
 export type ManagedPythonEnvironmentFailureReason =
@@ -141,6 +145,7 @@ const decodeRecord = Schema.decodeUnknownSync(ManagedPythonEnvironmentRecord);
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ManagedPythonEnvironmentRecord));
 
 function managedPurposeNoun(purpose: ManagedPythonPurpose): string {
+  if (purpose === "bridge-host") return "private Python host";
   return purpose === "matlab-connection"
     ? "MATLAB connection helper"
     : "managed Python environment";
@@ -331,6 +336,25 @@ async function readRecord(
   }
 }
 
+/**
+ * A copied profile keeps absolute launcher links and `pyvenv.cfg` homes into the old location. A
+ * managed environment never points outside its own compute directory otherwise.
+ */
+async function movedFrom(computeDir: string, executable: string): Promise<string | null> {
+  const prefix = NodePath.dirname(NodePath.dirname(executable));
+  const config = await NodeFSP.readFile(NodePath.join(prefix, "pyvenv.cfg"), "utf8").catch(
+    () => "",
+  );
+  const home = /^\s*home\s*=\s*(.+?)\s*$/mu.exec(config)?.[1] ?? null;
+  const link = await NodeFSP.readlink(executable).catch(() => null);
+  const target = link === null ? null : NodePath.resolve(NodePath.dirname(executable), link);
+  for (const candidate of [home, target]) {
+    if (candidate !== null && NodePath.isAbsolute(candidate) && !isContained(computeDir, candidate))
+      return candidate;
+  }
+  return null;
+}
+
 async function readStatus(
   paths: ManagedPythonEnvironmentPaths,
   purpose: ManagedPythonPurpose,
@@ -345,10 +369,13 @@ async function readStatus(
   const active = await canonicalGeneration(paths.managedRoot, record.active);
   const previous =
     record.previous === null ? null : await canonicalGeneration(paths.managedRoot, record.previous);
+  const moved =
+    active === null ? await movedFrom(NodePath.dirname(paths.environmentsRoot), executable) : null;
   return {
     record: { ...record, previous: previous?.generation ?? null },
     executable,
     available: active !== null,
+    ...(moved === null ? {} : { movedFrom: moved }),
   };
 }
 
@@ -729,6 +756,7 @@ export function makeManagedPythonEnvironmentManager(
             schemaVersion: 1,
             selection:
               latest?.selection ?? pendingSelection ?? input.selectionAfterInstall ?? "managed",
+            ...(latest?.chosen === undefined ? {} : { chosen: latest.chosen }),
             active,
             previous: existing?.record.active ?? null,
           };
@@ -775,8 +803,10 @@ export function makeManagedPythonEnvironmentManager(
             : "Set up Scientific Python before selecting it.",
         );
       }
-      if (current.record.selection === selection) return current;
-      const record = { ...current.record, selection };
+      const chosen = selection === "managed";
+      if (current.record.selection === selection && current.record.chosen === chosen)
+        return current;
+      const record = { ...current.record, selection, chosen };
       await commitState(paths.statePath, record).catch((cause) => {
         throw new ManagedPythonEnvironmentError(
           "activation-failed",

@@ -54,9 +54,11 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -69,14 +71,16 @@ import { promoteAnalysisRun } from "./AnalysisRunPromotion.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import { ScientificRuntimePreferences } from "../compute/ScientificRuntimePreferences.ts";
 import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
-import { ComputeLanguageId, resolveScientificComputingLanguageSettings } from "@t3tools/contracts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
+import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import {
   appendBoundedAnalysisOutput,
   completeUtf8PrefixByteLength,
 } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
+import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
+import { makeRunTableAdapters } from "./RunTableAdapter.ts";
 
 const RUN_HISTORY_DEFAULT_LIMIT = 20;
 const OUTPUT_COALESCE_MAX_CHUNK = 64;
@@ -91,6 +95,7 @@ interface QueuedAnalysisRun {
   readonly absoluteSourcePath: string;
 }
 
+const isOperationError = Schema.is(AnalysisOperationError);
 type AnalysisOperation = AnalysisOperationError["operation"];
 type AnalysisReason = AnalysisOperationError["reason"];
 
@@ -183,6 +188,8 @@ export class AnalysisService extends Context.Service<
       readonly artifactId: AnalysisArtifactId;
       readonly representationId: AnalysisArtifactRepresentationId;
     }) => Effect.Effect<ResolvedAnalysisArtifactRepresentation | null, AnalysisOperationError>;
+    /** Runs executing or waiting, in every project. */
+    readonly activeRunCount: Effect.Effect<number>;
     readonly subscribeRuns: (
       input: AnalysisSubscribeRunsInput,
     ) => Effect.Effect<Stream.Stream<AnalysisRunStreamEvent>, AnalysisOperationError, Scope.Scope>;
@@ -197,14 +204,31 @@ class AnalysisRuntimeAdapters extends Context.Reference<ReadonlyArray<AnalysisRu
 const make = Effect.gen(function* () {
   const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
-  const runtimeAdapters = yield* AnalysisRuntimeAdapters;
   const crypto = yield* Crypto.Crypto;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
+  const toolDiscovery = yield* ToolDiscovery;
+  const runWith = Effect.runPromiseWith(yield* Effect.context<never>());
+  const runtimeAdapters = [
+    ...(yield* AnalysisRuntimeAdapters),
+    ...(toolDiscovery === null
+      ? []
+      : makeRunTableAdapters({
+          tools: () =>
+            runWith(toolDiscovery.snapshot(false).pipe(Effect.map((snapshot) => snapshot.tools))),
+          environment: Object.fromEntries(
+            Object.entries(hostEnvironment).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          platform: hostPlatform,
+        })),
+  ];
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const store = yield* LocalAnalysisStore.LocalAnalysisStore;
+  const workspaceResolver = yield* Effect.serviceOption(WorkspaceBindingResolver);
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const runIndex = yield* AnalysisRunIndex.AnalysisRunIndex;
   const executionScope = yield* Scope.make("sequential");
@@ -421,8 +445,22 @@ const make = Effect.gen(function* () {
     return run;
   });
 
-  const identityForCwd = (operation: AnalysisOperation, cwd: string) =>
-    Effect.tryPromise({
+  /** The host's name for a registered folder, which can run files with or without a project. */
+  const registeredFolder = (cwd: string) =>
+    Option.match(workspaceResolver, {
+      onNone: () => Effect.succeed(null),
+      onSome: (resolver) =>
+        resolver.resolveWorkspaceRoot(cwd).pipe(
+          Effect.map(({ binding }): string => binding.bindingId),
+          Effect.orElseSucceed(() => null),
+        ),
+    });
+
+  const identityForCwd = Effect.fn("AnalysisService.identityForCwd")(function* (
+    operation: AnalysisOperation,
+    cwd: string,
+  ) {
+    const project = yield* Effect.tryPromise({
       try: async () => {
         const inspection = await inspectScientProject(cwd);
         return inspection.state === "initialized" ? readScientProjectIdentity(cwd) : null;
@@ -434,17 +472,28 @@ const make = Effect.gen(function* () {
           "Unable to inspect the Scient project identity.",
           cause,
         ),
-    }).pipe(
-      Effect.filterOrFail(
-        (identity) => identity !== null,
-        () =>
-          analysisError(
-            operation,
-            "project-not-initialized",
-            "Initialize this folder as a Scient project before running analysis files.",
-          ),
-      ),
+    });
+    const folder = yield* registeredFolder(cwd);
+    if (folder !== null) {
+      // Runs made before a folder was set up stay under the folder's name, so setup loses nothing.
+      const ranAsFolder =
+        project === null ||
+        (yield* store
+          .hasRuns(folder)
+          .pipe(
+            Effect.mapError((cause) =>
+              analysisError(operation, "persistence-failed", "Unable to read run history.", cause),
+            ),
+          ));
+      if (ranAsFolder) return { projectId: folder };
+    }
+    if (project !== null) return { projectId: project.projectId as string };
+    return yield* analysisError(
+      operation,
+      "project-not-initialized",
+      "Add this folder to Scient before running files in it.",
     );
+  });
 
   const inspectProfile = Effect.fn("AnalysisService.inspectProfile")(function* (
     adapter: AnalysisRuntimeAdapter,
@@ -466,6 +515,7 @@ const make = Effect.gen(function* () {
     if (
       cached !== undefined &&
       !refresh &&
+      adapter.readsLiveScan !== true &&
       cached.executablePreference === runtimeConfiguration.executablePath
     )
       return cached.profile;
@@ -1065,6 +1115,18 @@ const make = Effect.gen(function* () {
             status: transitionExecutionStatus(run.receipt.status, "starting"),
           },
         }));
+        // A record must name what ran, and a waiting run's file can change in the queue.
+        const { cwd, relativePath, revision } = startingRun.source;
+        const current = yield* workspaceFiles
+          .readFile({ cwd, relativePath })
+          .pipe(Effect.orElseSucceed(() => null));
+        if (current?.revision !== revision) {
+          return yield* analysisError(
+            "start",
+            "source-changed",
+            "This file changed while the run was waiting, so it did not run.",
+          );
+        }
         const artifactStagingDirectory = yield* store
           .prepareArtifactStaging(startingRun.projectId, startingRun.receipt.runId)
           .pipe(
@@ -1099,35 +1161,45 @@ const make = Effect.gen(function* () {
           });
         }
         const prepared = adapter.prepare(runContext);
-        const handle = yield* processes.start({
-          runId: startingRun.receipt.runId,
-          executable: prepared.executable,
-          args: prepared.args,
-          cwd: prepared.cwd,
-          environment: prepared.environment,
-        });
-        yield* Ref.update(handlesRef, (handles) => new Map(handles).set(runId, handle));
-        const running = yield* updateReceipt(runId, "start", (run) => ({
-          ...run,
-          phase: "running",
-          receipt: {
-            ...run.receipt,
-            status: transitionExecutionStatus(run.receipt.status, "running"),
-          },
-        }));
-        if (running.receipt.cancellationRequested) {
-          yield* handle.cancel;
+        let exitCode: number | null = 0;
+        for (const [index, step] of [...(prepared.before ?? []), prepared].entries()) {
+          // Stop between steps must not start the next one, such as a program just built.
+          if (index > 0 && (yield* Ref.get(runsRef)).get(runId)?.receipt.cancellationRequested)
+            break;
+          const handle = yield* processes.start({
+            runId: startingRun.receipt.runId,
+            executable: step.executable,
+            args: step.args,
+            cwd: step.cwd,
+            environment: step.environment,
+          });
+          yield* Ref.update(handlesRef, (handles) => new Map(handles).set(runId, handle));
+          const running =
+            index === 0
+              ? yield* updateReceipt(runId, "start", (run) => ({
+                  ...run,
+                  phase: "running",
+                  receipt: {
+                    ...run.receipt,
+                    status: transitionExecutionStatus(run.receipt.status, "running"),
+                  },
+                }))
+              : (yield* Ref.get(runsRef)).get(runId);
+          if (running?.receipt.cancellationRequested) {
+            yield* handle.cancel;
+          }
+          [, exitCode] = yield* Effect.all(
+            [
+              handle.output.pipe(
+                Stream.groupedWithin(OUTPUT_COALESCE_MAX_CHUNK, OUTPUT_COALESCE_WINDOW),
+                Stream.runForEach((outputs) => appendOutput(runId, outputs)),
+              ),
+              handle.exitCode,
+            ],
+            { concurrency: 2 },
+          );
+          if (exitCode !== 0) break;
         }
-        const [, exitCode] = yield* Effect.all(
-          [
-            handle.output.pipe(
-              Stream.groupedWithin(OUTPUT_COALESCE_MAX_CHUNK, OUTPUT_COALESCE_WINDOW),
-              Stream.runForEach((outputs) => appendOutput(runId, outputs)),
-            ),
-            handle.exitCode,
-          ],
-          { concurrency: 2 },
-        );
         yield* updateReceipt(runId, "start", (run) => ({ ...run, phase: "capturing" }));
         if (adapter.collectDiagnostics) {
           const diagnostics = yield* Effect.promise(() =>
@@ -1263,6 +1335,7 @@ const make = Effect.gen(function* () {
             })).pipe(Effect.ignoreCause({ log: true }));
             latest = (yield* Ref.get(runsRef)).get(runId) ?? latest;
           }
+          const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
           yield* finishRun(
             runId,
             status,
@@ -1271,7 +1344,9 @@ const make = Effect.gen(function* () {
               ? null
               : status === "lost"
                 ? `Scient stopped before the ${profile.label} run completed.`
-                : `${profile.label} could not be started or completed.`,
+                : isOperationError(failure) && failure.reason === "source-changed"
+                  ? failure.message
+                  : `${profile.label} could not be started or completed.`,
           ).pipe(Effect.ignoreCause({ log: true }));
           if (status === "failed") {
             yield* Ref.update(runtimeProfilesRef, (profiles) => {
@@ -1353,23 +1428,10 @@ const make = Effect.gen(function* () {
             "The selected analysis runtime is unavailable.",
           );
         }
-        const settings = yield* runtimePreferences.getSettings.pipe(
-          Effect.mapError((cause) =>
-            analysisError("start", "operation-failed", "Unable to read runtime settings.", cause),
-          ),
-        );
-        const preference = resolveScientificComputingLanguageSettings(
-          settings.scientificComputing,
-          ComputeLanguageId.make(adapter.kind),
-        );
-        if (!preference.enabled)
-          return yield* analysisError(
-            "start",
-            "runtime-invalid",
-            `Enable ${adapter.kind} in Scientific Computing settings before running it.`,
-          );
         const lowerPath = input.relativePath.toLowerCase();
-        if (!adapter.fileExtensions.some((extension) => lowerPath.endsWith(extension))) {
+        if (
+          !adapter.fileExtensions.some((extension) => lowerPath.endsWith(extension.toLowerCase()))
+        ) {
           return yield* analysisError(
             "start",
             "invalid-source",
@@ -1573,6 +1635,12 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.uninterruptible);
       }),
     );
+
+  const activeRunCount = Ref.get(runsRef).pipe(
+    Effect.map(
+      (runs) => [...runs.values()].filter((run) => !isTerminal(run.receipt.status)).length,
+    ),
+  );
 
   const requestRunCancellation = Effect.fn("AnalysisService.requestRunCancellation")(function* (
     input: AnalysisCancelRunInput,
@@ -2085,6 +2153,7 @@ const make = Effect.gen(function* () {
     promoteRun,
     resolveArtifact,
     subscribeRuns,
+    activeRunCount,
   });
 });
 

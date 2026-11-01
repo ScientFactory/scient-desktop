@@ -131,7 +131,6 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(panelSource).toContain(
       "isLatexPreviewFile(relativePath) || /\\.bib$/i.test(relativePath)",
     );
-    expect(panelSource).toContain("surfaceOwnsConflictDetection: usesDocumentSession");
   });
 
   it("routes bibliography tabs through the session-backed source surface", () => {
