@@ -2,7 +2,7 @@ import { attachSidebarTree, SIDEBAR_TREE_PROPS } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 // SCIENT-FORK:START — keep the computer awake until a thread is done.
-import { handleKeepAwakeMenuAction, readKeepAwakeChosen } from "../scient/keepAwake/menu";
+import { handleKeepAwakeMenuAction, readKeepAwakeChosen } from "../scient/keepAwake/threadChoice";
 // SCIENT-FORK:END
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
