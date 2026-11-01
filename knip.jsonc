@@ -34,6 +34,7 @@
         "setup-worktree.ts",
         "sign-macos.ts",
         "publication-after-sign.ts",
+        "prepare-server-compile-cache.cjs",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
         // release-smoke.ts runs it by path to check the branded nightly release name.
@@ -105,6 +106,7 @@
         "src/snapShot/SnapShotAccessibilityWorker.ts!",
         "src/boot.ts!",
         "src/compileCache.ts!",
+        "src/serverCompileCache.ts!",
         "src/main.ts!",
         "src/preload.ts!",
         "src/conversation-review-preload.ts!",

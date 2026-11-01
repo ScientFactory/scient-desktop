@@ -364,7 +364,6 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
             ),
           ),
         ),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(CursorKeychain.CursorKeychain, keychain),
@@ -378,6 +377,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
           }),
         ),
         Effect.provide(CursorSdkCatalog.layer),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       );
 
       const resolveMaintenance = runtime.maintenanceResolver
