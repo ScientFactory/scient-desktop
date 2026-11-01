@@ -75,6 +75,11 @@ const OVERLEAF_FAILURES = {
     ),
   unreachable: () =>
     toolError("overleaf-unreachable", "Overleaf could not be reached. Try again later."),
+  "rate-limited": () =>
+    toolError(
+      "overleaf-rate-limited",
+      "Overleaf is limiting Git requests right now. Nothing was lost. Try again in a minute.",
+    ),
   "git-unavailable": () =>
     toolError("git-unavailable", "Git 2.39 or newer is needed on this project's server."),
   "git-failed": () => toolError("failed", "Git failed while talking to Overleaf. Try again."),
@@ -96,13 +101,6 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
       switch (field("reason")) {
         case "token-missing":
           return Effect.succeed(toolError("token-missing", `${error.message} ${SAVE_TOKEN}`));
-        case "relink-needed":
-          return Effect.succeed(
-            toolError(
-              "relink-needed",
-              `${error.message} Use scient_overleaf_manage with action relink and the folder's path.`,
-            ),
-          );
         case "project-invalid":
           return Effect.succeed(
             toolError(
@@ -122,6 +120,7 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
         case "access-denied":
         case "project-not-found":
         case "unreachable":
+        case "rate-limited":
         case "git-unavailable":
         case "git-failed":
           return Effect.succeed(
@@ -205,6 +204,8 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
           return Effect.succeed(OVERLEAF_FAILURES["access-denied"]());
         case "project-not-found":
           return Effect.succeed(OVERLEAF_FAILURES["project-not-found"]());
+        case "rate-limited":
+          return Effect.succeed(OVERLEAF_FAILURES["rate-limited"]());
         case "timeout":
         case "dns":
         case "tls":
@@ -340,6 +341,7 @@ const MANAGE_REFUSALS: Record<OverleafConnectionRefusal, string> = {
   "access-denied": OVERLEAF_FAILURES["access-denied"]().message,
   "project-not-found": OVERLEAF_FAILURES["project-not-found"]().message,
   unreachable: OVERLEAF_FAILURES.unreachable().message,
+  "rate-limited": OVERLEAF_FAILURES["rate-limited"]().message,
   "no-branch": "The Overleaf project has no single main or master branch.",
   "git-unavailable": "Git 2.39 or newer is needed on this project's server.",
   "git-failed": "Git failed. Try again.",

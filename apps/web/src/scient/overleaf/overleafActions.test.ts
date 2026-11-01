@@ -2,6 +2,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
+  disconnectOverleaf: vi.fn(),
   cancelOverleafSync: vi.fn(),
   overleafRequestId: vi.fn(() => "request"),
   previewOverleaf: vi.fn(),

@@ -3,7 +3,16 @@
 // Sync now, the last sync, Undo last send, Open in Overleaf and Overleaf settings.
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ExternalLink, FileDiff, RefreshCw, Settings, Undo2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  FileDiff,
+  RefreshCw,
+  Settings,
+  Undo2,
+  Unlink,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -21,7 +30,12 @@ import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
-import { cancelOverleafRun, openOverleafProject, runOverleafSync } from "./overleafActions";
+import {
+  cancelOverleafRun,
+  openOverleafProject,
+  runOverleafSync,
+  unlinkOverleaf,
+} from "./overleafActions";
 import { connectionForPath, overleafChipView } from "./overleafModel";
 import { openOverleafReview, seeOverleafChanges } from "./openOverleafReview";
 import { ensureOverleafSaveWatch } from "./overleafSaveWatch";
@@ -75,6 +89,7 @@ export function OverleafFileChip(props: {
     status,
     syncing,
     workspace.lastSync.get(connection.connectionId)?.result ?? null,
+    workspace.remoteStates.get(connection.connectionId) ?? null,
   );
   const linkedElsewhere = !connection.linkedHere;
   const reviewInput = {
@@ -166,6 +181,14 @@ export function OverleafFileChip(props: {
             <ExternalLink aria-hidden className="size-4 text-muted-foreground" />
             Open in Overleaf
           </MenuItem>
+          {view.state === "syncing" ? null : (
+            <MenuItem
+              onClick={() => void unlinkOverleaf(environmentId, cwd, connection.connectionId)}
+            >
+              <Unlink aria-hidden className="size-4 text-muted-foreground" />
+              Unlink from Overleaf
+            </MenuItem>
+          )}
           <MenuItem onClick={() => void navigate({ to: "/settings/synced-folders" })}>
             <Settings aria-hidden className="size-4 text-muted-foreground" />
             Overleaf settings…

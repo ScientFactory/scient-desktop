@@ -120,6 +120,21 @@ export const connectEnvironmentOverleaf = Effect.fn(
   });
 });
 
+/** Asks Overleaf itself; the server's Git steps bound it. */
+export const getEnvironmentOverleafRemoteState = Effect.fn(
+  "clientRuntime.state.getEnvironmentOverleafRemoteState",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafConnectionRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: READ_TIMEOUT_MS,
+    url: (urls) => urls.remoteState(),
+    run: ({ client, headers }) => client.remoteState({ headers, payload: input.request }),
+  });
+});
+
 export const getEnvironmentOverleafStatus = Effect.fn(
   "clientRuntime.state.getEnvironmentOverleafStatus",
 )(function* (input: {

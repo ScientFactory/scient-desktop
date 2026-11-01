@@ -33,6 +33,7 @@ import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolv
 import * as WorkspaceBindingStore from "../projectScope/WorkspaceBindingStore.ts";
 import {
   gitRefusal,
+  logGitFailure,
   makeOverleafConnections,
   type OverleafConnectionStatus,
   type OverleafConnectionSummary,
@@ -41,7 +42,7 @@ import {
 import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
 import * as OverleafCoordinator from "./OverleafCoordinator.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
-import { newOverleafId } from "./OverleafGitExecutor.ts";
+import { newOverleafId, waitOutRateLimit } from "./OverleafGitExecutor.ts";
 import * as OverleafRepositoryModule from "./OverleafRepository.ts";
 import { OverleafRepository } from "./OverleafRepository.ts";
 import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
@@ -81,8 +82,6 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
     reason: Schema.Literals([
       /** The caller's workspace could not be resolved, or is not this connection's project. */
       "workspace-not-authorized",
-      /** The connection's checkout is no longer the binding it recorded: relink it. */
-      "relink-needed",
       /** No Overleaf token is saved. */
       "token-missing",
       "project-invalid",
@@ -91,6 +90,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       "project-not-found",
       /** Overleaf could not be reached. */
       "unreachable",
+      /** Overleaf is refusing Git requests for a moment: too many in the last minute. */
+      "rate-limited",
       /** Git is missing or older than 2.39. */
       "git-unavailable",
       "git-failed",
@@ -104,8 +105,6 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "Repair or reinstall Scient on this project's server before syncing.";
       case "workspace-not-authorized":
         return "This Overleaf link does not belong to this project.";
-      case "relink-needed":
-        return "This project's folder changed since it was linked to Overleaf. Relink it.";
       case "token-missing":
         return "No Overleaf Git token is saved. Save one first.";
       case "project-invalid":
@@ -116,6 +115,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.";
       case "unreachable":
         return "Overleaf could not be reached.";
+      case "rate-limited":
+        return "Overleaf is limiting Git requests right now. Nothing was lost. Try again in a minute.";
       case "git-unavailable":
         return "Overleaf sync needs Git 2.39 or newer on this computer.";
       case "git-failed":
@@ -408,6 +409,10 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const syncs = new Map<string, { readonly operationId: string; cancelled: boolean }>();
   /** Contract section 3: renewal is serialized against token use. */
   const credentialLock = yield* Semaphore.make(CREDENTIAL_PERMITS);
+  /** One fetch into the private repositories at a time, so a check never collides with a sync. */
+  const fetching = yield* Semaphore.make(1);
+  /** The Overleaf head last found to hold a link's base tree, so asking again needs no fetch. */
+  const matchingHeads = new Map<string, { readonly commit: string; readonly tree: string }>();
   const credentialUnavailable = new OverleafGitExecutor.OverleafGitError({
     reason: "runtime-failed",
     exitCode: null,
@@ -435,44 +440,52 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     credentialEpoch: () => credentialEpoch,
     gitUrl: (connection) => gitUrl(connection.remote.projectId),
     fetchRemote: (input) =>
-      credentialLock.withPermits(1)(
-        Effect.gen(function* () {
-          const token = yield* readToken;
-          if (token === null || token.length === 0) return yield* credentialUnavailable;
-          return yield* repos.fetch({
-            repo: input.repo,
-            branch: input.connection.remote.branch,
-            token,
-          });
-        }),
+      waitOutRateLimit(
+        credentialLock.withPermits(1)(
+          Effect.gen(function* () {
+            const token = yield* readToken;
+            if (token === null || token.length === 0) return yield* credentialUnavailable;
+            return yield* fetching.withPermits(1)(
+              repos.fetch({
+                repo: input.repo,
+                branch: input.connection.remote.branch,
+                token,
+              }),
+            );
+          }),
+        ),
       ),
     remoteHead: (input) =>
-      credentialLock.withPermits(1)(
-        Effect.gen(function* () {
-          const token = yield* readToken;
-          if (token === null || token.length === 0) return yield* credentialUnavailable;
-          return yield* repos.remoteHead({
-            repo: input.repo,
-            branch: input.connection.remote.branch,
-            token,
-          });
-        }),
+      waitOutRateLimit(
+        credentialLock.withPermits(1)(
+          Effect.gen(function* () {
+            const token = yield* readToken;
+            if (token === null || token.length === 0) return yield* credentialUnavailable;
+            return yield* repos.remoteHead({
+              repo: input.repo,
+              branch: input.connection.remote.branch,
+              token,
+            });
+          }),
+        ),
       ),
     // Never under another token than the review's: a renewal between send admission and
     // here fails the push before Git runs, and the attempt stays unknown, never resent.
     pushRemote: (input) =>
-      credentialLock.withPermits(1)(
-        Effect.gen(function* () {
-          const token = yield* readToken;
-          if (token === null || token.length === 0 || credentialEpoch !== input.credentialEpoch)
-            return yield* credentialUnavailable;
-          return yield* repos.push({
-            repo: input.repo,
-            commit: input.commit,
-            branch: input.connection.remote.branch,
-            token,
-          });
-        }),
+      waitOutRateLimit(
+        credentialLock.withPermits(1)(
+          Effect.gen(function* () {
+            const token = yield* readToken;
+            if (token === null || token.length === 0 || credentialEpoch !== input.credentialEpoch)
+              return yield* credentialUnavailable;
+            return yield* repos.push({
+              repo: input.repo,
+              commit: input.commit,
+              branch: input.connection.remote.branch,
+              token,
+            });
+          }),
+        ),
       ),
   });
   const connections = yield* makeOverleafConnections({
@@ -512,6 +525,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
                 : category === "access-denied" ||
                     category === "project-not-found" ||
                     category === "unreachable" ||
+                    category === "rate-limited" ||
                     category === "git-unavailable"
                   ? category
                   : "git-failed";
@@ -524,7 +538,12 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   ) =>
     effect.pipe(
       Effect.provideService(OverleafCoordinator.OverleafAuthorityGuard, guard),
-      Effect.catchIf(isGitFailure<E>, (error) => Effect.fail(gitFailure(error))),
+      Effect.catchIf(isGitFailure<E>, (error) =>
+        Effect.andThen(
+          error._tag === "OverleafGitError" ? logGitFailure(error) : Effect.void,
+          Effect.fail(gitFailure(error)),
+        ),
+      ),
     );
 
   /** The caller's authority, as resolved for this request, still holds. */
@@ -565,6 +584,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const savingEditorsFirst = <A, E, R>(connectionId: string, body: Effect.Effect<A, E, R>) =>
     OverleafCoordinator.reserveOverleafConnection(reservations, connectionId, (owner) =>
       Effect.gen(function* () {
+        yield* connections.followRestored(connectionId);
         const read = yield* store.readConnection(connectionId);
         if (read._tag !== "ready")
           return yield* new OverleafCoordinator.OverleafConnectionNotReadyError({
@@ -593,10 +613,21 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     );
 
   /**
-   * The connection, if the caller may use it: its checkout is still the binding it
-   * recorded, and the caller is in the same host project (another worktree acts on it).
-   * `guard` re-checks both authorities, as resolved now, before every change to the
-   * folder and inside send admission (contract rule 2).
+   * Whether a link is the caller's: it sits in the caller's checkout, or the project it
+   * recorded is the caller's. A link is its physical folders, proved before every change;
+   * registration comes and goes (a project added again, a new Git repository).
+   */
+  const isCallers =
+    (resolved: ResolvedThreadWorkspaceBinding) => (document: OverleafConnectionDocument) =>
+      document.checkout.canonicalRoot === resolved.binding.canonicalRoot
+        ? Effect.succeed(true)
+        : ownedBy(resolved)(document.binding.bindingId);
+
+  /**
+   * The connection, if the caller may use it: it is the caller's, and any project
+   * registered at its checkout is the caller's (another worktree acts on it). `guard`
+   * re-checks both as resolved now, before every change and inside send admission
+   * (contract rule 2). Seeing and unlinking need neither the checkout nor the folder.
    */
   const authorize = Effect.fn("OverleafSync.authorize")(function* (
     caller: OverleafCaller,
@@ -609,36 +640,47 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     const document = read.document;
     const linked = yield* resolver
       .resolveWorkspaceRoot(document.checkout.canonicalRoot)
-      .pipe(Effect.mapError(() => new OverleafSyncRefusedError({ reason: "relink-needed" })));
-    if (linked.binding.hostProjectId !== resolved.binding.hostProjectId)
-      return yield* new OverleafSyncRefusedError({ reason: "workspace-not-authorized" });
+      .pipe(Effect.option);
     if (
-      linked.binding.bindingId !== document.binding.bindingId ||
-      linked.binding.authorityGeneration !== document.binding.authorityGeneration
+      !(yield* isCallers(resolved)(document)) ||
+      Option.exists(
+        linked,
+        (found) => found.binding.hostProjectId !== resolved.binding.hostProjectId,
+      )
     )
-      return yield* new OverleafSyncRefusedError({ reason: "relink-needed" });
+      return yield* new OverleafSyncRefusedError({ reason: "workspace-not-authorized" });
+    const stillCaller = callerCurrent(caller, resolved);
+    /** The caller still holds, and the link's checkout, if registered, is still the caller's. */
+    const stillOwner = Effect.gen(function* () {
+      if (!(yield* stillCaller)) return false;
+      const now = yield* resolver
+        .resolveWorkspaceRoot(document.checkout.canonicalRoot)
+        .pipe(Effect.option);
+      return Option.match(now, {
+        onNone: () => true,
+        onSome: (found) => found.binding.hostProjectId === resolved.binding.hostProjectId,
+      });
+    });
     const guard = (connection: OverleafConnectionDocument) =>
       checkAuthority(connection).pipe(Effect.orElseSucceed(() => false));
     const checkAuthority = Effect.fn("OverleafSync.checkAuthority")(function* (
       connection: OverleafConnectionDocument,
     ) {
-      if (!(yield* callerCurrent(caller, resolved))) return false;
+      if (Option.isNone(linked) || !(yield* stillCaller)) return false;
       yield* resolver.assertCurrentWorkspaceScope({
         workspaceRoot: connection.checkout.canonicalRoot,
-        bindingId: linked.binding.bindingId,
-        authorityGeneration: linked.binding.authorityGeneration,
-        scopeRevision: linked.scopeRevision,
+        bindingId: linked.value.binding.bindingId,
+        authorityGeneration: linked.value.binding.authorityGeneration,
+        scopeRevision: linked.value.scopeRevision,
       });
-      return (
-        connection.binding.bindingId === linked.binding.bindingId &&
-        connection.binding.authorityGeneration === linked.binding.authorityGeneration
-      );
+      return true;
     });
     return {
       document,
       guard,
+      stillOwner,
       callerBindingId: resolved.binding.bindingId,
-      linkedElsewhere: linked.binding.bindingId !== resolved.binding.bindingId,
+      linkedElsewhere: document.checkout.canonicalRoot !== resolved.binding.canonicalRoot,
     };
   });
 
@@ -698,19 +740,17 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
 
   const list = Effect.fn("OverleafSync.list")(function* (caller: OverleafCaller) {
     const resolved = yield* resolveCaller(caller);
-    const owns = ownedBy(resolved);
     const result: Array<OverleafConnectionSummary & { readonly linkedHere: boolean }> = [];
     for (const document of yield* connections.documents) {
       if (document.state !== "active") continue;
-      // Ownership is the recorded binding's project, whatever the folder's path resolves to now.
-      if (!(yield* owns(document.binding.bindingId))) continue;
+      if (!(yield* isCallers(resolved)(document))) continue;
       const summary = (yield* connections.list({
         checkoutRoot: document.checkout.canonicalRoot,
       })).find((entry) => entry.connectionId === document.connectionId);
       if (summary !== undefined)
         result.push({
           ...summary,
-          linkedHere: document.binding.bindingId === resolved.binding.bindingId,
+          linkedHere: document.checkout.canonicalRoot === resolved.binding.canonicalRoot,
         });
     }
     return result;
@@ -754,6 +794,38 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       connectionId: input.connectionId,
     });
     return { ...found, linkedElsewhere };
+  });
+
+  /**
+   * Whether Overleaf moved past what the folder took in. The status reads only the disk;
+   * this asks Overleaf, by its head first, and fetches only when the head differs. It
+   * changes neither the folder nor the link, and takes no hold, so a sync never waits on it.
+   */
+  const remoteState = Effect.fn("OverleafSync.remoteState")(function* (input: {
+    readonly caller: OverleafCaller;
+    readonly connectionId: string;
+  }) {
+    const { document } = yield* authorize(input.caller, input.connectionId);
+    const { base, remote, connectionId } = document;
+    if (document.state !== "active" || base.commit === null) return { state: "unknown" as const };
+    const repo = NodePath.join(options.stateRoot, "repositories", `${connectionId}.git`);
+    return yield* credentialLock.withPermits(1)(
+      Effect.gen(function* () {
+        const token = yield* readToken;
+        if (token === null || token.length === 0) return { state: "unknown" as const };
+        const head = yield* repos.remoteHead({ repo, branch: remote.branch, token });
+        if (head === null) return { state: "unknown" as const };
+        const matched = matchingHeads.get(connectionId);
+        if (head === base.commit || (head === matched?.commit && base.tree === matched.tree))
+          return { state: "same" as const };
+        const fetched = yield* fetching.withPermits(1)(
+          repos.fetch({ repo, branch: remote.branch, token }),
+        );
+        if (fetched.tree !== base.tree) return { state: "changed" as const };
+        matchingHeads.set(connectionId, { commit: fetched.commit, tree: fetched.tree });
+        return { state: "same" as const };
+      }).pipe(Effect.catchIf(isGitFailure, () => Effect.succeed({ state: "unknown" as const }))),
+    );
   });
 
   const diff = Effect.fn("OverleafSync.diff")(function* (input: {
@@ -1213,12 +1285,24 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly connectionId: string;
     readonly requestId: string;
   }) {
-    const { guard, callerBindingId } = yield* authorize(input.caller, input.connectionId);
+    const { document, guard, stillOwner, callerBindingId } = yield* authorize(
+      input.caller,
+      input.connectionId,
+    );
+    // An interrupted sync finishes first when it can; unlinking never waits on it.
+    if (document.activeApply !== null)
+      yield* engine(
+        guard,
+        savingEditorsFirst(
+          input.connectionId,
+          coordinator.recover({ connectionId: input.connectionId }),
+        ),
+      ).pipe(Effect.exit);
     return yield* connections.disconnect({
       connectionId: input.connectionId,
       requestId: input.requestId,
       callerBindingId,
-      stillAuthorized: guard,
+      stillAuthorized: stillOwner,
     });
   });
 
@@ -1277,6 +1361,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     list,
     connect,
     status,
+    remoteState,
     preview,
     diff,
     sync,

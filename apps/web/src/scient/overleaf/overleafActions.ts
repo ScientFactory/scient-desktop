@@ -14,6 +14,7 @@ import { readLocalApi } from "~/localApi";
 
 import {
   cancelOverleafSync,
+  disconnectOverleaf,
   overleafRequestId,
   previewOverleaf,
   syncOverleaf,
@@ -29,6 +30,7 @@ import {
   workspacePathOf,
 } from "./overleafModel";
 import {
+  forgetOverleafConnection,
   pendingOverleafDecisions,
   reloadOverleafWorkspaces,
   readOverleafWorkspace,
@@ -56,6 +58,42 @@ export function openOverleafProject(projectId: string): void {
   const api = readLocalApi();
   if (api) void api.shell.openExternal(url).catch(() => undefined);
   else window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/**
+ * Unlinks a folder from Overleaf. It changes nothing on either side, so it asks nothing:
+ * linking the same folder to the same project again brings its history back.
+ * Resolves to whether the folder is unlinked.
+ */
+export async function unlinkOverleaf(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+): Promise<boolean> {
+  const failed = (description: string) => {
+    toastManager.add({ type: "error", title: "Couldn't unlink", description });
+    return false;
+  };
+  try {
+    const result = await disconnectOverleaf(environmentId, {
+      workspaceRoot,
+      connectionId,
+      requestId: overleafRequestId(),
+    });
+    if (result._tag === "refused") return failed(refusalText({ reason: result.reason }));
+    // What this window remembered of the link (its review, decisions) goes too.
+    forgetOverleafConnection(environmentId, connectionId);
+    toastManager.add({
+      type: "success",
+      title: "Unlinked from Overleaf",
+      description: "Your files stay as they are, here and on Overleaf.",
+    });
+    return true;
+  } catch (error) {
+    return failed(operationErrorText(error));
+  } finally {
+    void reloadOverleafWorkspaces(environmentId, workspaceRoot);
+  }
 }
 
 /**

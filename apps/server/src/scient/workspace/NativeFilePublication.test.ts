@@ -12,6 +12,7 @@ import {
   checkNativePrivateRetentionDirectory,
   closeNativeHelperServers,
   invokeNativeHelper,
+  isPackagedServerDirectory,
   nativeFilePublicationCapabilities,
   observedDirectoryBinding,
   withNativeFilePublicationLease,
@@ -323,7 +324,7 @@ const fakeServingHelper = async (root: string) => {
     `#!${process.execPath}
 if (process.argv[2] !== "--serve=1") {
   process.stdout.write("launched " + process.argv[4] + "\\n");
-  process.exit(0);
+  return;
 }
 let input = Buffer.alloc(0), stuck = false;
 process.stdin.on("data", (chunk) => {
@@ -363,4 +364,23 @@ describe.skipIf(!posix)("the long-lived Windows helper", () => {
       expect(await info(wide)).toBe(`launched ${wide}\n`);
       await closeNativeHelperServers();
     }));
+});
+
+describe("the packaged server's own resources", () => {
+  it.each([
+    ["macOS, whose folder is Resources", "/Applications/Scient.app/Contents/Resources"],
+    ["Windows and Linux", NodePath.join(NodePath.sep, "opt", "Scient", "resources")],
+  ])("are found on %s", (_platform, resources) => {
+    for (const archive of ["app.asar", "server.asar"])
+      expect(isPackagedServerDirectory(NodePath.join(resources, archive, "apps/server/dist"))).toBe(
+        true,
+      );
+  });
+
+  it("are not looked for in a source checkout or an unpacked build", () => {
+    expect(isPackagedServerDirectory(NodePath.join("/work", "apps/server/dist"))).toBe(false);
+    expect(isPackagedServerDirectory(NodePath.join("/work", "resources", "apps/server/dist"))).toBe(
+      false,
+    );
+  });
 });

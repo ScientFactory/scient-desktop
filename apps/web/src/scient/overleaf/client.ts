@@ -3,6 +3,7 @@ import {
   cancelEnvironmentOverleafSync,
   connectEnvironmentOverleaf,
   disconnectEnvironmentOverleaf,
+  getEnvironmentOverleafRemoteState,
   getEnvironmentOverleafStatus,
   getEnvironmentOverleafTokenStatus,
   listEnvironmentOverleafConnections,
@@ -89,6 +90,15 @@ export async function readOverleafStatus(
 ) {
   return runtime.runPromise(
     getEnvironmentOverleafStatus({ prepared: prepared(environmentId), request }),
+  );
+}
+
+export async function readOverleafRemoteState(
+  environmentId: EnvironmentId,
+  request: ScientOverleafConnectionRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentOverleafRemoteState({ prepared: prepared(environmentId), request }),
   );
 }
 

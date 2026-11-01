@@ -188,6 +188,14 @@ function element<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/** A page that lost its shell, or its body, must still say so instead of staying blank. */
+function restoreBootShell() {
+  const body = document.body ?? document.documentElement.appendChild(element("body"));
+  const shell = element("div", { id: "boot-shell" });
+  body.append(shell);
+  return shell;
+}
+
 function selectContents(target: HTMLElement) {
   const range = document.createRange();
   range.selectNodeContents(target);
@@ -307,8 +315,7 @@ function mountUpdateButton(
 
 export function showBootError(error: unknown) {
   console.error("Scient failed to start.", error);
-  const bootShell = document.getElementById("boot-shell");
-  if (!bootShell) return;
+  const bootShell = document.getElementById("boot-shell") ?? restoreBootShell();
 
   const bridge = window.desktopBridge;
   const environment = readEnvironment(bridge);

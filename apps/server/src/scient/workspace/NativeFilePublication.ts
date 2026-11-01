@@ -127,6 +127,12 @@ class NativeFilePublicationError extends Error {
   }
 }
 
+/** A server running from the app's archive. macOS calls its folder `Resources`. */
+export const isPackagedServerDirectory = (moduleDirectory: string) =>
+  ["app.asar", "server.asar"].some((archive) =>
+    moduleDirectory.toLowerCase().endsWith(NodePath.join("resources", archive, "apps/server/dist")),
+  );
+
 /** Explicit host configuration never falls through to a different executable. */
 export async function resolveNativeFilePublicationHelperPath(
   configuredPath?: string,
@@ -139,9 +145,7 @@ export async function resolveNativeFilePublicationHelperPath(
   // Source development has a separate, explicit build location. Installed servers
   // only inspect their own resources; cwd, PATH and project files grant no authority.
   const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
-  const desktop = ["app.asar", "server.asar"].some((archive) =>
-    moduleDirectory.endsWith(NodePath.join("resources", archive, "apps/server/dist")),
-  );
+  const desktop = isPackagedServerDirectory(moduleDirectory);
   const candidate =
     configuredPath ??
     (desktop

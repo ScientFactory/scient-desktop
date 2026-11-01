@@ -432,7 +432,7 @@ describe("Overleaf tool handlers", () => {
       ]) {
         expect(failure.code).toBe("connection-not-ready");
         expect(failure.message).toBe(
-          "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.",
+          "The linked folder was moved, renamed or replaced. Put it back, or unlink it and link the right folder.",
         );
       }
     }),
@@ -523,7 +523,6 @@ describe("Overleaf tool handlers", () => {
           new OverleafFilesystemError({ reason: "online-only-file", path: "/private/path" }),
           "retention-unavailable",
         ],
-        [new OverleafSyncRefusedError({ reason: "relink-needed" }), "relink-needed"],
         [new OverleafSyncRefusedError({ reason: "access-denied" }), "overleaf-access-denied"],
         [new OverleafSyncRefusedError({ reason: "unreachable" }), "overleaf-unreachable"],
         [new OverleafSyncRefusedError({ reason: "git-failed" }), "failed"],
@@ -777,6 +776,11 @@ describe("Overleaf tool handlers", () => {
       const refused = yield* linesFor({ _tag: "not-sent", attemptNumber: 3 });
       expect(refused).toContain(
         "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
+      );
+      expect(
+        yield* linesFor({ _tag: "not-sent", attemptNumber: 3, reason: "rate-limited" }),
+      ).toContain(
+        "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute.",
       );
     }),
   );

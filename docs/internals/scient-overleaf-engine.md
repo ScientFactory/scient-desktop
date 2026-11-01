@@ -780,8 +780,16 @@ section 9):
 6. **Send** once, never forced, holding no section, so a pull or branch switch
    of the checkout does not wait for the network. `accepted` makes the
    publication tree the base in the same replacement. `out-of-date` keeps the adopted
-   base. Anything else stays `unknown`, as does an attempt whose finalizing
-   write fails.
+   base. Overleaf's rate limit answers before anything is sent, so after the waits
+   below it records `not-sent` (`send-refused`). Anything else stays `unknown`, as
+   does an attempt whose finalizing write fails.
+
+**Rate limit.** Overleaf answers about 40 Git requests a minute, then refuses for up
+to 30 s with `no git access` and `Rate-limit exceeded` (measured 2026-10-31). Its
+opening words match a missing project, so `isRateLimited` is checked first. Fetches,
+head reads and pushes for a sync or a connect ask again every 10 seconds, four times,
+then refuse `rate-limited`. The background check of Overleaf never waits: it reports
+`unknown`, because asking again only adds to the load.
 
 **Settling earlier sends.** Prepare (on the head it fetches) and recover (one
 fetch) check every unresolved attempt against Overleaf by positive evidence
@@ -851,14 +859,31 @@ coordinator's per-connection reservations.
   recorded binding belongs to the caller's host project; otherwise a new
   connection starts with an empty base and the archive is left as it is. A new
   directory made at an archived folder's path would otherwise inherit the old
-  base, and its first sync would delete Overleaf's files. Git failures leave as fixed categories
+  base, and its first sync would delete Overleaf's files. An active link whose
+  recorded directory no longer stands at its recorded path owns nothing: when it
+  would block a connect or relink it is archived instead, and connecting that same
+  directory at a new path brings it back, base included, unless an apply is
+  unfinished. Git failures leave as fixed categories
   (`access-denied`, `project-not-found`, `unreachable`, `no-branch`,
   `git-unavailable`).
-- **Disconnect** archives the connection; it refuses while an apply or its
-  staged files are unsettled, and rechecks authority before the change. **Relink** records a moved folder or a renewed
-  workspace binding, finds the retention folder by its recorded identity, and
-  keeps the base. It refuses a second link of one project in the target
-  checkout.
+- **A link is its physical folders.** `verifyFolders` proves the checkout and the
+  folder by volume and file ID before every change, so workspace binding changes
+  (a project removed and added again, the folder gaining a Git repository) never
+  touch a link. The caller's authority is checked per request; a link belongs to
+  the project at its checkout, or the project it recorded when none is there.
+- **Disconnect** archives the connection and needs neither the checkout nor the
+  folder, so nothing can trap a person in a link. Only a running operation refuses
+  it. An interrupted apply finishes first when it can; otherwise it stays in the
+  archive, and connecting the folder again finishes it. **Relink** records a moved
+  folder, finds the retention folder by its recorded identity, and keeps the base.
+  It refuses a second link of one project in the target checkout, and refuses while
+  an apply or its staged files are unsettled.
+- **Remote state** asks Overleaf whether it moved past the base: `ls-remote` first,
+  a fetch only when the head differs, comparing trees so a new commit with the same
+  files is not a change. It changes neither the folder nor the record and takes no
+  hold, so a sync never waits on it; fetches into the private repositories run one
+  at a time. The app asks at most once a minute per link, on focus and every two
+  minutes while visible.
 - **Status** reads disk only, and is reused for two seconds while the
   connection's record is unchanged: availability (`ready`, `recovery-required`,
   `attention`, `unavailable`, `disconnected`) with every reason, and the

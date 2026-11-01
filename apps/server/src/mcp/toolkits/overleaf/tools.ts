@@ -46,7 +46,6 @@ export class ScientOverleafToolError extends Schema.TaggedError<ScientOverleafTo
       /** No active link with that ID in the thread's project. */
       "not-linked",
       "workspace-not-authorized",
-      "relink-needed",
       "token-missing",
       "token-invalid",
       "secret-unavailable",
@@ -63,6 +62,7 @@ export class ScientOverleafToolError extends Schema.TaggedError<ScientOverleafTo
       "overleaf-unreachable",
       "overleaf-access-denied",
       "overleaf-project-not-found",
+      "overleaf-rate-limited",
       "git-unavailable",
       "failed",
     ]),
