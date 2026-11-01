@@ -181,7 +181,7 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    as native musl qualification. Its server dependencies are installed through the
    already-provisioned Vite+ package-manager entrypoint with dependency build scripts
    disabled. This qualification drives the downloaded executables over stdio; it does not
-   require repository native addons such as `node-pty` or `msgpackr-extract`. Native addon
+   require repository native addons such as `node-pty`. Native addon
    builds remain the responsibility of the normal app CI and packaging checks; the
    provider executables still undergo the full installer and protocol checks above.
 5. Queue every publication (`queue: max`) under one shared writer lock, re-read

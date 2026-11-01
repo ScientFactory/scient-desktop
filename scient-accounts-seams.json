@@ -157,18 +157,13 @@
     },
     {
       "path": "scripts/lib/cli-external-packages.ts",
-      "anchor": "Scient Accounts: the 1Password SDK loads WASM",
+      "anchor": "the Accounts 1Password SDK loads WASM",
       "purpose": "Keep 1Password native and WASM runtime dependencies on disk."
     },
     {
       "path": "third-party-licenses.config.json",
       "anchor": "\"name\": \"@1password/sdk\"",
       "purpose": "Supply the SDK and SDK core notices omitted from their npm packages."
-    },
-    {
-      "path": "scripts/lib/cli-external-packages.test.ts",
-      "anchor": "\"@1password/sdk\",",
-      "purpose": "Expect the 1Password SDK among the server's on-disk runtime externals."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
@@ -456,6 +451,11 @@
       "path": "apps/server/src/scient/extensions/ExtensionsRpcHandlers.ts",
       "anchor": "AccountsService",
       "purpose": "Invalidate plugin eligibility after account authorization or token metadata changes, excluding usage-only events."
+    },
+    {
+      "path": "scripts/lib/cli-external-packages.scient.test.ts",
+      "anchor": "\"@1password/sdk\"",
+      "purpose": "Expect the 1Password SDK to stay on disk, outside the server bundle."
     }
   ]
 }
