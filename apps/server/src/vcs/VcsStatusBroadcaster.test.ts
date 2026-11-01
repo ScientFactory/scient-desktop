@@ -581,7 +581,7 @@ describe("VcsStatusBroadcaster", () => {
       });
       assert.equal(state.localStatusCalls, 3);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 2);
+      assert.equal(state.localInvalidationCalls, 3);
       assert.equal(state.remoteInvalidationCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
   });

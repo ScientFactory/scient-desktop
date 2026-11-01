@@ -4465,7 +4465,11 @@ function ChatViewContent(props: ChatViewProps) {
                       </div>
                     ) : null}
                     {/* SCIENT-FORK:END */}
-                    <ChildThreadApprovals threadRef={activeThreadRef} />
+                    {/* SCIENT-FORK:START — keep child approvals in the composer's column. */}
+                    <div className="mx-auto w-full max-w-(--chat-content-max-width)">
+                      <ChildThreadApprovals threadRef={activeThreadRef} />
+                    </div>
+                    {/* SCIENT-FORK:END */}
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                       <ComposerSurface.Host>
                         <div className="relative z-10">
