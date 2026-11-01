@@ -45,6 +45,7 @@ import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCom
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { observeResize } from "~/lib/observeResize";
+import { textDirection } from "~/textDirection";
 
 export function AssistantCitationChip({
   citation,
@@ -184,7 +185,9 @@ export function AssistantCitationChip({
       // SCIENT-FORK:END
     >
       <QuoteIcon aria-hidden="true" />
-      <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
+      <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
+        {label}
+      </ContextChipLabel>
     </Link>
   );
   // SCIENT-FORK:START — in chat, a file quote is a link chip with a hover card, not the popover.
@@ -378,10 +381,13 @@ function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
         getVirtualizedScrollFadeClassName(fade),
       )}
     >
-      <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">
+      <blockquote
+        className="border-l-2 border-border pl-3 text-muted-foreground"
+        dir={textDirection(citation.text)}
+      >
         {citation.text}
       </blockquote>
-      {citation.comment ? <p>{citation.comment}</p> : null}
+      {citation.comment ? <p dir={textDirection(citation.comment)}>{citation.comment}</p> : null}
     </div>
   );
 }

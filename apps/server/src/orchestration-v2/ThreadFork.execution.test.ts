@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EventId,
   MessageId,
@@ -1183,6 +1185,62 @@ const askSideChat = (threadId: ThreadId, commandId: string) =>
       creationSource: "web",
     });
   });
+
+it.effect("resolves an explicit checkpoint fork to its source run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const parentId = ThreadId.make("checkpoint-fork-parent");
+    const childId = ThreadId.make("checkpoint-fork-child");
+    const runId = RunId.make("checkpoint-fork-run");
+    const checkpointId = CheckpointId.make("checkpoint-fork-checkpoint");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId,
+      ordinal: 1,
+      status: "completed",
+      text: "Work",
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("checkpoint-fork-captured"),
+          type: "checkpoint.captured",
+          threadId: parentId,
+          occurredAt: now,
+          payload: {
+            id: checkpointId,
+            threadId: parentId,
+            scopeId: CheckpointScopeId.make("checkpoint-fork-scope"),
+            runId,
+            nodeId: NodeId.make("checkpoint-fork-node"),
+            parentCheckpointId: null,
+            ordinalWithinScope: 1,
+            appRunOrdinal: 1,
+            ref: CheckpointRef.make("refs/t3/checkpoint-fork/1"),
+            status: "ready",
+            files: [],
+            capturedAt: now,
+          },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("checkpoint-fork"),
+      sourceThreadId: parentId,
+      targetThreadId: childId,
+      sourcePoint: { type: "checkpoint", checkpointId },
+      createdBy: "user",
+      creationSource: "mcp",
+    });
+    // SCIENT-FORK: a Scient fork has no `forkedFrom`; its transfer names the source run.
+    const child = yield* orchestrator.getThreadProjection(childId);
+    assert.equal(child.contextTransfers[0]?.sourcePoint.runId, runId);
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
 
 it.effect("a side chat of an idle parent still starts with the framing note", () =>
   Effect.gen(function* () {

@@ -36,7 +36,6 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     // SCIENT-FORK:START scient-conversation-files
     displayName: "Scient (Alpha)",
     linuxDesktopEntryName: "scient.desktop",
-    linuxWmClass: "scient",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     desktopLauncherPath: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),

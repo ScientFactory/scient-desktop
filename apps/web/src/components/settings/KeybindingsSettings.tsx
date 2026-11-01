@@ -25,6 +25,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -709,6 +710,7 @@ function useKeybindingRowEditor({
   onSave: (input: ServerUpsertKeybindingInput) => void;
 }) {
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, row, createKeybindingRowDraft);
+  const pillRef = useRef<HTMLButtonElement>(null);
   const { keyDraft, whenDraft, isRecording, isWhenDraftValid } = draft;
   const whenDraftExpression = whenAstToExpression(whenDraft);
   const isDirty = keyDraft !== row.key || whenDraftExpression !== row.when;
@@ -731,7 +733,13 @@ function useKeybindingRowEditor({
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
     if (event.key === "Escape") {
-      setDraft({ keyDraft: row.key, isRecording: false });
+      // An unhandled Escape closes the settings page.
+      event.stopPropagation();
+      const field = event.currentTarget;
+      flushSync(() => setDraft({ keyDraft: row.key, isRecording: false }));
+      // The field may unmount for the pill; focus would otherwise drop to the page.
+      if (pillRef.current) pillRef.current.focus();
+      else field.blur();
       return;
     }
     const next = keybindingFromKeyboardEvent(event.nativeEvent, navigator.platform, {
@@ -752,6 +760,7 @@ function useKeybindingRowEditor({
     setDraft,
     save,
     captureKeybinding,
+    pillRef,
   };
 }
 
@@ -782,8 +791,16 @@ function KeybindingKeyControl({
   isSaving: boolean;
   pillClassName?: string | undefined;
 }) {
-  const { keyDraft, isRecording, isDirty, isWhenDraftValid, setDraft, save, captureKeybinding } =
-    editor;
+  const {
+    keyDraft,
+    isRecording,
+    isDirty,
+    isWhenDraftValid,
+    setDraft,
+    save,
+    captureKeybinding,
+    pillRef,
+  } = editor;
   const showPill = !isRecording && keyDraft === row.key && row.key.length > 0 && !isDirty;
 
   return (
@@ -799,6 +816,7 @@ function KeybindingKeyControl({
       ) : null}
       {showPill ? (
         <button
+          ref={pillRef}
           type="button"
           onClick={() => setDraft({ isRecording: true })}
           aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
@@ -1045,7 +1063,10 @@ function useNewKeybindingDraft({
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
     if (event.key === "Escape") {
+      // An unhandled Escape closes the settings page.
+      event.stopPropagation();
       setDraft({ keyDraft: "", isRecording: false });
+      event.currentTarget.blur();
       return;
     }
     const next = keybindingFromKeyboardEvent(event.nativeEvent, navigator.platform, {

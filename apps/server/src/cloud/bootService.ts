@@ -15,7 +15,9 @@ import * as Schema from "effect/Schema";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  launcherOwnsVersionsDir,
   pinnedRuntimePaths,
+  pinnedRuntimeVersionsDir,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 import {
@@ -540,6 +542,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
+  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
@@ -548,17 +552,23 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
       }),
   );
+  // During an update, the running CLI and a PATH inherited from the service name the runtime
+  // being replaced. The service and its agent shells should find the runtime it starts.
   const environmentPath = Array.from(
-    new Set([
-      ...xmlSafeInstallerDirectories,
-      path.dirname(host.execPath),
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]),
+    new Set(
+      [
+        ...xmlSafeInstallerDirectories,
+        path.dirname(host.execPath),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ].map((directory) =>
+        launcherOwnsVersionsDir(path, versionsDir, directory) ? runtimePaths.versionDir : directory,
+      ),
+    ),
   ).join(":");
 
   const detectedManager = selectBootServiceManager({
@@ -573,7 +583,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
-  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
   const launcherSourcePath =
     host.launcherSourcePath ??
     path.join(path.dirname(runtimePaths.entryPath), SERVICE_LAUNCHER_FILE);

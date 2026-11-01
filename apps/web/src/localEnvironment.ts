@@ -4,6 +4,7 @@ const disabledByWindow = new WeakMap<Window, boolean>();
 
 export function isLocalEnvironmentDisabled(): boolean {
   // SCIENT-FORK:START — read once per window instead of per call.
+  if (typeof window === "undefined") return false;
   const cached = disabledByWindow.get(window);
   if (cached !== undefined) return cached;
   const disabled = window.desktopBridge?.getLocalEnvironmentEnabled() === false;

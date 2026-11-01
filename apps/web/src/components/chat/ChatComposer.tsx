@@ -1044,11 +1044,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     includeContextualProviderSkills: true,
   });
   // SCIENT-FORK:END
-  const refreshWorkspaceSnapshotOnTyping = useProviderWorkspaceSnapshotRefresh({
-    environmentId,
-    gitCwd,
-    instanceId: selectedProviderEntry?.instanceId,
-  });
+  const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
+    useProviderWorkspaceSnapshotRefresh({
+      environmentId,
+      gitCwd,
+      instanceId: selectedProviderEntry?.instanceId,
+    });
   // SCIENT-FORK:START — inline provider setup inside the model picker
   const { isProviderSetupAvailable, renderProviderSetup } =
     createComposerProviderSetupRenderers(environmentId);
@@ -1280,6 +1281,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderSkills: effectiveSelectedProviderSkills,
     selectedProviderSlashCommands,
     showSkillsInSlashMenu: settings.showSkillsInSlashMenu,
+    workspaceSkillsScanning,
     questionAttachmentTarget,
   });
 
@@ -3611,7 +3613,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
                       ? "Finding pull request..."
-                      : "Searching workspace files..."
+                      : composerTriggerKind === "skill" || composerTriggerKind === "slash-command"
+                        ? "Searching workspace skills..."
+                        : "Searching workspace files..."
                     : composerMenuEmptyState
                   : ""}
               </div>
