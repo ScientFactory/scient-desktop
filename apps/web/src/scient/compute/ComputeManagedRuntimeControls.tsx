@@ -416,7 +416,7 @@ export function ManagedRuntimeNotice({
                   />
                 }
               >
-                {headline}
+                {retryAction === "repair" ? "Needs repair" : headline}
               </TooltipTrigger>
               <TooltipPopup>{retry === undefined ? headline : `Retry ${headline}`}</TooltipPopup>
             </Tooltip>
@@ -429,26 +429,28 @@ export function ManagedRuntimeNotice({
                     : "Retry"}
               </Button>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 shrink-0"
-                    aria-label="Copy error"
-                    onClick={() => copyToClipboard(failure.detail, undefined)}
-                  />
-                }
-              >
-                {isCopied ? (
-                  <CheckIcon aria-hidden className="size-3" />
-                ) : (
-                  <CopyIcon aria-hidden className="size-3" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup>Copy the full error</TooltipPopup>
-            </Tooltip>
+            {retry === undefined ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-5 shrink-0"
+                      aria-label="Copy error"
+                      onClick={() => copyToClipboard(failure.detail, undefined)}
+                    />
+                  }
+                >
+                  {isCopied ? (
+                    <CheckIcon aria-hidden className="size-3" />
+                  ) : (
+                    <CopyIcon aria-hidden className="size-3" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup>Copy the full error</TooltipPopup>
+              </Tooltip>
+            ) : null}
             {failure.detail === failure.summary ? null : (
               <Popover>
                 <PopoverTrigger
