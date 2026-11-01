@@ -21,6 +21,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProviderHostLive from "../../provider/ProviderHostLive.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeAcpRegistryManagedRuntimeActions } from "./AcpRegistryManagedRuntimeActions.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const decodeEnvironment = Schema.decodeSync(ProviderInstanceEnvironment);
@@ -46,6 +47,7 @@ const agent = {
 
 const layerSettings = ServerSettings.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), { prefix: "scient-acp-removal-integration-" }),

@@ -309,6 +309,7 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { DEFAULT_SIGNAL_EXPORT, layerOtlpSerialization } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
 // @effect-diagnostics nodeBuiltinImport:off
 
@@ -496,6 +497,7 @@ const makeAuthTestLayer = () =>
   EnvironmentAuth.layer.pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provide(
       Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
         getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
@@ -1280,6 +1282,7 @@ const buildAppUnderTest = (options?: {
         // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
         Layer.provide(AccountsTestkit.layer),
         // SCIENT-FORK:END
+        Layer.provide(ManagedPolicy.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
         Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
       )
@@ -1496,7 +1499,7 @@ const buildAppUnderTest = (options?: {
         forks: Context.get(services, ConversationFork.ConversationForkService),
       },
     };
-  });
+  }).pipe(Effect.provide(ManagedPolicy.layerTest()));
 
 const parseSessionCookieFromWsUrl = (
   wsUrl: string,
@@ -13817,7 +13820,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           keybindings: {
-            upsertKeybindingRule: () => Effect.succeed([resolved]),
+            upsertKeybindingRule: () => Effect.succeed({ keybindings: [resolved], issues: [] }),
           },
         },
       });
@@ -13855,7 +13858,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           keybindings: {
-            removeKeybindingRule: () => Effect.succeed([resolved]),
+            removeKeybindingRule: () => Effect.succeed({ keybindings: [resolved], issues: [] }),
           },
         },
       });

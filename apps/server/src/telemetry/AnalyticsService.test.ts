@@ -13,6 +13,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 
 import * as ServerConfig from "../config.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
 it("restricts the optional analytics QA destination to literal loopback ingestion", () => {
@@ -58,6 +59,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          ManagedPolicy.layerTest(),
           ServerConfig.ServerConfig.layerTest(process.cwd(), {
             prefix: "scient-analytics-disabled-",
           }),
@@ -85,6 +87,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Effect.scoped,
           Effect.provide(
             Layer.mergeAll(
+              ManagedPolicy.layerTest(),
               ServerConfig.ServerConfig.layerTest(process.cwd(), {
                 prefix: "scient-analytics-invalid-",
               }),
@@ -110,6 +113,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const analyticsLayer = AnalyticsService.layer.pipe(
         Layer.provideMerge(serverConfigLayer),
         Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+        Layer.provideMerge(ManagedPolicy.layerTest()),
       );
 
       yield* Effect.gen(function* () {
@@ -150,6 +154,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Layer.mergeAll(
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
+            ManagedPolicy.layerTest(),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),

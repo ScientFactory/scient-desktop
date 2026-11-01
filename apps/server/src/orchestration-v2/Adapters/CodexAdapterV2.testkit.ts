@@ -349,6 +349,7 @@ export function withIssuedCodexMcpReplayExpectations(
                 const params = frame.params;
                 if (frame.method !== "turn/start") {
                   const native = CodexAdapterV2.codexThreadRuntimeParams({
+                    threadId: null,
                     mcpSession: issued,
                     modelSelection: scope.modelSelection,
                     runtimePolicy: scope.runtimePolicy,

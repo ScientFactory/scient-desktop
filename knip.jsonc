@@ -94,6 +94,7 @@
         "@t3tools/web",
         "@napi-rs/canvas",
         "@napi-rs/keyring",
+        "ffi-rs",
       ],
     },
     "apps/desktop": {

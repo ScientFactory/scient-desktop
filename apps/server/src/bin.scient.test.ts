@@ -57,9 +57,11 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { layerAuthenticatedAuth as environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import packageJson from "../package.json" with { type: "json" };
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
 describe("Restored bin.test.ts", () => {
   const CliRuntimeLayer = Layer.mergeAll(
+    ManagedPolicy.layerTest(),
     NodeServices.layer,
     NetService.layer,
     ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
@@ -171,7 +173,11 @@ describe("Restored bin.test.ts", () => {
         ),
       ),
       Layer.provideMerge(WorkspacePaths.layer),
-      Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+      Layer.provideMerge(
+        ServerSettings.layer.pipe(
+          Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+        ),
+      ),
       Layer.provideMerge(database),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(ServerConfig.layer(config)),
@@ -442,6 +448,7 @@ describe("Restored bin.test.ts", () => {
           }),
         ),
         Layer.provide(environmentAuthenticatedAuthLayer),
+        Layer.provide(ManagedPolicy.layerTest()),
       );
       const appLayer = HttpRouter.serve(routesLayer, {
         disableListenLog: true,
@@ -452,6 +459,7 @@ describe("Restored bin.test.ts", () => {
             Layer.provideMerge(SqlitePersistenceLayerLive),
             Layer.provide(ServerEnvironment.layerIdentity),
             Layer.provide(ServerSecretStore.layer),
+            Layer.provide(ManagedPolicy.layerTest()),
           ),
         ),
         Layer.provideMerge(makeProjectPersistenceLayer(config)),

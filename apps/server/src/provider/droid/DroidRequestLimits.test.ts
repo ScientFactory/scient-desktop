@@ -24,6 +24,7 @@ import * as ServerSettingsModule from "../../serverSettings.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 
 const instanceId = ProviderInstanceId.make("droid_limits");
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -465,6 +466,7 @@ describe("Droid per-turn request limits", () => {
         Effect.provide(
           ServerSettingsModule.layer.pipe(
             Layer.provide(secretLayer),
+            Layer.provide(ManagedPolicy.layerTest()),
             Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
             Layer.provideMerge(
               Layer.fresh(

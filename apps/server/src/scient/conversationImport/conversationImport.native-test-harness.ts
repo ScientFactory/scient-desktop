@@ -32,6 +32,7 @@ import * as Commit from "./ConversationImportCommit.ts";
 import * as ImporterLive from "./ConversationImporterLive.ts";
 import type { PortableConversationImportPlan } from "./conversationImportPlan.ts";
 import { OTHER_PROJECT_ID, PROJECT_ID, PROVIDER_ID } from "./conversationImport.test-fixtures.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 
 export interface NativeImportTestControls {
   readonly persistence?: "memory" | "file";
@@ -177,6 +178,7 @@ export function nativeImportRuntimeTestLayer(
   const database = options.databaseLayer ?? SqlitePersistence.layerMemory;
   // Local threads must resolve to the disposable project, never the server checkout.
   const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
     Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
     Layer.provide(
       Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.sync(() => undefined) }),

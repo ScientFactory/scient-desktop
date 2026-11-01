@@ -155,7 +155,7 @@ function ThemeColorPickerPanel({
     const nextHsv = hexToHsv(nextValue);
     setHsv(nextHsv);
     setRgbDraft(themeRgbValue(nextValue));
-    onChange(nextColor);
+    onChange(nextColor + alphaSuffix);
   };
 
   const handleRgbChange = (nextValue: string) => {

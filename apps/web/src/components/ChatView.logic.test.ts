@@ -25,7 +25,6 @@ import {
 import {
   CommandId,
   EnvironmentId,
-  ComposerContextId,
   MessageId,
   NodeId,
   OrchestrationV2ProviderThread,
@@ -1622,85 +1621,6 @@ describe("artifact template composer insertion", () => {
     expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
   });
 });
-describe("restorePlanFollowUpComposer", () => {
-  it("writes back every field a cleared plan follow-up composer held", () => {
-    const snapshot = {
-      prompt: "Follow up on the plan",
-      terminalContexts: [
-        {
-          id: "terminal-1",
-          threadId: ThreadId.make("thread-1"),
-          createdAt: "2026-09-11T00:00:00.000Z",
-          terminalId: "main",
-          terminalLabel: "Main",
-          lineStart: 1,
-          lineEnd: 2,
-          text: "output",
-        },
-      ],
-      reviewComments: [
-        {
-          id: "review-1",
-          sectionId: "file:a.ts",
-          sectionTitle: "File comment",
-          filePath: "a.ts",
-          startIndex: 0,
-          endIndex: 0,
-          rangeLabel: "L1",
-          text: "look here",
-          diff: "",
-        },
-      ],
-      previewAnnotations: [],
-      threadContexts: [
-        {
-          version: 1 as const,
-          contextId: ComposerContextId.make("context-1"),
-          label: "Related thread",
-          kind: "thread" as const,
-          environmentId,
-          threadId: ThreadId.make("thread-2"),
-          title: "Related thread",
-        },
-      ],
-      environmentContexts: [],
-    };
-    const writePrompt = vi.fn();
-    const writeTerminalContexts = vi.fn();
-    const writeReviewComments = vi.fn();
-    const writePreviewAnnotations = vi.fn();
-    const writeThreadContexts = vi.fn();
-    const writeEnvironmentContexts = vi.fn();
-    const resetCursor = vi.fn();
-    restorePlanFollowUpComposer({
-      snapshot,
-      writePrompt,
-      writeTerminalContexts,
-      writeReviewComments,
-      writePreviewAnnotations,
-      writeThreadContexts,
-      writeEnvironmentContexts,
-      resetCursor,
-    });
-    expect(writePrompt).toHaveBeenCalledTimes(1);
-    expect(writePrompt).toHaveBeenCalledWith("Follow up on the plan");
-    expect(writeTerminalContexts).toHaveBeenCalledTimes(1);
-    expect(writeTerminalContexts).toHaveBeenCalledWith(snapshot.terminalContexts);
-    expect(writeReviewComments).toHaveBeenCalledTimes(1);
-    expect(writeReviewComments).toHaveBeenCalledWith(snapshot.reviewComments);
-    expect(writePreviewAnnotations).toHaveBeenCalledTimes(1);
-    expect(writePreviewAnnotations).toHaveBeenCalledWith(snapshot.previewAnnotations);
-    expect(writeThreadContexts).toHaveBeenCalledTimes(1);
-    expect(writeThreadContexts).toHaveBeenCalledWith(snapshot.threadContexts);
-    expect(writeEnvironmentContexts).toHaveBeenCalledWith(snapshot.environmentContexts);
-    expect(resetCursor).toHaveBeenCalledTimes(1);
-    expect(resetCursor).toHaveBeenCalledWith({
-      cursor: expect.any(Number),
-      prompt: "Follow up on the plan",
-      detectTrigger: true,
-    });
-  });
-});
 describe("prepareRevertedMessageAttachments", () => {
   it("copies attachment bytes before rewind into a fresh file", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("original bytes"));
@@ -1896,6 +1816,61 @@ describe("planComposerTurn", () => {
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
     });
+  });
+});
+
+describe("restorePlanFollowUpComposer", () => {
+  // The draft is the failed follow-up's thread; the refs and cursor are whatever thread is on
+  // screen.
+  it.each([
+    {
+      name: "puts the follow-up back while its thread is open",
+      before: { draft: "", refs: "", cursor: null },
+      routeIsCurrent: true,
+      after: { draft: "Tighten step 2", refs: "Tighten step 2", cursor: "Tighten step 2" },
+    },
+    {
+      name: "keeps a draft typed while the follow-up was in flight",
+      before: { draft: "Next idea", refs: "Next idea", cursor: null },
+      routeIsCurrent: true,
+      after: { draft: "Next idea", refs: "Next idea", cursor: null },
+    },
+    {
+      name: "leaves another thread's composer alone after navigating away",
+      before: { draft: "", refs: "Other thread", cursor: null },
+      routeIsCurrent: false,
+      after: { draft: "Tighten step 2", refs: "Other thread", cursor: null },
+    },
+  ])("$name", ({ before, routeIsCurrent, after }) => {
+    const composer: { draft: string; refs: string; cursor: string | null } = { ...before };
+    restorePlanFollowUpComposer({
+      snapshot: {
+        prompt: "Tighten step 2",
+        environmentContexts: [],
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+        threadContexts: [],
+      },
+      draftHasUserContent: composer.draft.trim().length > 0,
+      routeIsCurrent,
+      writeComposerRefs: (snapshot) => {
+        composer.refs = snapshot.prompt;
+      },
+      writePrompt: (prompt) => {
+        composer.draft = prompt;
+      },
+      writeTerminalContexts: () => undefined,
+      writeReviewComments: () => undefined,
+      writePreviewAnnotations: () => undefined,
+      writeThreadContexts: () => undefined,
+      writeEnvironmentContexts: () => undefined,
+      resetCursor: ({ prompt }) => {
+        composer.cursor = prompt;
+      },
+    });
+
+    expect(composer).toEqual(after);
   });
 });
 

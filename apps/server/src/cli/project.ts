@@ -44,6 +44,7 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
@@ -221,7 +222,11 @@ const ProjectCliCloneTrackerLive = ProjectCloneTracker.layer.pipe(
     ),
   ),
   Layer.provide(GitVcsDriver.layer),
-  Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provide(
+    ServerSettings.layer.pipe(
+      Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
+    ),
+  ),
   Layer.provide(VcsProcess.layer),
   Layer.provide(FetchHttpClient.layer),
 );
@@ -237,7 +242,11 @@ const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
     ),
   ),
   Layer.provideMerge(WorkspacePaths.layer),
-  Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provideMerge(
+    ServerSettings.layer.pipe(
+      Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
+    ),
+  ),
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
