@@ -27,10 +27,7 @@ export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoad
 
 type NodePtyModuleLoader = () => Promise<typeof NodePty>;
 
-// node-pty stays external to the CLI bundle because it dlopens a native
-// addon. Inside a Node single-executable, `import()` cannot load files from
-// disk (only built-ins resolve), while `require` always reads the real
-// filesystem, so both the module and its spawn-helper resolve through it.
+// node-pty's native addon stays external; single-executables need require to resolve disk modules and spawn helpers.
 const requireForNodePty = NodeModule.createRequire(import.meta.url);
 
 const loadNodePty: NodePtyModuleLoader = () =>
@@ -82,12 +79,8 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
-/**
- * node-pty defers creation to avoid blocking on named pipes:
- * https://github.com/microsoft/node-pty/pull/885 Its public API has no
- * readiness event. The private ready_datapipe handler sets pid before our
- * listener runs.
- */
+// node-pty has no public readiness event; ready_datapipe sets pid before our listener.
+// Deferred pipe creation: https://github.com/microsoft/node-pty/pull/885
 const waitForWindowsPid = (process: NodePty.IPty, trackedProcess: NodePtyProcess, shell: string) =>
   Effect.callback<void, PtyAdapter.PtySpawnError>((resume) => {
     const hasPid = () => Number.isInteger(process.pid) && process.pid > 0;
@@ -136,10 +129,7 @@ const waitForWindowsPid = (process: NodePty.IPty, trackedProcess: NodePtyProcess
     return Effect.sync(cleanup);
   });
 
-/**
- * Cancels Windows startup without waiting for the first output, unlike public kill().
- * The private agent can cancel the pending connection before a child exists.
- */
+// The private agent cancels pending connections before a child exists; public kill waits for first output.
 const killStartingWindowsPty = (process: NodePty.IPty) =>
   Effect.try(() => {
     if (
@@ -252,9 +242,7 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
       yield* ensureNodePtySpawnHelperExecutableCached;
-      // node-pty only writes `name` into the child's TERM on the Unix path;
-      // the ConPTY path leaves the environment untouched, so Windows children
-      // inherit a missing or 16-color TERM unless it is set here.
+      // ConPTY ignores node-pty's name option for TERM; set it explicitly to avoid missing/16-color values.
       const env =
         platform === "win32" && input.env["TERM"] === undefined
           ? { ...input.env, TERM: "xterm-256color" }

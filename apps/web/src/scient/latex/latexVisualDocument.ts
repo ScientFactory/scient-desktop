@@ -586,6 +586,7 @@ function closingBrace(source: string, opening: number): number | null {
   return null;
 }
 
+const LATEX_EM_DASH = String.fromCodePoint(0x2014);
 const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
   quad: "\u2003",
   qquad: "\u2003\u2003",
@@ -609,7 +610,7 @@ const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
   textasciitilde: "~",
   textasciicircum: "^",
   textendash: "\u2013",
-  textemdash: "\u2014",
+  textemdash: LATEX_EM_DASH,
   textellipsis: "\u2026",
   dots: "\u2026",
   ldots: "\u2026",
@@ -701,7 +702,7 @@ function inlineTextToken(
   const whitespace = /^[\t\r\n ]+/u.exec(source);
   if (whitespace) return { source: whitespace[0], text: " " };
   for (const [token, text] of [
-    ["---", "\u2014"],
+    ["---", LATEX_EM_DASH],
     ["--", "\u2013"],
     ["``", "\u201c"],
     ["''", "\u201d"],
@@ -944,7 +945,7 @@ function inlinePiece(
   const lineBreak = /^(?:\\\\|\\newline(?![A-Za-z]))[\t ]*(?:\r?\n[\t ]*)?/u.exec(rest);
   if (lineBreak) {
     // Optional lengths and starred breaks need their own layout support.
-    if (/^[*\[]/u.test(rest.slice(lineBreak[0].length))) return null;
+    if (/^[*[]/u.test(rest.slice(lineBreak[0].length))) return null;
     return { end: at + lineBreak[0].length, node: marked({ type: "hardBreak" }) };
   }
   const text = inlineTextToken(rest, marks);
@@ -968,7 +969,7 @@ function inlinePiece(
     name === "hyperref" ? source.indexOf("]", opening + 1) : closingBrace(source, opening);
   if (close === null || close < 0) return null;
   const argument = source.slice(opening + 1, close);
-  if (name === "hyperref" && /[{}\\%\s\[\]]/u.test(argument)) return null;
+  if (name === "hyperref" && /[{}\\%\s[\]]/u.test(argument)) return null;
   let end = close + 1;
   let linkText: string | undefined;
   if (["href", "hyperref", "hyperlink", "hypertarget"].includes(name)) {
@@ -2028,7 +2029,7 @@ function parseBibliographyPreview(source: string): JSONContent | null {
   if (!opening || !source.endsWith(closing)) return null;
   const body = source.slice(opening[0].length, -closing.length);
   if (/%/u.test(body)) return null;
-  const matches = [...body.matchAll(/\\bibitem\s*(?:\[([^\[\]]*)\]\s*)?\{([^{}\\\s]+)\}/gu)];
+  const matches = [...body.matchAll(/\\bibitem\s*(?:\[([^[\]]*)\]\s*)?\{([^{}\\\s]+)\}/gu)];
   if (matches.length > 100) return null;
   let editable = !body.slice(0, matches[0]?.index ?? body.length).trim();
   const items = matches.map((match, index) => {
@@ -2322,7 +2323,7 @@ function trimSourceRange(source: string, from: number, to: number): [number, num
   return [from, to];
 }
 
-export function latexTableMathCell(source: string) {
+function latexTableMathCell(source: string) {
   if (!(source.startsWith("$") || source.startsWith("\\("))) return null;
   const nodes = parseInline(source);
   if (nodes?.length !== 1 || nodes[0]?.type !== "latexInlineMath") return null;
@@ -2333,7 +2334,7 @@ export function latexTableMathCell(source: string) {
   };
 }
 
-export function latexTableCellIsMath(
+function latexTableCellIsMath(
   node: Pick<JSONContent, "attrs">,
   row: number,
   column: number,
@@ -5301,7 +5302,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     // Custom names are accepted only when reprojection finds a supported root declaration.
     if (!environment || !/^[A-Za-z]+\*?$/u.test(environment)) return null;
     const title = typeof node.attrs?.title === "string" ? node.attrs.title : "";
-    if (!node.attrs?.titleSource && /[\[\]]/u.test(title)) return null;
+    if (!node.attrs?.titleSource && /[[\]]/u.test(title)) return null;
     const blocks = (node.content ?? []).map(serializeLatexVisualBlock);
     if (blocks.some((block) => block === null)) return null;
     const eol = String(node.attrs?.raw ?? "").includes("\r\n") ? "\r\n" : "\n";
@@ -5496,7 +5497,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
             if (entry.body === item.body) entries.push(entry.source);
             else {
               const inline = parseInline(item.body);
-              const command = /^\\bibitem\s*(?:\[[^\[\]]*\]\s*)?\{[^{}]+\}/u.exec(entry.source);
+              const command = /^\\bibitem\s*(?:\[[^[\]]*\]\s*)?\{[^{}]+\}/u.exec(entry.source);
               if (
                 !command ||
                 !inline?.every((part) => part.type === "text" || part.type === "hardBreak")
@@ -6009,7 +6010,7 @@ function roundTripSignature(node: JSONContent): string {
   if (cached !== undefined) return cached;
   const prose = (text: string) =>
     text
-      .replace(/---/gu, "\u2014")
+      .replace(/---/gu, LATEX_EM_DASH)
       .replace(/--/gu, "\u2013")
       .replace(/[\t\r\n ]+/gu, " ");
   const normalize = (value: JSONContent): JSONContent => {
@@ -7348,7 +7349,7 @@ function patchScientificStructure(
     (!SCIENTIFIC_ENVIRONMENTS.has(environment) &&
       !setup.declarations.environments.has(environment)) ||
     typeof title !== "string" ||
-    (title !== (ranges.title?.display ?? "") && /[\[\]]/u.test(title)) ||
+    (title !== (ranges.title?.display ?? "") && /[[\]]/u.test(title)) ||
     (setup.declarations.environments.get(environment)?.kind === "quote" && title !== "")
   )
     return null;

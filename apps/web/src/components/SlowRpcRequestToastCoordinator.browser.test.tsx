@@ -15,21 +15,24 @@ vi.mock("../hooks/useSettings", () => ({
     selector({ timestampFormat: mocks.timestampFormat }),
 }));
 vi.mock("../rpc/requestLatencyState", () => ({
-  useSlowRpcAckRequests: () => [
-    {
-      requestId: "request:synthetic",
-      tag: "Synthetic request",
-      startedAt: mocks.startedAt,
-      startedAtMs: 0,
-      thresholdMs: 15000,
-    },
-  ],
+  subscribeSlowRpcAckRequests: (listener: (requests: ReadonlyArray<unknown>) => void) => {
+    listener([
+      {
+        requestId: "request:synthetic",
+        tag: "Synthetic request",
+        startedAt: mocks.startedAt,
+        startedAtMs: 0,
+        thresholdMs: 15000,
+      },
+    ]);
+    return () => {};
+  },
 }));
 vi.mock("./ui/toast", () => ({
   toastManager: { add: mocks.add, update: mocks.update, close: mocks.close },
 }));
 
-import { SlowRpcRequestToastCoordinator } from "./SlowRpcRequestToastCoordinator";
+import { startSlowRpcRequestToasts } from "./SlowRpcRequestToastCoordinator";
 
 async function _setupFixture0(_fixture: _Fixture) {
   vi.clearAllMocks();
@@ -47,7 +50,7 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   _fixture.container.remove();
 }
 async function renderDetails(_fixture: _Fixture) {
-  await act(async () => await _fixture.root0.rerender(<SlowRpcRequestToastCoordinator />));
+  _fixture.cleanup.defer(startSlowRpcRequestToasts());
   const toast = mocks.add.mock.calls[0]?.[0] as { data: { expandableContent: ReactNode } };
   expect(toast).toBeDefined();
   await act(async () => await _fixture.root0.rerender(toast.data.expandableContent));

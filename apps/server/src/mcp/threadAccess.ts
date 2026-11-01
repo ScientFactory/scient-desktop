@@ -5,7 +5,7 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
-  type ThreadId,
+  ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -13,9 +13,38 @@ import * as Effect from "effect/Effect";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { requireInvocationPolicy } from "./InvocationPolicy.ts";
+// SCIENT-FORK:START — upstream liveness predicate, moved to a dependency-free module.
+import { isLiveCallerShell } from "./liveCallerShell.ts";
+// SCIENT-FORK:END
+
+/**
+ * Threads an agent starts over MCP are `mcp:<uuid>`, and agents often paste the
+ * bare uuid. The id is never rewritten, so permission checks keyed on it still
+ * hold; the miss only names a live thread the caller could read by its full id.
+ */
+export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
+  threadId: ThreadId,
+  message: string,
+  // SCIENT-FORK:START — never name a thread outside the caller's read authority.
+  canReadShell: (shell: OrchestrationV2ThreadShell) => boolean = () => true,
+  // SCIENT-FORK:END
+) {
+  const prefixed = ThreadId.make(`mcp:${threadId}`);
+  const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
+  return yield* new OrchestratorMcpFailure({
+    code: "thread_not_found",
+    // SCIENT-FORK:START — never name a thread outside the caller's read authority.
+    message:
+      shell === null || shell.deletedAt !== null || !canReadShell(shell)
+        ? message
+        : `${message} Did you mean \`${prefixed}\`?`,
+    // SCIENT-FORK:END
+  });
+});
 
 export const unavailable = () =>
   new OrchestratorMcpFailure({
@@ -69,10 +98,7 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
       scope,
       threads,
       caller: undefined,
-      limits: {
-        runtimeMode: McpInvocationContext.clientRuntimeModeCeiling(scope.client),
-        interactionMode: "default",
-      },
+      limits: McpInvocationContext.clientModeCeiling(scope.client),
     } satisfies Caller;
   }
   const caller = yield* threads
@@ -96,22 +122,19 @@ export const assertTargetWithinLimits = (
   limits: CallerLimits,
   target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
 ) =>
-  OrchestrationMcp.resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
-    Effect.andThen(
-      OrchestrationMcp.resolveInteractionMode(limits.interactionMode, target.interactionMode),
-    ),
+  resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
+    Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
     Effect.asVoid,
   );
 
-/**
- * A thread caller acts only while it owns a live run, or a background
- * subagent that run started, of a thread that is not archived, so a provider
- * token that outlived its session cannot act. An OAuth client has no run; its
- * session and ceiling are its authority.
- */
+// SCIENT-FORK:START — upstream callers import the liveness predicate from here.
+export { isLiveCallerShell };
+// SCIENT-FORK:END
+
+/** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
 export function assertLiveCaller({ caller, scope }: Caller) {
   if (caller === undefined) return Effect.void;
-  return OrchestrationMcp.isLiveCallerShell(caller, scope.thread?.providerInstanceId)
+  return isLiveCallerShell(caller, scope.thread?.providerInstanceId)
     ? Effect.void
     : Effect.fail(
         new OrchestratorMcpFailure({
@@ -172,14 +195,25 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
   if (
-    shell === null ||
-    shell.deletedAt !== null ||
-    (context.caller !== undefined && shell.projectId !== context.caller.projectId)
+    shell !== null &&
+    context.caller !== undefined &&
+    shell.projectId !== context.caller.projectId
   ) {
     return yield* new OrchestratorMcpFailure({
       code: "thread_not_found",
       message: "The thread was not found.",
     });
+  }
+  if (shell === null || shell.deletedAt !== null) {
+    // SCIENT-FORK:START — thread credentials stay within the calling project.
+    return yield* threadNotFound(
+      context.threads,
+      targetId,
+      "The thread was not found.",
+      (candidate) =>
+        context.caller === undefined || candidate.projectId === context.caller.projectId,
+    );
+    // SCIENT-FORK:END
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {

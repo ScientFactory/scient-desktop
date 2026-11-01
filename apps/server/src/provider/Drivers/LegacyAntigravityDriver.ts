@@ -1,15 +1,6 @@
 /**
- * LegacyAntigravityDriver — compatibility `ProviderDriver` for `agy --stream-json`.
- *
- * Antigravity uses the CLI's native persistent stream-json interface.
- *
- * Text generation uses the same native transport with agy's JSON-schema
- * structured-output option.
- *
- * The provider defaults to enabled so first-run assisted onboarding can
- * install and verify it. An explicit instance or legacy disable still wins.
- *
- * @module provider/Drivers/AntigravityDriver
+ * Default enabled permits first-run assisted installation/verification; explicit instance or legacy
+ * disable still wins. Use native stream-json transport for Antigravity rather than ACP assumptions.
  */
 import {
   AntigravitySettings,
@@ -141,7 +132,7 @@ export const LegacyAntigravityDriver = {
     const serverConfig = yield* ServerConfig;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-    const serverSettings = yield* ServerSettingsService;
+    yield* ServerSettingsService;
     // Antigravity is intentionally the Google-account/subscription provider.
     // Do not let ambient Gemini/API-key variables silently change billing or
     // make an unauthenticated account appear connected.

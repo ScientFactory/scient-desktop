@@ -57,6 +57,7 @@ afterEach(async () => {
 });
 
 describe("Codex package completeness", () => {
+  // regression: aa7e503582 fix(provider-runtime): qualify Codex packages without patched zsh
   it.each(cases)(
     "$version $target.platform-$target.arch-$target.libc missing=$missing",
     async ({ target, version, files, missing }) => {

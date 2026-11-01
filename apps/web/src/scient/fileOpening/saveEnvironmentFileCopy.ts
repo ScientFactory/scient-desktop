@@ -12,11 +12,8 @@ import { ensureLocalApi } from "~/localApi";
 import { environmentFileAssetResource } from "./openEnvironmentFileInPreview";
 
 /**
- * Saves a copy of any file the environment can read onto the device in hand:
- * the native Save dialog on desktop, a download in a browser. It is what
- * "open it in another app" means for a viewer on another machine, where the
- * host's own applications are out of reach, and it works for files Scient
- * cannot preview. The environment serves the one exact file, nothing beside it.
+ * A remote viewer cannot use the environment host's applications. Save only the exact file onto the
+ * current device; adjacent files are outside this capability.
  */
 export async function saveEnvironmentFileCopy<AssetError>(input: {
   readonly environmentId: EnvironmentId;

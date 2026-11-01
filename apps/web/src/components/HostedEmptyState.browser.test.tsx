@@ -86,7 +86,13 @@ function linked(availability: Record<string, Availability>): DiscoveredEnvironme
 }
 
 async function publish(environments: DiscoveredEnvironments) {
-  discovery.state = { environments, refreshing: false, offline: false, error: Option.none() };
+  discovery.state = {
+    environments,
+    listed: true,
+    refreshing: false,
+    offline: false,
+    error: Option.none(),
+  };
   await act(async () => {
     for (const listener of discovery.listeners) listener();
   });
@@ -101,6 +107,7 @@ function setup() {
   discovery.listeners.clear();
   discovery.state = {
     environments: new Map(),
+    listed: true,
     refreshing: false,
     offline: false,
     error: Option.none(),
@@ -108,6 +115,7 @@ function setup() {
   discovery.register.mockReset().mockResolvedValue(AsyncResult.success(undefined));
 }
 
+// regression: e37a7a4f71 fix(web): hosted app skips setup and recommends signing in (#19680)
 // The first added computer replaces this screen with the app, so every
 // registration has to start in the same pass, after all health checks finish.
 it("adds every linked computer only after discovery finishes checking them", async () => {
@@ -174,6 +182,6 @@ it("routes a disabled local computer to Connections without installation or clou
   expect(screen.container.textContent).not.toMatch(/npx|T3 Code|Sign in/);
   expect(screen.container.querySelector('a[href*="t3.codes"]')).toBeNull();
   expect(discovery.register).not.toHaveBeenCalled();
-  await screen.getByRole("link", { name: "Open Connections" }).click();
+  await screen.getByRole("link", { name: "Open Environments" }).click();
   expect(screen.router?.state.location.pathname).toBe("/settings/connections");
 });

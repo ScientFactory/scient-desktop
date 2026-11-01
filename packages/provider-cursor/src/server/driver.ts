@@ -1,11 +1,5 @@
 /**
- * CursorDriver — `ProviderDriver` for the Cursor Agent SDK runtime.
- *
- * Provider status, model discovery, orchestration, and text generation use the
- * official Cursor SDK with an instance browser login or CURSOR_API_KEY. A host
- * may inject runtime resolution and instance composition without moving that
- * host's lifecycle policy into this package.
- *
+ * Host runtime resolution must not move host lifecycle policy into the generic Cursor SDK driver.
  * @module provider/Drivers/CursorDriver
  */
 import {
@@ -31,7 +25,7 @@ import {
   makeCursorAdapterV2,
   type CursorAdapterV2DriverEnv,
   // SCIENT-FORK:START — type the optional host copy passed through the runtime resolver.
-  type CursorAdapterV2DriverOptions,
+  type CursorAdapterV2Options,
   // SCIENT-FORK:END
   type CursorTurnStartErrorMapper,
 } from "./adapter.ts";
@@ -99,12 +93,8 @@ export interface CursorRuntimeResolverInput extends ProviderDriverCreateInput<Cu
 }
 
 /**
- * Host-owned runtime policy applied around the generic Cursor driver.
- *
- * `effectiveEnvironment` is used for status, skills, and text-generation
- * commands. The SDK adapter continues to receive the explicit instance
- * environment and effective config, so it does not inherit arbitrary host
- * resolver state.
+ * Host effectiveEnvironment governs status, skills and text generation.
+ * The SDK adapter receives explicit instance configuration to avoid inheriting arbitrary resolver state.
  */
 export interface CursorRuntimeResolution<Requirements = never, Extension extends object = {}> {
   readonly effectiveConfig: CursorSettings;
@@ -114,9 +104,9 @@ export interface CursorRuntimeResolution<Requirements = never, Extension extends
   readonly turnStartError?: CursorTurnStartErrorMapper;
   // SCIENT-FORK:START — host-owned copy is optional and does not move runtime policy.
   /** Host-owned prompt policy; absent means the package's generic T3 default. */
-  readonly orchestrationPromptForFirstRun?: CursorAdapterV2DriverOptions["orchestrationPromptForFirstRun"];
+  readonly orchestrationPromptForFirstRun?: CursorAdapterV2Options["orchestrationPromptForFirstRun"];
   /** Host-owned runtime policy; absent means the package's generic T3 default. */
-  readonly runtimeInstructions?: CursorAdapterV2DriverOptions["runtimeInstructions"];
+  readonly runtimeInstructions?: CursorAdapterV2Options["runtimeInstructions"];
   // SCIENT-FORK:END
   /** Called after the package stamps the canonical provider-instance identity. */
   readonly decorateSnapshot?: (snapshot: ServerProvider) => ServerProvider;
@@ -278,7 +268,6 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
       let catalogModels: ReadonlyArray<ServerProviderModel> = [];
       const orchestrationAdapter = yield* makeCursorAdapterV2({
         instanceId: input.instanceId,
-        settings: effectiveConfig,
         environment: effectiveEnvironment,
         ...(runtime.turnStartError ? { turnStartError: runtime.turnStartError } : {}),
         ...(runtime.orchestrationPromptForFirstRun === undefined
@@ -349,29 +338,29 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
             { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
             auth.usesApiKey ? "api-key" : "browser",
           ).pipe(
-            Effect.flatMap((providerSnapshot) =>
-              effectiveConfig.enabled && providerSnapshot.installed
-                ? Effect.gen(function* () {
-                    const skills = yield* readMachineSkills;
-                    const usageLimits =
-                      providerSnapshot.auth.status === "authenticated"
-                        ? yield* host.settings.get.pipe(
-                            Effect.flatMap((settings) =>
-                              readCursorUsageLimits(
-                                effectiveConfig,
-                                { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
-                                settings.cursorKeychainUsageEnabled,
-                              ),
+            Effect.filterOrElse(
+              (providerSnapshot) => !(effectiveConfig.enabled && providerSnapshot.installed),
+              (providerSnapshot) =>
+                Effect.gen(function* () {
+                  const skills = yield* readMachineSkills;
+                  const usageLimits =
+                    providerSnapshot.auth.status === "authenticated"
+                      ? yield* host.settings.get.pipe(
+                          Effect.flatMap((settings) =>
+                            readCursorUsageLimits(
+                              effectiveConfig,
+                              { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
+                              settings.cursorKeychainUsageEnabled,
                             ),
-                          )
-                        : undefined;
-                    return {
-                      ...providerSnapshot,
-                      ...(skills === undefined ? {} : { skills }),
-                      ...(usageLimits === undefined ? {} : { usageLimits }),
-                    };
-                  })
-                : Effect.succeed(providerSnapshot),
+                          ),
+                        )
+                      : undefined;
+                  return {
+                    ...providerSnapshot,
+                    ...(skills === undefined ? {} : { skills }),
+                    ...(usageLimits === undefined ? {} : { usageLimits }),
+                  };
+                }),
             ),
           ),
         ),

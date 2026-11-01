@@ -6,11 +6,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
+// SCIENT-FORK:START
 import {
   resolveGitWorktreePath,
   resolveWorktreeScientDevHome,
   resolveWorktreeT3Home,
 } from "./devHome.ts";
+// SCIENT-FORK:END
 
 const makeRepo = (
   kind:
@@ -85,6 +87,7 @@ describe("resolveWorktreeT3Home", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+// SCIENT-FORK:START
 
 describe("resolveWorktreeScientDevHome", () => {
   it.effect("answers with .scient-next before the dev runner creates it", () =>
@@ -96,3 +99,4 @@ describe("resolveWorktreeScientDevHome", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+// SCIENT-FORK:END

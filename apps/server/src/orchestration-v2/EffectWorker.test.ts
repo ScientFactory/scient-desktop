@@ -9,6 +9,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   VcsProcessExitError,
 } from "@t3tools/contracts";
@@ -18,11 +19,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Queue from "effect/Queue";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -43,46 +42,6 @@ const providerThreadId = ProviderThreadId.make("provider-thread:effect-worker-re
 const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart");
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
 const runId = RunId.make("run:effect-worker-restart");
-
-it.effect("tracks concurrent execution ownership until completion or interruption", () =>
-  Effect.gen(function* () {
-    const entered = yield* Queue.unbounded<string>();
-    const firstDone = yield* Deferred.make<void>();
-    const secondDone = yield* Deferred.make<void>();
-    const now = yield* DateTime.now;
-    const first = { ...restartEffect(now, { type: "detach" }), id: "health:first" };
-    const second = { ...first, id: "health:second" };
-    const pending = [first, second];
-    const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.sync(() => Option.fromNullishOr(pending.shift())),
-      get: (id) => Effect.succeed(Option.some(id === first.id ? first : second)),
-      awaitCancellation: () => Effect.never,
-      clearCancellation: () => Effect.void,
-      succeed: () => Effect.succeed(true),
-    });
-    const executor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
-      execute: (effect) =>
-        Queue.offer(entered, effect.id).pipe(
-          Effect.andThen(Deferred.await(effect.id === first.id ? firstDone : secondDone)),
-        ),
-    });
-    yield* Effect.gen(function* () {
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      assert.isFalse(yield* worker.isExecutingThread!(threadId));
-      const firstRun = yield* worker.runOnce.pipe(Effect.forkChild);
-      assert.equal(yield* Queue.take(entered), first.id);
-      const secondRun = yield* worker.runOnce.pipe(Effect.forkChild);
-      assert.equal(yield* Queue.take(entered), second.id);
-      assert.isTrue(yield* worker.isExecutingThread!(threadId));
-      assert.isFalse(yield* worker.isExecutingThread!(ThreadId.make("other-thread")));
-      yield* Deferred.succeed(firstDone, undefined);
-      yield* Fiber.join(firstRun);
-      assert.isTrue(yield* worker.isExecutingThread!(threadId));
-      yield* Fiber.interrupt(secondRun);
-      assert.isFalse(yield* worker.isExecutingThread!(threadId));
-    }).pipe(Effect.provide(EffectWorker.layer.pipe(Layer.provide(Layer.merge(outbox, executor)))));
-  }),
-);
 
 function restartEffect(
   now: DateTime.Utc,
@@ -111,7 +70,6 @@ function restartEffect(
     attemptCount: 1,
     availableAt: timestamp,
     leaseOwner: "test-worker",
-    leaseExpiresAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: null,
@@ -128,6 +86,7 @@ function makeExecutorLayer(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
   readonly pendingInterrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interruptPendingStart"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
+  readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -150,18 +109,19 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
-        inspectExecution: () => Effect.succeed("unknown"),
         withProviderWorkAdmission: () => Effect.die("Unused native generation admission"),
         resolveMcpInvocationPolicy: () =>
           Effect.die("MCP invocation policy is not used in this fixture."),
         shutdown: Effect.void,
         open: () => Effect.die("unused open"),
-        get: () => Effect.succeed(Option.none()),
+        get: () => Effect.succeedNone,
         isLive: () => Effect.succeed(false),
         close: () => Effect.void,
         closeInstance: () => Effect.void,
         release: () => record("release"),
         detach: () => record("detach"),
+        otherWorkingThreads: () => Effect.succeed([]),
+        releaseUnlessBusy: () => Effect.succeed(true),
       }),
     ),
     Layer.succeed(
@@ -210,7 +170,9 @@ function makeExecutorLayer(input: {
     ),
     Layer.succeed(
       RuntimeRequestService.RuntimeRequestServiceV2,
-      RuntimeRequestService.RuntimeRequestServiceV2.of({ respond: () => Effect.void }),
+      RuntimeRequestService.RuntimeRequestServiceV2.of({
+        respond: input.respond ?? (() => Effect.void),
+      }),
     ),
     Layer.succeed(
       ThreadTitleRegenerationService.ThreadTitleRegenerationService,
@@ -265,7 +227,18 @@ it.effect(
     }),
 );
 
-it.effect("settles a stopped run when its adapter has already lost the native turn", () =>
+it.effect.each([
+  {
+    name: "settles a stopped run when its adapter has already lost the native turn",
+    unresponsive: false,
+    dispatched: ["thread.background-work.settle"],
+  },
+  {
+    name: "leaves the run running and flags the Stop when the provider never confirms it",
+    unresponsive: true,
+    dispatched: ["thread.interrupt.unresponsive"],
+  },
+])("$name", ({ unresponsive, dispatched }) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const events = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -276,7 +249,8 @@ it.effect("settles a stopped run when its adapter has already lost the native tu
           threadId,
           operation: "interrupt",
           providerTurnId,
-          cause: "Provider turn is not active.",
+          ...(unresponsive ? { unresponsive } : {}),
+          cause: unresponsive ? "Timed out." : "Provider turn is not active.",
         }),
       threads: {
         dispatch: (command) =>
@@ -297,7 +271,7 @@ it.effect("settles a stopped run when its adapter has already lost the native tu
         },
       });
     }).pipe(Effect.provide(layer));
-    assert.deepEqual(yield* Ref.get(events), ["thread.background-work.settle"]);
+    assert.deepEqual(yield* Ref.get(events), dispatched);
   }),
 );
 
@@ -370,6 +344,42 @@ it.effect.each([
   }),
 );
 
+it.effect("does not report an answer whose last delivery attempt is interrupted", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const reported = yield* Ref.make(0);
+    const layer = makeExecutorLayer({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      respond: () => Effect.interrupt,
+      threads: {
+        dispatch: (command) =>
+          Ref.update(reported, (count) =>
+            command.type === "runtime-request.delivery.fail" ? count + 1 : count,
+          ).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+      },
+    });
+    const exit = yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      return yield* Effect.exit(
+        executor.execute(
+          {
+            ...restartEffect(now, { type: "detach" }),
+            request: {
+              type: "runtime-request.respond",
+              providerSessionId: oldSessionId,
+              requestId: RuntimeRequestId.make("runtime-request:effect-worker-interrupted"),
+              answers: { next: "Ship it" },
+            },
+          },
+          { willRetry: false },
+        ),
+      );
+    }).pipe(Effect.provide(layer));
+    assert.isTrue(Exit.hasInterrupts(exit));
+    assert.equal(yield* Ref.get(reported), 0);
+  }),
+);
+
 it.effect("requeues a claim when a pre-execution worker check fails", () =>
   Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);
@@ -384,7 +394,6 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -400,7 +409,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     >([]);
     const executionCount = yield* Ref.make(0);
     const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
       get: () =>
         Effect.fail(
           new EffectOutbox.EffectOutboxError({
@@ -456,7 +465,6 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -467,7 +475,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
     const executionCount = yield* Ref.make(0);
     const settlementCount = yield* Ref.make(0);
     const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => {
         cancellationArmed = true;
         return Deferred.await(signal);
@@ -524,7 +532,6 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -534,8 +541,8 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     const terminalErrors = yield* Ref.make<ReadonlyArray<string>>([]);
     const executionCount = yield* Ref.make(0);
     const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
-      get: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
+      get: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => Effect.never,
       clearCancellation: () => Effect.void,
       succeed: () =>
@@ -590,7 +597,6 @@ it.effect("requeues a replay-safe claim when success settlement fails", () =>
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -599,8 +605,8 @@ it.effect("requeues a replay-safe claim when success settlement fails", () =>
     const retries = yield* Ref.make(0);
     const terminalizations = yield* Ref.make(0);
     const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
-      get: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
+      get: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => Effect.never,
       clearCancellation: () => Effect.void,
       succeed: () =>
@@ -651,7 +657,6 @@ it.effect("keeps a process-bound executor failure retryable when retry settlemen
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -660,8 +665,8 @@ it.effect("keeps a process-bound executor failure retryable when retry settlemen
     const retryAttempts = yield* Ref.make(0);
     const terminalizations = yield* Ref.make(0);
     const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
-      get: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
+      get: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => Effect.never,
       clearCancellation: () => Effect.void,
       retry: () =>
@@ -723,7 +728,6 @@ it.effect("keeps a max-attempt replay-safe failure terminal when fail settlement
       attemptCount: 5,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -732,8 +736,8 @@ it.effect("keeps a max-attempt replay-safe failure terminal when fail settlement
     const failAttempts = yield* Ref.make(0);
     const retries = yield* Ref.make(0);
     const outboxLayer = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
-      get: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
+      get: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => Effect.never,
       clearCancellation: () => Effect.void,
       fail: () =>
@@ -863,8 +867,8 @@ it.effect(
           }),
       });
       const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-        claimNext: () => Effect.succeed(Option.some(effect)),
-        get: () => Effect.succeed(Option.some(effect)),
+        claimNext: () => Effect.succeedSome(effect),
+        get: () => Effect.succeedSome(effect),
         awaitCancellation: () => Effect.never,
         clearCancellation: () => Effect.void,
         retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
@@ -909,7 +913,7 @@ it.effect("a stale pending Stop never settles background work on its former thre
     };
     const layer = makeExecutorLayer({
       events,
-      pendingInterrupt: () => Effect.succeed(Option.none()),
+      pendingInterrupt: () => Effect.succeedNone,
     });
     yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
@@ -978,7 +982,6 @@ it.effect("settles a delegated child once its restart continuation fails for goo
       attemptCount: 1,
       availableAt: timestamp,
       leaseOwner: "test-worker",
-      leaseExpiresAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
       completedAt: null,
@@ -1011,7 +1014,6 @@ it.effect("keeps retrying a file release past the attempt budget while its files
       attemptCount: 9,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -1020,8 +1022,8 @@ it.effect("keeps retrying a file release past the attempt budget while its files
     const retries = yield* Ref.make(0);
     const failures = yield* Ref.make(0);
     const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(effect)),
-      get: () => Effect.succeed(Option.some(effect)),
+      claimNext: () => Effect.succeedSome(effect),
+      get: () => Effect.succeedSome(effect),
       awaitCancellation: () => Effect.never,
       clearCancellation: () => Effect.void,
       retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),

@@ -16,7 +16,7 @@ model picker can open the same compact setup flow. On mobile, open
 **Settings > Environments** and choose **Set up Antigravity** for the host
 environment.
 
-Once the runtime is installed, you can also sign in from **Settings > Provider accounts** in the
+Once the runtime is installed, you can also sign in from **Settings > Providers** in the
 mobile app.
 
 1. If Antigravity is missing, choose **Install Antigravity**. Scient downloads
@@ -107,7 +107,10 @@ remove a runtime while it is in use.
 
 ## Models, files, and permissions
 
-The official agent reports the models available to the selected account.
+The official agent reports the models available to the selected account,
+including Claude and GPT models when your plan has them. Pick a thinking level
+beside the model list in the model picker; it shows only the levels the selected
+model supports.
 Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
@@ -130,6 +133,10 @@ Skills for every project go in `~/.gemini/config/skills` or
 `~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
 so a skill there only appears when the project itself is your home directory.
 
+Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
+workspace when a session starts. Git does not track empty folders, so they never
+appear in commits.
+
 Antigravity receives images directly. Every other attachment, including PDFs,
 text, audio, archives, and videos, is passed as a saved file path for the agent
 to inspect with its tools. A video path does not enable native video input.
@@ -144,6 +151,9 @@ Provider questions with fixed choices remain interactive even in **Full access**
 Antigravity does not support conversation rewind. Reverting a thread or editing
 and resubmitting an earlier turn is therefore unavailable; send a follow-up or
 start a new thread instead.
+
+Manual context compaction is unavailable through Antigravity's ACP runtime, even
+though its CLI has `/compact`. Start a new thread when you need a fresh context.
 
 ## Skills and subagents
 
@@ -178,7 +188,7 @@ until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use provider settings on web or desktop, or **Provider accounts** on mobile.
+sign in again, use provider settings on web or desktop, or **Settings > Providers** on mobile.
 
 Legacy `agy` credentials use the older provider-owned credential store and are
 kept for legacy-session compatibility. Removing the ACP runtime does not erase

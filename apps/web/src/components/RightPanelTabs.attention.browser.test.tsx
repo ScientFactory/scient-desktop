@@ -86,7 +86,7 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
       await root.rerender(<RightPanelTabs {...props} attentionSurfaceIds={new Set([file.id])} />),
   );
   const attentionButton = host.querySelector<HTMLButtonElement>(
-    '[aria-label="notes.md — changes need attention"]',
+    '[aria-label="notes.md: changes need attention"]',
   );
   expect(attentionButton).not.toBeNull();
   expect(attentionButton?.querySelector('svg[aria-hidden="true"]')).not.toBeNull();

@@ -36,6 +36,7 @@ export function LatexLongTableBand({
     <>
       {band.rows.map((row, rowIndex) => (
         <tr
+          // oxlint-disable-next-line react/no-array-index-key -- Repeated header/footer rows occupy positional grid slots and may have identical content.
           key={rowIndex}
           data-latex-longtable-band={kind}
           data-paged-repeat={repeat || undefined}
@@ -57,6 +58,7 @@ export function LatexLongTableBand({
             const bottomRule = latexTableRulePresentation(layout?.bottomRule);
             return (
               <td
+                // oxlint-disable-next-line react/no-array-index-key -- Column coordinates own merged-cell layout; equal text is not a cell identity.
                 key={column}
                 colSpan={layout?.colSpan}
                 rowSpan={layout?.rowSpan}

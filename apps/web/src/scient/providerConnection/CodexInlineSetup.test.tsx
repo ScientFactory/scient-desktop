@@ -121,6 +121,33 @@ describe("CodexInlineSetup", () => {
     expect(markup).not.toContain("The secure flow opens in your browser");
   });
 
+  it("offers to check again, not repair or sign-in, when a healthy Codex could not read the account", () => {
+    const offline = (healthy: boolean) =>
+      render(
+        provider({
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Codex app-server provider probe failed: workspace routing discovery failed.",
+          connection: {
+            ...provider().connection!,
+            runtime: {
+              ...provider().connection!.runtime!,
+              source: "scient_managed",
+              actions: ["repair", "remove"],
+              healthy,
+            },
+          },
+        }),
+      );
+
+    const markup = offline(true);
+    expect(markup).toContain("Codex can’t check your account");
+    expect(markup).toContain("Try again");
+    expect(markup).not.toContain("Codex needs repair");
+    expect(markup).not.toContain("Sign in required");
+    expect(offline(false)).toContain("Codex needs repair");
+  });
+
   it("shows and labels the active Codex device code", () => {
     const markup = render(
       provider({
@@ -143,36 +170,6 @@ describe("CodexInlineSetup", () => {
     expect(markup).toContain("ABCD-EFGH");
     expect(markup).toContain('aria-label="Copy Codex device code"');
     expect(markup).toContain("Open sign-in page");
-  });
-
-  it("keeps managed installation compact without synthetic progress", () => {
-    const markup = render(
-      provider({
-        connection: {
-          ...provider().connection!,
-          runtime: {
-            ...provider().connection!.runtime!,
-            operation: {
-              operationId: "runtime-install",
-              action: "install",
-              status: "downloading",
-              startedAt: "2026-08-11T20:00:00.000Z",
-              finishedAt: null,
-              message: "Downloading Codex.",
-              downloadedBytes: 1,
-              totalBytes: 2,
-            },
-          },
-        },
-      }),
-    );
-
-    expect(markup).toContain("Installing Codex");
-    expect(markup).toContain("Downloading Codex…");
-    expect(markup).toContain(">Cancel<");
-    expect(markup).toContain("text-destructive/80");
-    expect(markup).not.toContain("progressbar");
-    expect(markup).toContain("space-y-3 px-6 pb-4");
   });
 
   it("keeps the connected account action in the ready row", () => {

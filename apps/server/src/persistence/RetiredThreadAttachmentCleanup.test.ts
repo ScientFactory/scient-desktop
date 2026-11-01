@@ -40,10 +40,12 @@ layer("RetiredThreadAttachmentCleanup", (it) => {
         const survivorId = createAttachmentId("thread-retired-extra");
         assert.isNotNull(retiredId);
         assert.isNotNull(survivorId);
-        const retiredPath = NodePath.join(attachmentsDir, `${retiredId}.png`);
-        const survivorPath = NodePath.join(attachmentsDir, `${survivorId}.png`);
+        const retiredPath = NodePath.join(attachmentsDir, `${retiredId}.docx`);
+        const survivorPath = NodePath.join(attachmentsDir, `${survivorId}.docx`);
         NodeFS.writeFileSync(retiredPath, "remove");
+        NodeFS.writeFileSync(`${retiredPath}.txt`, "extracted remove");
         NodeFS.writeFileSync(survivorPath, "keep");
+        NodeFS.writeFileSync(`${survivorPath}.txt`, "extracted keep");
         const terminalPath = NodePath.join(
           terminalLogsDir,
           `terminal_${Base64Url.encode("thread-retired")}.log`,
@@ -65,7 +67,9 @@ layer("RetiredThreadAttachmentCleanup", (it) => {
         });
 
         assert.isFalse(NodeFS.existsSync(retiredPath));
+        assert.isFalse(NodeFS.existsSync(`${retiredPath}.txt`));
         assert.isTrue(NodeFS.existsSync(survivorPath));
+        assert.isTrue(NodeFS.existsSync(`${survivorPath}.txt`));
         assert.isFalse(NodeFS.existsSync(terminalPath));
         assert.isFalse(NodeFS.existsSync(providerPath));
         assert.isFalse(NodeFS.existsSync(queuePath));
@@ -106,6 +110,7 @@ layer("RetiredThreadAttachmentCleanup", (it) => {
         assert.isNotNull(sharedSegmentAttachment);
         const attachmentPath = NodePath.join(attachmentsDir, `${sharedSegmentAttachment}.png`);
         NodeFS.writeFileSync(attachmentPath, "keep");
+        NodeFS.writeFileSync(`${attachmentPath}.txt`, "keep sidecar");
 
         yield* cleanupRetiredThreadFilesystem({
           stateDir,
@@ -115,6 +120,7 @@ layer("RetiredThreadAttachmentCleanup", (it) => {
         });
 
         assert.isTrue(NodeFS.existsSync(attachmentPath));
+        assert.isTrue(NodeFS.existsSync(`${attachmentPath}.txt`));
         const cleanup = yield* sql<{ readonly count: number }>`
           SELECT COUNT(*) AS count FROM retired_projectless_thread_cleanup
         `;

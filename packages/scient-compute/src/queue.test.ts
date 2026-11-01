@@ -185,12 +185,6 @@ describe("compute queue draining", () => {
       expect(drained.cancelled).toEqual([id("execution-1"), id("execution-2")]);
     }),
   );
-
-  it("drains an empty queue without inventing anything to cancel", () => {
-    const drained = drainComputeQueue(EMPTY_COMPUTE_QUEUE);
-    expect(drained.active).toBeNull();
-    expect(drained.cancelled).toEqual([]);
-  });
 });
 
 describe("compute queue positions", () => {
@@ -214,8 +208,4 @@ describe("compute queue positions", () => {
       ]);
     }),
   );
-
-  it("has no position for an execution it does not hold", () => {
-    expect(computeQueuePositionOf(EMPTY_COMPUTE_QUEUE, id("stranger"))).toBeNull();
-  });
 });

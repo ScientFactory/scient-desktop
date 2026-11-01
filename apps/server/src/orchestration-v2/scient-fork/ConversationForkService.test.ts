@@ -319,6 +319,17 @@ it.effect(
       assert.notProperty(target.thread, "conversationForkBoundaries");
       const shell = yield* store.getShellSnapshot();
       assert.ok(shell.threads.some((thread) => thread.id === command.newThreadId));
+      const assertForkShellCounts = Effect.gen(function* () {
+        const detail = yield* store.getThreadProjection(command.newThreadId);
+        const snapshot = yield* store.getShellSnapshot();
+        const listed = [...snapshot.threads, ...snapshot.archivedThreads].find(
+          (thread) => thread.id === command.newThreadId,
+        );
+        const single = yield* store.getThreadShell(command.newThreadId);
+        assert.equal(listed?.visibleItemCount, detail.visibleTurnItems.length);
+        assert.equal(single?.visibleItemCount, detail.visibleTurnItems.length);
+      });
+      yield* assertForkShellCounts;
       assert.ok(shell.threads.every((thread) => !("conversationForkBoundaries" in thread)));
       assert.equal(target.thread.sectionId, ThreadSectionId.make("section:research"));
       assert.equal(target.thread.conversationFork?.status, "ready");
@@ -467,6 +478,7 @@ it.effect(
         conversationSnapshotProjection(target, cwd).messages,
       );
       assert.deepEqual(reverted.visibleTurnItems, target.visibleTurnItems);
+      yield* assertForkShellCounts;
       assert.deepEqual(
         (yield* store.getTimelinePage(command.newThreadId, { view: "activity", limit: 100 })).items,
         page.items,
@@ -598,6 +610,7 @@ it.effect(
         ),
       );
       assert.equal(yield* fs.readFileString(sourcePath!), "evidence");
+      yield* assertForkShellCounts;
       assert.equal(
         (yield* orchestrator.getThreadProjection(command.newThreadId)).messages[1]?.text,
         "Answer",
@@ -643,6 +656,7 @@ it.effect(
       })).archivedThreads.find((thread) => thread.id === command.newThreadId);
       assert.ok(rebuiltShell);
       assert.deepEqual(rebuiltShell.forkLineage, originalLineage);
+      yield* assertForkShellCounts;
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
     }).pipe(Effect.provide(layer)),
 );

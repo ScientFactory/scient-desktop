@@ -864,9 +864,14 @@ it.effect(
       yield* Effect.gen(function* () {
         const service = yield* ProjectService.make;
         const serverSettings = yield* ServerSettings.ServerSettingsService;
+        // A `null` reset keeps title instructions for released clients; deletion must not.
         yield* serverSettings.updateSettings({
           projectSettingsOverrides: {
-            [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+            [projectId]: {
+              defaultAutoPull: true,
+              threadTitleInstructions: "",
+              providerInstances: { [instanceId]: { enabled: true } },
+            },
           },
         });
 

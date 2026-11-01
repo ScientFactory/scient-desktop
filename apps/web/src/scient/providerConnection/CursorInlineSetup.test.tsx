@@ -174,65 +174,6 @@ describe("CursorInlineSetup", () => {
     expect(markup).toContain("Repair Cursor CLI");
   });
 
-  it("uses the Cursor mark for composer installation while preserving dialog status styling", () => {
-    const markup = render(
-      provider({
-        installed: false,
-        status: "error",
-        connection: {
-          ...provider().connection!,
-          runtime: {
-            ...provider().connection!.runtime!,
-            source: "missing",
-            actions: ["install"],
-          },
-        },
-      }),
-    );
-
-    expect(markup).toContain("Install Cursor");
-    expect(markup).toContain('viewBox="0 0 466.73 532.09"');
-    expect(markup).toContain("in-[[data-model-picker-content=true]]:inline-flex");
-    expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
-  });
-
-  it("keeps managed installation compact without synthetic progress", () => {
-    const markup = render(
-      provider({
-        connection: {
-          ...provider().connection!,
-          runtime: {
-            ...provider().connection!.runtime!,
-            source: "scient_managed",
-            actions: ["repair", "remove"],
-            managedVersion: "2026.08.11-e8db854",
-            operation: {
-              operationId: "runtime-install",
-              action: "install",
-              status: "downloading",
-              startedAt: "2026-08-23T08:00:00.000Z",
-              finishedAt: null,
-              message: "Downloading Cursor.",
-              downloadedBytes: 1,
-              totalBytes: 2,
-            },
-          },
-        },
-      }),
-    );
-
-    expect(markup).toContain("Installing Cursor CLI");
-    expect(markup).toContain("Downloading Cursor.");
-    expect(markup).not.toContain('viewBox="0 0 466.73 532.09"');
-    expect(markup.match(/animate-spin/g)).toHaveLength(1);
-    expect(markup).toContain(">Cancel<");
-    expect(markup).toContain("text-destructive/80");
-    expect(markup).not.toContain("progressbar");
-    expect(markup).toContain('data-provider-onboarding-view="assisted"');
-    // The status icon is the only spinner: no second one beside the title.
-    expect(markup.match(/animate-spin/g)).toHaveLength(1);
-  });
-
   it("shows the explicitly requested CLI activation", () => {
     const markup = render(
       provider({

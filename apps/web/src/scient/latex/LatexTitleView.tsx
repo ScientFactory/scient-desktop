@@ -114,9 +114,11 @@ export function LatexTitleView({
   const announceSelectedContext = useEffectEvent(() => {
     if (editable) activateLatexContext(editor.view.dom, id);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- announces the selected context to the editor when selection changes
   useEffect(() => {
     if (selected) announceSelectedContext();
   }, [selected]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for context-activate events on the latex context root DOM scope until unmount
   useEffect(() => {
     const deactivate = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== id) setActive(false);
@@ -125,6 +127,7 @@ export function LatexTitleView({
     scope.addEventListener("scient-latex-context-activate", deactivate);
     return () => scope.removeEventListener("scient-latex-context-activate", deactivate);
   }, [editor, id]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for outside pointer and focus events on the document while the title is active
   useEffect(() => {
     if (!active) return;
     const outside = (event: PointerEvent) => {
@@ -144,6 +147,7 @@ export function LatexTitleView({
       document.removeEventListener("focusin", focusOutside);
     };
   }, [active, editor]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for edit-title events on the root DOM node until unmount
   useEffect(() => {
     const element = root.current;
     if (!element) return;

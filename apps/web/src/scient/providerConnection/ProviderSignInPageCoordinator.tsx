@@ -14,16 +14,14 @@ import { usePendingProviderSignInKeys } from "./providerSignInRequests";
 import { claimProviderSignInPage } from "./providerSignInCommands";
 
 /**
- * Mounted once for the app. Lends the opener the server's claim command, and
- * watches the provider snapshots of each environment in which this client is
- * starting a sign-in, so its page opens even when the start reply is lost or the
- * view that started it is gone. Nothing is observed while no sign-in started
- * here is pending, or before the command is registered.
+ * Watch pending sign-ins at app scope so lost replies or unmounted setup views cannot lose their
+ * page. Observe only environments with starts owned by this window and a registered claim command.
  */
 export function ProviderSignInPageCoordinator() {
   const claim = useAtomCommand(claimProviderSignInPage, {
     reportFailure: false,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this page's sign-in claimer in the module registry until unmount
   useEffect(() => {
     setProviderSignInPageClaimer(async (environmentId, input) => {
       const result = await claim({ environmentId, input });
@@ -47,6 +45,7 @@ export function ProviderSignInPageCoordinator() {
 
 function EnvironmentSignInObserver(props: { readonly environmentId: EnvironmentId }) {
   const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds provider snapshots to the sign-in openings observer outside React
   useEffect(() => {
     if (providers) observeProviderSignInSnapshots(props.environmentId, providers);
   }, [props.environmentId, providers]);

@@ -1,11 +1,6 @@
 /**
- * Scient's fork-related orchestration V2 wire schemas: Claude fork boundary
- * evidence, fork initialization provenance, and the message-boundary fork
- * turn item with the notice older clients decode instead. The fork items
- * share one exact base-field factory. orchestrationV2.ts supplies its status
- * and native-reference schemas and keeps the items at their original union positions.
- *
- * @module orchestrationV2Fork
+ * Fork variants share exact base fields and preserve original union positions. Keep the fallback
+ * notice older clients can decode alongside the native message-boundary item.
  */
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
@@ -16,10 +11,12 @@ import {
   MessageId,
   NodeId,
   NonNegativeInt,
+  PositiveInt,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
   ThreadId,
+  TrimmedNonEmptyString,
   TurnId,
   TurnItemId,
 } from "../baseSchemas.ts";
@@ -43,6 +40,14 @@ export const makeTurnItemBaseFields = (
         itemId: TurnItemId,
         runId: Schema.NullOr(RunId),
         status: OrchestrationV2TurnItemStatus,
+      }),
+    ),
+    /** Wire-only cursor for collapsed work; persisted items keep their complete history. */
+    deferredWork: Schema.optionalKey(
+      Schema.Struct({
+        cursor: TrimmedNonEmptyString,
+        itemCount: PositiveInt,
+        lastOrdinal: NonNegativeInt,
       }),
     ),
     toolNonExecutionKind: Schema.optional(Schema.String),
@@ -74,6 +79,13 @@ interface OrchestrationV2TurnItemBaseFields {
       readonly itemId: typeof TurnItemId;
       readonly runId: Schema.NullOr<typeof RunId>;
       readonly status: typeof TurnItemStatus;
+    }>
+  >;
+  readonly deferredWork: Schema.optionalKey<
+    Schema.Struct<{
+      readonly cursor: typeof TrimmedNonEmptyString;
+      readonly itemCount: typeof PositiveInt;
+      readonly lastOrdinal: typeof NonNegativeInt;
     }>
   >;
   readonly toolNonExecutionKind: Schema.optional<typeof Schema.String>;

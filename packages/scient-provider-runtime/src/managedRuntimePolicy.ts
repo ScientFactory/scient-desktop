@@ -1,11 +1,9 @@
 import type { ManagedRuntimeCatalogProvider } from "./managedRuntimeArtifact.ts";
 
 /**
- * Compatibility between a release feed and the installer shipped in Scient.
- * Bump only the affected family when new releases require changed installer
- * policy. Older apps reject that revision and retain their compatible runtime.
- * Historical revisions are readable by publication tooling, never relabeled
- * or published as current without native qualification.
+ * Bump installer compatibility only for the affected family so older apps retain compatible
+ * runtimes. Historical revisions are publication inputs, never current releases without native
+ * qualification.
  */
 export const MANAGED_RUNTIME_POLICY: Readonly<
   Record<
@@ -13,9 +11,9 @@ export const MANAGED_RUNTIME_POLICY: Readonly<
     { readonly revision: number; readonly historicalRevisions: ReadonlyArray<number> }
   >
 > = {
-  // Codex 0.163 removed patched zsh. Older installers require it unconditionally;
-  // keep their qualified feeds readable but never advertise the new layout to them.
-  codex: { revision: 4, historicalRevisions: [1, 2, 3] },
+  // Codex 0.166 unpacks past the 512 MiB older installers allow; keep their qualified
+  // feeds readable but never advertise a package they would reject.
+  codex: { revision: 5, historicalRevisions: [1, 2, 3, 4] },
   claudeAgent: { revision: 1, historicalRevisions: [] },
   antigravity: { revision: 1, historicalRevisions: [] },
   antigravityAcp: { revision: 2, historicalRevisions: [1] },

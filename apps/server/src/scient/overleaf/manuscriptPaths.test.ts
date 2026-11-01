@@ -31,6 +31,17 @@ describe("manuscriptPathProblem", () => {
     expect(manuscriptPathProblem(".scient/project.json")).toBe("reserved");
   });
 
+  it("refuses superscript device names and oversized Unicode components without rewriting", () => {
+    expect(manuscriptPathProblem("COM¹.tex")).toBe("invalid-on-a-supported-platform");
+    expect(manuscriptPathProblem("lpt².tex")).toBe("invalid-on-a-supported-platform");
+    expect(manuscriptPathProblem("é".repeat(127) + "a")).toBeNull();
+    expect(manuscriptPathProblem("é".repeat(128))).toBe("component-too-long");
+    expect(manuscriptPathProblem("a".repeat(255))).toBeNull();
+    expect(manuscriptPathProblem("a".repeat(256))).toBe("component-too-long");
+    expect(manuscriptPathProblem("bad\ud800.tex")).toBe("invalid-on-a-supported-platform");
+    expect(manuscriptPathProblem("😀.tex")).toBeNull();
+  });
+
   it("rejects names that cannot exist on every supported platform", () => {
     expect(manuscriptPathProblem("aux.tex")).toBe("invalid-on-a-supported-platform");
     expect(manuscriptPathProblem("notes.")).toBe("invalid-on-a-supported-platform");

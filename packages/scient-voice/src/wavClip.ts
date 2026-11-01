@@ -1,11 +1,5 @@
-// Strict validation and normalization of an untrusted recorded-audio payload
-// into a `NormalizedVoiceClip`.
-//
-// Lifted from the old app's desktop IPC boundary (`voiceRequest.ts`) and
-// stripped of host concerns (workspace cwd, thread id, routing mode): this core
-// only cares that the bytes are a well-formed 24 kHz mono 16-bit PCM WAV small
-// enough to transcribe. Every rejection is a `VoiceTranscriptionError` with
-// kind `invalid-audio` and a user-safe message.
+// Treat recorded audio as untrusted: accept only bounded, well-formed 24 kHz mono 16-bit PCM WAV
+// bytes. Rejections must use invalid-audio with a user-safe message.
 
 import * as NodeBuffer from "node:buffer";
 

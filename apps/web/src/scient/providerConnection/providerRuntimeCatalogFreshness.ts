@@ -3,11 +3,8 @@ import type { ProviderRuntimeSummary } from "@t3tools/contracts";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 /**
- * One line on Scient's qualified releases for a runtime it manages or can
- * manage: how the installed copy compares with the newest one, and how current
- * that list is ("Update 0.241.1 available · checked 5m ago"), with the reason when
- * the latest check failed. Null when the runtime has nothing to do with Scient's
- * list.
+ * Only managed/manageable runtimes have qualified-catalog freshness. Show last-check failure with
+ * comparison state so an old list cannot imply current release knowledge.
  */
 export function describeProviderRuntimeCatalog(
   runtime: ProviderRuntimeSummary,

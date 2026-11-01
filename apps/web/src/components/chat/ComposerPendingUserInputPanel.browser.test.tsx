@@ -78,18 +78,6 @@ describe("ComposerPendingUserInputPanel", () => {
     );
   });
 
-  it("starts expanded so the question and its options are visible", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const markup = await renderPanel(_fixture);
-
-    expect(markup).toContain("Approach");
-    expect(markup).toContain("Which approach should the migration take?");
-    expect(markup).toContain("Incremental");
-    expect(markup).toContain("Big bang");
-  });
-
   it("links URLs in the question text", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

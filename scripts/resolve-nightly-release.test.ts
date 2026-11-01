@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 
 import { resolveNightlyReleaseMetadata } from "./resolve-nightly-release.ts";
 
+// regression: 409ff90a14 Nightly release channel (#2012)
 it("derives nightly metadata including the short commit sha in the release name", () => {
   assert.deepStrictEqual(
     resolveNightlyReleaseMetadata("9.9.10", "20260413", 321, "abcdef1234567890"),

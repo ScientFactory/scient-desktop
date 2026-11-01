@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -40,9 +41,16 @@ const writes = [];
 let promptId;
 const run = async (index) => {
   let chunk = "";
+  let terminating = false;
   const flush = () => { if (chunk) process.stdout.write(chunk); chunk = ""; };
   for (const step of plan[index] ?? []) {
-    if (step.sleep !== undefined) {
+    if (step.onTermination) {
+      flush();
+      const termination = Promise.withResolvers();
+      process.once("SIGTERM", termination.resolve);
+      await termination.promise;
+      terminating = true;
+    } else if (step.sleep !== undefined) {
       flush();
       await new Promise((resolve) => setTimeout(resolve, step.sleep));
     } else if (step.respond === "prompt") {
@@ -63,6 +71,7 @@ const run = async (index) => {
     }
   }
   flush();
+  if (terminating) process.stdout.end(() => process.exit(0));
 };
 let buffer = "";
 process.stdin.on("data", (data) => {
@@ -76,12 +85,13 @@ process.stdin.on("data", (data) => {
       process.stdout.write(line({ id: message.id, result: { sessionId: "s", configOptions: options() } }));
     else if (message.method === "session/prompt") {
       promptId = message.id;
-      fs.writeFileSync(process.env.ACP_PROMPT, "received");
+      process.stderr.write("fixture:prompt-received\n");
     }
     else if (message.method === "session/set_config_option") {
       writes.push({ id: message.id, configId: message.params.configId, value: message.params.value });
       fs.appendFileSync(process.env.ACP_WRITES, message.params.value + "\n");
       void run(writes.length - 1);
+      process.stderr.write("fixture:write-received\n");
     }
   }
 });
@@ -90,7 +100,8 @@ process.stdin.on("data", (data) => {
 type Step =
   | { readonly respond: true | "prompt" | "malformed" | "rejected" }
   | { readonly update: "requested" | Record<string, string> }
-  | { readonly sleep: number };
+  | { readonly sleep: number }
+  | { readonly onTermination: true };
 const RESPOND: Step = { respond: true };
 const APPLY: Step = { update: "requested" };
 const decodePid = Schema.decodeSync(Schema.NumberFromString);
@@ -110,17 +121,19 @@ const scriptedRuntime = (
     const agent = NodePath.join(directory, "agent.mjs");
     const writes = NodePath.join(directory, "writes");
     const pid = NodePath.join(directory, "pid");
-    const prompt = NodePath.join(directory, "prompt");
     NodeFS.writeFileSync(agent, AGENT_SOURCE);
     NodeFS.writeFileSync(writes, "");
     const scope = yield* Effect.scope;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     let childExit: Fiber.Fiber<unknown, unknown> | undefined;
+    const promptReceived = yield* Deferred.make<void>();
+    const writeReceived = yield* Deferred.make<void>();
+    let receiptBuffer = "";
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
         command: process.execPath,
         args: [agent],
-        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid, ACP_PROMPT: prompt },
+        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid },
       },
       cwd: directory,
       clientInfo: { name: "t3-test", version: "0.0.0" },
@@ -128,6 +141,15 @@ const scriptedRuntime = (
       configOptionTransport,
       configOptionSettleTimeout: settleTimeout as never,
       ...(onTermination === undefined ? {} : { onTermination }),
+      onStderr: Effect.fn("test.observeAgentReceipt")(function* (text: string) {
+        receiptBuffer += text;
+        if (receiptBuffer.includes("fixture:prompt-received\n")) {
+          yield* Deferred.succeed(promptReceived, undefined);
+        }
+        if (receiptBuffer.includes("fixture:write-received\n")) {
+          yield* Deferred.succeed(writeReceived, undefined);
+        }
+      }),
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
         ...spawner,
@@ -147,28 +169,15 @@ const scriptedRuntime = (
       }),
     );
     yield* runtime.start();
-    const awaitReceipt = Effect.fn("test.awaitAgentReceipt")(function* (predicate: () => boolean) {
-      yield* Effect.callback<void, Error>((resume) => {
-        const check = () => {
-          if (predicate()) resume(Effect.void);
-        };
-        const watcher = NodeFS.watch(directory, check);
-        watcher.on("error", (error) => resume(Effect.fail(error)));
-        check();
-        return Effect.sync(() => watcher.close());
-      });
-    });
     return {
       ...runtime,
       /** The values of the writes that reached the agent. */
       writesReceived: () => NodeFS.readFileSync(writes, "utf8").split("\n").filter(Boolean),
       childPid: () => decodePid(NodeFS.readFileSync(pid, "utf8")),
-      awaitPromptReceived: awaitReceipt(() => NodeFS.existsSync(prompt)),
-      awaitWriteReceived: awaitReceipt(
-        () => NodeFS.existsSync(writes) && NodeFS.readFileSync(writes, "utf8").length > 0,
-      ),
+      awaitPromptReceived: Deferred.await(promptReceived),
+      awaitWriteReceived: Deferred.await(writeReceived),
       awaitChildExit: Effect.suspend(() =>
-        childExit ? Fiber.await(childExit).pipe(Effect.asVoid) : Effect.die("Missing native child"),
+        childExit ? Fiber.await(childExit) : Effect.die("Missing native child"),
       ),
     };
   });
@@ -187,7 +196,11 @@ const currentValue = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"], i
   );
 const live = <A, E>(name: string, body: () => Effect.Effect<A, E, never>) => it.live(name, body);
 const scoped = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  effect.pipe(
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(HostProcess.Platform, HostProcess.Platform.defaultValue()),
+  );
 
 const NO_ANSWER =
   'The agent did not answer the change of autonomy_level to "auto-high" within 0.4 s, so its session was closed.';
@@ -481,18 +494,24 @@ describe("confirmed config writes", () => {
   live("ends the connection when a write is interrupted after it was sent", () =>
     scoped(
       Effect.gen(function* () {
+        // The late answer is released by cancellation, never by an elapsed-time budget.
         const runtime = yield* scriptedRuntime([
-          [{ sleep: 300 }, RESPOND, { sleep: 100 }, APPLY],
-          [RESPOND, { sleep: 600 }, { update: { model: "c" } }],
+          [{ onTermination: true }, RESPOND, APPLY],
+          [RESPOND, { update: { model: "c" } }],
         ]);
+        const received = yield* runtime.awaitWriteReceived.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
         const first = yield* runtime.setModel("b").pipe(Effect.forkScoped);
-        yield* runtime.awaitWriteReceived;
+        yield* Fiber.join(received);
         yield* Fiber.interrupt(first);
         const second = yield* timed(runtime.setModel("b"));
         expect((failure(second.exit) as Error | undefined)?.message).toBe(
           'The change of model to "b" was interrupted before the agent reported the applied value, so its session was closed.',
         );
-        yield* runtime.awaitChildExit;
+        const childExit = yield* runtime.awaitChildExit;
+        // Windows force-terminates SIGTERM recipients without running their JavaScript handlers.
+        if ((yield* HostProcess.Platform) !== "win32") expect(childExit).toEqual(Exit.succeed(0));
         expect(runtime.writesReceived()).toEqual(["b"]);
       }),
     ),

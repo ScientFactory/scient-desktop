@@ -10,14 +10,13 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
-import {
-  browserDefaultOpenProfileId,
-  browserDefaultOpenViewport,
-  resolveBrowserDefaults,
-} from "~/browser/browserDefaults";
+import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
+// SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { openProfileId } from "~/scient/accounts/openProfile";
+// SCIENT-FORK:END
 
 interface OpenPreviewSessionInput<E> {
   openPreview: (input: {
@@ -29,30 +28,37 @@ interface OpenPreviewSessionInput<E> {
   viewport?: PreviewViewportSetting;
   profileId?: string;
   runtime?: PreviewRuntime;
+  assertCurrent?: () => void;
 }
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
 ): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
-  // Resolved once: a tab opened before client settings hydrate would otherwise
-  // be born at the schema defaults and never corrected.
+  input.assertCurrent?.();
+  // Wait for settings hydration so new tabs cannot retain uncorrected schema defaults.
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
+  input.assertCurrent?.();
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+  const profileId = input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults));
+  input.assertCurrent?.();
+  // SCIENT-FORK:END
   const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
-      viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      viewport: input.viewport ?? defaults.viewport,
+      profileId,
       ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });
+  input.assertCurrent?.();
   if (result._tag === "Failure") {
     return result;
   }

@@ -241,6 +241,7 @@ export default function(pi) {
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getInstance: () => Effect.succeed(undefined),
             }),
           ),
@@ -396,8 +397,12 @@ export default function(pi) {
           mcpSessionRegistryLayer: Layer.succeed(
             McpRegistry.McpSessionRegistry,
             McpRegistry.McpSessionRegistry.of({
-              issue: ({ threadId, providerInstanceId, capabilities }) =>
-                Effect.succeed({
+              issue: Effect.fn("McpSessionRegistry.issue")(function ({
+                threadId,
+                providerInstanceId,
+                capabilities,
+              }) {
+                return Effect.succeed({
                   config: {
                     threadId,
                     providerInstanceId,
@@ -408,12 +413,26 @@ export default function(pi) {
                     authorizationHeader: "Bearer synthetic-only",
                     connectors: [],
                   },
-                }),
-              resolve: () => Effect.succeed(undefined),
-              touch: () => Effect.void,
-              replaceSkillScope: () => Effect.void,
-              revokeProviderSession: () => Effect.void,
-              revokeThread: () => Effect.void,
+                });
+              }),
+              resolve: Effect.fn("McpSessionRegistry.resolve")(function () {
+                // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+                return Effect.succeed(undefined);
+              }),
+              touch: Effect.fn("McpSessionRegistry.touch")(function () {
+                return Effect.void;
+              }),
+              replaceSkillScope: Effect.fn("McpSessionRegistry.replaceSkillScope")(function () {
+                return Effect.void;
+              }),
+              revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
+                function () {
+                  return Effect.void;
+                },
+              ),
+              revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function () {
+                return Effect.void;
+              }),
               revokeAll: Effect.void,
             }),
           ),
@@ -452,8 +471,8 @@ export default function(pi) {
         const receipts = yield* CommandReceiptStoreV2;
         const checkpointStore = yield* CheckpointStore;
         if (barrier)
-          beforeAdmission = (request) =>
-            Effect.gen(function* () {
+          beforeAdmission = Effect.fn("PiNativeInitiatedWorkTestHarness.beforeAdmission")(
+            function* (request) {
               const p = yield* orchestrator.getThreadProjection(h.threadId);
               const native = p.providerThreads.find((row) => row.id === request.providerThreadId);
               const session = yield* admissionManager.get(request.initiated!.providerSessionId);
@@ -503,10 +522,10 @@ export default function(pi) {
                 );
                 readyAdmissionChecks++;
               }
-            }).pipe(
-              Effect.orDie,
-              Effect.tapCause((cause) => Deferred.succeed(wireFailure, cause).pipe(Effect.asVoid)),
-            );
+            },
+            Effect.orDie,
+            Effect.tapCause((cause) => Deferred.succeed(wireFailure, cause).pipe(Effect.asVoid)),
+          );
         const projectId = ProjectId.make("pi-real-initiated-project");
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* projects.apply({
@@ -1066,8 +1085,8 @@ export default function(pi) {
           });
           assert.deepEqual(yield* snapshotB, untouchedB);
           const store = yield* CheckpointStore;
-          beforePrompt = () =>
-            Effect.gen(function* () {
+          beforePrompt = Effect.fn("PiNativeInitiatedWorkTestHarness.beforePrompt")(
+            function* () {
               const p = yield* orchestrator.getThreadProjection(h.threadId).pipe(Effect.orDie);
               const predecessor = p.runs.find((r) => r.id === nativeRun.id)!;
               const answer = p.messages.find(
@@ -1130,7 +1149,9 @@ export default function(pi) {
                 `${yield* fs.realPath(cwd).pipe(Effect.orDie)}\n`,
               );
               queuedWireChecks++;
-            }).pipe(Effect.tapCause((c) => Deferred.succeed(wireFailure, c).pipe(Effect.asVoid)));
+            },
+            Effect.tapCause((c) => Deferred.succeed(wireFailure, c).pipe(Effect.asVoid)),
+          );
           yield* orchestrator.dispatch({
             type: "runtime-request.respond",
             commandId: CommandId.make("native:approve"),

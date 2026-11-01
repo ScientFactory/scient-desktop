@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
 import * as McpRegistry from "../../mcp/McpSessionRegistry.ts";
@@ -49,6 +50,7 @@ const testLayer = McpRegistry.layer.pipe(
       NodeServices.layer,
       NodeHttpClient.layerNodeHttp,
       OmpExecutableGate.layer,
+      ServerSettings.layerTest(),
       environment,
       allocatorLayer,
       McpProviderSessions.layer,

@@ -1,18 +1,6 @@
-// SCIENT-OWNED: how the macOS development app bundle is kept signed and stable.
-//
-// The dev app is a signed copy of Electron.app. Three rules keep it reliable:
-// - Each bundle owns its build record, so building one bundle (for example a
-//   production-mode smoke test in the same checkout) never invalidates another.
-// - Nothing that varies between launches lives inside the signed bundle. The
-//   bundle's start command only runs a script kept beside it, so a different
-//   Node, pnpm or shell environment never forces a re-sign.
-// - A rebuild is staged next to the bundle and swapped in only once it is
-//   signed; a failed signature leaves the previous bundle untouched.
-//
-// Signing is done in the foreground (`pnpm dev:app`, or `pnpm dev:app:start`,
-// which prepares the bundle before handing off). macOS can refuse to sign from
-// the background service, so the service never signs: it stops with a message
-// that status reports instead of retrying.
+// Keep launch-varying state outside the signed bundle and build records per bundle. Stage and sign
+// before swapping so failure preserves the previous bundle. Sign in the foreground: macOS may
+// refuse background-service signing, which must stop rather than retry.
 
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

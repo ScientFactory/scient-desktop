@@ -1,3 +1,4 @@
+import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -48,7 +49,6 @@ import { FileFinder } from '@ff-labs/fff-node';
 const require = createRequire(import.meta.url);
 const { createCanvas } = require('@napi-rs/canvas');
 assert.ok(createCanvas(2, 2).toBuffer('image/png').length > 0);
-assert.ok(require('msgpackr-extract').extractStrings);
 const finder = FileFinder.create({ basePath: process.cwd(), disableMmapCache: true, disableContentIndexing: true, aiMode: false });
 assert.ok(finder.ok, JSON.stringify(finder));
 finder.value.destroy();
@@ -77,10 +77,15 @@ await Promise.all(Array.from({ length: 10 }, (_, i) => new Promise((resolve, rej
     try { assert.equal(exitCode, 0); assert.ok(output.includes(token), output); if (win) pty.kill(); resolve(); } catch (error) { reject(error); }
   });
 })));
-process.stdout.write('Remote native probes: canvas, file search, msgpackr, Cursor helpers and 10 concurrent terminals passed.\\n', () => process.exit(0));
+process.stdout.write('Remote native probes: canvas, file search, Cursor helpers and 10 concurrent terminals passed.\\n', () => process.exit(0));
 `,
   );
   process.stdout.write(run(process.execPath, ["qualification.mjs"], installed));
+  if (platform === "linux")
+    qualifyPackagedOverleaf({
+      executable: process.execPath,
+      entry: NodePath.join(installed, "dist/overleaf-packaging-probe.mjs"),
+    });
   const bin = NodePath.join(installed, "dist/bin.mjs");
   NodeAssert.match(run(process.execPath, [bin, "--help"], installed), /serve/u);
   run(

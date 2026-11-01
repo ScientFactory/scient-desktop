@@ -42,7 +42,7 @@ export interface AntigravityAcpCatalogAsset {
 }
 
 // Registry revision of the bundled native ACP release; advance both together during alignment.
-export const ANTIGRAVITY_ACP_REGISTRY_VERSION = "1.3.0";
+export const ANTIGRAVITY_ACP_REGISTRY_VERSION = "1.4.1";
 /** Compatibility changes require a contract transition; default advances do not raise this floor. */
 export const ANTIGRAVITY_ACP_MINIMUM_REGISTRY_VERSION = "1.3.0";
 export const ANTIGRAVITY_ACP_CATALOG_KEY = "antigravityAcp";

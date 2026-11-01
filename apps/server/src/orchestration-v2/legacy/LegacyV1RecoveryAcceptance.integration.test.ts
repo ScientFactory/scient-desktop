@@ -1,3 +1,4 @@
+import * as DocumentText from "../../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- SQLite's supported backup API snapshots both disposable databases, including their WALs.
 import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -500,6 +501,13 @@ it.live(
             database.close();
           }
         });
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            IdAllocator.layer,
+            DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
+        ),
+      ),
     ),
 );

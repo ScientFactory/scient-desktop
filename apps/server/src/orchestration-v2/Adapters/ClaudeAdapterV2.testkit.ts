@@ -1,4 +1,6 @@
+import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,21 +28,7 @@ import {
 } from "./ClaudeAdapterV2.replay-protocol.testkit.ts";
 import { makeReplayQueryRunner } from "./ClaudeAdapterV2.replay-query.testkit.ts";
 
-const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQueryRunner.layer")(
-  function* (
-    transcript: ClaudeAgentSdkReplayTranscript,
-    options: { readonly replayGate?: ProviderReplayGate } = {},
-  ) {
-    const queryRunner = makeReplayQueryRunner(transcript, options);
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        queryRunner.assertComplete();
-      }),
-    );
-
-    return replayQueryRunnerService(transcript, queryRunner);
-  },
-);
+const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 function replayQueryRunnerService(
   transcript: ClaudeAgentSdkReplayTranscript,
@@ -87,12 +75,7 @@ function layerClaudeAgentSdkReplay(
   );
 }
 
-/**
- * While a foreground Bash call runs, Claude Code writes its output to a task
- * file the adapter tails. A replay has no Claude Code process, so it writes the
- * file each recorded `task_started` names, holding that call's recorded output,
- * under a scenario-owned `CLAUDE_CODE_TMPDIR`.
- */
+/** Replays write recorded Bash output to task_started files under a scenario-owned CLAUDE_CODE_TMPDIR. */
 const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles")(function* (
   transcript: ClaudeAgentSdkReplayTranscript,
 ) {
@@ -117,7 +100,12 @@ const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles"
     const stderr = typeof result.stderr === "string" ? result.stderr : "";
     outputByToolUseId.set(toolResult.tool_use_id, `${result.stdout}${stderr}`);
   }
-  const root = claudeTaskOutputRoot({ CLAUDE_CODE_TMPDIR: tmpRoot }, path);
+  const root = claudeTaskOutputRoot(
+    { CLAUDE_CODE_TMPDIR: tmpRoot },
+    path,
+    null,
+    yield* HostProcess.Platform,
+  );
   for (const frame of frames) {
     if (frame.type !== "system" || frame.subtype !== "task_started") continue;
     if (frame.task_type !== "local_bash" || frame.is_backgrounded !== false) continue;
@@ -148,15 +136,18 @@ function layerClaudeProviderAdapterRegistryReplay(
     writeReplayTaskOutputFiles(transcript).pipe(
       Effect.orDie,
       Effect.map((tmpRoot) =>
-        ProviderAdapterRegistry.layerFromDrivers({
-          drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
-          configMap: {
-            [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        ProviderAdapterRegistry.layerFromAdaptersEffect(
+          ClaudeAdapterV2.createClaudeAdapterV2(
+            {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              displayName: undefined,
               environment: [{ name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false }],
+              enabled: true,
+              config: DEFAULT_CLAUDE_SETTINGS,
             },
-          },
-        }),
+            {},
+          ).pipe(Effect.map((adapter) => [adapter])),
+        ),
       ),
       Effect.provide(NodeServices.layer),
     ),

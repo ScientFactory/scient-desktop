@@ -209,6 +209,9 @@ export function mapRemoteEnvironmentError(
     case "ScientConversationExportError":
     case "ScientConversationImportError":
     case "ScientWordExportError":
+    // SCIENT-FORK:START
+    case "ScientOverleafOperationError":
+      // SCIENT-FORK:END
       return new ConnectionBlockedError({ reason: "configuration", detail: error.message });
     case "EnvironmentRequestInvalidError":
       return new ConnectionBlockedError({

@@ -100,7 +100,7 @@ generation. Packaged launchers do not enable source-map loading. Preserve the
 corresponding source revision and build output when diagnosing bundled stacks.
 
 Whisper, resource monitor, SyncTeX, and `scient-file-publication` run from external Electron resources.
-macOS also carries `scient-file-exchange` for volume probes.
+Overleaf volume probes use that same publication helper.
 Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
 on every platform; Linux also excludes the KDE and Hyprland capture staging
 trees. Keep individual exclusions: Linux registration reads
@@ -259,6 +259,14 @@ both desktop backends. Ordinary JavaScript and patched SDKs remain bundled;
 only disk-loaded runtime roots and their npm shrinkwrapped closure are installed
 on the remote host. The Electron-only FFF ASAR loader patch is unnecessary in
 this plain filesystem package.
+
+Desktop packages stage those same roots from `pnpm-lock.yaml`
+(`scripts/lib/scient-stage-locked-dependencies.ts`). Every required peer of the staged
+closure becomes a root at its locked version, because Electron Builder collects
+only dependencies and optional dependencies. A stage that resolves any package
+the lockfile does not pin fails the build. macOS arm64 and Linux x64 builds then
+start the packaged server from the extracted archive before anything uploads,
+so Linux packaging in PR CI catches a missing runtime package before merge.
 
 Required CI qualification builds the real tarball on Linux, installs the same
 bytes outside the workspace on Linux, macOS and Windows, probes native file

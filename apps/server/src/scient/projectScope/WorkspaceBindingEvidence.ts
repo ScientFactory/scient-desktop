@@ -189,7 +189,7 @@ const make = Effect.gen(function* () {
           ) {
             return null;
           }
-          return yield* Effect.fail(cause);
+          return yield* cause;
         }),
       ),
       Effect.mapError(

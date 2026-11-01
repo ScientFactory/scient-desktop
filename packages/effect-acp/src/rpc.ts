@@ -8,20 +8,9 @@ import * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
 import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";
 
 /**
- * Lenient wire codec for `session/set_config_option` responses.
- *
- * The ACP spec types the response as `{ configOptions: [...] }`, but real
- * agents may be looser: an agent can acknowledge a write with `{}` (or
- * `configOptions: null`) and publish the refreshed inventory asynchronously
- * via `config_option_update` notifications. This is a
- * deliberate, tested compatibility transformation living OUTSIDE the
- * generated schema so a regeneration cannot silently drop it.
- *
- * A missing or `null` inventory is preserved as absent — it is NOT
- * normalized to `[]`. An absent inventory means "see the async
- * notification", while an authoritative empty inventory means "no options
- * exist"; the session runtime relies on that distinction to avoid erasing
- * notification-published state with an empty acknowledgment.
+ * Agents may acknowledge config writes with {} or null before async config_option_update arrives.
+ * Keep this compatibility transform outside generated schemas so regeneration cannot erase it.
+ * Preserve missing/null inventory as absent: [] is authoritative and would erase notification state.
  */
 export interface LenientSetSessionConfigOptionResponseData {
   readonly _meta?: { readonly [x: string]: unknown } | null;

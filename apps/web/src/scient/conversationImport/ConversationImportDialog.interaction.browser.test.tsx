@@ -909,65 +909,25 @@ describe("ConversationImportDialog", () => {
     expect(dialog()).toBeNull();
   });
 
-  it("says plainly when the destination refuses a desktop upload", async () => {
+  // "file-changed" takes the same desktopUploadOutcome branch (importDialog.logic.test.ts).
+  it("asks for the file to be opened again, with only Cancel, when the file is unavailable", async () => {
+    const reason = "file-unavailable";
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     Object.assign(window, {
       desktopBridge: {
-        uploadOpenedConversationFile: vi
-          .fn()
-          .mockResolvedValue({ _tag: "failed", reason: "rejected" }),
-      },
-    });
-    await act(async () => await _fixture.root0.rerender(<ConversationImportDialogHost />));
-    await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
-    await flush();
-    expect(alerts()).toEqual(["The destination didn't accept the file. Try again."]);
-    expect(dialog()?.textContent).not.toContain("rejected");
-  });
-
-  it.each(["file-unavailable", "file-changed"])(
-    "asks for the file to be opened again, with only Cancel, when the desktop answers %s",
-    async (reason) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
-
-      Object.assign(window, {
-        desktopBridge: {
-          uploadOpenedConversationFile: vi.fn().mockResolvedValue({ _tag: "failed", reason }),
-        },
-      });
-      await act(async () => await _fixture.root0.rerender(<ConversationImportDialogHost />));
-      await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
-      await flush();
-
-      expect(alerts()).toEqual(["Open the file again to import it."]);
-      expect(visibleButtons()).toEqual(["Cancel"]);
-      expect(dialog()?.textContent).not.toContain(reason);
-    },
-  );
-
-  it("words other desktop failures plainly", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    Object.assign(window, {
-      desktopBridge: {
-        uploadOpenedConversationFile: vi
-          .fn()
-          .mockResolvedValue({ _tag: "failed", reason: "network-failed" }),
+        uploadOpenedConversationFile: vi.fn().mockResolvedValue({ _tag: "failed", reason }),
       },
     });
     await act(async () => await _fixture.root0.rerender(<ConversationImportDialogHost />));
     await act(async () => requestConversationImport({ _tag: "desktop-file", file: opened }));
     await flush();
 
-    expect(alerts()).toEqual(["The file couldn't be sent. Check the connection and try again."]);
-    expect(dialog()?.textContent).not.toContain("network-failed");
+    expect(alerts()).toEqual(["Open the file again to import it."]);
+    expect(visibleButtons()).toEqual(["Cancel"]);
+    expect(dialog()?.textContent).not.toContain(reason);
   });
 
   it("shows one plain line, and only Cancel, for a file that cannot be read", async () => {
@@ -989,23 +949,6 @@ describe("ConversationImportDialog", () => {
     expect(dialog()!.querySelector('[data-slot="select-trigger"]')).toBeNull();
     expect(visibleButtons()).toEqual(["Cancel"]);
     expect(cancelConversationImport).toHaveBeenCalledWith(local, importId);
-  });
-
-  it("says plainly that a file couldn't be read when there is no specific reason", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    previewConversationImport.mockRejectedValueOnce(
-      new ScientConversationImportError({
-        reason: "package-rejected",
-        rejection: { reason: "unsafe-path", entry: null },
-        message: "Rejected: unsafe-path",
-      }),
-    );
-    await openWith(_fixture, scic());
-    expect(alerts()).toEqual(["This file can't be imported. It didn't pass Scient's checks."]);
-    expect(visibleButtons()).toEqual(["Cancel"]);
   });
 
   it("offers Try again after a failure that sending again can fix", async () => {

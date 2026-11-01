@@ -11,16 +11,9 @@ import { Count, Label, ShortText, StreamText } from "./primitives.ts";
 import { ComputeExecutionSource, ComputeProjectId } from "./record.ts";
 
 /**
- * What a client asks a compute session coordinator to do, and how it is told no.
- *
- * These are the commands, not the transport: a transport speaks to one runtime
- * and knows nothing of projects, queues, or history. Everything here is
- * addressed by `(projectId, sessionId)` and carries the generation the caller
- * believed it was talking to, because a session can be restarted underneath a
- * client that is still holding a stale view of it.
- *
- * Inputs are schemas rather than interfaces so the RPC boundary can decode them
- * once, at the edge, instead of every caller hand-validating the same fields.
+ * Commands bind project/session and expected generation so stale clients cannot mutate replacement
+ * namespaces. Decode schemas once at the RPC edge rather than asking every caller to validate
+ * fields.
  */
 
 export class ComputeOperationError extends Schema.TaggedError<ComputeOperationError>()(
@@ -75,12 +68,8 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
 ) {}
 
 /**
- * Starting a session names it: the caller chooses the id, so a retried start is
- * idempotent rather than a second runtime for the same panel.
- *
- * `projectId` is passed rather than derived from `workingDirectory` because
- * resolving a project identity is the RPC edge's job, and a coordinator that
- * did it too would need a project on disk to be testable at all.
+ * Caller-chosen session IDs make retried start idempotent. Project resolution belongs to the RPC
+ * edge, not cwd inference inside the coordinator.
  */
 export const ComputeStartSessionInput = Schema.Struct({
   projectId: ComputeProjectId,

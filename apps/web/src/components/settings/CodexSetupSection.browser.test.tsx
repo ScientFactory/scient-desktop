@@ -39,7 +39,15 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => state.canManageProviders,
+  readPreparedConnection: () => null,
   useEnvironmentScope: () => state.canManageProviders,
+}));
+vi.mock("../../state/primaryEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(null) };
+});
+vi.mock("../../state/presentation", () => ({
+  environmentPresentations: { presentationAtom: () => null },
 }));
 vi.mock("../../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");
@@ -225,6 +233,8 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
 
+// regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
+// (every case below).
 describe("CodexSetupSection provider-management scope", () => {
   it("does not auto-start installation or consume the request while read-only", async () => {
     await using _fixture = _createFixture();

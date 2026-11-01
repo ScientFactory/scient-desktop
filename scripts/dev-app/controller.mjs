@@ -1,15 +1,6 @@
 #!/usr/bin/env node
-// The standing dev app ("Scient (Dev) Stable"): one installed app that can be
-// switched to any branch, pull request or commit for review.
-//
-//   pnpm dev:app:review <#123 | pr:123 | branch | commit:<sha>> [--fresh]
-//   pnpm dev:app:review --restore-previous
-//   pnpm dev:app:stable <install [--checkout <path>] | start | stop | status | logs | open | uninstall>
-//
-// `install` copies this controller out of the invoking checkout into
-// ~/.scient-next/scient-dev-stable/controller; every later command runs that
-// copy, so a switch never executes lifecycle code from the commit it is
-// replacing. See docs/operations/dev-app-review.md.
+// Install copies this controller to ~/.scient-next/scient-dev-stable/controller so later switches
+// never execute lifecycle code from the replaced commit. See docs/operations/dev-app-review.md.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -50,6 +41,7 @@ import {
   launchJobName,
   launchTokenHash,
   ownerState,
+  packageManagerInvocation,
   quoteWindowsArgument,
   registerScheduledTask,
   runScheduledTask,
@@ -186,16 +178,17 @@ function runInstallOnce(checkout, pnpm) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     let lastOutputAt = startedAt;
-    const child = NodeChildProcess.spawn(
+    const invocation = packageManagerInvocation(
+      pnpm,
+      ["install", "--frozen-lockfile", "--reporter=append-only"],
       process.execPath,
-      [pnpm, "install", "--frozen-lockfile", "--reporter=append-only"],
-      {
-        cwd: checkout,
-        windowsHide: true,
-        detached: hostPlatform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
     );
+    const child = NodeChildProcess.spawn(invocation.command, invocation.args, {
+      cwd: checkout,
+      windowsHide: true,
+      detached: hostPlatform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const onOutput = (chunk) => {
       lastOutputAt = Date.now();
       appendLog(chunk);

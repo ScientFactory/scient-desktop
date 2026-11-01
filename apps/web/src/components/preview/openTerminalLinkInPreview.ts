@@ -2,17 +2,16 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 
-import {
-  browserDefaultOpenProfileId,
-  browserDefaultOpenViewport,
-  resolveBrowserDefaults,
-} from "~/browser/browserDefaults";
+import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRuntime";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+// SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { openProfileId } from "~/scient/accounts/openProfile";
+// SCIENT-FORK:END
 
 const terminalLinkErrorContext = {
   environmentId: Schema.String,
@@ -66,8 +65,10 @@ export async function openTerminalLinkInPreview<E>(
     input: {
       threadId: input.threadRef.threadId,
       url: input.url,
-      viewport: browserDefaultOpenViewport(defaults),
-      profileId: browserDefaultOpenProfileId(defaults),
+      viewport: defaults.viewport,
+      // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+      profileId: await openProfileId(input.threadRef, input.url, defaults),
+      // SCIENT-FORK:END
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

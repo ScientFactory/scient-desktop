@@ -1,17 +1,9 @@
 /**
- * Reviews waiting for the user (coordinator contract sections 3 and 5).
- *
- * One current review per connection, for fifteen minutes, in memory only: a
- * restarted server has no reviews to replay. A confirmation consumes its review
- * once, and only if it names the current review's ID and digest and every
- * acknowledgement the review requires. Whether the world still matches is a
- * separate check: the caller builds the review again from a fresh capture and
- * fetch and compares the two.
- *
- * A review holds the bytes the applier would write, so the registry bounds how
- * many it keeps and how many bytes they hold, and drops expired reviews on
- * every call. `sweep` lets an owner with a timer drop them without a call.
+ * Confirmation consumes a review once only for matching ID/digest/acknowledgements; callers must
+ * separately rebuild from fresh capture/fetch. Keep reviews in memory with expiry and byte/count
+ * bounds because they retain write bytes and cannot be replayed after restart.
  */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import {
   overleafReviewDigest,
   type OverleafReview,
@@ -162,20 +154,18 @@ export function overleafReviewStaleness(
     binding.authority.scopeRevision !== fresh.authority.scopeRevision
   )
     return "authority";
-  if (
-    binding.folderIdentity.volume !== fresh.folderIdentity.volume ||
-    binding.folderIdentity.fileId !== fresh.folderIdentity.fileId
-  )
-    return "folder";
+  if (!platformFileIdentity.equal(binding.folderIdentity, fresh.folderIdentity)) return "folder";
   if (binding.localTree !== fresh.localTree) return "capture";
   if (binding.remoteCommit !== fresh.remoteCommit || binding.remoteTree !== fresh.remoteTree)
     return "remote";
   if (
     !same(binding.selectedAdditions, fresh.selectedAdditions) ||
     !same(binding.newLocalOnly, fresh.newLocalOnly) ||
+    !same(binding.sentLocalOnly, fresh.sentLocalOnly) ||
     !same(binding.collisionPaths, fresh.collisionPaths) ||
-    !same(binding.recordedMarkerPaths, fresh.recordedMarkerPaths) ||
-    !same(binding.unresolvedMarkers, fresh.unresolvedMarkers)
+    !same(binding.recordedMarkers, fresh.recordedMarkers) ||
+    !same(binding.unresolvedMarkers, fresh.unresolvedMarkers) ||
+    !same(binding.released, fresh.released)
   )
     return "inventory";
   return "review";

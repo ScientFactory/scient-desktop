@@ -1,11 +1,28 @@
 import type { OrchestrationV2TurnItem, SecretRequestAnswerInput } from "@t3tools/contracts";
+// SCIENT-FORK:START — Scient Accounts: cards from scient_account_add save into Accounts.
+import {
+  ACCOUNT_SECRET_REQUEST_NOTE,
+  ACCOUNT_SECRET_REQUEST_SAVED,
+  isAccountSecretRequest,
+} from "@t3tools/shared/scientAccountSecretRequest";
+// SCIENT-FORK:END
 
 export type SecretRequestItem = Extract<
   OrchestrationV2TurnItem,
   { readonly type: "secret_request" }
 >;
 
-export const SECRET_REQUEST_PRIVACY_NOTE = "Stored securely, never shown to the agent";
+/** A `file` request lets the agent's commands read the value, so its card must not promise more. */
+export const secretRequestPrivacyNote = (
+  item: Pick<SecretRequestItem, "delivery"> & { readonly id?: string },
+) => {
+  // SCIENT-FORK:START — Scient Accounts: an Accounts card keeps the key in Accounts.
+  if (isAccountSecretRequest(item.id)) return ACCOUNT_SECRET_REQUEST_NOTE;
+  // SCIENT-FORK:END
+  return item.delivery === "file"
+    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
+    : "Stored securely, never shown to the agent";
+};
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
 export type SecretRequestDisplay =
@@ -43,13 +60,17 @@ const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
  * thread (a fork) can only be answered where it was asked.
  */
 export function secretRequestDisplay(
-  item: Pick<SecretRequestItem, "secretStatus">,
+  item: Pick<SecretRequestItem, "secretStatus"> & { readonly id?: string },
   visibility: "local" | "inherited" | "synthetic",
 ): SecretRequestDisplay {
   switch (item.secretStatus) {
     case "pending":
       return visibility === "local" ? PENDING_DISPLAY : PENDING_ELSEWHERE_DISPLAY;
     case "saved":
+      // SCIENT-FORK:START — Scient Accounts: an Accounts card says where the key went.
+      if (isAccountSecretRequest(item.id))
+        return { kind: "answered", outcome: "saved", label: ACCOUNT_SECRET_REQUEST_SAVED };
+      // SCIENT-FORK:END
       return SAVED_DISPLAY;
     case "declined":
       return DECLINED_DISPLAY;

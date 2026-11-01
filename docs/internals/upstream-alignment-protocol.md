@@ -520,6 +520,13 @@ Base signals and refinement alternatives remain active when the candidate remove
 Introducing a refinement requires positive boundary/removal fixtures and unrelated-domain negative fixtures;
 it is matching precision, not a path exemption or a substitute for behavioral review.
 
+An inherited guard that fails against a Scient divergence is evidence, not an obstacle. Change the
+code it guards, or move its seed through a marked seam, but never widen what the guard assumes the
+build does. In #678, a staged-peer test was taught that "the install adds peers". It stayed green
+while every macOS and Linux package lacked `zod`, and only the release's start-up check caught it.
+When the guard models packaging, prove the claim with the real artifact: Linux packaging in PR CI
+starts the packaged server.
+
 Run additional focused gates required by the range, including mobile native checks, release smoke,
 provenance, migration, and provider seam tests where applicable. User-facing desktop behavior also
 requires an isolated synthetic-state app from the exact candidate head and a proportional visual and

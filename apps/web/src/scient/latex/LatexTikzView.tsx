@@ -184,6 +184,7 @@ export function LatexTikzArtwork(props: {
     : resultState?.key === requestKey
       ? resultState.message
       : "Rendering drawing…";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the containing panel DOM node width until unmount
   useLayoutEffect(() => {
     const panel = root.current?.closest<HTMLElement>(
       ".scient-latex-figure-panel, .scient-latex-compiled-algorithm",
@@ -202,7 +203,9 @@ export function LatexTikzArtwork(props: {
   const resetRequested = useEffectEvent((..._changes: readonly unknown[]) => {
     requested.current = false;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the requested ref when the drawing source identity changes
   useEffect(() => resetRequested(sourceIdentity), [sourceIdentity]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- paints the artwork over the environment connection after a debounce timer, aborted on unmount or change
   useEffect(() => {
     if (!admitted || widthInches === null) return;
     const delay = requested.current ? 150 : 0;

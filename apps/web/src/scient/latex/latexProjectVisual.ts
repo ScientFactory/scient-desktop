@@ -391,11 +391,9 @@ function contentRevisions(contents: string) {
 }
 
 /**
- * Translates a build's page anchors into offsets of the assembled document,
- * through its source spans. Only while every file the document shows holds
- * exactly the revision the build compiled; otherwise the build's pages do not
- * describe this document and nothing is placed. A file is hashed once per
- * contents, and a placement, once made, is kept for the build.
+ * Place build page anchors only while every displayed source revision matches the build. Cache
+ * hashes per contents and placement per build; stale pages cannot describe an edited assembled
+ * document.
  */
 export function placeBuildPageAnchors(
   build: LatexBuildPageAnchors,

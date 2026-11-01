@@ -1,15 +1,16 @@
+import { matchesExtensionAddressTemplate } from "@t3tools/contracts";
 import {
   type ConnectorAddInput,
   type ConnectorProviderSupport,
   type ConnectorStatus,
   type ConnectorSummary,
   type ConnectorTestResult,
-  type ConnectorToolSummary,
   type DiscoverCatalog,
   type DiscoverEntry,
   ExtensionCategory,
+  supportsScientClaudePlugins,
+  type ExtensionAudience,
   type ExtensionDeliverySkipReason,
-  type ProjectIconColor,
   type ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProvider,
@@ -20,16 +21,16 @@ import {
 import {
   BookOpenIcon,
   CpuIcon,
+  LeafIcon,
   FileTextIcon,
   type LucideIcon,
   MonitorSmartphoneIcon,
-  PuzzleIcon,
+  PlugIcon,
 } from "lucide-react";
 
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
-import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 
 /** Shown after a row's name; healthy entries show nothing. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
@@ -74,7 +75,7 @@ export function connectorStatusText(connector: Pick<ConnectorSummary, "status" |
 }
 
 export interface ConnectorActions {
-  /** `reconnect` repeats sign-in for a connected OAuth connector. */
+  /** The primary action appears only when a grant is needed. */
   readonly signIn: "sign-in" | "reconnect" | null;
   readonly canTest: boolean;
 }
@@ -85,7 +86,7 @@ export interface ConnectorActions {
  */
 export function connectorActions(connector: Pick<ConnectorSummary, "status" | "auth">) {
   const actions: Readonly<Record<ConnectorStatus, ConnectorActions>> = {
-    connected: { signIn: connector.auth.type === "oauth" ? "reconnect" : null, canTest: true },
+    connected: { signIn: null, canTest: true },
     "needs-auth": { signIn: "sign-in", canTest: false },
     "needs-credential": { signIn: null, canTest: false },
   };
@@ -105,7 +106,7 @@ export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
           : auth.strategy === "basic"
             ? "Basic auth"
             : `Header ${auth.headerName ?? ""}`.trim();
-      return auth.storage === "bound" ? `${kind} from Secrets` : kind;
+      return auth.storage === "bound" ? `${kind} from Accounts` : kind;
     }
   }
 }
@@ -135,21 +136,6 @@ export function entrySourceLabel(entry: DiscoverEntry): string {
     : "MCP Registry";
 }
 
-export interface ToolGroups {
-  readonly read: ReadonlyArray<ConnectorToolSummary>;
-  readonly write: ReadonlyArray<ConnectorToolSummary>;
-  /** Tools whose server gave no read-only or destructive hint. */
-  readonly other: ReadonlyArray<ConnectorToolSummary>;
-}
-
-/** Read: read-only. Write: not read-only, or destructive. Other: no hint at all. */
-export function groupTools(tools: ReadonlyArray<ConnectorToolSummary>): ToolGroups {
-  const write = tools.filter((tool) => tool.destructive === true || tool.readOnly === false);
-  const read = tools.filter((tool) => tool.readOnly === true && tool.destructive !== true);
-  const other = tools.filter((tool) => tool.readOnly === undefined && tool.destructive !== true);
-  return { read, write, other };
-}
-
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
 export function urlHost(url: string): string | null {
   return URL.canParse(url) ? new URL(url).hostname.replace(/^www\./u, "") : null;
@@ -159,6 +145,7 @@ const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   "scient.sources": BookOpenIcon,
   "scient.documents": FileTextIcon,
   "scient.compute": CpuIcon,
+  "scient.overleaf": LeafIcon,
   "scient.browser-devices": MonitorSmartphoneIcon,
   "scient.pull-requests": PullRequestGlyph.pullRequest,
 };
@@ -168,7 +155,7 @@ export function pluginGlyph(
   plugin: Pick<ScientPluginSummary, "pluginId" | "origin">,
 ): LucideIcon | undefined {
   if (plugin.origin !== "built-in") return undefined;
-  return BUILT_IN_PLUGIN_GLYPHS[plugin.pluginId] ?? PuzzleIcon;
+  return BUILT_IN_PLUGIN_GLYPHS[plugin.pluginId] ?? PlugIcon;
 }
 
 export function isExtensionCategory(value: string): value is ExtensionCategory {
@@ -178,7 +165,8 @@ export function isExtensionCategory(value: string): value is ExtensionCategory {
 /** Remotes Scient can reach as a connector without extra user input. */
 export function installableRemotes(entry: DiscoverEntry) {
   return entry.remotes.filter(
-    (remote) => remote.type === "streamable-http" && !remote.requiresInput,
+    (remote) =>
+      remote.type === "streamable-http" && (!remote.requiresInput || entry.address !== undefined),
   );
 }
 
@@ -227,14 +215,9 @@ export function matchesQuery(query: string, texts: ReadonlyArray<string | undefi
   return words.every((word) => haystack.includes(word));
 }
 
-/** A stable tint per name, from the project icon palette. */
-export function iconTint(name: string): ProjectIconColor {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return PROJECT_ICON_COLORS[Math.abs(hash) % PROJECT_ICON_COLORS.length]!.value;
-}
-
 function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+  if (provider.driver === "scient" && (!provider.displayName || provider.displayName === "Scient"))
+    return "Scient Agent";
   if (provider.displayName) return provider.displayName;
   return (
     AVAILABLE_PROVIDER_OPTIONS.find((option) => option.value === provider.driver)?.label ??
@@ -294,7 +277,6 @@ export function collectProviderExtensionGroups(
 ): ReadonlyArray<ProviderExtensionGroup> {
   const groups: ProviderExtensionGroup[] = [];
   for (const provider of providers) {
-    if (worksWith !== null && provider.instanceId !== worksWith) continue;
     const plugins: ProviderPluginEntry[] = (provider.plugins ?? []).map((plugin) => ({
       plugin,
       cwd: undefined,
@@ -307,9 +289,32 @@ export function collectProviderExtensionGroups(
         plugins.push({ plugin, cwd: snapshot.cwd });
       }
     }
-    const mcpServers = provider.mcpServers ?? [];
-    if (plugins.length === 0 && mcpServers.length === 0) continue;
-    groups.push({ provider, label: providerLabel(provider), plugins, mcpServers });
+    const selected = providers.find((candidate) => candidate.instanceId === worksWith);
+    const visiblePlugins = selected
+      ? plugins.filter(({ plugin }) =>
+          audienceReaches(providerExtensionAudience(provider, plugin), selected),
+        )
+      : plugins;
+    const mcpServers = (provider.mcpServers ?? []).filter(
+      (server) =>
+        !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
+    );
+    if (
+      selected &&
+      provider.instanceId !== selected.instanceId &&
+      visiblePlugins.length === 0 &&
+      mcpServers.length === 0
+    )
+      continue;
+    if (
+      visiblePlugins.length === 0 &&
+      mcpServers.length === 0 &&
+      provider.driver !== "claudeAgent" &&
+      provider.driver !== "codex" &&
+      provider.driver !== "scient"
+    )
+      continue;
+    groups.push({ provider, label: providerLabel(provider), plugins: visiblePlugins, mcpServers });
   }
   return groups;
 }
@@ -357,4 +362,182 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+export function providerExtensionAudience(
+  provider: ServerProvider,
+  entry: ServerProviderPlugin | ServerProviderMcpServer,
+): ExtensionAudience {
+  const shared =
+    provider.driver === "claudeAgent"
+      ? "id" in entry ||
+        Boolean(entry.pluginId) ||
+        entry.scope === "plugin" ||
+        entry.name.startsWith("plugin:")
+      : provider.driver === "scient" &&
+        ("id" in entry
+          ? Boolean(entry.marketplace)
+          : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
+  if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
+  return {
+    layer: "agent",
+    driver: provider.driver,
+    instanceId: provider.instanceId,
+    label:
+      provider.driver === "codex"
+        ? "Codex"
+        : provider.driver === "claudeAgent"
+          ? "Claude"
+          : providerLabel(provider),
+    reason:
+      provider.driver === "codex" && "source" in entry && entry.source === "remote"
+        ? "Uses Codex's own ChatGPT account"
+        : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
+          ? "Uses Claude's own Claude account"
+          : "Managed by this agent",
+  };
+}
+
+export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
+  switch (audience.layer) {
+    case "scient":
+      return true;
+    case "shared":
+      return (
+        provider.driver === "claudeAgent" ||
+        provider.instanceId === audience.ownerInstanceId ||
+        (provider.driver === "scient" &&
+          supportsScientClaudePlugins(provider.version) &&
+          provider.usesClaudePlugins === true)
+      );
+    case "agent":
+      return provider.instanceId === audience.instanceId;
+  }
+}
+
+export function audienceLabel(audience: ExtensionAudience): string {
+  switch (audience.layer) {
+    case "scient":
+      return "Works with all your agents";
+    case "shared":
+      return "Works with Claude and Scient Agent";
+    case "agent":
+      return `${audience.label} only`;
+  }
+}
+
+export function audienceSupport(
+  audience: ExtensionAudience,
+  providers: ReadonlyArray<ServerProvider>,
+  connectorSupport: ReadonlyArray<ConnectorProviderSupport>,
+): ReadonlyArray<ConnectorProviderSupport> {
+  return providers.map((provider) => {
+    const supported = audienceReaches(audience, provider);
+    const connector = connectorSupport.find(
+      (entry) => entry.providerInstanceId === provider.instanceId,
+    );
+    if (audience.layer === "scient" && connector) return connector;
+    return {
+      providerInstanceId: provider.instanceId,
+      driver: provider.driver,
+      displayName: providerLabel(provider),
+      status: supported ? "supported" : "unsupported",
+      ...(!supported
+        ? {
+            reason:
+              audience.layer === "agent" ? audience.reason : "Uses Claude Code's plugin format",
+          }
+        : {}),
+    };
+  });
+}
+
+/**
+ * Agents shown in the works-with card. An agent-specific label ("Codex only") already names who can
+ * use the item, so other agents are left out; Scient connectors keep every agent, with the reason
+ * an agent can't use it.
+ */
+export function worksWithCardAgents(
+  audience: ExtensionAudience,
+  support: ReadonlyArray<ConnectorProviderSupport>,
+): ReadonlyArray<ConnectorProviderSupport> {
+  return audience.layer === "scient"
+    ? support
+    : support.filter((entry) => entry.status !== "unsupported");
+}
+
+export function preferCuratedStoreEntries<T extends { readonly name: string }>(
+  entries: ReadonlyArray<T>,
+  curated: ReadonlyArray<DiscoverEntry>,
+): ReadonlyArray<T> {
+  const aliases = new Set(
+    curated.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
+  );
+  return entries.filter((entry) => !aliases.has(entry.name));
+}
+
+export function providerServerDisplayName(
+  server: Pick<ServerProviderMcpServer, "name" | "scope">,
+): string {
+  return server.scope === "claudeai" ? server.name.replace(/^claude\.ai\s+/i, "") : server.name;
+}
+
+export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
+  return (
+    entry?.remotes.some((remote) => remote.url === "https://api.githubcopilot.com/mcp/") === true
+  );
+}
+
+/** The Extensions page's two lists; an address without `?kind=` shows plugins. */
+export const EXTENSION_KINDS = ["plugins", "skills"] as const;
+export type ExtensionKind = (typeof EXTENSION_KINDS)[number];
+
+export const EXTENSION_KIND_LABELS: Readonly<Record<ExtensionKind, string>> = {
+  plugins: "Plugins",
+  skills: "Skills",
+};
+
+/** `?kind=skills` from an Extensions address; anything else is the plugins list. */
+export function extensionKindSearch(raw: Record<string, unknown>): { kind?: "skills" } {
+  return raw.kind === "skills" ? { kind: "skills" } : {};
+}
+
+/** Whether a section of `kind` shows on the list `selected` names. */
+export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKind): boolean {
+  return (selected ?? "plugins") === kind;
+}
+
+export function entryNeedsSetup(entry: DiscoverEntry): boolean {
+  return (
+    entry.oauthClientRequired === true ||
+    entryNeedsToken(entry) ||
+    entry.apiKey !== undefined ||
+    entry.address !== undefined
+  );
+}
+
+export function entryFacts(
+  entry: DiscoverEntry | undefined,
+): ReadonlyArray<readonly [string, string]> {
+  if (!entry) return [];
+  return [
+    ...(entry.hosting ? [["Hosting", entry.hosting] as const] : []),
+    ...(entry.paidPlan ? [["Plan", "Paid plan"] as const] : []),
+    ...(entry.beta ? [["Status", "Beta"] as const] : []),
+    ...(entry.apiKey
+      ? [["Access", "API key needed"] as const]
+      : entry.accountRequired === true
+        ? [["Access", "Account needed"] as const]
+        : entry.accountRequired === false
+          ? [["Access", "No account needed"] as const]
+          : []),
+    ...(entry.address ? [["Setup", "Your address needed"] as const] : []),
+    ...(entry.accessNote ? [["Requirements", entry.accessNote] as const] : []),
+  ];
+}
+
+export function validateCuratedAddress(value: string, template: string): string | null {
+  return matchesExtensionAddressTemplate(value, template)
+    ? null
+    : "Enter an https address matching " + template + ".";
 }

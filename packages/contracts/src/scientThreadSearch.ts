@@ -1,15 +1,15 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, ThreadId } from "./baseSchemas.ts";
-import { OrchestrationThreadSearchSource } from "./threadSearch.ts";
+import { ProjectId } from "./baseSchemas.ts";
+import { OrchestrationThreadSearchMatch as UpstreamThreadSearchMatch } from "./threadSearch.ts";
 
-/** Scient public and MCP search results retain threads without a project. */
+/**
+ * Scient public and MCP search results retain threads without a project. Every
+ * other field follows upstream's match, including the ranking fields it adds.
+ */
 export const OrchestrationThreadSearchMatch = Schema.Struct({
-  threadId: ThreadId,
+  ...UpstreamThreadSearchMatch.fields,
   projectId: Schema.NullOr(ProjectId),
-  source: OrchestrationThreadSearchSource,
-  snippet: Schema.String.check(Schema.isMaxLength(240)),
-  messageCreatedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestrationThreadSearchMatch = typeof OrchestrationThreadSearchMatch.Type;
 

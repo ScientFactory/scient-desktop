@@ -60,14 +60,10 @@ import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
 
 type Methods = NonNullable<ServerProvider["connection"]>["methods"];
 
+// Every provider renders the same setup mark and diagnostics switch; which
+// state uses them is checked per provider in ComposerProviderSetupParity.
 const PROVIDERS: ReadonlyArray<readonly [driver: string, name: string, methods: Methods]> = [
   ["codex", "Codex", ["codex_browser"]],
-  ["claudeAgent", "Claude", ["claude_subscription"]],
-  ["cursor", "Cursor", ["cursor_browser"]],
-  ["antigravity", "Antigravity", ["antigravity_google"]],
-  ["droid", "Droid", ["droid_device_pairing"]],
-  ["grok", "Grok", ["grok_account"]],
-  ["pi", "Pi", []],
 ];
 
 function snapshot(driver: string, name: string, methods: Methods): ServerProvider {
@@ -236,6 +232,7 @@ describe("optional provider runtime summaries", () => {
   );
 });
 
+// regression: 40c5dea2e5 fix(web): give every composer setup state the same status icon
 describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
   const states = [
     ["install", notInstalled(snapshot(driver, name, methods))],
@@ -283,70 +280,68 @@ describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
   );
 });
 
-describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && methods.length > 0))(
-  "%s single-click Scient-managed installation",
-  (driver, name, methods) => {
-    const provider = signInFailedOnSystem(driver, name, methods);
-    const plan: ProviderRuntimePlan = {
-      instanceId: provider.instanceId,
-      action: "install",
-      target: "darwin-arm64",
-      version: "0.230.0",
-      downloadBytes: null,
-      sourceLabel: "Official release",
-      catalogRevision: "reviewed:1:older-than-system",
-      message: `Scient-managed ${name} 0.230.0 is older than your installed ${name} 0.231.0.`,
-      systemVersion: "0.231.0",
-      olderThanSystem: true,
-    };
+// regression: 2d693058ea fix(providers): install managed runtimes without version confirmation
+describe.each(PROVIDERS)("%s single-click Scient-managed installation", (driver, name, methods) => {
+  const provider = signInFailedOnSystem(driver, name, methods);
+  const plan: ProviderRuntimePlan = {
+    instanceId: provider.instanceId,
+    action: "install",
+    target: "darwin-arm64",
+    version: "0.230.0",
+    downloadBytes: null,
+    sourceLabel: "Official release",
+    catalogRevision: "reviewed:1:older-than-system",
+    message: `Scient-managed ${name} 0.230.0 is older than your installed ${name} 0.231.0.`,
+    systemVersion: "0.231.0",
+    olderThanSystem: true,
+  };
 
-    it.each([true, false])(
-      "starts from its blue action without another frame (model picker: %s)",
-      async (picker) => {
-        await using _fixture = _createFixture();
-        _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  it.each([true, false])(
+    "starts from its blue action without another frame (model picker: %s)",
+    async (picker) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-        runtime.plan.mockResolvedValue(plan);
-        runtime.start.mockResolvedValue(provider);
-        _fixture.host = document.createElement("div");
-        document.body.append(_fixture.host);
-        _fixture.root0 = _fixture.stack.use(
-          await _fixtureRender(null, { container: _fixture.host, router: false }),
-        );
-        await _fixture.root0.rerender(
-          <Container picker={picker}>
-            <AssistedProviderSetupHost
-              displayName={name}
-              environmentId={EnvironmentId.make("local")}
-              provider={provider}
-              surface="composer"
-            />
-          </Container>,
-        );
-        await expect.poll(() => _fixture.host!.querySelector("details")).toBeTruthy();
-        _fixture.host.querySelector("details")!.open = true;
-        await expect.poll(() => visibleButton(_fixture, `Use Scient-managed ${name}`)).toBeTruthy();
-        const action = visibleButton(_fixture, `Use Scient-managed ${name}`)!;
-        expect(action.className).toContain("text-primary");
-        const container = _fixture.host.querySelector("[data-container]")!.getBoundingClientRect();
-        const box = action.getBoundingClientRect();
-        expect(box.left).toBeGreaterThanOrEqual(container.left);
-        expect(box.right).toBeLessThanOrEqual(container.right);
-        action.click();
+      runtime.plan.mockResolvedValue(plan);
+      runtime.start.mockResolvedValue(provider);
+      _fixture.host = document.createElement("div");
+      document.body.append(_fixture.host);
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.host, router: false }),
+      );
+      await _fixture.root0.rerender(
+        <Container picker={picker}>
+          <AssistedProviderSetupHost
+            displayName={name}
+            environmentId={EnvironmentId.make("local")}
+            provider={provider}
+            surface="composer"
+          />
+        </Container>,
+      );
+      await expect.poll(() => _fixture.host!.querySelector("details")).toBeTruthy();
+      _fixture.host.querySelector("details")!.open = true;
+      await expect.poll(() => visibleButton(_fixture, `Use Scient-managed ${name}`)).toBeTruthy();
+      const action = visibleButton(_fixture, `Use Scient-managed ${name}`)!;
+      expect(action.className).toContain("text-primary");
+      const container = _fixture.host.querySelector("[data-container]")!.getBoundingClientRect();
+      const box = action.getBoundingClientRect();
+      expect(box.left).toBeGreaterThanOrEqual(container.left);
+      expect(box.right).toBeLessThanOrEqual(container.right);
+      action.click();
 
-        await expect.poll(() => runtime.start.mock.calls.length).toBe(1);
-        expect(runtime.start).toHaveBeenCalledExactlyOnceWith(plan);
-        expect(visibleButton(_fixture, "Back")).toBeUndefined();
-        expect(_fixture.host.textContent).not.toContain(plan.message);
-        const frames = [
-          ..._fixture.host.querySelectorAll("[data-provider-onboarding-view=assisted]"),
-        ];
-        expect(frames).toHaveLength(1);
-        expect(frames.filter(isVisible)).toHaveLength(1);
-      },
-    );
-  },
-);
+      await expect.poll(() => runtime.start.mock.calls.length).toBe(1);
+      expect(runtime.start).toHaveBeenCalledExactlyOnceWith(plan);
+      expect(visibleButton(_fixture, "Back")).toBeUndefined();
+      expect(_fixture.host.textContent).not.toContain(plan.message);
+      const frames = [
+        ..._fixture.host.querySelectorAll("[data-provider-onboarding-view=assisted]"),
+      ];
+      expect(frames).toHaveLength(1);
+      expect(frames.filter(isVisible)).toHaveLength(1);
+    },
+  );
+});
 
 // Cursor account sign-in uses its bundled SDK. The optional CLI is managed
 // through the shared runtime section rather than the account setup action.
@@ -365,7 +360,8 @@ describe("Cursor CLI single-click Scient-managed installation", () => {
     olderThanSystem: true,
   };
 
-  it.each([true, false])(
+  // The compact row is ProviderRuntimeSection's "Cursor one-click managed selection".
+  it.each([false])(
     "starts from its blue action without a version review (compact: %s)",
     async (compact) => {
       await using _fixture = _createFixture();

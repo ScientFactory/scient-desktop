@@ -11,6 +11,7 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { deriveProviderInstanceConfigMap } from "../../provider/ProviderInstanceRegistryHydration.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../TextGeneration.ts";
 
 /** Run caller-level metadata tests through the real instance/model resolver. */
@@ -20,11 +21,21 @@ export const makeNativeTextGeneration = (
   overrides: Partial<TextGeneration.TextGeneration["Service"]>,
 ) => {
   const textGeneration = TextGeneration.TextGeneration.of({
-    generateCommitMessage: () => Effect.die("Unexpected commit generation"),
-    generatePrContent: () => Effect.die("Unexpected pull-request generation"),
-    generateBranchName: () => Effect.die("Unexpected branch generation"),
-    generateThreadTitle: () => Effect.die("Unexpected title generation"),
-    generateReviewGuide: () => Effect.die("Unexpected review guide generation"),
+    generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function () {
+      return Effect.die("Unexpected commit generation");
+    }),
+    generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function () {
+      return Effect.die("Unexpected pull-request generation");
+    }),
+    generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function () {
+      return Effect.die("Unexpected branch generation");
+    }),
+    generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function () {
+      return Effect.die("Unexpected title generation");
+    }),
+    generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function () {
+      return Effect.die("Unexpected review guide generation");
+    }),
     ...overrides,
   });
   const instance: ProviderInstance = {
@@ -74,7 +85,9 @@ export const makeNativeTextGeneration = (
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
+          listInstances: Effect.succeed([instance]),
         }),
+        ServerSettings.layerTest(),
         Layer.mock(SourceControlProviderRegistry)({
           resolveLink: () => Effect.die("No source-control link expected"),
         }),

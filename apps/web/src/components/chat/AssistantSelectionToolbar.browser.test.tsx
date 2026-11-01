@@ -3,6 +3,7 @@ import "../../index.css";
 
 import { expect, it, vi } from "vite-plus/test";
 
+import { SideChatCitationContext } from "~/scient/chat/sideChatCitation";
 import { SelectionCitationToolbar } from "./AssistantSelectionToolbar";
 
 it.each([
@@ -54,10 +55,54 @@ it.each([
     );
     const action = () =>
       document.querySelector<HTMLButtonElement>('button[aria-label="Ask in chat"]');
-    await expect.poll(() => action()?.style.left).toBe(`${expected.x}px`);
-    expect(action()!.style.top).toBe(`${expected.y}px`);
+    const bar = () => action()?.closest<HTMLElement>('[role="group"]');
+    await expect.poll(() => bar()?.style.left).toBe(`${expected.x}px`);
+    expect(bar()!.style.top).toBe(`${expected.y}px`);
     action()!.click();
-    expect(onCite).toHaveBeenCalledWith(citation, sourceAnchor);
+    expect(onCite).toHaveBeenCalledWith(citation, sourceAnchor, "chat");
+  } finally {
+    await root.unmount();
+    viewport.remove();
+  }
+});
+
+it("offers both chats when the conversation has side chats", async () => {
+  await using _fixture = _createFixture();
+
+  const viewport = document.createElement("div");
+  viewport.style.cssText = "position:fixed;left:50px;top:50px;width:300px;height:400px";
+  document.body.append(viewport);
+  const root = _fixture.stack.use(
+    await _fixtureRender(null, { container: viewport, router: false }),
+  );
+  const sourceAnchor = {
+    source: viewport,
+    viewport,
+    range: document.createRange(),
+    resolveRects: () => [new DOMRect(200, 200, 40, 20)],
+  };
+  const citation = { text: "Selected text" };
+  const onCite = vi.fn(() => true);
+  try {
+    await root.rerender(
+      <SideChatCitationContext value={() => undefined}>
+        <SelectionCitationToolbar
+          viewport={viewport}
+          capture={() => ({ citation, sourceAnchor })}
+          onCite={onCite}
+        />
+      </SideChatCitationContext>,
+    );
+    viewport.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, button: 0, isPrimary: true }),
+    );
+    viewport.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    const action = (name: string) =>
+      [...document.querySelectorAll("button")].find((button) => button.textContent === name);
+    await expect.poll(() => action("Ask in side chat")).toBeDefined();
+    expect(action("Ask in chat")).toBeDefined();
+    action("Ask in side chat")!.click();
+    expect(onCite).toHaveBeenCalledWith(citation, sourceAnchor, "side-chat");
   } finally {
     await root.unmount();
     viewport.remove();

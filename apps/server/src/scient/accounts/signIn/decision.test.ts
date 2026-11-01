@@ -1,0 +1,288 @@
+import { describe, expect, it } from "vite-plus/test";
+import {
+  decideSignIn,
+  decideSignInContinuation,
+  MAX_SIGN_IN_STEPS,
+  pageOffersNoSignIn,
+  type SignInSubmission,
+} from "./decision.ts";
+import type { SignInDetection } from "./detection.ts";
+import { matchesAccountOrigin } from "./origin.ts";
+import { accountOtp, parseTotp } from "./totp.ts";
+
+const page: SignInDetection = {
+  origin: "https://login.example.com",
+  username: "#user",
+  password: "#pass",
+  otp: null,
+  submit: "button",
+  challenge: null,
+  signedIn: false,
+};
+const available = { username: true, password: true, otp: true };
+describe("account sign-in decisions", () => {
+  it("stops at a page that says the site is limiting automation", () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, limited: true, challenge: "captcha" },
+        ["example.com"],
+        available,
+      ),
+    ).toMatchObject({ type: "needs-user", kind: undefined });
+  });
+
+  it("says a sign-in page failed to load instead of asking the user to finish", () => {
+    expect(
+      decideSignIn(
+        { ...page, origin: "null", username: null, password: null, broken: true },
+        ["example.com"],
+        available,
+      ),
+    ).toMatchObject({
+      type: "needs-user",
+      kind: undefined,
+      message: expect.stringContaining("load"),
+    });
+  });
+
+  it("looks elsewhere only from a page with no way to sign in", () => {
+    const empty = { ...page, username: null, password: null, submit: null };
+    const sites = ["example.com"];
+    expect(pageOffersNoSignIn(empty, sites)).toBe(true);
+    expect(pageOffersNoSignIn({ ...empty, broken: true }, sites)).toBe(true);
+    expect(pageOffersNoSignIn(page, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, signInLink: "#sign-in" }, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, signedIn: true }, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, challenge: "captcha" }, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, limited: true }, sites)).toBe(false);
+    // Another company's sign-in step keeps going; leaving it would break the sign-in.
+    expect(pageOffersNoSignIn({ ...empty, origin: "https://idp.other.org" }, sites)).toBe(false);
+  });
+
+  it("picks the saved account from a list of accounts, and only that one", () => {
+    const chooser = {
+      ...page,
+      username: null,
+      password: null,
+      submit: null,
+      accountChoices: [
+        { email: "other@example.com", selector: "#other" },
+        { email: "Saved@Example.com", selector: "#saved" },
+      ],
+    };
+    expect(
+      decideSignIn(chooser, ["example.com"], { ...available, accountName: "saved@example.com" }),
+    ).toMatchObject({ type: "fill", submit: "#saved" });
+    expect(
+      decideSignIn(chooser, ["example.com"], { ...available, accountName: "new@example.com" }),
+    ).toMatchObject({ type: "needs-user", kind: "other" });
+    expect(pageOffersNoSignIn(chooser, ["example.com"])).toBe(false);
+  });
+
+  it("takes the password route past a passkey when a password is saved", () => {
+    const offer = {
+      ...page,
+      username: null,
+      password: null,
+      submit: null,
+      challenge: "passkey" as const,
+      signInLink: "#password",
+    };
+    expect(decideSignIn(offer, ["example.com"], available)).toMatchObject({
+      type: "fill",
+      submit: "#password",
+    });
+    expect(decideSignIn(offer, ["example.com"], { ...available, password: false })).toMatchObject({
+      type: "needs-user",
+      kind: "passkey",
+    });
+  });
+
+  it("follows a home page's sign-in link", () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, submit: null, signInLink: "#sign-in" },
+        ["example.com"],
+        available,
+      ),
+    ).toEqual({ type: "fill", fields: [], submit: "#sign-in" });
+  });
+
+  it('answers "Stay signed in?" with its Yes button', () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, submit: null, stay: "#yes" },
+        ["example.com"],
+        available,
+      ),
+    ).toEqual({ type: "fill", fields: [], submit: "#yes" });
+  });
+
+  it("fills visible steps only on a matching origin and stops for challenges, missing fields and uncertain completion", () => {
+    expect(decideSignIn(page, ["example.com"], available)).toEqual({
+      type: "fill",
+      fields: [
+        { field: "username", selector: "#user" },
+        { field: "password", selector: "#pass" },
+      ],
+      submit: "button",
+    });
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, otp: "#code" },
+        ["example.com"],
+        available,
+      ),
+    ).toMatchObject({ type: "fill", fields: [{ field: "otp", selector: "#code" }] });
+    expect(
+      decideSignIn(
+        { ...page, origin: "https://example.com.attacker.test" },
+        ["example.com"],
+        available,
+      ).type,
+    ).toBe("needs-user");
+    expect(decideSignIn({ ...page, challenge: "captcha" }, ["example.com"], available).type).toBe(
+      "needs-user",
+    );
+    expect(
+      decideSignIn({ ...page, challenge: "passkey" }, ["example.com"], available),
+    ).toMatchObject({ type: "needs-user", message: "Use your passkey in the browser." });
+    expect(decideSignIn({ ...page, challenge: "push" }, ["example.com"], available)).toMatchObject({
+      type: "needs-user",
+      message: "Approve sign-in on your device.",
+    });
+    expect(decideSignIn(page, ["example.com"], { ...available, password: false }).type).toBe(
+      "needs-user",
+    );
+    expect(
+      decideSignIn({ ...page, username: null, password: null }, ["example.com"], available).type,
+    ).toBe("needs-user");
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, signedIn: true },
+        ["example.com"],
+        available,
+      ).type,
+    ).toBe("signed-in");
+  });
+  it("matches exact HTTPS origins and domain boundaries without granting extra ports or insecure pages", () => {
+    expect(matchesAccountOrigin("https://sso.example.com/path", ["example.com"])).toBe(true);
+    expect(
+      matchesAccountOrigin("https://example.com:8443/path", ["https://example.com:8443"]),
+    ).toBe(true);
+    for (const origin of [
+      "https://example.com:8443",
+      "http://example.com",
+      "https://badexample.com",
+      "https://example.com.evil.test",
+      "https://u:p@example.com",
+      "not a url",
+    ])
+      expect(matchesAccountOrigin(origin, ["example.com"])).toBe(false);
+    expect(matchesAccountOrigin("https://sso.example.com", ["https://example.com"])).toBe(false);
+  });
+  it("parses outside TOTP formats using the RFC 6238 vector and sanitizes invalid setup errors", () => {
+    const setup = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    expect(parseTotp(setup).generate({ timestamp: 59_000 })).toBe("287082");
+    expect(
+      parseTotp(`otpauth://totp/example?secret=${setup}&digits=8&period=30`).generate({
+        timestamp: 59_000,
+      }),
+    ).toBe("94287082");
+    expect(accountOtp("123456", 0)).toBe("123456");
+    for (const value of ["not:a:key", "otpauth://hotp/example?secret=GEZDGNBV&counter=1", ""])
+      expect(() => parseTotp(value)).toThrow("The account's two-factor setup is invalid.");
+  });
+});
+
+describe("sign-in submission guard", () => {
+  const submitted = (fields: SignInSubmission["fields"], otpPeriod?: number): SignInSubmission => ({
+    origin: page.origin,
+    fields,
+    otpPeriod,
+  });
+  it("stops a repeated password but permits the first password after a username step", () => {
+    expect(decideSignInContinuation(page, [submitted(["password"])], 1, undefined).type).toBe(
+      "password-rejected",
+    );
+    expect(decideSignInContinuation(page, [submitted(["username"])], 1, undefined).type).toBe(
+      "continue",
+    );
+    expect(
+      decideSignInContinuation(
+        { ...page, origin: "https://sso.example.com" },
+        [submitted(["password"])],
+        1,
+        undefined,
+      ).type,
+    ).toBe("continue");
+  });
+  it("permits exactly one new TOTP period retry and never retries a static code", () => {
+    const codePage = { ...page, password: null, otp: "#otp" };
+    expect(decideSignInContinuation(codePage, [submitted(["otp"], 10)], 1, 10).type).toBe(
+      "code-rejected",
+    );
+    expect(decideSignInContinuation(codePage, [submitted(["otp"])], 1, undefined).type).toBe(
+      "code-rejected",
+    );
+    expect(decideSignInContinuation(codePage, [submitted(["otp"], 10)], 1, 11).type).toBe(
+      "continue",
+    );
+    expect(
+      decideSignInContinuation(codePage, [submitted(["otp"], 10), submitted(["otp"], 11)], 2, 12)
+        .type,
+    ).toBe("code-rejected");
+  });
+  it("leaves a challenge to the user instead of calling the password rejected", () => {
+    expect(
+      decideSignInContinuation(
+        { ...page, challenge: "captcha" },
+        [submitted(["password"])],
+        1,
+        undefined,
+      ).type,
+    ).toBe("continue");
+  });
+  it("leaves the two-step check's other options to the user", () => {
+    const options = { ...page, username: null, password: null, submit: null, anotherWay: "#other" };
+    expect(decideSignIn(options, ["example.com"], available)).toMatchObject({
+      type: "fill",
+      submit: "#other",
+    });
+    expect(
+      decideSignIn(options, ["example.com"], { ...available, passwordSent: true }),
+    ).toMatchObject({ type: "needs-user", kind: "other" });
+  });
+
+  it("stops when the site keeps asking for the username", () => {
+    const typed = { origin: page.origin, fields: ["username"] as const, otpPeriod: undefined };
+    const repeat = { ...page, password: null };
+    expect(decideSignInContinuation(repeat, [typed], 1, undefined).type).toBe("continue");
+    expect(decideSignInContinuation(repeat, [typed, typed], 2, undefined).type).toBe("failed");
+  });
+
+  it("stops at the step limit", () => {
+    expect(decideSignInContinuation(page, [], MAX_SIGN_IN_STEPS, undefined).type).toBe("failed");
+  });
+});
+
+it("assigns hand-off kinds only on an allowed site", () => {
+  for (const kind of ["captcha", "passkey", "push"] as const)
+    expect(decideSignIn({ ...page, challenge: kind }, ["example.com"], available)).toMatchObject({
+      type: "needs-user",
+      kind,
+    });
+  expect(
+    decideSignIn({ ...page, otp: "#code" }, ["example.com"], { ...available, otp: false }),
+  ).toMatchObject({ kind: "code" });
+  expect(decideSignIn(page, ["example.com"], { ...available, password: false })).toMatchObject({
+    kind: "other",
+  });
+  expect(
+    decideSignIn(
+      { ...page, challenge: "push", origin: "https://unrelated.test" },
+      ["example.com"],
+      available,
+    ),
+  ).toMatchObject({ kind: undefined });
+});

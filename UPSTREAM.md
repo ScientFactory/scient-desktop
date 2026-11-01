@@ -17,7 +17,7 @@ idle end keeping, restore), `readingPositionStore.ts` (session storage),
 (return to a follow), `useTimelineEndControl.ts` and `unreadTimelineMessages.ts` (Scroll to
 end and its count). They are mounted in marked regions of `ChatView.tsx`,
 `MessagesTimeline.tsx` and `timelineScrollAnchoring.ts`; ChatView's reader navigation
-(placement cancel, one-shot Scroll to end, gesture listeners, thread-switch reset) stays in
+(placement cancel, Scroll to end, gesture listeners, thread-switch reset) stays in
 marked regions there because it shares refs with upstream's anchor callbacks. The outer
 timeline never maintains the live end during streaming, tool activity, completion, or queued
 sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
@@ -63,18 +63,31 @@ stays on underneath the reveal. The timeline's working state (`chat/timelineWork
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).
-Preserve the existing first-message framing. One controller in ChatView owns the send follow
-(`chat/responseFollow.ts`): eligible sends, and queued prompts the server delivers while the
-reader is at the end (V2's `queued_turn`/`promoted_queued_to_steer` input intent on the
-delivered prompt, which keeps its message id), start it; it settles from the V2 run answering
-that prompt (the run its message belongs to, so a promoted steer follows the run it went into,
-not its cancelled queue run), never from the thread looking busy. A prompt's response ends at the
-next prompt. It reveals the prompt and the start of its response's latest
-message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
-follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
-reaching the top margin, past it only to show a message pushed below the fold, never
-past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
-cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+Preserve the existing first-message framing. One controller in ChatView owns the follow
+(`chat/responseFollow.ts`), whose rule is that work is watched and answers are read. A reader at
+the end of a working thread follows it: a send at the end, a prompt arriving at the end from
+anywhere (including a queued prompt V2 delivers: its `queued_turn`/`promoted_queued_to_steer`
+input intent keeps the message id, so it counts before the send's receipt), and arriving at the
+end while the latest prompt's run works (scrolling down, Scroll to end, opening the thread there)
+start or rejoin it. A follow the reader ended stays ended until they leave the end and come back.
+It settles from the V2 run answering that prompt (the run its message belongs to, so a promoted
+steer follows the run it went into, not its cancelled queue run), never from the thread looking
+busy. A prompt's response ends at the next prompt. `chat/useBoundedAnswerFollow.ts` follows the
+response's live end (traces, tools, short progress notes, the reader's queued messages after the
+latest response) at a calm pace, and stops before the start of a read row passes the top margin:
+a message still arriving, one `keepsSettledAnswerVisible` keeps when its turn folds, a plan, a
+card, or work the reader expanded. Read rows the reader had scrolled past when they joined do not
+stop it, unless still arriving. Past the stop it only shows the first lines of a message pushed
+below the fold. Scrolling up by any means (wheel, keys, touch, scrollbar)
+cancels pending placement and bounded following; scrolling down and clicks do not, and a text
+selection holds it still. An upward scroll away from the end without reader input (assistive
+technology) also ends a fresh-open end restore. Footer status never moves the reader: upstream's
+footer-growth follow (`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`); the
+reader's queued messages are kept reachable by the follow and `chat/queuedRunsInView.ts`, which
+also shows Scroll to end while they are hidden below.
+The end-of-timeline "Syncing messages..." status waits 2s instead of upstream's 400ms while the
+cached messages already show; "Loading messages..." for an empty thread keeps upstream's delay
+(marked in `ChatView.tsx`).
 Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
 field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
@@ -83,13 +96,14 @@ from rest 250ms after their input stops. ChatView hands every end report to
 `useTimelineEndControl`, which reacts to transitions only and changes the follow modes there.
 The timeline never pins to its end, so a report of leaving it is never swallowed (upstream's
 handler swallows it because its list pins; restoring that hides Scroll to end while an answer
-grows below). The existing Scroll to end button is a one-shot action with an
-unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
+grows below). The existing Scroll to end button jumps to the bottom with an unread badge
+counting responses; while the thread works the reader then follows it again. Do not add a
 second navigation button. A reader who leaves while the follow is still going (saved as
 `followingPromptId`; never inferred from resting at the end) comes back to where the follow
-would be now for that saved prompt (`chat/liveFollowOffset.ts`): its response's end if it all
-fits, else the prompt at the top margin, or its latest message's start there if it would be below
-the screen; a later prompt (from another window) never moves it further. The follow then carries
+would be now for that saved prompt (`chat/liveFollowOffset.ts`, the same stop rule): its
+response's end unless that passes a read row's start, else that row at the top margin, or its
+latest message's start there if it would be below the screen; a later prompt (from another
+window) never moves it further. The follow then carries
 on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
@@ -190,8 +204,10 @@ are retained unmounted (knip entries) so their changes still merge; the pass's r
 the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
-In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
-available" toasts to the circle; the browser client keeps them.
+A marked root mount delegates browser "update available" toasts to Scient's
+`scient/providerConnection/BrowserProviderUpdateNotification.tsx`, reusing the shared CLI and
+managed-runtime update owners. Desktop availability stays in the circle. Browser dismissal
+storage and published-version identities remain compatible.
 Because a server waits while a provider update is queued, a marked seam in
 `apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
 one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has
@@ -219,9 +235,22 @@ Scient owns held-queue release in `orchestration-v2/scient-fork/QueuedRunSend.ts
 releases a held queue for any client send that starts or queues a run, except after worktree setup
 failed without a worktree. Scient releases it only for an ordinary direct send that starts its own
 run, including after such a failure, where the queue follows that checkout turn. A plain send that
-Stop turns into a queued message joins the held queue. Upstream's release block in `Orchestrator.ts`
+Stop turns into a queued message joins the held queue. A stop made so a queued message runs next
+(a `/goal`, or Send now into a running compaction) does not hold the queue
+(`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
 `SteeringCompletion.integration.test.ts` assert Scient's rule.
+Upstream's release of unattended messages after a later completed run is composed: the
+terminal fence honours it as the one release without a command, and a message queued before a
+Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
+
+The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
+`queuedRunsControl` slot. Scient's additions live in
+`scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
+`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
+command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+upstream's changes to the rest of the file as they are, including its single Send now action
+without reordering; agents still reorder through `scient_queue`.
 
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
@@ -589,19 +618,122 @@ publishing it, and workspace image refresh reaches both inline and Scient-card
 renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
-The current alignment through
-`21da3061aa006fc852ea4bd84c31ec084a3afa26` is recorded in
-[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
-([Scient PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)).
-Literal extension merge `a495ed55e0d5f5e2740b750121772dcf1327108c` has exact owned
-base `80436ae5bead92d3cde82b90a6aa5b137aefde6b` and the frozen official target as
-parents, retaining all 133 additional donor commits after `81dea7821d`.
-Its committed provenance and staged seam checks pass; final qualification of the
-composed owned-main catch-up remains pending. Native V2, scientific capabilities,
-immutable migrations and database durability remain; cloud, telemetry, relay,
-updater, mobile publication and release holds are unchanged. The receipt separates
-older qualification from extension evidence and outstanding native/visual checks.
+The current committed alignment through
+`79f1fadfc6020b820d541ca4691d2feebb15dd1b` is recorded in
+[the 2026-10-31 79f1fadfc6 receipt](docs/internals/t3-upstream-sync-20261031-79f1fadfc6.md).
+Literal merge `5589000e86b47f1c227daa57521779cb8e93d5f9` has owned base
+`f91025e88ce96d5f26bb4e7485af2db2f62d768c` (#718) and the frozen official target as parents,
+retaining the 103 official commits after `59bb4e83bc`. Side chats are real threads on upstream's
+lineage beside Scient's frozen forks, and a forked parent gives them its frozen history. Model
+and effort share one control on Scient's picker. Upstream's migration 076 lands as Scient 080.
 Release remains separate.
+
+The previous committed alignment through
+`59bb4e83bcf753e6ebb99b63b5232f5f41251c8a` is recorded in
+[the 2026-10-31 59bb4e83bc receipt](docs/internals/t3-upstream-sync-20261031-59bb4e83bc.md).
+Literal merge `bcf7bf08725b71e805949d4d7e757947b8c4bffd` has owned base
+`3a3dec7711ba5eb07e31eb5c8a2ab0fa6a911c48` (#713, with main's #715) and the frozen official
+target as parents, retaining the 295 official commits after `97e35bcf23`. Every chat message
+renders through upstream's faster renderer, and messages without math intent also take its
+cache and last-block streaming; Scient's math, direction, image gallery and generated-image
+display stay. Upstream's migrations 074 and 075 land as Scient 078 and 079. Release remains
+separate.
+
+An earlier committed alignment through
+`97e35bcf23e4dcf34c2dcffadd37c08db0e01e52` is recorded in
+[the 2026-10-30 97e35bcf23 receipt](docs/internals/t3-upstream-sync-20261030-97e35bcf23.md).
+Literal merge `fa47084190dd8c156172c23678b2e84bbea8a4a6` has owned base
+`5dc9c2c26725b92751c984263f5f9b70abdb21f3` (#710) and the frozen official target as
+parents, retaining the 27 official commits after `dd14848153`. Stop always completes with
+force stop on top of Scient's queue and admission rules; held agent, server and scheduled
+messages continue after a later completed run, except those a Stop held. Provider environment
+secrets arrive behind upstream's off secrets
+flag. Release remains separate.
+
+An earlier committed alignment through
+`dd148481531a0a090780a2ade20588566db099a2` is recorded in
+[the 2026-10-30 dd14848153 receipt](docs/internals/t3-upstream-sync-20261030-dd14848153.md).
+Literal merge `e86962f1278340f6fdbdda071ebe1cc0a11aec22` has owned base
+`51505395956e7dc959e00c868b10048a63f89946` (#707, which carries #694) and the frozen
+official target as parents, retaining the 99 official commits after `6d450a4284`.
+Upstream's server performance work is in; Scient keeps full SQLite durability, its
+counts-free startup heartbeat, and its settings, sidebar-section and fork-history
+additions on upstream's faster shapes. Upstream's migration 073 lands as Scient 077.
+1Password secret providers stay behind upstream's off-by-default flag. Release remains
+separate.
+
+The previous committed alignment through
+`6d450a4284852af137b2f3407fddd89eb76e7644` is recorded in
+[the 2026-10-29 6d450a4284 receipt](docs/internals/t3-upstream-sync-20261029-6d450a4284.md),
+stacked on #694. Literal merge `49d0d85dde06de7b398f4d117a098cd41fb862a7` has owned base
+`abe2e529285a9b1b204e507d5673d2fd3dff5dbd` and the frozen official target as parents,
+retaining the 44 official commits after `9826dbb990`. Scient keeps its Stable/Beta update
+picker and adopts the updater's release floor and guarded downgrade; upstream's npm-based
+fleet track switch is not adopted. Upstream's out-of-usage fallback, turning a thread
+without a project into a project, local-first Git status and Electron 44.10.0 are in.
+Immutable migrations (none added), cloud, telemetry, relay, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
+`9826dbb9904b2591bfbf60d1317486b59132f56b` is recorded in
+[the 2026-10-28 8e76f945d2 receipt](docs/internals/t3-upstream-sync-20261028-8e76f945d2.md)
+([Scient PR #694](https://github.com/ScientFactory/scient-desktop/pull/694)).
+Literal merge `f3c25c6c49cf8cc3e76a61ddb71553ffb5029f2e` has owned base
+`b3ea3c2fd48441e00f85247920decf96afcc1541` and the frozen official target as parents,
+retaining the 102 official commits after `a56ecdafa7`; owned-main catch-up
+`0f956df756f3c2a866b1d9df672ea4320728e3c7` includes `eaf4ccdd8e`; official extension
+`05313ed5470d673fa4a51fcf394b59fe86267490` retains the next 53 through `9826dbb990`, with
+upstream's grouped composer, the boring sidebar in place of the deleted legacy sidebar,
+bounded history pages and Simlock as a Labs alpha. Update-time thread
+continuation and thread-continuation gating are removed with upstream; thread links
+use upstream's v2 format while older links still parse; upstream's peer links land
+as migrations 074-076 with `scient_*` tool names; Labs keeps upstream's page.
+Upstream's dead-code sweep also removes the Scient code that only it reached, and
+every Scient React effect now states its reason. Native V2, immutable migrations,
+storage identities and cloud, telemetry, relay, updater, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
+`a56ecdafa7c944286f3b45aa51486be4ffe079fd` is recorded in
+[the 2026-10-27 a56ecdafa7 receipt](docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md)
+([Scient PR #684](https://github.com/ScientFactory/scient-desktop/pull/684)).
+Literal merge `92002fb3417a5ccaaa5fbd1527578bb491a29464` has owned base
+`d17d8f60cecccf6580a9f50c9672d0cd1e8ed3e9` and the frozen official target as parents,
+retaining the 15 official commits after `e9236274a3`. A hung delegated-task stop
+now times out so later runs can start; draft model reconciliation runs at app
+start; the upload queue alone records finished draft uploads; Alchemy moves to
+2.0.0-beta.84 while the relay deploy workflow stays disabled. Scient's release
+runbook, Native V2, storage identities and cloud, telemetry, relay, updater,
+mobile publication and release controls remain. Release remains separate.
+
+The previous committed alignment through
+`e9236274a3a6e0c731a7df4092db1e686f039068` is recorded in
+[the 2026-10-27 4cb29a56f6 receipt](docs/internals/t3-upstream-sync-20261027-4cb29a56f6.md)
+([Scient PR #678](https://github.com/ScientFactory/scient-desktop/pull/678)).
+Literal merge `778edf4cf086b666c42964b409480ba0c2821982` retains the 92 official
+commits after `dd5b5401e1`; official extensions `5331a9f1be`, `825bc88442`,
+`cd1eeaa6e0`, `b229dcb1cf`, `a2fdbcf0b0`, `cde42c1b92` and `07694becc0` retain the next 7, 3, 8, 8, 1, 3 and 1.
+Settings adopt upstream's single design with Scient rows placed in its groups; MCP
+tools follow upstream's consolidated action tools; fx takes Scient's application
+bridge; the web queue takes upstream's Send now action without reordering. Scient
+keeps its file-save registry, reading-end policy, held-queue policy and tagged
+mini-player content. Typecheck, lint, seam checks, affected suites, build and
+desktop smoke pass; exact-head CI qualifies the PR. Owner visual acceptance and
+release remain separate steps.
+
+The previous committed alignment through
+`dd5b5401e1f240f4314af29edf431369d182f386` is recorded in
+[the 2026-10-26 receipt](docs/internals/t3-upstream-sync-20261026-10629afaac.md).
+Literal merge `cd00c855fd6bc05f153e8390ee5dd9685e283186` retains the 192 official
+commits after `5b35402623`; owned-main catch-ups `2f5ac15cf3` and `421f6276e2`
+retain owned main through `b4966ac4eb916b183ca8c38a325e7ba5385d5fd1`; official
+extensions `606c164fc9` (#672) and `c23258e6e7` retain the next 50 and 7
+commits. Typecheck, lint, seam checks and affected suites pass; exact-head CI
+qualified each PR. Its
+[preceding receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md)
+retains its own boundaries and evidence. Native V2, scientific capabilities,
+immutable migrations, storage compatibility and cloud, telemetry, relay,
+updater, mobile publication and release controls remain.
 
 ## Receiving T3 updates
 
@@ -1007,7 +1139,9 @@ opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
 Scient's injected MCP connection is named `scient`, and the omitted-history
-reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+reader is `scient_thread_inspect` (upstream `t3_thread_read`). Scient's own
+`scient_handoff_summary_read` pages saved handoff summaries that upstream's
+reader omits. Tool descriptions, provider-qualified names,
 generated handoff instructions and activity presentation use Scient identity.
 Preserve this public boundary when adopting upstream toolkits. Historical
 `t3-code`/`t3_` activity identities are normalized only for display; they are not
@@ -1055,10 +1189,21 @@ presentation cutover to Codex, Claude or external Oh My Pi during upstream merge
 
 `scient-omp-seams.json` inventories owned code and the anchored `upstreamMounts`
 and shared `scientMounts`; shared integration points are not wholly OMP-owned.
-Analytics sends OMP as the gateway's existing `other` provider and is not a mount.
+The revision-7 analytics contract preserves `omp` and `scient` as separate bounded
+categories instead of folding them into `other`. Its shared allowlist, conformance
+generator and generated fixture are anchored `scientMounts`, not OMP-owned code.
+Deploy the revision-7 gateway before releasing this producer; old `other` records
+cannot be re-attributed. Analytics meanings and consent/content boundaries remain
+in `docs/internals/product-analytics.md`.
 `scripts/scient-seam-check.mjs --base --head` checks this inventory with the
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
+
+Single-child Stop eligibility is shared by the lineage UI and server admission in
+`packages/contracts/src/scient/nativeSubagentControl.ts`. Claude, Oh My Pi and Scient Agent
+support this operation; Claude workflow stopping remains separate. The native adapter validates
+the owning session and sends Oh My Pi's `cancel_subagent` with the task's protocol ID, leaving
+the parent turn intact. Native lifecycle events own the resulting child state.
 
 Scient Extensions owns `apps/server/src/scient/extensions` and
 `apps/web/src/scient/extensions`. Connected services stay on the Scient server:
@@ -1091,6 +1236,12 @@ index for untracked files. A freshly timestamped copy can bypass Git's racy-clea
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,
 retain split-index handling, and preserve the deterministic regression in
 `GitVcsDriverCore.test.ts`; do not replace it with a timing delay or size-changing fixture.
+
+`effect-codex-app-server`'s client runs the caller's `onTermination` hook and
+then fails its own termination signal. Upstream's handler replaces the caller's
+hook, so Scient's session cleanup never ran. The order matters: the signal can
+retire the session and interrupt the hook. Retire the marked block when upstream
+composes the two.
 
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its
@@ -1144,17 +1295,18 @@ never overwrite each other. Environment-local resolution lives entirely in
 `apps/web/src/scient/sections` and added no upstream seams. Scient code lives under
 `apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
 `apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
-mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
+mounts. A few bindings change in place in `Sidebar.tsx`, along with the search field's class
 list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
 the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
 keeps Add project above No project beneath the scrolling project list, so a project,
 including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
 Sections view reuses T3's rows, shelves and canonical manual order keys and never changes pin state.
-Its optional **Keep active threads near the top** presentation is client-local, lives
-in `apps/web/src/scient/sections`, and never writes order keys on status transitions.
-Manual drops update only the deliberate placement; Status view continues to use the
-canonical order. If T3 ships its own
+The default Status sidebar and Sections view share the default-on **Keep active threads
+near the top** preference. Placement is client-local, lives in `apps/web/src/scient/sections`
+and `apps/web/src/scient/sidebar`, and never writes order keys on status transitions.
+Manual drops update only the deliberate placement against canonical neighbours; Status
+keeps the Working-section beta's own ordering while that beta is enabled. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).
@@ -1456,8 +1608,9 @@ The rich Markdown editor is isolated under `packages/scient-markdown`,
 `apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`
 and `packages/client-runtime/src/state/scientMarkdownHttp.ts` as the owned files
 outside those roots. The inherited-host seams are limited to one lazy editor
-mount and eye switch in `FilePreviewPanel.tsx`, one create button in
-`FileBrowserPanel.tsx`, a generic current-file control slot in
+mount and eye switch in `FilePreviewPanel.tsx`, the Files bar's New menu and a
+folder's New document in `FileBrowserPanel.tsx` (see "Side panel and Files bar"),
+a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
 Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
@@ -1581,15 +1734,17 @@ The Wayland layer namespace `t3-snap-shot` and the portal shortcut id
 `t3-snap-shot-<hash>` keep T3's names: renaming them would drop users'
 compositor rules and approved shortcuts.
 
-The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
+The Overleaf engine owns `apps/server/src/scient/overleaf` and its
 retained mutation implementation in `apps/server/src/scient/workspace`. Its
 `WorkspaceFileSystem` methods share physical-file publication ownership with
 editor saves. Desktop resources carry `scient-file-publication` for retained
-publication; macOS also carries the protocol-1 `scient-file-exchange` helper for
-Overleaf volume probes. Staging either helper must preserve the other's files.
-Keep both outside ASAR and resolve them only from the server host. Preserve
+publication and Overleaf volume probes. Keep it outside ASAR and resolve it
+only from the server host. Preserve
 journaled recovery across app updates, including review of ambiguous publication
-boundaries. No Overleaf routes or UI are mounted yet. See
+boundaries. Its routes (`scientOverleaf`, `/api/scient/overleaf/v1/*`) are a
+Scient group in `packages/contracts/src/scient/environmentHttpGroups.ts`, with
+contracts in `scientOverleaf.ts`; the only edits to shared files are the marked
+group registration in `environmentHttp.ts` and the export in `index.ts`. See
 [Overleaf engine](docs/internals/scient-overleaf-engine.md).
 
 ## File-tree bidirectional labels
@@ -1610,3 +1765,125 @@ truncation and selection checks in
 `apps/web/src/scient/files/fileTreeBidi.browser.test.ts`. Reversing filenames or
 setting the whole tree RTL is not a substitute for preserving each name's bidi
 paragraph.
+
+## Side panel and Files bar
+
+Scient's side panel replaces T3's tab bar look, its empty state and its file
+toolbar. The behaviour lives in `apps/web/src/scient/rightPanel`, `scient/files`,
+`scient/browser` and `scient/presentation`; T3 files keep short marked calls,
+guarded by `scient-side-panel-seams.json`. Without `onAddNewTab`,
+`RightPanelTabs` keeps T3's "+" menu, empty state and scroll arrows; Scient's tab
+look applies either way.
+
+| Piece                    | Owned in                                                                                                           | Mounted in T3 at                                                                                                    | Removed from T3's version                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Tab strip                | `rightPanel/tabStrip.ts` (`SCIENT_PANEL_TAB_CLASS`, `useScientTabStrip`), `presentation/scient-panel-tabstrip.css` | `RightPanelTabs.tsx`: tab classes after T3's own (later classes win), `data-scient-tabstrip`, `data-scient-surface` | Scroll arrows give way to the all-tabs menu (`AllTabsMenu`)                                 |
+| New tab page             | `rightPanel/SurfaceLauncher.tsx`, `ScientNewTabButton`, `useScientRightPanelOpeners`                               | `RightPanelTabs.tsx` (launcher instead of `RightPanelEmptyState`, "+" outside the scrolling list), `ChatView.tsx`   | The "+" menu; an open, empty panel always shows a New tab                                   |
+| Tab shortcuts, duplicate | `rightPanel/usePanelTabShortcuts.ts`, `panelTabCommands.ts`, `panelTabDuplication.ts`                              | `ChatView.tsx` (`...panelTabs.shortcuts`, `onDuplicateSurface`), `RightPanelTabs.tsx` tab menu "Duplicate"          | —                                                                                           |
+| File list beside a tab   | `rightPanel/PanelFilesColumn.tsx` (`PanelFilesLayout`, `PanelFilesToggle`, `usePanelFilesOpen`)                    | `ChatView.tsx` around the panel content, `RightPanelTabs.tsx` Files button                                          | `FilePreviewPanel.tsx`'s own file-list toggle and its storage key                           |
+| Files bar                | `files/useScientFolderActions.tsx`, `files/FileBrowserToolbarActions.tsx`, `WorkspaceFilesMenu`                    | `FileBrowserPanel.tsx` toolbar and folder right-click menu                                                          | `RefreshFilesButton`, the expand-all button (both in the Files menu), the old create button |
+| Tab Back and Forward     | `rightPanel/tabHistory.tsx`                                                                                        | `ChatView.tsx` (`useRightPanelTabHistory`, renames carry history), `FilePreviewPanel.tsx` toolbar                   | —                                                                                           |
+| Browser control chip     | `browser/BrowserControlChip.tsx`                                                                                   | `ServerBrowserSurface.tsx`; `otherViewers` in `ServerBrowser.ts` and `serverBrowserStream.ts`                       | T3's control status row (`previewStreamControlLabel`)                                       |
+| Browser history link     | `browser/useBrowserHistoryProjectLink.ts`                                                                          | `ChatView.tsx`                                                                                                      | —                                                                                           |
+| Tooltip timing           | `presentation/AppTooltipTiming.tsx`                                                                                | `main.tsx`, around `<AppRoot>`                                                                                      | —                                                                                           |
+| Icon weight              | `presentation/scient-icon-weight.css`                                                                              | stylesheet only; `PanelLayoutControls.tsx` sets its maximize glyph's stroke                                         | —                                                                                           |
+
+When aligning, check:
+
+- **App-wide effects.** Tooltips open after 0.1s, and at once while moving between
+  controls, everywhere; a place that sets its own timing keeps it. Lucide icons
+  drawn 16–18.5px wide take a 1.75 stroke; an icon with its own stroke class or
+  width, or marked `data-preserve-icon-weight` (on the icon or its parent), keeps its weight.
+- **Shortcuts T3 may also claim.** Scient adds `rightPanel.nextTab` (Ctrl+Tab),
+  `rightPanel.previousTab` (Ctrl+Shift+Tab), `rightPanel.duplicateTab` (⌘⇧D),
+  `rightPanel.toggleFiles` (⌘⌥E), and ⌘T (`rightPanel.new`) for a closed panel; the
+  server's keybindings migration gives existing configs the closed-panel rule. ⌘[ and
+  ⌘] (T3's `navigation.back`/`forward`) belong to a file tab's own history while the
+  keyboard is in it. If T3 binds any of these, decide which command keeps the key.
+- **`otherViewers`.** The server browser now tells each window how many others watch
+  the page, so the one in control sees that another waits. Keep the field if T3
+  reshapes the control payload.
+- **A T3 bug fix to retire.** `useBrowserHistoryProjectLink` restores the call T3's
+  orchestrator rewrite (upstream `de34391427`) dropped, which filed browser visits
+  under the thread's project. Remove it and its mount once T3 makes that call again.
+- **New tab page letters.** `composerFocusRedirect.ts` leaves `[data-scient-launcher]`
+  out of the composer's typing redirect, so the page's letter shortcuts reach it.
+- **User docs.** `docs/user/keybindings.md` (these shortcuts) and `docs/user/devices.md`
+  (Device under More on the New tab page) carry no markers, like the rest of
+  Scient's lines there.
+
+## Add project paste
+
+The Add project box starts with the home folder (`~/` until the environment resolves it) or the
+configured base folder. Upstream's input only ever joins pasted text to that, so pasting
+`/Users/dana/thesis` gives `/Users/dana//Users/dana/thesis`, a missing folder inside home that
+Add project creates empty. The marked `onPaste` seam in
+`CommandPalette.tsx` replaces the box when `resolvePastedBrowsePath` sees a full path, and leaves
+every other paste and all typing alone. Drop the seam if upstream fixes this in their picker.
+
+## Browser downloads and composer focus
+
+Browser download attribution is upstream's, unchanged: `DesktopBrowserHost.humanStartedDownload`
+treats a download as the person's unless agent CDP input reached the tab in the last 5 seconds,
+and only then does `Manager.ts` copy it to ~/Downloads. Do not attribute downloads from the guest
+preload's input reports. Chrome's PDF viewer is an out-of-process frame the preload never runs in,
+so its Download button would never count as the person's, and the file would be lost when the tab
+closes (this happened between the 2026-10-09 alignment and 2026-10-30). Keep the preload's input
+reports asynchronous; a synchronous IPC per key or click makes page typing wait on the main process.
+
+Two marked focus seams keep the caret where the person is typing:
+
+- `ChatView.tsx`, the thread-open effect: a new thread, or closing the terminal, focuses the
+  composer as in T3. The same thread re-resolving (a reconnect) focuses it only when
+  `shouldRefocusComposerOnWindowFocus` allows, so a browser page, field or editor keeps the caret.
+- `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
+  takes the caret only if focus is still in the composer or nowhere in particular.
+
+## Multiple app windows
+
+Scient Desktop can run several full app windows in one Electron process
+([Multiple app windows](docs/internals/multi-window.md)). The behavior lives in
+`apps/desktop/src/scient/multiWindow` and `apps/web/src/scient/multiWindow`; T3
+files keep marked seams only. Paths below are relative to `apps/desktop/src`, or
+to `apps/web/src` after `web/`.
+
+| Area                      | T3 files with marked seams                                                                                                                              | What the seam does                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Window registry           | `electron/ElectronWindow.ts`                                                                                                                            | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
+| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
+| Sender checks             | `ipc/DesktopIpc.ts`, `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts`                 | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
+| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                            | Change notices to other windows; Web Lock around writes                                                                                                                                              |
+| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                        | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
+| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                 | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
+| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                      | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
+| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                            | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
+| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                   | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
+| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`       | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
+
+Desktop test files that build `ElectronWindow`, `DesktopWindow` or `ElectronMenu`
+fakes carry marked `appWindows`, `openNewWindow` and `setDockMenu` members;
+Scient cases live in
+`.scient.` siblings and `scient/multiWindow` tests.
+
+When aligning, check:
+
+- **Single-window assumptions.** A new T3 call to `electronWindow.main` or a
+  comparison of an IPC sender with the main window's renderer usually means
+  "the window that asked". Route it through `appWindowForSender` unless it really
+  concerns the most recently used window.
+- **Window construction.** T3 changes to `createWindow` (options, load, DevTools,
+  bounds persistence) apply to every app window. Keep the route and cascade
+  options, and keep DevTools opening only for the first window.
+- **Persisted stores.** A T3 change to a merged store's persisted shape or
+  version must keep its sync module's fields in step: `uiStateSync.ts` lists UI
+  state fields, `rightPanelSync.ts` reads `byThreadKey` and
+  `threadPanelVisibilityByThreadKey`, and `composerDraftSync.ts` lists draft
+  sections. A new field in a thread's side panel entry is shared with the tabs
+  by default; one that belongs to each window's view goes in `rightPanelSync.ts`'s
+  `splitView` and `withOwnView`. A new T3 store that persists shared state needs the same treatment or a reason
+  it does not.
+- **Preview manager.** T3 code that reads a single main window in
+  `preview/Manager.ts` must use the tab's host window (`PreviewHostWindows` in
+  `scient/multiWindow/previewHostWindows.ts`) or all `appWindows`.
+- **Shortcuts.** File > New Window uses `CmdOrCtrl+Alt+Shift+N`. If T3 binds it,
+  decide which command keeps the key and update `docs/user/multiple-windows.md`.

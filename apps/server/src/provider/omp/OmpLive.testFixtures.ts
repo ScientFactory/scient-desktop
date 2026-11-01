@@ -1,16 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Shared opt-in settings for the live Oh My Pi suites. Each suite runs only
- * when its variables are set, so CI reports it as skipped rather than passed:
- *
- * - `OMP_QUALIFY_BINARY`: the `omp` executable to qualify.
- * - `OMP_QUALIFY_FULL_TURN=1`: also run a turn against a real model.
- * - `OMP_QUALIFY_MODEL`: that model, as `<provider>/<model>` (default a local
- *   Ollama model, so no paid provider is contacted).
- * - `OMP_QUALIFY_MANAGED=1`: download and qualify the managed runtime.
- * - `OMP_QUALIFY_TARGET=scient`: `OMP_QUALIFY_BINARY` is a `scient-agent`
- *   executable. The same suites then qualify Scient Agent, which must do
- *   everything Oh My Pi does here.
+ * Live suites are opt-in and must report skipped without OMP_QUALIFY_BINARY. Full turns and managed
+ * downloads require separate flags; default the model to local Ollama. OMP_QUALIFY_TARGET=scient
+ * applies the same qualification to Scient Agent.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -72,12 +64,8 @@ export const ompQualifyEnvironment = (input: {
       });
 
 /**
- * A live instance built the way the driver builds one: the test's own
- * environment with `root/home` as HOME, passed through the production
- * builder with the instance home setting `homePath` (`root/home/agent`).
- * Hand both to the adapter, as the driver does. With `blockEgress`,
- * non-loopback HTTP goes to a dead proxy and OMP's default Ollama probe is
- * disabled, so only local stubs can answer.
+ * Build HOME/instance home through the production environment path. blockEgress sends non-loopback
+ * HTTP to a dead proxy and disables default Ollama probing so only local stubs can answer.
  */
 export const ompLiveInstance = (
   root: string,

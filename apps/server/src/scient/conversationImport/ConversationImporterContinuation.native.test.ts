@@ -127,6 +127,8 @@ import {
 } from "@scientfactory/conversation";
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
 
+const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
+
 const encodeHistoryFixtureJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeQuestionFileReferences = Schema.encodeEffect(
   Schema.fromJsonString(
@@ -3579,7 +3581,7 @@ it.live(
             assert.equal(otherInstance.itemIds.length, original.items.length);
             assert.deepEqual(otherInstance.omittedItemIds, []);
             const current = yield* settings.getSettings;
-            const currentConfig = yield* Schema.decodeUnknownEffect(CodexSettings)(
+            const currentConfig = yield* decodeCodexSettings(
               current.providerInstances[PROVIDER_ID]?.config ?? {},
             );
             yield* settings.updateSettings({

@@ -1,4 +1,3 @@
-import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -42,6 +41,8 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
+  antigravityModelOptions,
+  antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
 } from "../acp/AntigravityAcpSupport.ts";
@@ -257,11 +258,9 @@ export const AntigravityDriver: ScientProviderDriver<
             : cause,
         ),
       );
-      // Each process unpacks into its own directory that dies with the
-      // runtime scope, after the child is killed. A shared directory would
-      // let one session's teardown delete files a sibling still reads.
-      // Removal is best effort: a handle can outlive the kill on Windows,
-      // and the sweep on the next driver start reclaims what is left.
+      // Use one directory per process; shared cleanup could delete files another session still reads.
+      // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
+      // the next driver start sweeps leftovers.
       const runtimeTempDirectory = yield* Effect.acquireRelease(
         fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
           Effect.mapError(
@@ -291,7 +290,7 @@ export const AntigravityDriver: ScientProviderDriver<
           installation: executable,
           profile,
           cwd: input.cwd,
-          baseEnv: withAgentDeviceEnvironment(processEnvironment, input),
+          baseEnv: processEnvironment,
           auth,
           runtimeTempDirectory,
         }),
@@ -339,7 +338,6 @@ export const AntigravityDriver: ScientProviderDriver<
       );
       const runtime = yield* makeRuntime({
         cwd,
-        clientInfo: { name: "t3-code-provider-setup", version: "0.0.0" },
         mcpServers: [],
         ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
       });
@@ -358,7 +356,10 @@ export const AntigravityDriver: ScientProviderDriver<
 
     const publishCatalog = Effect.fn("AntigravityDriver.publishCatalog")(function* (
       started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
-      runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "getEvents" | "drainEvents">,
+      runtime: Pick<
+        AcpSessionRuntime.AcpSessionRuntime["Service"],
+        "getEvents" | "drainEvents" | "setModel"
+      >,
     ) {
       yield* provider.onSessionStarted(started);
       yield* Stream.runForEach(runtime.getEvents(), (event) => {
@@ -372,6 +373,14 @@ export const AntigravityDriver: ScientProviderDriver<
           ? provider.onAvailableCommands(event.availableCommands)
           : Effect.void;
       }).pipe(Effect.forkScoped);
+      // Thinking levels differ per model and are reported only for the selected one.
+      const configOptions = started.sessionSetupResult.configOptions ?? [];
+      const current = configOptions.find((option) => option.id === "model")?.currentValue;
+      if (antigravityThinkingConfig(configOptions) !== undefined && typeof current === "string") {
+        for (const model of [...antigravityModelOptions(configOptions), { value: current }]) {
+          yield* runtime.setModel(model.value).pipe(Effect.ignore);
+        }
+      }
       yield* runtime.drainEvents;
     }, Effect.scoped);
 
@@ -490,7 +499,6 @@ export const AntigravityDriver: ScientProviderDriver<
       makeRuntime: (cwd) =>
         makeRuntime({
           cwd,
-          clientInfo: { name: "t3-code-text", version: "0.0.0" },
           mcpServers: [],
         }),
     });

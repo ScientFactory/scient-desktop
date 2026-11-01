@@ -1,11 +1,8 @@
 import * as Hex from "effect/encoding/Hex";
 /**
- * Captures a `ConversationSnapshotV1` from the durable projections: the thread
- * detail with its complete history, the projection sequence, and the thread's
- * latest event sequence are read in one SQL transaction, so the snapshot
- * reflects exactly one point in the event log. The transaction is released
- * before attachments are inspected or anything is rendered. The client's
- * timeline is never consulted.
+ * Read full detail and projection/event sequences in one SQL transaction so the snapshot represents
+ * one event-log point. Release it before inspecting attachments/rendering; client timeline state is
+ * not capture authority.
  */
 import {
   type ChatAttachment,
@@ -45,6 +42,8 @@ import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1Th
 import * as Option from "effect/Option";
 import { conversationSnapshotProjection } from "./conversationSnapshotProjection.ts";
 import { turnItemMetadataSql } from "../../orchestration-v2/scient-fork/ContextHistorySql.ts";
+
+const isConversationExportError = Schema.is(ScientConversationExportError);
 
 /** A portable snapshot is assembled in memory for its digest and document writers.
  * Refuse beyond this capture allowance before hydration; retained sources remain
@@ -204,8 +203,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           isThreadNotFound(cause)
             ? new ConversationThreadNotFoundError({ threadId })
-            : Schema.is(ScientConversationExportError)(cause) ||
-                isConversationSnapshotReadError(cause)
+            : isConversationExportError(cause) || isConversationSnapshotReadError(cause)
               ? cause
               : new ConversationSnapshotReadError({ cause }),
         ),

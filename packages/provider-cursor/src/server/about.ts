@@ -15,7 +15,6 @@ export function toTitleCaseWords(value: string): string {
 
 /** Strip ANSI escape sequences so we can parse plain key-value lines. */
 function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex -- ANSI escape sequences contain control characters by definition.
   return text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g, "");
 }
 
@@ -166,24 +165,8 @@ export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
 }
 
 /**
- * Parse the output of `agent about` to extract version and authentication
- * status in a single probe.
- *
- * Example output (logged in):
- * ```
- * About Cursor CLI
- *
- * CLI Version         2026.03.20-44cb435
- * User Email          user@example.com
- * ```
- *
- * Example output (logged out):
- * ```
- * About Cursor CLI
- *
- * CLI Version         2026.03.20-44cb435
- * User Email          Not logged in
- * ```
+ * agent about reports User Email as Not logged in when unauthenticated. Parse version and auth from
+ * that single provider-owned probe.
  */
 export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult {
   const jsonPayload = parseCursorAboutJsonPayload(result.stdout);

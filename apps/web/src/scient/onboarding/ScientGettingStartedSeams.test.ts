@@ -17,6 +17,7 @@ describe("Scient getting-started host seams", () => {
     expect(indexRoute).toContain("fallback={<IndexDraftLanding />}");
   });
 
+  // regression: f46b1a4711 feat(web): add compact getting started flow (#136)
   it("keeps replay additive and contained to a Scient-owned route", () => {
     const settings = read("../../components/settings/SettingsPanels.tsx");
     const route = read("../../routes/_chat.getting-started.tsx");
@@ -32,6 +33,7 @@ describe("Scient getting-started host seams", () => {
     expect(settingsRow).not.toContain("<Button");
   });
 
+  // regression: f46b1a4711 feat(web): add compact getting started flow (#136)
   it("reuses canonical provider setup and avoids card or progress primitives", () => {
     const view = read("./ScientGettingStartedView.tsx");
     const flow = read("./ScientGettingStartedFlow.tsx");

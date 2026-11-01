@@ -1,4 +1,5 @@
 import type { ChatAttachment } from "@t3tools/contracts";
+import { isProviderNativeImageAttachment } from "@t3tools/provider-core/server/attachmentPrompt";
 import type { PiDiscoveredCommands } from "./commands.ts";
 import { piRecordField as recordField } from "./rpc.ts";
 
@@ -21,7 +22,7 @@ export function piNativeCommandWithAttachments(
 }
 
 export function piHasImageAttachments(attachments: ReadonlyArray<ChatAttachment>): boolean {
-  return attachments.some((attachment) => attachment.mimeType.startsWith("image/"));
+  return attachments.some(isProviderNativeImageAttachment);
 }
 
 export function piModelRefusesImages(state: unknown): boolean {

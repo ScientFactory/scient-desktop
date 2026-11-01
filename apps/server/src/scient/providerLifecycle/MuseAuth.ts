@@ -328,15 +328,13 @@ export function guardMuseTextGeneration(
           ? new TextGenerationError({ operation, detail: cause.detail })
           : cause,
       ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.fail(
-              new TextGenerationError({
-                operation,
-                detail: "Muse's sign-in changed during generation. Try again.",
-              }),
-            )
-          : Effect.failCause(cause),
+      Effect.catchCauseIf(Cause.hasInterruptsOnly, () =>
+        Effect.fail(
+          new TextGenerationError({
+            operation,
+            detail: "Muse's sign-in changed during generation. Try again.",
+          }),
+        ),
       ),
     );
   return {

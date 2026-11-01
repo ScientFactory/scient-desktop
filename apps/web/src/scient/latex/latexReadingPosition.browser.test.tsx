@@ -5,7 +5,7 @@ import { page, userEvent } from "vitest/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import { waitForTestReceipt } from "../../../test/receipt";
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { latexPagedKey, pagedLayoutProgress, pagedLayoutSettled } from "./latexPagedGeometry";
+import { latexPagedKey, pagedLayoutProgress } from "./latexPagedGeometry";
 import {
   rememberLatexReadingPosition,
   rememberedLatexReadingBlock,
@@ -117,22 +117,12 @@ it("keeps the visible Hebrew two-column source heading across a file-tab remount
     "Hebrew tab initial opening",
   );
   expect(latexPagedKey.getState(before.state)!.plan!.pages).toBeGreaterThanOrEqual(5);
-  let delivered = false;
-  scroller(before).addEventListener(
-    "scroll",
-    () => {
-      delivered = true;
-    },
-    { once: true },
-  );
   const pageNumber = screen.getByRole("textbox", { name: "Page number", exact: true });
   await pageNumber.fill("5");
   await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => {
-    expect(delivered).toBe(true);
-    expect(rememberedLatexReadingBlock(readingKey)).toBeGreaterThan(0);
-    expect(pagedLayoutSettled(before.view)).toBe(true);
-  });
+  // The scroll is remembered a frame later; pagination then settles for the revealed pages.
+  await vi.waitFor(() => expect(rememberedLatexReadingBlock(readingKey)).toBeGreaterThan(0));
+  await waitForLatexVisualTestReadiness(container, context, "page 5 after navigation");
   const box = scroller(before).getBoundingClientRect();
   const headings = Array.from(before.view.dom.querySelectorAll("h1,h2,h3,h4,h5,h6"));
   const heading = headings.find((element) => {

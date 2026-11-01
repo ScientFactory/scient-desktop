@@ -1126,8 +1126,8 @@ test.live("drains successful FIFO work and sends any held row after idle reorder
       const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
         readOnly: true,
       });
-      const strip = f.page.getByTestId("thread-queue-strip");
-      const queueRows = strip.locator('[data-testid^="thread-queue-row-"]');
+      const strip = f.page.getByRole("region", { name: /queued message/ });
+      const queueRows = strip.getByRole("listitem");
       const runs = () =>
         sql
           .prepare(`
@@ -1217,9 +1217,9 @@ test.live("drains successful FIFO work and sends any held row after idle reorder
         await expect
           .poll(() => queued().map((run) => run.held), { timeout: 30000 })
           .toEqual([1, 1]);
-        // A held queue on an idle thread offers Send on every row and no Resume queue.
+        // A held queue on an idle thread offers Send now on every row and no Resume queue.
         await expect
-          .poll(() => strip.getByRole("button", { name: "Send", exact: true }).count(), {
+          .poll(() => strip.getByRole("button", { name: "Send now", exact: true }).count(), {
             timeout: 15000,
           })
           .toBe(2);
@@ -1230,34 +1230,11 @@ test.live("drains successful FIFO work and sends any held row after idle reorder
           .toBe(0);
         stage("public Stop held both pending messages");
 
-        // Exercise the original strip's actual pointer sensor while the thread is idle.
-        const from = await queueRows
-          .nth(1)
-          .getByRole("button", {
-            name: "Reorder queued message",
-            exact: true,
-          })
-          .boundingBox();
-        const to = await queueRows.first().boundingBox();
-        expect(from).not.toBeNull();
-        expect(to).not.toBeNull();
-        await f.page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2);
-        await f.page.mouse.down();
-        await f.page.mouse.move(from!.x + from!.width / 2, to!.y + to!.height / 2, { steps: 10 });
-        await f.page.mouse.up();
-        await expect
-          .poll(() => queued().map((run) => run.text), { timeout: 15000 })
-          .toEqual(["ACP_ACCEPTANCE:ANSWER held-second", "ACP_ACCEPTANCE:ANSWER held-first"]);
-        await expect
-          .poll(() => queueRows.first().innerText(), { timeout: 15000 })
-          .toContain("held-second");
-        stage("idle pointer reorder reached native queue authority");
-
         // Send on the second row starts that message now; the rest of the queue
         // continues after it without a Resume.
-        await queueRows.nth(1).getByRole("button", { name: "Send", exact: true }).click();
-        await expect.poll(() => completed("held-first"), { timeout: 30000 }).toBe(true);
+        await queueRows.nth(1).getByRole("button", { name: "Send now", exact: true }).click();
         await expect.poll(() => completed("held-second"), { timeout: 30000 }).toBe(true);
+        await expect.poll(() => completed("held-first"), { timeout: 30000 }).toBe(true);
         await expect.poll(() => queueRows.count(), { timeout: 15000 }).toBe(0);
         expect(queued()).toEqual([]);
         expect(
@@ -1269,8 +1246,8 @@ test.live("drains successful FIFO work and sends any held row after idle reorder
           "fifo-first",
           "fifo-second",
           "stopped-root",
-          "held-first",
           "held-second",
+          "held-first",
         ]);
         stage("Send on a non-head row resumed the whole queue");
         console.info("[connected queue policy receipt] " + JSON.stringify(runs()));
@@ -1290,142 +1267,145 @@ test.live("drains successful FIFO work and sends any held row after idle reorder
   }),
 );
 
-test.live("promotes one queued message through the public Steer control and real ACP restart", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture();
-    yield* Effect.promise(async () => {
-      const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
-        readOnly: true,
-      });
-      const promotions: Array<{ commandId: string; queuedRunId: string; targetRunId: string }> = [];
-      const strip = f.page.getByTestId("thread-queue-strip");
-      try {
-        await f.page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
-          const server = socket.connectToServer();
-          socket.onMessage((message) => {
-            const decoded = JSON.parse(message.toString());
-            for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
-              if (
-                frame._tag === "Request" &&
-                frame.payload?.type === "queued-message.promote-to-steer"
-              )
-                promotions.push(frame.payload);
-            }
-            server.send(message);
+test.live(
+  "promotes one queued message through the public Send now control and real ACP restart",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      yield* Effect.promise(async () => {
+        const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
+          readOnly: true,
+        });
+        const promotions: Array<{ commandId: string; queuedRunId: string; targetRunId: string }> =
+          [];
+        const strip = f.page.getByRole("region", { name: /queued message/ });
+        try {
+          await f.page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+            const server = socket.connectToServer();
+            socket.onMessage((message) => {
+              const decoded = JSON.parse(message.toString());
+              for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
+                if (
+                  frame._tag === "Request" &&
+                  frame.payload?.type === "queued-message.promote-to-steer"
+                )
+                  promotions.push(frame.payload);
+              }
+              server.send(message);
+            });
+            server.onMessage((message) => socket.send(message));
           });
-          server.onMessage((message) => socket.send(message));
-        });
-        await f.page.reload();
-        await expect
-          .poll(() => f.page.getByTestId("composer-editor").count(), { timeout: 60000 })
-          .toBe(1);
-        await send(f.page, "ACP_ACCEPTANCE:HOLD steer-owner");
-        await expect
-          .poll(
-            async () =>
-              (await audit(f.peer)).filter(
-                (event) => event.event === "prompt_accepted" && event.label === "steer-owner",
-              ).length,
-            { timeout: 30000 },
-          )
-          .toBe(1);
-        await typePrompt(f.page, "ACP_ACCEPTANCE:ANSWER steered-once");
-        await f.page.getByRole("button", { name: "Queue message", exact: true }).click();
-        await expect
-          .poll(() => strip.locator('[data-testid^="thread-queue-row-"]').count(), {
-            timeout: 15000,
-          })
-          .toBe(1);
-        const queued = sql
-          .prepare(`SELECT r.run_id, json_extract(r.payload_json, '$.userMessageId') AS message_id
+          await f.page.reload();
+          await expect
+            .poll(() => f.page.getByTestId("composer-editor").count(), { timeout: 60000 })
+            .toBe(1);
+          await send(f.page, "ACP_ACCEPTANCE:HOLD steer-owner");
+          await expect
+            .poll(
+              async () =>
+                (await audit(f.peer)).filter(
+                  (event) => event.event === "prompt_accepted" && event.label === "steer-owner",
+                ).length,
+              { timeout: 30000 },
+            )
+            .toBe(1);
+          await typePrompt(f.page, "ACP_ACCEPTANCE:ANSWER steered-once");
+          await f.page.getByRole("button", { name: "Queue message", exact: true }).click();
+          await expect
+            .poll(() => strip.getByRole("listitem").count(), {
+              timeout: 15000,
+            })
+            .toBe(1);
+          const queued = sql
+            .prepare(`SELECT r.run_id, json_extract(r.payload_json, '$.userMessageId') AS message_id
       FROM orchestration_v2_projection_runs r WHERE r.status = 'queued'`)
-          .get() as { run_id: string; message_id: string };
-        const active = sql
-          .prepare(`SELECT run_id FROM orchestration_v2_projection_runs
+            .get() as { run_id: string; message_id: string };
+          const active = sql
+            .prepare(`SELECT run_id FROM orchestration_v2_projection_runs
       WHERE status = 'running'`)
-          .get() as { run_id: string };
-        expect(queued).toBeDefined();
-        expect(active).toBeDefined();
-        await strip.getByRole("button", { name: "Steer", exact: true }).click();
-        await expect
-          .poll(
-            async () =>
-              (await audit(f.peer)).filter(
-                (event) => event.event === "prompt_accepted" && event.label === "steered-once",
-              ).length,
-            { timeout: 30000 },
-          )
-          .toBe(1);
-        await expect
-          .poll(
-            () =>
-              sql
-                .prepare(`SELECT status FROM orchestration_v2_projection_runs
+            .get() as { run_id: string };
+          expect(queued).toBeDefined();
+          expect(active).toBeDefined();
+          await strip.getByRole("button", { name: "Send now", exact: true }).click();
+          await expect
+            .poll(
+              async () =>
+                (await audit(f.peer)).filter(
+                  (event) => event.event === "prompt_accepted" && event.label === "steered-once",
+                ).length,
+              { timeout: 30000 },
+            )
+            .toBe(1);
+          await expect
+            .poll(
+              () =>
+                sql
+                  .prepare(`SELECT status FROM orchestration_v2_projection_runs
       WHERE run_id = ?`)
-                .get(active.run_id),
-            { timeout: 30000 },
-          )
-          .toEqual({ status: "completed" });
-        expect(promotions).toHaveLength(1);
-        expect(promotions[0]).toMatchObject({
-          queuedRunId: queued.run_id,
-          targetRunId: active.run_id,
-        });
-        expect(
-          sql
-            .prepare(`SELECT status FROM orchestration_v2_projection_runs WHERE run_id = ?`)
-            .get(queued.run_id),
-        ).toEqual({ status: "cancelled" });
-        const message = sql
-          .prepare(`SELECT m.run_id, json_extract(m.payload_json, '$.text') AS text,
+                  .get(active.run_id),
+              { timeout: 30000 },
+            )
+            .toEqual({ status: "completed" });
+          expect(promotions).toHaveLength(1);
+          expect(promotions[0]).toMatchObject({
+            queuedRunId: queued.run_id,
+            targetRunId: active.run_id,
+          });
+          expect(
+            sql
+              .prepare(`SELECT status FROM orchestration_v2_projection_runs WHERE run_id = ?`)
+              .get(queued.run_id),
+          ).toEqual({ status: "cancelled" });
+          const message = sql
+            .prepare(`SELECT m.run_id, json_extract(m.payload_json, '$.text') AS text,
       json_extract(i.payload_json, '$.inputIntent') AS intent
       FROM orchestration_v2_projection_messages m JOIN orchestration_v2_projection_turn_items i
         ON json_extract(i.payload_json, '$.messageId') = m.message_id
       WHERE m.message_id = ? AND i.type = 'user_message'`)
-          .get(queued.message_id);
-        expect(message).toEqual({
-          run_id: active.run_id,
-          text: "ACP_ACCEPTANCE:ANSWER steered-once",
-          intent: "promoted_queued_to_steer",
-        });
-        await expect
-          .poll(() => strip.locator('[data-testid^="thread-queue-row-"]').count(), {
-            timeout: 15000,
-          })
-          .toBe(0);
-        await expect
-          .poll(
-            () => f.page.locator('[data-user-message-intent="promoted_queued_to_steer"]').count(),
-            {
+            .get(queued.message_id);
+          expect(message).toEqual({
+            run_id: active.run_id,
+            text: "ACP_ACCEPTANCE:ANSWER steered-once",
+            intent: "promoted_queued_to_steer",
+          });
+          await expect
+            .poll(() => strip.getByRole("listitem").count(), {
               timeout: 15000,
-            },
-          )
-          .toBe(1);
-        expect(
-          (await audit(f.peer))
-            .filter((event) => event.event === "prompt_accepted")
-            .map((event) => event.label),
-        ).toEqual(["steer-owner", "steered-once"]);
-        expect(
-          (await audit(f.peer)).filter((event) => event.event === "cancel_requested"),
-        ).toHaveLength(1);
-        console.info(
-          "[connected positive steer receipt] " + JSON.stringify({ promotions, message }),
-        );
-      } finally {
-        console.info(
-          "[connected positive steer native observations] " +
-            JSON.stringify(
-              (await audit(f.peer)).filter(
-                (event) =>
-                  event.event === "prompt_accepted" ||
-                  event.event === "idle" ||
-                  event.event === "cancel_requested",
+            })
+            .toBe(0);
+          await expect
+            .poll(
+              () => f.page.locator('[data-user-message-intent="promoted_queued_to_steer"]').count(),
+              {
+                timeout: 15000,
+              },
+            )
+            .toBe(1);
+          expect(
+            (await audit(f.peer))
+              .filter((event) => event.event === "prompt_accepted")
+              .map((event) => event.label),
+          ).toEqual(["steer-owner", "steered-once"]);
+          expect(
+            (await audit(f.peer)).filter((event) => event.event === "cancel_requested"),
+          ).toHaveLength(1);
+          console.info(
+            "[connected positive steer receipt] " + JSON.stringify({ promotions, message }),
+          );
+        } finally {
+          console.info(
+            "[connected positive steer native observations] " +
+              JSON.stringify(
+                (await audit(f.peer)).filter(
+                  (event) =>
+                    event.event === "prompt_accepted" ||
+                    event.event === "idle" ||
+                    event.event === "cancel_requested",
+                ),
               ),
-            ),
-        );
-        sql.close();
-      }
-    });
-  }),
+          );
+          sql.close();
+        }
+      });
+    }),
 );

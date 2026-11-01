@@ -187,6 +187,9 @@ function runGuards(provider: string, changed: string) {
 }
 
 describe("publication guards", () => {
+  // One voiding row per guard (shared, Pi, Droid, Oh My Pi, Muse), plus rows proving
+  // the Pi and Oh My Pi guards stay scoped to their own provider's inputs.
+  // regression: 118e3242bb ci(provider-runtime): void Pi, Oh My Pi and Muse publication on relevant main changes
   it.each([
     ["claudeAgent", "scripts/qualify-managed-runtime-catalog.ts", true],
     ["pi", "apps/server/src/provider/pi/PiRpcClient.ts", true],

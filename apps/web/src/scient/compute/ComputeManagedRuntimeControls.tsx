@@ -158,6 +158,7 @@ export function useComputeManagedRuntime(input: {
   });
   // Once superseded, a receipt must not reappear if the server later returns
   // to its pre-command state (for example after cancellation or removal).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the optimistic command receipt with newer server truth from the status query
   useEffect(() => {
     if (candidateCommandStatus === null || commandStatus !== null) return;
     // This synchronizes an optimistic command receipt with newer server truth.

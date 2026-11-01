@@ -9,6 +9,58 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.26",
+    publishedAt: "2026-10-28",
+    format: "paragraphs",
+    headline: "Overleaf inside Scient. Sign in once, everywhere.",
+    highlights: [
+      {
+        id: "overleaf-0626",
+        title: "Work on your Overleaf papers without leaving Scient",
+        description:
+          "Connect a folder to an Overleaf project, edit as usual, and press Sync to send your changes and receive your collaborators'. If both sides changed the same text, you choose what to keep, or ask your agent to help. Sent something by mistake? Undo brings it back, and earlier versions of every file are kept.",
+      },
+      {
+        id: "accounts-0626",
+        title: "Sign in once, and let your agents use it",
+        description:
+          "Add your website logins, API keys, library access and browser profiles in Settings → Accounts. For each one, you decide whether agents may use it and in which projects. If a site asks for something only you can do (approve on your phone, enter a code), Scient waits with the sign-in open in your conversation. Your passwords stay in Scient's encrypted store, your keychain, 1Password, Bitwarden or Proton Pass, and agents never see them.",
+      },
+      {
+        id: "extensions-0626",
+        title: "All your plugins and skills in one place",
+        description:
+          "Settings → Extensions now brings plugins, connectors and skills together, each showing which agents can use it. Browse a catalogue organized by research field, install what you need, and add any required key through Accounts; it reaches the service without your agent seeing it.",
+      },
+      {
+        id: "side-panel-0626",
+        title: "Tabs that work like your browser's",
+        description:
+          "Press + or ⌘T to open a new tab with Files, Browser, Document, Sources, Scientific computing, Diff and Terminal. Switch tabs with Ctrl+Tab, and move Back and Forward through your files, just like web pages.",
+      },
+      {
+        id: "pdf-pages-0626",
+        title: "Fix a PDF's pages as you read",
+        description:
+          "Rotate a scanned page, move pages around, remove one, or add pages from another PDF, right in the reader's sidebar, with undo if you change your mind. Papers in Sources and compiled PDFs are never changed directly; Scient saves an edited copy.",
+      },
+      {
+        id: "scient-agent-0626",
+        title: "Improvements to Scient Agent",
+        description:
+          "Stop now pauses Scient Agent in the middle of its work, so your next message continues right where it left off. Long conversations can be compacted to free up space, token use and cost are visible as it works, and you can stop one delegated task while the rest keep going.",
+      },
+      {
+        id: "design-0626",
+        title: "A fresh, simpler look",
+        description:
+          "Scient has a new design throughout. Settings is reorganized and opens over your conversation, and ⌘K now finds words inside your messages, not just conversation titles.",
+      },
+    ],
+    alsoIncluded:
+      "Conversations that need you stay near the top of the sidebar. The message queue above the composer is tidier. Word files, notebooks, e-books and zip files open as previews. New setups search Google by default; if you already chose a search engine, yours stays. Scient Agent updates to 0.1.3.",
+  },
+  {
     version: "0.6.25",
     publishedAt: "2026-10-22",
     format: "paragraphs",
@@ -134,7 +186,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "same-conversation-switching-0622",
         title: "Switch agents in the same conversation",
         description:
-          "Start with Codex, continue with Claude, then move to Gemini—all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
+          "Start with Codex, continue with Claude, then move to Gemini, all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
       },
       {
         id: "scheduled-tasks-0622",
@@ -198,7 +250,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "same-conversation-switching-0622",
         title: "Switch agents in the same conversation",
         description:
-          "Start with Codex, continue with Claude, then move to Gemini—all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
+          "Start with Codex, continue with Claude, then move to Gemini, all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
       },
       {
         id: "scheduled-tasks-0622",
@@ -596,7 +648,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "ask-in-chat-from-more-places",
         title: "Ask in chat from more places",
         description:
-          "Select text in an answer or rendered Markdown—including code and editable Mermaid source—and add it to chat with an optional typed or voice note. Saved quotes can reopen the source.",
+          "Select text in an answer or rendered Markdown, including code and editable Mermaid source, and add it to chat with an optional typed or voice note. Saved quotes can reopen the source.",
       },
       {
         id: "compose-with-richer-context",
@@ -924,7 +976,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "assisted-provider-connections",
         title: "Connect Antigravity, Cursor, and Grok",
         description:
-          "Install and manage Scient-reviewed app-private runtimes for Antigravity and Cursor—or keep using existing CLIs—and sign in through their supported browser flows. Early Access Grok also gains assisted installation, repair, and browser or device-code sign-in from Settings or the composer.",
+          "Install and manage Scient-reviewed app-private runtimes for Antigravity and Cursor, or keep using existing CLIs, and sign in through their supported browser flows. Early Access Grok also gains assisted installation, repair, and browser or device-code sign-in from Settings or the composer.",
       },
       {
         id: "browser-pdf-export",

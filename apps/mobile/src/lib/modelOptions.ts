@@ -1,15 +1,9 @@
 import {
-  getAntigravityModelGroups,
-  getAntigravityReasoningControl,
-  groupAntigravityModelRows,
-  type AntigravityModelGroup,
-} from "@t3tools/client-runtime/antigravity-model-presentation";
-import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import type { MenuAction } from "@react-native-menu/menu";
+
 import type {
   ModelCapabilities,
   ModelSelection,
@@ -17,18 +11,17 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
+import { isProviderDriverKind, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
-  resolveAutomaticModel,
-  resolveProviderModelPreferences,
 } from "@t3tools/shared/model";
+import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 
 export type ModelOption = {
-  readonly reasoningGroup?: AntigravityModelGroup;
   readonly key: string;
   readonly label: string;
+  readonly shortName?: string;
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
@@ -142,11 +135,7 @@ function normalizeSelectionOptions(
       };
 }
 
-/**
- * `projectId` has no default: a caller that forgets it would silently check only the
- * machine-wide state and miss a project that turned this instance off. Pass `null` explicitly
- * outside a project's scope.
- */
+/** Require explicit projectId or null so omissions cannot bypass project provider disablement. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -163,9 +152,6 @@ export function isModelSelectionUnavailable(
   }
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
-  if (provider?.models.some((model) => model.slug === selection.model && model.unavailableReason)) {
-    return true;
-  }
   return (
     driver === "antigravity" &&
     (!provider ||
@@ -230,16 +216,7 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return model?.unavailableReason ||
-    (provider &&
-      resolveProviderModelPreferences(
-        provider.driver,
-        provider.models,
-        config?.settings?.providerModelPreferences?.[provider.instanceId],
-      ).hiddenModels.includes(usable.model)) ||
-    (provider?.driver !== "antigravity" && model?.isLegacy === true)
-    ? null
-    : usable;
+  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
 }
 
 export function resolveNewTaskModelSelection(input: {
@@ -323,7 +300,6 @@ export function buildModelOptions(
       !matchesLockedProvider(provider) ||
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
-      provider.status === "error" ||
       provider.auth.status === "unauthenticated" ||
       (provider.driver === "antigravity" && provider.availability === "unavailable")
     ) {
@@ -335,36 +311,21 @@ export function buildModelOptions(
     const updateRequired = provider.updateRequiredModels?.length
       ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
       : undefined;
-    const preferences = resolveProviderModelPreferences(
-      provider.driver,
-      provider.models,
-      config?.settings?.providerModelPreferences?.[provider.instanceId],
-    );
+    const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
-    const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
-    const automaticModel = resolveAutomaticModel(
-      provider.driver,
-      provider.models.filter(
-        (model) => !model.unavailableReason && (model.isCustom || !hiddenModels.has(model.slug)),
-      ),
-    );
     const models = provider.models.filter(
-      (model) =>
-        !model.unavailableReason &&
-        (includeHidden || model.isCustom || !hiddenModels.has(model.slug)),
+      (model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug),
     );
     if (order.size > 0)
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
     for (const model of models) {
-      const reasoningGroup = reasoningGroups.find((group) =>
-        group.models.some(({ slug }) => slug === model.slug),
-      );
       const key = `${provider.instanceId}:${model.slug}`;
+      const shortName = resolveModelShortName(model, provider.driver);
       options.set(key, {
         key,
         label: model.name,
-        ...(reasoningGroup ? { reasoningGroup } : {}),
+        ...(shortName ? { shortName } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -376,7 +337,7 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,
-        isDefault: model.slug === automaticModel,
+        isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
         capabilities: model.capabilities,
@@ -420,16 +381,6 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
-      if (model?.unavailableReason) return [...options.values()];
-      if (
-        provider &&
-        resolveProviderModelPreferences(
-          provider.driver,
-          provider.models,
-          config?.settings?.providerModelPreferences?.[provider.instanceId],
-        ).hiddenModels.includes(fallbackModelSelection.model)
-      )
-        return [...options.values()];
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({
@@ -437,12 +388,13 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
-      const updateRequired = provider?.updateRequiredModels?.length
-        ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
+      const shortName = model
+        ? resolveModelShortName(model, isProviderDriverKind(providerDriver) ? providerDriver : null)
         : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
+        ...(shortName ? { shortName } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
@@ -455,7 +407,6 @@ export function buildModelOptions(
         provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }
           : {}),
-        ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
         capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });
@@ -463,32 +414,6 @@ export function buildModelOptions(
   }
 
   return [...options.values()];
-}
-
-export function modelOptionReasoningControl(option: ModelOption | null | undefined) {
-  return !option?.isUnavailable && option?.reasoningGroup
-    ? getAntigravityReasoningControl([option.reasoningGroup], option.selection.model)
-    : null;
-}
-
-/** Presentation only; callers keep the full catalog for selection and validation. */
-export function groupModelOptionsForDisplay(
-  options: ReadonlyArray<ModelOption>,
-  selectedModel?: string | null,
-): ReadonlyArray<ModelOption> {
-  const groups = [
-    ...new Set(options.flatMap((option) => (option.reasoningGroup ? [option.reasoningGroup] : []))),
-  ];
-  if (groups.length === 0) return options;
-  return groupAntigravityModelRows(
-    options.map((option) => ({
-      ...option,
-      slug: option.selection.model,
-      name: option.label,
-    })),
-    groups,
-    selectedModel,
-  ).map(({ slug: _slug, name, shortName: _shortName, ...option }) => ({ ...option, label: name }));
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
@@ -520,54 +445,4 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     models: group.models,
     ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
   }));
-}
-
-function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
-  return {
-    id: `model:${option.key}`,
-    title: option.label,
-    state:
-      option.selection.instanceId === selectedModel?.instanceId &&
-      option.selection.model === selectedModel.model
-        ? "on"
-        : undefined,
-  };
-}
-
-export function buildModelMenuActions(
-  groups: ReadonlyArray<ProviderGroup>,
-  selectedModel: ModelSelection | null,
-): MenuAction[] {
-  return groups.flatMap((group) => {
-    const currentModels = group.models.filter((model) => !model.isLegacy);
-    const legacyModels = group.models.filter((model) => model.isLegacy);
-    const selected = group.models.find(
-      (model) =>
-        model.selection.instanceId === selectedModel?.instanceId &&
-        model.selection.model === selectedModel.model,
-    );
-
-    return [
-      ...(currentModels.length > 0
-        ? [
-            {
-              id: `provider:${group.providerKey}`,
-              title: group.providerLabel,
-              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
-              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-      ...(legacyModels.length > 0
-        ? [
-            {
-              id: `legacy-models:${group.providerKey}`,
-              title: `${group.providerLabel} legacy models`,
-              subtitle: selected?.isLegacy ? selected.label : undefined,
-              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-    ];
-  });
 }

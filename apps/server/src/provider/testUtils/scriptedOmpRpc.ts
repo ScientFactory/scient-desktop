@@ -30,6 +30,7 @@ interface FakeModel {
 }
 
 interface Frame {
+  readonly subagentId?: string;
   readonly id?: string;
   readonly type: string;
   readonly provider?: string;
@@ -37,6 +38,7 @@ interface Frame {
   readonly level?: string;
   readonly message?: string;
   readonly events?: ReadonlyArray<string> | null;
+  readonly messageUpdates?: string;
   readonly confirmed?: boolean;
   readonly value?: string;
   readonly cancelled?: boolean;
@@ -60,6 +62,8 @@ export const scriptedOmpRpc = (input: {
   readonly environment?: Readonly<Record<string, string>>;
   readonly eventFilterError?: string;
   readonly commandError?: (frame: Frame) => string | undefined;
+  readonly responseData?: (frame: Frame) => unknown;
+  readonly todoPhases?: () => unknown;
   readonly readyDelay?: Effect.Effect<void>;
   readonly supportedProtocolVersions?: ReadonlyArray<number>;
   readonly switchCancelled?: boolean;
@@ -68,6 +72,7 @@ export const scriptedOmpRpc = (input: {
   /** A switch takes effect and then reports this error, as a failure after the session changed. */
   readonly switchErrorAfterChange?: string;
   readonly promptError?: string;
+  readonly abortResponse?: unknown;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
   readonly reportThinkingLevel?: () => boolean;
@@ -161,6 +166,8 @@ export const scriptedOmpRpc = (input: {
       state.frames.push(frame);
       const refused = input.commandError?.(frame);
       if (refused) return respond(frame, undefined, refused);
+      const supplied = input.responseData?.(frame);
+      if (supplied !== undefined) return respond(frame, supplied);
       if (
         frame.type !== "get_state" &&
         frame.type !== "negotiate_protocol" &&
@@ -193,6 +200,7 @@ export const scriptedOmpRpc = (input: {
           if (!NodeFS.existsSync(sessionFile)) NodeFS.writeFileSync(sessionFile, "{}\n");
           return respond(frame, {
             model: state.model,
+            ...(input.todoPhases === undefined ? {} : { todoPhases: input.todoPhases() }),
             ...(input.reportThinkingLevel?.() === false
               ? {}
               : { thinkingLevel: state.thinkingLevel }),
@@ -264,6 +272,12 @@ export const scriptedOmpRpc = (input: {
             input.clamp?.[`${state.model.provider}/${state.model.id}`]?.[level] ?? level;
           return respond(frame);
         }
+        case "abort_and_restore_queue":
+          return respond(
+            frame,
+            input.abortResponse,
+            input.abortResponse === undefined ? "Abort is not scripted by this peer." : undefined,
+          );
         case "prompt":
         case "steer":
           state.prompts.push({ frame, bytes });

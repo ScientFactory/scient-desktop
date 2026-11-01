@@ -95,6 +95,20 @@ export interface ConnectorSignInCallbackOutcome {
 }
 
 export interface ConnectorRuntimeShape {
+  readonly registerPluginKeyHttp?: (input: {
+    readonly connectorId: ConnectorId;
+    readonly serverName: string;
+    readonly displayName: string;
+    readonly url: string;
+    readonly projectId: ProjectId | undefined;
+    readonly authorize: (scope: McpInvocationScope | undefined) => Effect.Effect<
+      {
+        readonly headers: Readonly<Record<string, string>>;
+        readonly secrets: ReadonlyArray<string>;
+      },
+      ExtensionsError
+    >;
+  }) => Effect.Effect<EligibleConnector, ExtensionsError>;
   readonly list: () => Effect.Effect<{
     readonly revision: number;
     readonly connectors: ReadonlyArray<ConnectorSummary>;
@@ -155,14 +169,9 @@ export interface ExtensionDeliveryReceiptsShape {
     },
   ) => Effect.Effect<void>;
   /**
-   * A settled adapter connector registration for the credential
-   * `providerSessionId`: the delivered connectors it left out (a
-   * provider-native server owns the name, the agent's servers were unknown,
-   * or registering failed). Replaces the previous report for that credential,
-   * so connectors a later registration did register return to delivered.
-   * Ignored while another credential owns the thread's receipt. Ordering
-   * between overlapping registrations is the caller's: see
-   * `ConnectorSessionDelivery.registrationTrackerFor`.
+   * Replace registration omissions for the same credential; ignore reports once another credential
+   * owns the thread. The credential's ConnectorSessionDelivery tracker orders overlapping
+   * registrations independently of receipt retention.
    */
   readonly reportRegistration: (input: {
     readonly threadId: ThreadId;
@@ -206,6 +215,17 @@ export class ExtensionsDiscover extends Context.Service<
 >()("t3/scient/extensions/ExtensionsServices/ExtensionsDiscover") {}
 
 export interface ScientPluginRegistryShape {
+  readonly contents?:
+    | ((
+        pluginId: string,
+      ) => Effect.Effect<import("@t3tools/contracts").ExtensionPluginContents, ExtensionsError>)
+    | undefined;
+  readonly skillDocument?:
+    | ((
+        pluginId: string,
+        skillId: string,
+      ) => Effect.Effect<import("@t3tools/contracts").ExtensionSkillDocument, ExtensionsError>)
+    | undefined;
   readonly list: () => Effect.Effect<{
     readonly plugins: ReadonlyArray<ScientPluginSummary>;
     readonly diagnostics: ReadonlyArray<ExtensionsDiagnostic>;

@@ -1,10 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- ZIP packaging streams attachment files into the export file.
 /**
- * The server-owned temporary location for produced export files. Each export
- * gets its own directory, read by clients through a signed asset URL that
- * expires with it. Directories older than the retention period are removed on
- * a timer, and the whole location is cleared when the server starts, so an
- * export never outlives a restart.
+ * Signed export URLs expire with their temporary directories. Clear exports on startup as well as
+ * retention expiry so no export survives a server restart.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -235,29 +232,31 @@ export const make = Effect.fn("ConversationExportFiles.make")(function* (options
 
   const write: ConversationExportFiles["Service"]["write"] = Effect.fn(
     "ConversationExportFiles.write",
-  )(function* (input) {
-    const directory = path.join(root, input.exportId);
-    const target = path.join(directory, input.fileName);
-    yield* Effect.gen(function* () {
-      yield* fileSystem.makeDirectory(directory, { recursive: true });
-      if (input.content._tag === "text") {
-        yield* fileSystem.writeFileString(target, input.content.text);
-      } else {
-        const { entries, modifiedAt } = input.content;
-        yield* Effect.tryPromise({
-          try: () => writeZip(target, entries, DateTime.toDateUtc(DateTime.makeUnsafe(modifiedAt))),
-          catch: (cause) => new ConversationExportFileError({ cause }),
-        }).pipe(
-          // Never leave a partial archive behind a signed URL.
-          Effect.onError(() => fileSystem.remove(target, { force: true }).pipe(Effect.ignore)),
-        );
-      }
-    }).pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-    const info = yield* fileSystem
-      .stat(target)
-      .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-    return { path: target, byteLength: Number(info.size) };
-  });
+  )(
+    function* (input) {
+      const directory = path.join(root, input.exportId);
+      const target = path.join(directory, input.fileName);
+      yield* Effect.gen(function* () {
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+        if (input.content._tag === "text") {
+          yield* fileSystem.writeFileString(target, input.content.text);
+        } else {
+          const { entries, modifiedAt } = input.content;
+          yield* Effect.tryPromise({
+            try: () =>
+              writeZip(target, entries, DateTime.toDateUtc(DateTime.makeUnsafe(modifiedAt))),
+            catch: (cause) => new ConversationExportFileError({ cause }),
+          }).pipe(
+            // Never leave a partial archive behind a signed URL.
+            Effect.onError(() => fileSystem.remove(target, { force: true }).pipe(Effect.ignore)),
+          );
+        }
+      });
+      const info = yield* fileSystem.stat(target);
+      return { path: target, byteLength: Number(info.size) };
+    },
+    Effect.mapError((cause) => new ConversationExportFileError({ cause })),
+  );
 
   const reserve: ConversationExportFiles["Service"]["reserve"] = Effect.fn(
     "ConversationExportFiles.reserve",

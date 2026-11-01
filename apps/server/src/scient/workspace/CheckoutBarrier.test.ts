@@ -213,13 +213,16 @@ describe("CheckoutBarrier", () => {
 
   it.effect("reopens admission when a waiting bulk change is interrupted", () =>
     Effect.gen(function* () {
-      const { repo } = yield* folders;
-      const barrier = makeCheckoutBarrier();
+      const repo = "/synthetic/checkout";
+      const barrier = makeCheckoutBarrier(() =>
+        Effect.succeed({ root: repo, keys: ["synthetic-checkout"] }),
+      );
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, repo, release);
-      const bulk = yield* barrier.bulk(repo, Effect.void).pipe(Effect.forkChild);
-      // Interrupt only once the bulk change has closed admission and is waiting.
-      while ((yield* barrier.current(repo)).epoch === 0) yield* Effect.yieldNow;
+      const bulk = yield* barrier
+        .bulk(repo, Effect.void)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.equal((yield* barrier.current(repo)).epoch, 1);
       assert.isTrue(
         Exit.isFailure(yield* Effect.exit(barrier.application(repo, () => Effect.void))),
       );

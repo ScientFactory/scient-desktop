@@ -1,9 +1,5 @@
 import type { ComposerCitation } from "@t3tools/contracts";
 import { collectComposerCitations } from "@t3tools/shared/composerCitations";
-import {
-  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
-  type TerminalContextDraft,
-} from "./lib/terminalContext";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,

@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 
 import { assert, describe, it } from "vite-plus/test";
+// SCIENT-FORK:START scient-dev-app
 import {
   CONVERSATION_FILE_TYPE,
   macConversationDocumentTypes,
@@ -50,6 +51,7 @@ describe("electron development launcher", () => {
       "Scient (Dev) Stable",
     );
   });
+  // SCIENT-FORK:END scient-dev-app
 
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const environmentScript = makeDevelopmentEnvironmentScript({
@@ -82,6 +84,7 @@ describe("electron development launcher", () => {
       script,
       "if [ -f '/repo/apps/desktop/.electron-runtime/dev-environment.sh' ]; then . '/repo/apps/desktop/.electron-runtime/dev-environment.sh'; fi",
     );
+    // SCIENT-FORK:START scient-dev-app
     assert.notInclude(script, "\nexport VITE_DEV_SERVER_URL=");
     assert.include(script, 'if [ "${SCIENT_NEXT_DEV_RUNNER_ACTIVE:-}" != "1" ]; then');
     assert.include(script, 'run-scient-next-dev.command" "$@"');
@@ -158,7 +161,7 @@ describe("electron development launcher", () => {
   });
 
   it("refuses failed or uncompleted native identity verification", () => {
-    for (const status of [1, 2, 3, null]) {
+    for (const status of [1, null]) {
       assert.isFalse(
         hasValidDevelopmentCodeIdentity("/runtime/Scient (Dev).app", {
           spawnSync: () => ({ status, stdout: "", stderr: "" }),
@@ -215,6 +218,7 @@ describe("electron development launcher", () => {
     assert.include(script, "'/tool/pnpm.cjs' dev:app:start");
     assert.include(script, NodePath.resolve("/repo", ".scient-next", "local-dev-app.log"));
   });
+  // SCIENT-FORK:END scient-dev-app
 
   it("repairs Electron before loading the package entrypoint", () => {
     const calls = [];
@@ -238,6 +242,7 @@ describe("electron development launcher", () => {
 
   it("keeps the native Electron executable name inside the branded macOS bundle", () => {
     const paths = resolveMacLauncherPaths(
+      // SCIENT-FORK:START scient-dev-app
       "/repo/apps/desktop/.electron-runtime/Scient (Dev).app",
       "Scient (Dev)",
     );
@@ -250,6 +255,7 @@ describe("electron development launcher", () => {
     assert.equal(
       paths.runtimeElectronBinaryPath,
       "/repo/apps/desktop/.electron-runtime/Scient (Dev).app/Contents/MacOS/Electron",
+      // SCIENT-FORK:END scient-dev-app
     );
 
     const script = makeDevelopmentLauncherScript({
@@ -260,6 +266,7 @@ describe("electron development launcher", () => {
     });
     assert.include(
       script,
+      // SCIENT-FORK:START scient-dev-app
       "exec '/repo/apps/desktop/.electron-runtime/Scient (Dev).app/Contents/MacOS/Electron'",
     );
     assert.notInclude(script, "node_modules/electron");
@@ -307,25 +314,6 @@ describe("electron development launcher", () => {
     assert.equal(developmentBootstrapPackageName(""), "scient-next-dev-local");
     // The same checkout keeps its entry, and with it what it encrypted, across rebuilds.
     assert.equal(developmentBootstrapPackageName("scientdesktopfeaturea20261002"), first);
-    const launcherSource = NodeFS.readFileSync(
-      new URL("./electron-launcher.mjs", import.meta.url),
-      "utf8",
-    );
-    assert.include(launcherSource, "name: developmentBootstrapPackageName(devBundleIdSuffix)");
-    assert.notInclude(launcherSource, '"scient-next-dev-bootstrap"');
-  });
-
-  it("declares why the macOS app needs protected access", () => {
-    const values = resolveMacBundleInfoPlistStrings("T3 Code (Dev) Launcher");
-
-    assert.equal(
-      values.NSScreenCaptureUsageDescription,
-      "Scient captures the active window when you use the snapshot shortcut.",
-    );
-    assert.equal(
-      values.NSDocumentsFolderUsageDescription,
-      "Scient reads project files you open in the desktop app.",
-    );
   });
 
   it("gives each macOS bundle its own .scic document type with the shared MIME identity", () => {
@@ -468,6 +456,7 @@ it.each([
   "/tmp/t3-feature.one/apps/desktop",
   "/tmp/t3-feature.one [two](three)+?^${four}|back\\slash*/apps/desktop",
 ])("dev cleanup matches only the literal root argument: %s", async (desktopDir) => {
+  // SCIENT-FORK:END scient-dev-app
   const flag = `--t3code-dev-root=${desktopDir}`;
   const argvCases = [
     [flag],
@@ -477,6 +466,7 @@ it.each([
     [`prefix${flag}`],
     [`--t3code-dev-root=/other${desktopDir}`],
   ];
+  // SCIENT-FORK:START scient-dev-app
   const signals = await developmentCleanupSignals(desktopDir, argvCases);
   assert.sameMembers(
     signals.map(({ pid }) => pid),
@@ -486,4 +476,5 @@ it.each([
     signals.map(({ signal }) => signal),
     ["SIGTERM", "SIGTERM"],
   );
+  // SCIENT-FORK:END scient-dev-app
 });

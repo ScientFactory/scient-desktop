@@ -272,11 +272,9 @@ export function mathReadingNodeView(
       if (event.type === "focusin" && event.target === props.view.dom) return;
       cancelAdmission?.();
     };
-    // When the formula was selected without a click (just inserted from a
-    // menu, or reached with the keyboard), what is typed while its editor is
-    // prepared is kept and typed into it, key by key, once it is ready. A
-    // click's own caret and selection belong to the relayed gesture, so after a
-    // click keys are not kept, as before. Cancelled admission discards them.
+    // Buffer keys only for keyboard/menu-selected formulas while admission prepares the editor.
+    // Click selection/caret belongs to the relayed gesture; buffering then would duplicate or
+    // misplace input. Cancelled admission drops buffered keys.
     let typedWhileWaiting: string[] = [];
     let keepTyping = true;
     const typeKept = (math: MathfieldElement) => {

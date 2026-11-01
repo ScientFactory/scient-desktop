@@ -415,7 +415,7 @@ describe("Antigravity sign-in page", () => {
     await expect.element(page.getByText("Signed in, but Antigravity couldn’t start")).toBeVisible();
     // The next step, not the server's sentence again; and a retry, not a new Google sign-in.
     expect(text(_fixture)).toContain(
-      "Your Google account is connected. Try again, or check Settings > Diagnostics if it keeps failing.",
+      "Your Google account is connected. Try again, or check Settings > Maintenance > Diagnostics if it keeps failing.",
     );
     await expect
       .element(page.getByRole("button", { name: "Try starting Antigravity again" }))

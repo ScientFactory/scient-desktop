@@ -611,14 +611,10 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             if (result._tag === "Success") {
               const current = (yield* Ref.get(activeRef)).get(input.instanceId);
               if (current?.operationId !== operationId) return;
-              // The provider action returning successfully is the durable commit
-              // boundary. Reconciliation remains interruptible during layer
-              // shutdown, but a user cancellation can no longer claim that the
-              // previous runtime was preserved after this point. Reloading
-              // restarts the provider, so a turn started during activation
-              // finishes first.
-              // Committed: no longer cancellable, so this wait is reported as
-              // finishing rather than as a cancellable `waitingForIdle`.
+              // Successful provider action is the durable commit boundary. User cancellation cannot
+              // then claim the previous runtime survived; report finishing, not cancellable
+              // waitingForIdle. Wait for turns before reload, while keeping reconciliation
+              // interruptible for layer shutdown.
               yield* waitForIdleTurns(
                 target.provider,
                 publishProgress({

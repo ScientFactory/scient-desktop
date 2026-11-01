@@ -12,20 +12,33 @@ import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
 import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./conversationExport/ConversationExportService.ts";
+import { EditorFlush } from "./editorFlush/EditorFlush.ts";
 import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
 
+// SCIENT-FORK:START — Scient Accounts: capture the shared owner for each client connection.
+import { AccountsService } from "./accounts/AccountsService.ts";
+import { accountsForRpc } from "./accounts/AccountsRpcHandlers.ts";
+// SCIENT-FORK:END
+
 export const captureScientWsServices = Effect.gen(function* () {
+  // SCIENT-FORK:START — Scient Accounts: preserve one owner across WebSocket connections.
+  const accounts = yield* accountsForRpc;
+  // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const conversationExports = yield* ConversationExportService;
+  const editorFlush = yield* EditorFlush;
   const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
   const providerLifecycleCoordinator =
     yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
   const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
   return Layer.mergeAll(
+    // SCIENT-FORK:START — Scient Accounts: reuse the captured owner.
+    Layer.succeed(AccountsService, accounts),
+    // SCIENT-FORK:END
     Layer.succeed(
       ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
       providerLifecycleCoordinator,
@@ -36,5 +49,6 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
     Layer.succeed(ConversationExportService, conversationExports),
+    Layer.succeed(EditorFlush, editorFlush),
   );
 });

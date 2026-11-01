@@ -148,6 +148,9 @@ for await (const line of input) {
         isCompacting: false,
       });
       break;
+    case "get_session_stats":
+      response(command, { cost: 0 });
+      break;
     case "get_available_models":
       response(command, { models: [model] });
       break;
@@ -183,6 +186,22 @@ for await (const line of input) {
       thinkingLevel = command.level;
       response(command, { level: thinkingLevel });
       break;
+    case "abort_and_restore_queue": {
+      if (active) {
+        output({ type: "agent_end", messages: [], isTerminal: true, yielded: true });
+        output({
+          type: "prompt_result",
+          id: active,
+          agentInvoked: true,
+          status: "aborted",
+          sessionSettled: true,
+        });
+        active = undefined;
+        output({ type: "session_settled" });
+      }
+      response(command, { steering: [], followUp: [] });
+      break;
+    }
     case "prompt": {
       if (active) throw new Error("Overlapping prompt");
       active = command.id;

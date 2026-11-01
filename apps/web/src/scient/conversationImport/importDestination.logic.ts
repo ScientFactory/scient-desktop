@@ -14,12 +14,10 @@ import {
 import { resolveComposerProviderSelection } from "../../components/ChatView.logic";
 import { deriveEffectiveComposerModelState } from "../../composerDraftStore";
 import { resolveNewThreadModelSelectionOverride } from "../../lib/chatThreadActions";
-import { sortThreads, type ThreadSortInput } from "../../lib/threadSort";
+import { sortThreads, type ThreadSortInput } from "@t3tools/client-runtime/state/thread-sort";
 import {
   NO_PROVIDER_MODEL_SELECTION,
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
+  providerInstanceEntriesFor,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { resolveAntigravityDraftSelection } from "../providerConnection/antigravityDraftSelection";
@@ -38,12 +36,9 @@ export interface StickyModelSelection {
 }
 
 /**
- * The model a new chat in `project` opens on, following the new-thread flow
- * step by step: the new draft takes the sticky selection, then the
- * new-thread override (the project's default, else the environment's, else
- * what the chat in view carries); the composer's own resolution then picks
- * the instance and model as it does for that draft. Null only when no
- * provider can run a chat here.
+ * Resolve the destination project's model through the same sticky selection, new-thread overrides,
+ * and composer resolution as an ordinary new draft; otherwise import can choose a different
+ * provider.
  */
 export function newChatModelSelection(input: {
   /** The environment's provider statuses; undefined while it is not connected. */
@@ -75,9 +70,7 @@ export function newChatModelSelection(input: {
   };
   // A draft thread's own selection, as the chat view builds it.
   const threadModelSelection = projectDefault ?? NO_PROVIDER_MODEL_SELECTION;
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, project.id),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, project.id);
   const { selectedProviderEntry } = resolveComposerProviderSelection({
     entries,
     candidateInstanceIds: [

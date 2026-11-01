@@ -1,14 +1,6 @@
 /**
- * Agents right-panel surface: the fleet view over the native subagent fold.
- * The chat carries one expandable row per spawn batch and links here.
- *
- * Visualization rules (from live-test feedback):
- * - Spawn order is stable. Activity and completion update rows in place.
- * - Agent rows reserve three fixed lines for identity, activity, and metrics;
- *   changing data must never change their height.
- * - Workflow expansion is presentation state. A live run stays expanded when
- *   it settles; older collapsed runs can still be opened at run granularity.
- * - Static status dots, DOM-write elapsed timers, plain token counters.
+ * Keep spawn order and row height stable as activity changes. Workflow expansion is presentation
+ * state and survives settlement. Avoid repainting timers and animated status indicators.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -88,6 +80,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the elapsed-time DOM node in step with a 1s interval via direct text writes
   useEffect(() => {
     if (!live || !startedAt) {
       return;
@@ -153,7 +146,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
     modelLabel,
     agent.usage?.totalTokens !== undefined
       ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
-      : "— tok",
+      : "Unknown tokens",
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -332,6 +325,7 @@ function PhaseSection({
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
   const previousState = useRef(phase.state);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the section when the runtime workflow phase transitions to running; manual toggles stick
   useEffect(() => {
     if (previousState.current !== "running" && phase.state === "running") {
       setOpen(true);
@@ -502,7 +496,7 @@ function CollapsedWorkflowSection({
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
           <span className="tabular-nums">
-            · {totalTokens === null ? "—" : formatSubagentTokenCount(totalTokens)} tok
+            · {totalTokens === null ? "Unknown" : formatSubagentTokenCount(totalTokens)} tok
           </span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
@@ -592,7 +586,8 @@ export function AgentsPanel({
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
         <span className="tabular-nums">
-          Σ {model.totalTokens === null ? "—" : formatSubagentTokenCount(model.totalTokens)} tok
+          Σ {model.totalTokens === null ? "Unknown" : formatSubagentTokenCount(model.totalTokens)}{" "}
+          tok
         </span>
       </footer>
     </div>

@@ -1,8 +1,12 @@
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useLocation, useRouter } from "@tanstack/react-router";
+import { useLayoutEffect } from "react";
 
 import { useDesktopReloadGuard } from "~/lib/desktopReload";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { registerActiveSurfaceDeparture } from "./activeSurfaceDeparture";
 import {
   useActivePendingSurfaceDeparture,
   usePendingSurfaceDeparture,
@@ -14,6 +18,14 @@ import {
   useMarkdownPersistenceGuards,
   useMarkdownPersistenceNavigationGuards,
 } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
+
+export interface ChatSurfaceDepartureGuards {
+  readonly runAfterPendingSurfaceSave: (
+    surfaceIds: ReadonlyArray<string>,
+    run: () => void,
+  ) => boolean;
+  readonly runAfterPendingFileSave: (targetSurfaceId: string | null, run: () => void) => boolean;
+}
 
 /**
  * Markdown save state for the chat's right-panel surfaces: which surfaces
@@ -45,6 +57,7 @@ export function useChatMarkdownSurfaceGuards(input: {
  * Returns the runners that switch or close surfaces once saves settle.
  */
 export function useChatSurfaceDepartureGuards(input: {
+  readonly activeThreadRef: ScopedThreadRef | null;
   readonly pendingFileSurfaceIds: ReadonlySet<string>;
   readonly markdownDepartureOptions: PendingSurfaceDepartureOptions;
   readonly activeSurfaceId: string | null;
@@ -52,8 +65,9 @@ export function useChatSurfaceDepartureGuards(input: {
   readonly cwd: string | undefined;
   readonly pendingFileSurfaceIdsByProject: ReadonlyMap<string, ReadonlySet<string>>;
   readonly handleMarkdownAttention: (surfaceId: string) => void;
-}) {
+}): ChatSurfaceDepartureGuards {
   const {
+    activeThreadRef,
     pendingFileSurfaceIds,
     markdownDepartureOptions,
     activeSurfaceId,
@@ -68,9 +82,25 @@ export function useChatSurfaceDepartureGuards(input: {
   );
   const runAfterPendingFileSave = useActivePendingSurfaceDeparture({
     activeSurfaceId,
+    getActiveSurfaceId: () =>
+      activeThreadRef
+        ? (useRightPanelStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)]
+            ?.activeSurfaceId ?? null)
+        : activeSurfaceId,
     pendingSurfaceIds: pendingFileSurfaceIds,
     ...markdownDepartureOptions,
   });
+  const router = useRouter();
+  const location = useLocation({ structuralSharing: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Register the committed route owner with the app-lifetime preview service, and retire it on departure.
+  useLayoutEffect(() => {
+    if (activeThreadRef === null) return;
+    return registerActiveSurfaceDeparture({
+      threadRef: activeThreadRef,
+      isCurrent: () => router.state.location === location,
+      run: runAfterPendingFileSave,
+    });
+  }, [activeThreadRef, location, router, runAfterPendingFileSave]);
   const markdownNavigation = useMarkdownPersistenceNavigationGuards({
     environmentId,
     cwd,

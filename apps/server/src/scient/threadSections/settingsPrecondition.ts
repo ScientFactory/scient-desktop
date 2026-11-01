@@ -5,13 +5,9 @@ import {
 } from "@t3tools/contracts";
 
 /**
- * Applies a thread-section edit's precondition. Clients replace the whole
- * section catalog, so two clients editing at once would otherwise lose one
- * edit. A patch whose `threadSectionsExpected` no longer matches the stored
- * catalog keeps its other keys but drops the section keys; the client sees
- * its edit missing from the returned settings and reapplies it. Runs inside
- * the settings write lock, so the check and the write are atomic. Every
- * applied catalog keeps the stored `createdInProjects` (see below).
+ * Check section preconditions inside the settings write lock to avoid lost concurrent catalog
+ * edits. Drop only stale section keys so clients can reapply against returned state; retain other
+ * settings and stored createdInProjects.
  */
 export function applyThreadSectionsPrecondition(
   current: ServerSettings,
@@ -35,11 +31,8 @@ export function applyThreadSectionsPrecondition(
 }
 
 /**
- * Keeps every project a stored section was created for. The precondition
- * ignores `createdInProjects` so clients that predate it can still write, which
- * means a write can be based on a copy missing newer refs (or, from such a
- * client, missing the field entirely). Refs are only ever added, so the stored
- * ones are merged back into the written entry with the same id.
+ * createdInProjects is add-only and excluded from preconditions for old-client compatibility. Merge
+ * stored refs back by section ID so stale or field-unaware clients cannot erase them.
  */
 function keepCreatedInProjects(
   stored: ServerSettings["threadSections"],

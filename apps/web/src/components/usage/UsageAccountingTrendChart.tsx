@@ -130,6 +130,7 @@ export function UsageAccountingTrendChart({
     });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending tooltip-position rAF held until unmount
   useEffect(
     () => () => {
       if (animationFrameRef.current !== null && typeof cancelAnimationFrame !== "undefined") {
@@ -139,6 +140,7 @@ export function UsageAccountingTrendChart({
     [animationFrameRef],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the tooltip DOM node and keeps it placed via plot/tooltip resize observation
   useLayoutEffect(() => {
     if (activePeriod === null) return;
     positionTooltip();

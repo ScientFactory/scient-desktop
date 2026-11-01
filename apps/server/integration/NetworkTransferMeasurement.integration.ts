@@ -33,7 +33,7 @@ export interface HttpTransferMeasurement {
 /** Read-only gzip attribution for synthetic snapshots; hypothetical omissions are never sent. */
 export function attributeSnapshotTransfer(measurement: HttpTransferMeasurement) {
   const record = Schema.Record(Schema.String, Schema.Unknown);
-  const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(record))(
+  const decoded = Schema.decodeSync(Schema.fromJsonString(record))(
     Buffer.from(measurement.decodedBody).toString("utf8"),
   );
   const projection = Schema.decodeUnknownSync(record)(decoded.projection);
@@ -161,7 +161,7 @@ export interface WebSocketTransferRecorder {
   ) => globalThis.WebSocket;
   readonly totals: () => WebSocketTransferTotals;
   readonly negotiatedExtensions: () => string;
-  /** Resolves once the upgrade completes, so totals taken after it exclude the upgrade response. */
+  /** Resolves after upgrade; later totals exclude the upgrade response. */
   readonly awaitOpen: Effect.Effect<void>;
 }
 
@@ -180,8 +180,7 @@ function rawDataBytes(data: NodeSocket.NodeWS.RawData): number {
 
 function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   let socket: NodeWebSocketWithTransport | null = null;
-  // Held separately from the WebSocket so wire totals survive a close, which
-  // is when a reconnect measurement reads them.
+  // Keep wire totals after WebSocket close for reconnect measurements.
   let transport: NodeWebSocketWithTransport["_socket"] | null = null;
   let decodedBytes = 0;
   let messages = 0;

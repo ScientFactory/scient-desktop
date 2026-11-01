@@ -12,11 +12,9 @@ const PROVIDER_STATUS_COALESCE_MAX_CHUNK = 256;
 const PROVIDER_STATUS_COALESCE_WINDOW = Duration.millis(200);
 
 /**
- * Bound provider-status traffic without waiting for the entire stream to go
- * quiet. Runtime downloads can publish progress continuously, so a trailing
- * debounce can indefinitely hide the final succeeded/failed snapshot from
- * connected clients. Fixed windows preserve the latest snapshot at least once
- * per window while still collapsing noisy byte-level progress updates.
+ * Trailing debounce can indefinitely postpone status during continuous download progress. Use fixed
+ * windows that publish the latest snapshot while collapsing byte-level noise, including final
+ * success/failure.
  */
 export const coalesceProviderStatusUpdates = <E, R>(
   updates: Stream.Stream<ReadonlyArray<ServerProvider>, E, R>,

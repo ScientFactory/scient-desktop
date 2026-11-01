@@ -4,13 +4,14 @@ import {
   render as _fixtureRender,
   type Screen,
 } from "../../../test/render";
+import { advanceTestClock } from "../../../test/testClock";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import { EnvironmentId, MessageId, ProviderInstanceId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { StrictMode, createRef, useLayoutEffect, useRef, useState } from "react";
 
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -46,8 +47,8 @@ async function scroll(operation: () => Promise<void>) {
   await vi.waitFor(() => receipt);
 }
 
-async function advanceClock(ms = 64) {
-  await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+async function advanceClock(_fixture: _Fixture, ms = 64) {
+  await advanceTestClock(_fixture.signal, ms);
 }
 async function mountHost(_fixture: _Fixture) {
   if (!_fixture.host) {
@@ -58,7 +59,7 @@ async function mountHost(_fixture: _Fixture) {
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
-    _fixture.timers ??= _fixture.cleanup.use(fakeTimers());
+    _fixture.timers ??= _fixture.stack.use(fakeTimers());
   }
 }
 async function render(
@@ -88,8 +89,8 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-it("holds a measured viewport through repeated appended rows and completion", async () => {
-  await using _fixture = _createFixture();
+it("holds a measured viewport through repeated appended rows and completion", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   let entries = Array.from({ length: 20 }, (_, i) => entry(i));
@@ -103,26 +104,26 @@ it("holds a measured viewport through repeated appended rows and completion", as
   await vi.waitFor(() => {
     expect(readTimelinePosition("geometry:stream")).toBeDefined();
   });
-  await advanceClock();
+  await advanceClock(_fixture);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const original = node.scrollTop;
   // The reader really is away from the end, reading at 300.
   expect(Math.abs(original - 300)).toBeLessThanOrEqual(1);
   for (let i = 20; i < 45; i++) {
     entries.push(entry(i));
     await render(_fixture, "geometry:stream", entries, { isWorking: true });
-    await advanceClock(32);
+    await advanceClock(_fixture, 32);
     expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
   }
   await render(_fixture, "geometry:stream", entries, { isWorking: false });
-  await advanceClock();
+  await advanceClock(_fixture);
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
 });
 
-it("restores the same message after switching threads with a saved at-end position", async () => {
-  await using _fixture = _createFixture();
+it("restores the same message after switching threads with a saved at-end position", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 15 }, (_, i) => entry(i));
@@ -146,7 +147,7 @@ it("restores the same message after switching threads with a saved at-end positi
   await vi.waitFor(() => {
     expect(readTimelinePosition("geometry:a")?.messageId).toBe(saved.messageId);
   });
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   await vi.waitFor(() => {
     expect(
@@ -168,8 +169,8 @@ it("restores the same message after switching threads with a saved at-end positi
   });
 });
 
-it("captures the last scroll before an immediate thread switch", async () => {
-  await using _fixture = _createFixture();
+it("captures the last scroll before an immediate thread switch", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
@@ -178,21 +179,21 @@ it("captures the last scroll before an immediate thread switch", async () => {
     expect(readTimelinePosition("geometry:quick-switch")).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   // No timer, polling, or animation frame between this gesture and navigation.
   node.scrollTop += 35;
   node.dispatchEvent(new Event("scroll"));
   const expectedOffset = node.scrollTop;
   await render(_fixture, "geometry:quick-other", [entry(100)]);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   await render(_fixture, "geometry:quick-switch", entries);
-  await advanceClock(256);
+  await advanceClock(_fixture, 256);
   expect(_fixture.listRef.current!.getScrollableNode()!.scrollTop).toBeCloseTo(expectedOffset, 0);
 });
 
-it("flushes the latest captured position on pagehide before the storage debounce", async () => {
-  await using _fixture = _createFixture();
+it("flushes the latest captured position on pagehide before the storage debounce", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await render(
@@ -204,7 +205,7 @@ it("flushes the latest captured position on pagehide before the storage debounce
     expect(readTimelinePosition("geometry:pagehide")).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   node.scrollTop += 35;
   node.dispatchEvent(new Event("scroll"));
@@ -217,37 +218,8 @@ it("flushes the latest captured position on pagehide before the storage debounce
   expect(saved.offsetWithinRow).toBe(receipt.offsetWithinRow);
 });
 
-it("keeps a held thread's exact reading and follow receipt through scroll, pagehide and unmount", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const key = "geometry:held-follow-receipt";
-  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
-  await render(_fixture, key, entries);
-  await vi.waitFor(() => {
-    expect(readTimelinePosition(key)).toBeDefined();
-  });
-  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
-  await advanceClock();
-  const captured = readTimelinePosition(key)!;
-  const saved = { ...captured, atEnd: false, followingPromptId: "message-19" };
-  rememberTimelinePosition(key, saved);
-
-  await render(_fixture, key, entries, { paintOnly: true });
-  const node = _fixture.listRef.current!.getScrollableNode()!;
-  node.scrollTop += 35;
-  node.dispatchEvent(new Event("scroll"));
-  await advanceClock();
-  expect(readTimelinePosition(key)).toEqual(saved);
-  window.dispatchEvent(new Event("pagehide"));
-  expect(readTimelinePosition(key)).toEqual(saved);
-  await _fixture.root0?.unmount();
-  _fixture.root0 = undefined;
-  expect(readTimelinePosition(key)).toEqual(saved);
-});
-
-it("does not offer a jump into reserved blank space but reports a hidden answer", async () => {
-  await using _fixture = _createFixture();
+it("does not offer a jump into reserved blank space but reports a hidden answer", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const prompt = entry(0, "Short prompt");
@@ -269,10 +241,10 @@ it("does not offer a jump into reserved blank space but reports a hidden answer"
     onIsAtEndChange,
   };
   await render(_fixture, "geometry:reserved-end", [prompt], extra);
-  await advanceClock(256);
+  await advanceClock(_fixture, 256);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
   await render(_fixture, "geometry:reserved-end", [prompt, answer("Short answer")], extra);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
   // The send gate must agree with the end control even while padding remains.
   expect(
@@ -287,12 +259,12 @@ it("does not offer a jump into reserved blank space but reports a hidden answer"
     [prompt, answer("Long answer\n\n".repeat(100))],
     extra,
   );
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
-it("never paints a cold thread at the beginning before positioning at its end", async () => {
-  await using _fixture = _createFixture();
+it("never paints a cold thread at the beginning before positioning at its end", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await render(
@@ -302,7 +274,7 @@ it("never paints a cold thread at the beginning before positioning at its end", 
   );
   let visibleFrames = 0;
   for (let i = 0; i < 16; i++) {
-    await advanceClock(16);
+    await advanceClock(_fixture, 16);
     const node = _fixture.listRef.current!.getScrollableNode()!;
     if (getComputedStyle(node).visibility !== "hidden") {
       visibleFrames++;
@@ -313,8 +285,8 @@ it("never paints a cold thread at the beginning before positioning at its end", 
   expect(visibleFrames).toBeGreaterThan(0);
 });
 
-it("does not apply an unrelated offset when a transient saved row disappeared", async () => {
-  await using _fixture = _createFixture();
+it("does not apply an unrelated offset when a transient saved row disappeared", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
@@ -333,7 +305,7 @@ it("does not apply an unrelated offset when a transient saved row disappeared", 
         .data.some((row: { message?: { id: string } }) => row.message?.id === "message-7"),
     ).toBe(true);
   });
-  await advanceClock(192);
+  await advanceClock(_fixture, 192);
   const state = _fixture.listRef.current!.getState();
   const index = state.data.findIndex(
     (row: { message?: { id: string } }) => row.message?.id === "message-7",
@@ -345,8 +317,8 @@ it("does not apply an unrelated offset when a transient saved row disappeared", 
   ).toBeLessThanOrEqual(2);
 });
 
-it("does not follow a growing answer even when the reader starts at the bottom", async () => {
-  await using _fixture = _createFixture();
+it("does not follow a growing answer even when the reader starts at the bottom", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 12 }, (_, i) => entry(i));
@@ -361,13 +333,13 @@ it("does not follow a growing answer even when the reader starts at the bottom",
       ...entries,
       ...Array.from({ length: i + 1 }, (_, n) => entry(n + 12)),
     ]);
-    await advanceClock(32);
+    await advanceClock(_fixture, 32);
     expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
   }
 });
 
-it("waits for older history before restoring a saved reading message", async () => {
-  await using _fixture = _createFixture();
+it("waits for older history before restoring a saved reading message", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const old = entry(7);
@@ -388,7 +360,7 @@ it("waits for older history before restoring a saved reading message", async () 
   await vi.waitFor(() => {
     expect(load.mock.calls.length).toBe(1);
   });
-  await advanceClock();
+  await advanceClock(_fixture);
   expect(readTimelinePosition("geometry:paged")?.messageId).toBe(old.message.id);
   await render(_fixture, "geometry:paged", [
     ...Array.from({ length: 30 }, (_, i) => entry(i)),
@@ -411,8 +383,8 @@ it("waits for older history before restoring a saved reading message", async () 
   });
 });
 
-it("manual navigation cancels restoration while history is still loading", async () => {
-  await using _fixture = _createFixture();
+it("manual navigation cancels restoration while history is still loading", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   rememberTimelinePosition("geometry:cancel", {
@@ -431,18 +403,18 @@ it("manual navigation cancels restoration while history is still loading", async
   await vi.waitFor(() => {
     expect(load.mock.calls.length).toBe(1);
   });
-  await advanceClock();
+  await advanceClock(_fixture);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   node.dispatchEvent(new WheelEvent("wheel", { deltaY: 200, bubbles: true }));
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 350, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const before = _fixture.listRef.current!.getState();
   const rowIndex = before.data.findIndex(
     (row: { message?: { id: string } }) => row.message?.id === "message-51",
   );
   const original = before.elementAtIndex(rowIndex)!.getBoundingClientRect().top;
   await render(_fixture, "geometry:cancel", recent, { loadEarlier: null });
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   expect(
     Math.abs(
       _fixture.listRef.current!.getState().elementAtIndex(rowIndex)!.getBoundingClientRect().top -
@@ -454,8 +426,8 @@ it("manual navigation cancels restoration while history is still loading", async
   });
 });
 
-it("keeps the saved reading position while a send is being placed", async () => {
-  await using _fixture = _createFixture();
+it("keeps the saved reading position while a send is being placed", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
@@ -463,14 +435,14 @@ it("keeps the saved reading position while a send is being placed", async () => 
   await vi.waitFor(() => {
     expect(readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
   });
-  await advanceClock();
+  await advanceClock(_fixture);
   const saved = readTimelinePosition("geometry:single-writer")!;
   // While the placement is in flight, scrolling saves nothing: the record that
   // names its message stays (no raw record without one replaces it).
   await render(_fixture, "geometry:single-writer", entries, { timelinePositioningPending: true });
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
   _fixture.listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   expect(readTimelinePosition("geometry:single-writer")).toEqual(saved);
   // Once it is done, the reader's place is saved again, by message.
   await render(_fixture, "geometry:single-writer", entries, { timelinePositioningPending: false });
@@ -483,8 +455,8 @@ it("keeps the saved reading position while a send is being placed", async () => 
   expect(readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
 });
 
-it("keeps existing first-message framing and short-answer space through completion", async () => {
-  await using _fixture = _createFixture();
+it("keeps existing first-message framing and short-answer space through completion", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries: ReturnType<typeof entry>[] = [];
@@ -505,7 +477,7 @@ it("keeps existing first-message framing and short-answer space through completi
   await vi.waitFor(() => {
     expect(positioned).toBe(true);
   });
-  await advanceClock(192);
+  await advanceClock(_fixture, 192);
   const node = _fixture.listRef.current!.getScrollableNode()!;
   const original = node.scrollTop;
   await render(
@@ -514,7 +486,7 @@ it("keeps existing first-message framing and short-answer space through completi
     [...entries, followUp, entry(9, "Short answer")],
     extra,
   );
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
   await vi.waitFor(() => {
     expect(readTimelinePosition("geometry:anchor")?.anchorMessageId).toBe(followUp.message.id);
@@ -534,8 +506,8 @@ it("keeps existing first-message framing and short-answer space through completi
   expect(readTimelinePosition("geometry:anchor")?.messageId).toBe(saved.messageId);
 });
 
-it("preserves the original near-bottom tolerance for lines hidden by the composer", async () => {
-  await using _fixture = _createFixture();
+it("preserves the original near-bottom tolerance for lines hidden by the composer", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   await render(
@@ -550,15 +522,15 @@ it("preserves the original near-bottom tolerance for lines hidden by the compose
   const initial = list.getScrollableNode()!.scrollTop;
   expect(resolveTimelineIsAtEnd(list.getState())).toBe(true);
   await scroll(() => list.scrollToOffset({ offset: initial - 20, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   expect(resolveTimelineIsAtEnd(list.getState())).toBe(true);
   await scroll(() => list.scrollToOffset({ offset: initial - 80, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   expect(resolveTimelineIsAtEnd(list.getState())).toBe(false);
 });
 
-it("counts new answers below the reader once while streaming, then clears them on reaching them", async () => {
-  await using _fixture = _createFixture();
+it("counts new answers below the reader once while streaming, then clears them on reaching them", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 15 }, (_, i) => entry(i));
@@ -569,7 +541,7 @@ it("counts new answers below the reader once while streaming, then clears them o
     expect(readTimelinePosition("geometry:unread")).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 250, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const original = _fixture.listRef.current!.getScrollableNode()!.scrollTop;
   let answer = {
     ...entry(20),
@@ -586,7 +558,7 @@ it("counts new answers below the reader once while streaming, then clears them o
       },
     };
     await render(_fixture, "geometry:unread", [...entries, answer], extra);
-    await advanceClock(32);
+    await advanceClock(_fixture, 32);
     expect(
       Math.abs(_fixture.listRef.current!.getScrollableNode()!.scrollTop - original),
     ).toBeLessThanOrEqual(1);
@@ -618,12 +590,12 @@ it("counts new answers below the reader once while streaming, then clears them o
     [...entries, { ...answer, message: { ...answer.message, streaming: false } }],
     extra,
   );
-  await advanceClock(80);
+  await advanceClock(_fixture, 80);
   expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
 });
 
-it("reveals a growing answer only until the sent prompt text reaches the top margin", async () => {
-  await using _fixture = _createFixture();
+it("reveals a growing answer only until its start reaches the top margin", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 10 }, (_, i) => entry(i));
@@ -656,21 +628,22 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
       },
     };
     await render(_fixture, "geometry:bounded", [...entries, answer], extra);
-    await advanceClock(80);
+    await advanceClock(_fixture, 80);
   }
-  const promptTextTop = () => {
+  const answerTop = () => {
     const state = _fixture.listRef.current!.getState();
     const index = state.data.findIndex(
-      (row: { message?: { id: string } }) => row.message?.id === entries[9]!.message.id,
+      (row: { message?: { id: string } }) => row.message?.id === answer.message.id,
     );
-    const body = state.elementAtIndex(index)!.querySelector('[data-user-message-body="true"]')!;
-    return body.getBoundingClientRect().top - node.getBoundingClientRect().top;
+    return (
+      state.elementAtIndex(index)!.getBoundingClientRect().top - node.getBoundingClientRect().top
+    );
   };
   // The same eased reveal; a slow runner needs more than the default second.
   await vi.waitFor(() => {
-    expect(promptTextTop()).toBeLessThanOrEqual(25);
+    expect(answerTop()).toBeLessThanOrEqual(25);
   });
-  expect(promptTextTop()).toBeGreaterThanOrEqual(23);
+  expect(answerTop()).toBeGreaterThanOrEqual(23);
   expect(node.scrollTop).toBeGreaterThan(initial);
   const capped = node.scrollTop;
   await render(
@@ -685,12 +658,12 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
     ],
     extra,
   );
-  await advanceClock(192);
+  await advanceClock(_fixture, 192);
   expect(Math.abs(node.scrollTop - capped)).toBeLessThanOrEqual(1);
 });
 
-it("manual scrolling cancels limited answer following without rearming it", async () => {
-  await using _fixture = _createFixture();
+it("manual scrolling cancels limited answer following without rearming it", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 10 }, (_, i) => entry(i));
@@ -713,12 +686,12 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
   // not the follow this test is about.
   const extra = { readingFollowPromptId: entries[9]!.message.id, isWorking: true };
   await render(_fixture, "geometry:bounded-cancel", [...entries, answer], extra);
-  await advanceClock(48);
+  await advanceClock(_fixture, 48);
   node.dispatchEvent(new WheelEvent("wheel", { deltaY: -80, bubbles: true }));
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({ offset: node.scrollTop - 80, animated: false }),
   );
-  await advanceClock(48);
+  await advanceClock(_fixture, 48);
   const original = node.scrollTop;
   await render(
     _fixture,
@@ -729,12 +702,12 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
     ],
     extra,
   );
-  await advanceClock(192);
+  await advanceClock(_fixture, 192);
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
 });
 
-it("keeps the sent prompt visible even when a full answer arrives before layout settles", async () => {
-  await using _fixture = _createFixture();
+it("stops at the answer's start even when a full answer arrives before layout settles", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 10 }, (_, i) => entry(i));
@@ -756,40 +729,28 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
     ...extra,
     timelinePositioningPending: true,
   });
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   const list = _fixture.listRef.current!;
   await render(_fixture, "geometry:fast-answer", [...entries, prompt, answer], extra);
-  // Observe the prompt alignment reached by the controlled reveal.
+  const answerTop = () => {
+    const state = list.getState();
+    const index = state.data.findIndex(
+      (row: { message?: { id: string } }) => row.message?.id === answer.message.id,
+    );
+    return (
+      state.elementAtIndex(index)!.getBoundingClientRect().top -
+      list.getScrollableNode()!.getBoundingClientRect().top
+    );
+  };
+  // Observe the answer's alignment reached by the controlled reveal.
   await vi.waitFor(() => {
-    expect(
-      (() => {
-        const state = list.getState();
-        const answerIndex = state.data.findIndex(
-          (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
-        );
-        return (
-          state
-            .elementAtIndex(answerIndex)!
-            .querySelector('[data-user-message-body="true"]')!
-            .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
-        );
-      })(),
-    ).toBeLessThanOrEqual(25);
+    expect(answerTop()).toBeLessThanOrEqual(25);
   });
-  const state = list.getState();
-  const answerIndex = state.data.findIndex(
-    (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
-  );
-  expect(
-    state
-      .elementAtIndex(answerIndex)!
-      .querySelector('[data-user-message-body="true"]')!
-      .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top,
-  ).toBeGreaterThanOrEqual(23);
+  expect(answerTop()).toBeGreaterThanOrEqual(23);
 });
 
-it("retains the reading position when the same thread briefly has no loaded rows", async () => {
-  await using _fixture = _createFixture();
+it("retains the reading position when the same thread briefly has no loaded rows", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const entries = Array.from({ length: 20 }, (_, i) => entry(i));
@@ -803,7 +764,7 @@ it("retains the reading position when the same thread briefly has no loaded rows
   });
   const saved = readTimelinePosition("geometry:reload-window")!;
   await render(_fixture, "geometry:reload-window", [], { positionHistoryLoading: true });
-  await advanceClock();
+  await advanceClock(_fixture);
   await render(_fixture, "geometry:reload-window", entries);
   await vi.waitFor(() => {
     expect(
@@ -826,8 +787,8 @@ it("retains the reading position when the same thread briefly has no loaded rows
   });
 });
 
-it("allows three of the answer's lines hidden, but not more, at different text sizes", async () => {
-  await using _fixture = _createFixture();
+it("allows three of the answer's lines hidden, but not more, at different text sizes", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const answer = {
@@ -852,7 +813,7 @@ it("allows three of the answer's lines hidden, but not more, at different text s
     const body = node.querySelector<HTMLElement>('[data-message-id="message-20"] .chat-markdown')!;
     body.style.fontSize = `${lineHeight / 1.5}px`;
     body.style.lineHeight = `${lineHeight}px`;
-    await advanceClock(96);
+    await advanceClock(_fixture, 96);
     // Native resize delivery is not driven by the controlled clock.
     await vi.waitFor(() => {
       const state = list.getState();
@@ -870,7 +831,7 @@ it("allows three of the answer's lines hidden, but not more, at different text s
       await scroll(() =>
         list.scrollToOffset({ offset: atTextEnd - lineHeight * hiddenLines, animated: false }),
       );
-      await advanceClock(32);
+      await advanceClock(_fixture, 32);
       expect(
         readerAtReadingEnd(list.getState(), inset),
         JSON.stringify({ lineHeight, hiddenLines }),
@@ -879,8 +840,8 @@ it("allows three of the answer's lines hidden, but not more, at different text s
   }
 });
 
-it("remeasures pending handoff footer layout and clears end navigation through the reader owner", async () => {
-  await using _fixture = _createFixture();
+it("remeasures pending handoff footer layout and clears end navigation through the reader owner", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "geometry:pending-handoff-end";
@@ -1008,7 +969,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   await vi.waitFor(() => {
     expect(readTimelinePosition(key)).toBeDefined();
   });
-  await advanceClock();
+  await advanceClock(_fixture);
   const list = _fixture.listRef.current!;
   const viewport = list.getScrollableNode()!;
   await scroll(() => list.scrollToOffset({ offset: 300, animated: false }));
@@ -1022,7 +983,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   const anchorBefore = anchor.getBoundingClientRect().top;
   for (const pending of [true, false, true]) {
     await renderControlled(pending);
-    await advanceClock(128);
+    await advanceClock(_fixture, 128);
     expect(viewport.scrollTop).toBeCloseTo(scrollBefore, 0);
     expect(anchor.getBoundingClientRect().top).toBe(anchorBefore);
   }
@@ -1085,14 +1046,40 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   expect(_fixture.host!.querySelector("[data-reader-end-control]")).toBeNull();
 });
 
-function _createFixture() {
+it("leaves a scroll without reader input where it is while a fresh open settles at the end", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:open-settling-scroll";
+  const onPositioned = vi.fn();
+  await render(
+    _fixture,
+    key,
+    Array.from({ length: 30 }, (_, i) => entry(i)),
+    { onPositionedThreadKeyChange: onPositioned },
+  );
+  const node = _fixture.listRef.current!.getScrollableNode()!;
+  await vi.waitFor(() => {
+    expect(node.scrollTop).toBeGreaterThan(0);
+  });
+  expect(onPositioned).not.toHaveBeenCalledWith(key);
+  // A screen reader moving to the first heading scrolls with no wheel, touch, press or key.
+  node.scrollTop = 0;
+  node.dispatchEvent(new Event("scroll"));
+  await vi.waitFor(() => {
+    expect(onPositioned).toHaveBeenCalledWith(key);
+  });
+  await advanceClock(_fixture, 256);
+  expect(node.scrollTop).toBe(0);
+});
+
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   const listRef = createRef<LegendListRef>();
   const base = {
     listRef,
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     runningRunId: null,
@@ -1100,7 +1087,6 @@ function _createFixture() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
@@ -1126,6 +1112,8 @@ function _createFixture() {
     host: undefined! as HTMLDivElement | undefined,
     stack,
     cleanup,
+    /** Aborts at the test's deadline; advanceClock stops on it. */
+    signal: context.signal,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {
       try {

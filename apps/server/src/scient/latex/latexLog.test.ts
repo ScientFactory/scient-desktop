@@ -8,12 +8,8 @@ import {
 } from "./latexLog.ts";
 
 /**
- * What `latexmk` prints — verbatim, from the machine this was diagnosed on —
- * when it decides not to redo a target whose last run failed. It is the whole
- * of a failed compile's output: nothing here is `file:line:` shaped, nothing
- * here starts with `!`, and nothing here names a missing file. A build that
- * only reads TeX-shaped lines therefore reads this run as having said nothing
- * at all, which is exactly what happened in production.
+ * latexmk's whole failed output can be prose with no TeX-shaped diagnostic or missing filename.
+ * Keep this real transcript so fallback reporting cannot silently discard its only explanation.
  */
 const REFUSED_RERUN_TRANSCRIPT = [
   "Initial Win CP for (console input, console output, system): (CP437, CP437, CP1252)",

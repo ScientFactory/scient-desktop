@@ -31,6 +31,21 @@ export function requestDesktopReload(ignoreCache: boolean): void {
   else reload();
 }
 
+export function startDesktopReloadHandling(): void {
+  window.desktopBridge?.onMenuAction((action) => {
+    if (action === "reload-main" || action === "force-reload-main") {
+      requestDesktopReload(action === "force-reload-main");
+    }
+  });
+  window.desktopBridge?.onReloadBlocked?.(() => {
+    toastManager.add({
+      type: "warning",
+      title: "Reload paused",
+      description: "A file has pending changes. Save or resolve them, then try again.",
+    });
+  });
+}
+
 /** Reuses the same save barrier that protects file and route departure. */
 export function useDesktopReloadGuard(
   pendingSurfaceIds: ReadonlySet<string>,
@@ -38,6 +53,7 @@ export function useDesktopReloadGuard(
   describeAttention: (id: string) => string | undefined,
 ): void {
   const currentRef = useRef({ pendingSurfaceIds, options });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps currentRef in step with the latest pending surfaces and options for the reload handler
   useLayoutEffect(() => {
     currentRef.current = { pendingSurfaceIds, options };
   }, [pendingSurfaceIds, options]);
@@ -55,6 +71,7 @@ export function useDesktopReloadGuard(
     },
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this component as the module-level beforeReload handler and unregisters on unmount
   useEffect(() => {
     const handler = (reload: () => void) => {
       const finish = () => {

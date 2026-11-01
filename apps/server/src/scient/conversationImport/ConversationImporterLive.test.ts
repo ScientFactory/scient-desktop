@@ -354,6 +354,7 @@ function allMessageIds(thread: ReturnType<typeof conversationSnapshotProjection>
 }
 
 describe("ConversationImporter", () => {
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("preserves omissions from an already-imported source", () =>
     withImporter(
       Effect.gen(function* () {
@@ -390,6 +391,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("adds up the gaps of an already-imported source and of this file", () =>
     withImporter(
       Effect.gen(function* () {
@@ -434,6 +436,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("counts an unavailable answer attachment once, not again on its folded message", () =>
     withImporter(
       Effect.gen(function* () {
@@ -493,6 +496,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("files a prompt whose turn has no reply under that turn, not the next one", () =>
     withImporter(
       Effect.gen(function* () {
@@ -524,6 +528,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("gives null-turn imported reasoning a retained inherited turn", () =>
     withImporter(
       Effect.gen(function* () {
@@ -551,6 +556,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("maps prototype-shaped external record ids as own ids", () =>
     withImporter(
       Effect.gen(function* () {
@@ -577,6 +583,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("starts the imported thread supervised even when full access is requested", () =>
     withImporter(
       Effect.gen(function* () {
@@ -602,6 +609,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("keeps what the sender's work log left out through import and re-export", () =>
     withImporter(
       Effect.gen(function* () {
@@ -808,6 +816,7 @@ describe("ConversationImporter", () => {
       ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("imports a package as a new independent thread with fresh ids", () =>
     withImporter(
       Effect.gen(function* () {
@@ -1293,6 +1302,7 @@ describe("ConversationImporter", () => {
         }),
       ).pipe(Effect.map((command) => command.origin.notices));
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("filters an earlier transfer's notices like this file's own", () =>
       withImporter(
         Effect.gen(function* () {
@@ -1313,6 +1323,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("keeps every kind of warning, counting repeats of one kind in one line", () =>
       withImporter(
         Effect.gen(function* () {
@@ -1337,6 +1348,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: a495ed55e0 chore(upstream): merge t3 through 21da3061aa
     it.effect("counts a hundred thousand warnings and accounts for a later warning kind", () =>
       withImporter(
         Effect.gen(function* () {
@@ -1367,6 +1379,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("shares the room between earlier and new notes and counts the rest", () =>
       withImporter(
         Effect.gen(function* () {
@@ -1920,6 +1933,7 @@ describe("ConversationImporter", () => {
       ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("flushes the journal before publishing anything", () =>
     withImporter(
       Effect.gen(function* () {
@@ -1942,6 +1956,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect(
     "retrying one attempt is idempotent; importing the file again makes a second thread",
     () =>
@@ -1968,6 +1983,7 @@ describe("ConversationImporter", () => {
       ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("resumes an attempt that failed during publication with the same ids", () =>
     withImporter(
       Effect.gen(function* () {
@@ -1995,6 +2011,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect(
     "an interrupted import leaves only journal-listed files, and cancel rolls them back",
     () =>
@@ -2027,6 +2044,7 @@ describe("ConversationImporter", () => {
       ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("finds a commit made before a crash instead of repeating it", () =>
     withImporter(
       Effect.gen(function* () {
@@ -2073,6 +2091,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("reports a commit whose acknowledgement failed", () =>
     withImporter(
       Effect.gen(function* () {
@@ -2089,6 +2108,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("never removes committed attachments, even after the thread was deleted", () =>
     withImporter(
       Effect.gen(function* () {
@@ -2131,6 +2151,7 @@ describe("ConversationImporter", () => {
     ),
   );
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect(
     "a rejected command removes exactly its files; confirming again starts a new attempt",
     () =>
@@ -2230,6 +2251,7 @@ describe("ConversationImporter", () => {
         return { directory, journal };
       });
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("rejected receipt: removes the attempt's files and reports the refusal", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2256,6 +2278,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("rejected receipt found on confirm: the old attempt ends and a new one commits", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2282,6 +2305,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("absent receipt: rolls back exactly the journal-listed files inside the store", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2307,6 +2331,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("an interrupted journal write settles as nothing published", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2321,6 +2346,7 @@ describe("ConversationImporter", () => {
     );
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("cleanup never runs while the attempt's commit is in flight", () => {
     const entered = Deferred.makeUnsafe<void>();
     const release = Deferred.makeUnsafe<void>();
@@ -2354,6 +2380,7 @@ describe("ConversationImporter", () => {
     );
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it.effect("a kept attempt is never re-targeted to another destination", () =>
     withImporter(
       Effect.gen(function* () {
@@ -2384,6 +2411,7 @@ describe("ConversationImporter", () => {
   );
 
   describe("destination authority", () => {
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("refuses a missing project and journals nothing", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2398,6 +2426,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("refuses a project still being cloned", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2410,6 +2439,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("refuses a provider that is off or not configured", () =>
       withImporter(
         Effect.gen(function* () {
@@ -2425,6 +2455,7 @@ describe("ConversationImporter", () => {
       ),
     );
 
+    // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
     it.effect("rechecks the operate scope with the confirm's principal", () =>
       withImporter(
         Effect.gen(function* () {

@@ -56,14 +56,12 @@ import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshot
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
-// npm's `latest` tracks Grok's stable channel, the one `grok update` installs
-// by default, so the registry stays the source for "latest".
+// npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` finds the installer that owns the binary itself, so the
-// resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. The exception is a Homebrew cask
-// (normally `grok-build`), which brew upgrades and versions: `grok update` would install
-// a second copy beside it, so a cask its brew cannot vouch for stays manual.
+// `grok update` installs under `GROK_HOME`; use the resolved executable and instance environment.
+// npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
+// Homebrew casks need brew upgrades; `grok update` would install a second copy.
+// Keep casks manual when their brew cannot vouch for them.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("resolveGrokMaintenance")(function* (context) {
     if (!context) {
@@ -95,7 +93,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: context.env,
+      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
     });
   }),
 };
@@ -258,16 +256,21 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
         effectiveEnvironment,
         cwd,
       ).pipe(
-        Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readGrokAccount(effectiveEnvironment).pipe(
-                Effect.map(({ email, usageLimits }) => ({
-                  ...snapshot,
-                  auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                  usageLimits,
-                })),
-              )
-            : Effect.succeed(snapshot),
+        Effect.filterOrElse(
+          (snapshot) =>
+            !(
+              effectiveConfig.enabled &&
+              snapshot.installed &&
+              snapshot.auth.status === "authenticated"
+            ),
+          (snapshot) =>
+            readGrokAccount(effectiveEnvironment).pipe(
+              Effect.map(({ email, usageLimits }) => ({
+                ...snapshot,
+                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                usageLimits,
+              })),
+            ),
         ),
         Effect.map(decorateSnapshot),
         Effect.provideService(HttpClient.HttpClient, httpClient),

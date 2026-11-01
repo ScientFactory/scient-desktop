@@ -45,6 +45,7 @@ export function useScientVoiceDraftOrigin(input: {
 }): VoiceDraftOrigin {
   const navigate = useNavigate();
   const latestRef = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latestRef holding the latest endpoint input
   useLayoutEffect(() => {
     latestRef.current = input;
   });
@@ -54,6 +55,7 @@ export function useScientVoiceDraftOrigin(input: {
   const title = input.title;
 
   // Layout timing: a job finishing right after a remount finds the endpoint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this composer's voice draft endpoint in the registry until unmount
   useLayoutEffect(
     () =>
       registerVoiceDraftEndpoint(key, {

@@ -594,6 +594,64 @@ const assistantEnd = (message: Record<string, unknown>) => ({
 });
 
 describe("Oh My Pi content ownership", () => {
+  it.effect("streams delta-only message updates without cumulative snapshots", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("turn");
+      // The `messageUpdates: "delta"` projection: `message` keeps only its role
+      // and `assistantMessageEvent` has no `partial`.
+      const update = (assistantMessageEvent: Record<string, unknown>) => ({
+        type: "message_update",
+        messageId: "answer",
+        message: { role: "assistant" },
+        assistantMessageEvent,
+      });
+      yield* h.wire.send(
+        { type: "agent_start" },
+        {
+          type: "message_start",
+          messageId: "answer",
+          message: { role: "assistant", responseId: "current", content: [] },
+        },
+        update({ type: "thinking_start", contentIndex: 0 }),
+        update({ type: "thinking_delta", contentIndex: 0, delta: "Re" }),
+        update({ type: "thinking_delta", contentIndex: 0, delta: "ason" }),
+        update({ type: "thinking_end", contentIndex: 0, content: "Reason" }),
+        update({ type: "text_start", contentIndex: 1 }),
+        update({ type: "text_delta", contentIndex: 1, delta: "Hel" }),
+        update({ type: "text_delta", contentIndex: 1, delta: "lo" }),
+        update({ type: "text_end", contentIndex: 1, content: "Hello" }),
+        update({ type: "toolcall_start", contentIndex: 2, id: "call", toolName: "edit" }),
+        update({ type: "toolcall_delta", contentIndex: 2, delta: '{"path":' }),
+        {
+          type: "message_end",
+          messageId: "answer",
+          message: {
+            role: "assistant",
+            responseId: "current",
+            stopReason: "toolUse",
+            content: [
+              { type: "thinking", thinking: "Reason" },
+              { type: "text", text: "Hello" },
+              { type: "toolCall", id: "call", name: "edit", arguments: { path: "a" } },
+            ],
+          },
+        },
+      );
+      const updates = yield* h.settleFrames;
+      expect(updates.filter((u) => u.type === "reasoning-delta")).toMatchObject([
+        { delta: "Re" },
+        { delta: "ason" },
+      ]);
+      expect(updates.filter((u) => u.type === "assistant-delta")).toMatchObject([
+        { delta: "Hel" },
+        { delta: "lo" },
+      ]);
+      expect(updates.filter((u) => u.type === "content-snapshot")).toEqual([]);
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
   it.effect(
     "reconciles only the open envelope from agent_end after earlier tool-only messages",
     () =>
@@ -1631,11 +1689,11 @@ describe("Oh My Pi session runtime compaction", () => {
         [
           "a successful compaction is reported",
           { type: "auto_compaction_end", result: { summary: "done" } },
-          [{ type: "compacted" }],
+          [{ type: "compacted", result: { summary: "done" } }],
         ],
       ] as const
     ).map(([label, frame, expected]) => ({ caseTitle: label, label, frame, expected })),
-  )("$caseTitle", ({ label, frame, expected }) =>
+  )("$caseTitle", ({ frame, expected }) =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
       yield* h.wire.send(frame);
@@ -2039,4 +2097,48 @@ it.effect.each(
     expect(outcomes).toEqual([expect.objectContaining({ outcome: "unknown" })]);
     yield* Scope.close(h.scope, Exit.void);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "logs paused diagnostics without publishing and restores warnings on the next begin",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* runtimeHarness();
+      yield* h.runtime.begin("stopped");
+      yield* h.runtime.accepted("stopped-prompt", true);
+      const pause = yield* h.runtime.pause;
+      for (const event of [
+        { type: "agent_start" },
+        { type: "agent_end", messages: [], isTerminal: true },
+        { type: "prompt_result", id: "stopped-prompt", agentInvoked: true, status: "aborted" },
+      ])
+        yield* Queue.offer(h.events, { _tag: "Event", event });
+      yield* pause.settled;
+      for (const event of [
+        { type: "extension_error", error: "Stopped extension failed late" },
+        { type: "session_settled" },
+      ])
+        yield* Queue.offer(h.events, { _tag: "Event", event });
+      const observed: OmpSessionUpdate[] = [];
+      for (;;) {
+        const update = yield* takeUpdate(h.updates);
+        observed.push(update);
+        if (update.type === "session-settled") break;
+      }
+      expect(observed.filter((update) => update.type === "warning")).toEqual([]);
+      expect(observed.filter((update) => update.type === "turn-started")).toEqual([
+        { type: "turn-started", turnId: "stopped" },
+      ]);
+      yield* h.runtime.begin("next");
+      expect(yield* takeUpdate(h.updates)).toEqual({ type: "turn-started", turnId: "next" });
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: { type: "extension_error", error: "Current extension failed" },
+      });
+      expect(yield* takeUpdate(h.updates)).toEqual({
+        type: "warning",
+        message: "Current extension failed",
+      });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
 );

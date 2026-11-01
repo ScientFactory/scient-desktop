@@ -26,6 +26,7 @@ describe("ContextualConfirmation", () => {
     vi.unstubAllGlobals();
   }
 
+  // regression: b43b0d69ef fix(compute): choose capable Python before first run
   it("uses the quiet action slot for a second explicit choice", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

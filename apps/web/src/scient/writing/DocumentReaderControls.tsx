@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
+import { PanelTabNewWindowItem } from "../multiWindow/PanelTabNewWindowItem";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { formatPdfZoom, parsePdfPageInput, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { ReaderBarHostContext } from "./readerBarHost";
@@ -94,6 +95,7 @@ export interface ReaderSearch {
 export function ReaderSearchField(props: ReaderSearch & { readonly label: string }) {
   const input = useRef<HTMLInputElement>(null);
   const { focusRequest } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when a focus request arrives
   useEffect(() => {
     if (!focusRequest) return;
     input.current?.focus();
@@ -205,6 +207,7 @@ export function DocumentReaderControls(props: {
   const host = useContext(ReaderBarHostContext);
   const hostSlot = host?.slot ?? null;
   const onHosted = host?.onHosted;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports this controls bar as hosted to the reader bar host until unmount
   useLayoutEffect(() => {
     if (!onHosted || hostSlot === null) return;
     onHosted(true);
@@ -390,6 +393,9 @@ export function DocumentReaderControls(props: {
         <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
           {/* Only what the row does not show right now, and what has no button. */}
           <ReaderRowContext value={menuRow}>
+            {/* First, so no separator leads the menu when the row shows every other item. A
+                surface that hosts the bar lists this in its own menus. */}
+            {host ? null : <PanelTabNewWindowItem />}
             <IfRowHidden selector=".scient-pdf-action-zoom-step">
               <DropdownMenuItem
                 disabled={!props.ready}

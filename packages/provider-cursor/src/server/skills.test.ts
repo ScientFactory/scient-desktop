@@ -21,7 +21,7 @@ const runNode = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 describe("Cursor skills", () => {
-  it("discovers recursive project skills with project precedence", async () =>
+  it("discovers project, user, then built-in skills by precedence", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -316,7 +316,7 @@ effectIt.layer(NodeServices.layer)("Cursor machine skill catalog", (it) => {
           displayName: "Built-in skill",
           description: "Cursor built-in.",
           path: builtinPath,
-          scope: "app",
+          scope: "system",
           enabled: true,
         },
         {

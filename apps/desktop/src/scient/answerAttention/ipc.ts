@@ -6,6 +6,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
+import { appWindowForSender } from "../multiWindow/appWindows.ts";
 import * as DesktopIpc from "../../ipc/DesktopIpc.ts";
 import {
   SET_NOTIFICATION_BADGE_CHANNEL,
@@ -77,10 +78,10 @@ export const installUnreadAnswerBadge = Effect.fn("scient.answerAttention.instal
         payload: UnreadAnswerBadge,
         result: Schema.Boolean,
         handler: Effect.fn("scient.answerAttention.setBadge")(function* (badge, event) {
-          const main = yield* windows.main;
           // Browser previews and other guest renderers cannot control the app badge.
-          if (Option.isNone(main) || main.value.webContents.id !== event?.sender.id) return false;
-          return applyUnreadAnswerBadge(platform, main.value, badge);
+          const sender = yield* appWindowForSender(windows, event?.sender.id);
+          if (Option.isNone(sender)) return false;
+          return applyUnreadAnswerBadge(platform, sender.value, badge);
         }),
       }),
     );

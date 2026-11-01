@@ -1,11 +1,6 @@
 /**
- * The authorized, instrumented RPC wrappers that ws.ts builds for each
- * connection. Scient handler modules receive them so every Scient RPC keeps
- * the same scope check and metrics as the shared handlers. Handlers that
- * join a shared group are typed as a subset of that group's handlers, so
- * the group's `of` still checks every payload and result.
- *
- * @module ScientRpcObservers
+ * Keep every Scient RPC behind shared scope checks and instrumentation. Group subsets must still
+ * satisfy the shared payload/result contract.
  */
 import type { EnvironmentAuthorizationError } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";

@@ -1,10 +1,5 @@
-// Window-level owner for voice dictation after the user commits a stop.
-//
-// Recording belongs to the visible control and ends with it. Once Insert or
-// Send is pressed, the clip, transcription and correction belong to a job held
-// here, outside React, so leaving the thread does not discard the dictation.
-// Every job carries an owner key fixed at the stop click. Controls display the
-// job for their owner key; the job's own `deliver` decides where text lands.
+// Recording ends with its control, but committed dictation must survive thread navigation. Hold the
+// job outside React with an owner fixed at stop; delivery must use that owner.
 
 import { useSyncExternalStore } from "react";
 import type {
@@ -23,7 +18,7 @@ import {
 } from "./voiceTranscriptCorrectionClient.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
 
-export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
+const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 
 export type VoiceJobPhase = "transcribing" | "correcting";
 

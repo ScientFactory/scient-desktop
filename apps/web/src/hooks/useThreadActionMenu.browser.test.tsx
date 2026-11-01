@@ -58,14 +58,8 @@ vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn
 vi.mock("../state/entities", () => ({
   useProjects: () => [],
   readThreadShell: () => boundary.shell,
-  readEnvironmentSupportsVisitedTracking: () => boundary.serverTracked,
+  readEnvironmentServerConfigLoaded: () => boundary.serverTracked,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
-  readEnvironmentSupportsTitleRegeneration: () => true,
-  readEnvironmentSupportsPinReorder: () => true,
-  readEnvironmentSupportsActiveReorder: () => true,
   readEnvironmentThreadRefs: () => [],
   readProject: () => null,
   readThreadShells: () => [],
@@ -80,8 +74,18 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/threads", () => ({
   threadEnvironment: { markUnread: { command: "mark-unread" } },
 }));
-vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const settings = Atom.make(null);
+  return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    primaryServerKeybindingsAtom: {},
+    serverEnvironment: { settingsValueAtom: () => settings },
+  };
+});
 vi.mock("../state/vcs", () => ({ vcsEnvironment: {} }));
+vi.mock("../state/orchestration", () => ({ orchestrationEnvironment: {} }));
+vi.mock("../state/projects", () => ({ projectEnvironment: { createFromThread: {} } }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
@@ -123,6 +127,7 @@ function Header({ onReady }: { onReady: (menu: ReturnType<typeof useThreadAction
     projectCwd: "/synthetic",
     onStartRename: vi.fn(),
     onRequestNewSection: vi.fn(),
+    canShareWithGuest: false,
   });
   useEffect(() => onReady(actions), [actions, onReady]);
   return null;
@@ -173,21 +178,6 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("header Mark unread through the shared thread action", () => {
-  it("dispatches the exact scoped native mutation when the server tracks visits", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await selectMarkUnread(_fixture);
-    expect(boundary.markUnread).toHaveBeenCalledExactlyOnceWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId },
-    });
-    expect(useUiStateStore.getState().threadLastVisitedAtById[key]).toBe(
-      "2026-10-05T08:20:00.000Z",
-    );
-    expect(boundary.unrelatedCommand).not.toHaveBeenCalled();
-  });
   it("uses the canonical completed answer minus one millisecond for older servers", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

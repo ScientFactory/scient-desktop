@@ -20,18 +20,12 @@ import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./
 
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-/**
- * A pinned runtime is an exact Scient release asset npm-installed into
- * <baseDir>/runtime/versions/<version>. The boot service points its unit or
- * launch agent here, and server self-update installs the target version here before
- * switching over, never `npx t3`, whose cache is ephemeral and whose
- * registry fetch at boot would make startup depend on the network.
- */
+/** npm-install exact Scient assets into runtime/versions/<version> for boot and update.
+ * Avoid ephemeral package-runner caches and network-dependent startup. */
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
-// Boot-service setup and remote update can construct separate layers. Serialize
-// the complete install transaction across every caller in this process.
+// Separate layers share one install lock across this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
@@ -95,14 +89,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
   }
 }
 
-/**
- * Installs the immutable server asset for a release into the pinned runtime
- * directory unless a complete
- * install is already there, and returns its paths. The sentinel is written
- * only after npm exits 0; checking the entry file alone is not enough. npm
- * extracts files before running native builds (node-pty), so a killed
- * install leaves a plausible-looking but broken tree behind.
- */
+/** npm writes entry files before native builds; only a successful install gets a sentinel. */
 interface PinnedRuntimeInstallInput {
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
   readonly baseDir: string;
@@ -561,12 +548,9 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
 });
 
 /**
- * Every update publishes a new immutable runtime, so without pruning they pile up. Removes
- * completed runtimes nothing can start again and keeps: the caller's versions, everything the
- * service state references (active, rollback, pending), and runtimes that a running process
- * executes, a `t3` launcher points at, or `references` (such as the service unit) name, plus
- * anything published within the last hour. Staging directories, symlinks, and unexpected entries
- * are never touched. Returns the versions removed.
+ * Keep runtimes named by callers, service state, running processes, launchers, or references,
+ * and anything published within an hour. Only prune completed runtimes; leave staging
+ * directories, symlinks, and unexpected entries untouched.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
   readonly baseDir: string;

@@ -27,12 +27,12 @@ sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 # First-run terminal notice, rendered by the devcontainers base image.
 sudo mkdir -p /usr/local/etc/vscode-dev-containers
 sudo tee /usr/local/etc/vscode-dev-containers/first-run-notice.txt >/dev/null <<'EOF'
-T3 Code devcontainer
+Scient devcontainer
 
-  vp run dev            start server + web, then open the pairing URL it
-                        prints (the bare forwarded port will not authenticate)
-  cp .env.example .env  optional: enable T3 Connect cloud features
-                        (public identifiers, not secrets)
+  vp run dev --home-dir .scient-next
+                        start server + web with workspace-owned state, then
+                        open the pairing URL it prints (the bare forwarded
+                        port will not authenticate)
 
 Details: docs/internals/devcontainer.md
 EOF

@@ -1,24 +1,6 @@
-// SCIENT-OWNED: Scient's remote server home for SSH launches. tunnel.ts uses
-// these from short marked lines.
-//
-// The remote home is `~/.scient-next`, the same directory Scient desktop uses
-// on its own computer, so connecting to a machine that runs Scient desktop
-// reuses that machine's server. It is never T3's `~/.t3`: a T3 server there is
-// never adopted, and the two products never share a state database.
-//
-// Earlier Scient builds kept SSH state in `~/.t3`. A launch that finds no
-// `~/.scient-next` but a `~/.t3` database stops before creating anything and
-// reports it; the desktop then runs the copy as its own SSH step with its own
-// budget and launches again. The copy happens once, and only when the database
-// proves Scient wrote it; otherwise the step creates an empty new home. It
-// leaves `~/.t3` in place, so an older Scient desktop keeps working against it.
-// Only the state directory (`userdata`) is copied, without the live server's
-// discovery record, ownership lock, and logs; the database itself is copied
-// through SQLite's backup API so a concurrent writer cannot tear it. Worktrees,
-// projects and scratch folders stay where they are: the database records them
-// by absolute path and Git registers worktrees at their location, so a copy
-// would be an unregistered duplicate nothing points at. Installed runtimes,
-// tools and caches are rebuilt on demand, and some record their own absolute
+// Never share/adopt T3 state. Migrate only proven Scient databases via SQLite backup; retain the
+// old home. Copy userdata without live discovery/locks/logs. Keep worktrees/projects/scratch at
+// recorded absolute paths, and rebuild tools/caches because relocating them can invalidate embedded
 // paths.
 import * as Effect from "effect/Effect";
 

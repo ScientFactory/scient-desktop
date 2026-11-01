@@ -1,20 +1,6 @@
 /**
- * Text direction for Word export.
- *
- * Pandoc's Word writer derives right-to-left layout only from `dir`: a
- * document-level `dir: rtl` or a `dir` attribute on a div or span. `lang: he`
- * alone makes nothing right-to-left (Pandoc qualification, REPORT §6). Scient
- * renders each block in the direction of its first strong character, so
- * preparation marks direction the same way:
- *
- * - a right-to-left document gets `dir: rtl`, and its left-to-right blocks
- *   `dir=ltr`;
- * - any other document keeps left-to-right, and its right-to-left paragraphs,
- *   headings, list items, quotes, table cells, and footnotes get `dir=rtl`.
- *
- * Word tables keep left-to-right column order (no `bidiVisual`), while their
- * right-to-left cell text is marked. This expected mixed-direction layout is
- * not a conversion warning.
+ * Pandoc derives RTL from dir, not lang alone. Mark block direction explicitly while preserving LTR
+ * table column order with RTL cell text; expected mixed direction is not a conversion warning.
  */
 import type { DocumentDirection } from "@t3tools/contracts";
 

@@ -191,9 +191,9 @@ function escapeMarkdown(text: string): string {
 export function renderComposerCitationsAsText(prompt: string): string {
   return replaceCitations(prompt, (citation) => {
     const label = isPdfCitation(citation)
-      ? `${pdfCitationDocumentLabel(citation)} — ${pdfCitationPages(citation)}`
+      ? `${pdfCitationDocumentLabel(citation)}, ${pdfCitationPages(citation)}`
       : isFileCitation(citation)
-        ? `${citation.path} — within lines ${citation.startLine}–${citation.endLine}${citation.origin === "draft" ? " (unsaved at capture)" : ""}`
+        ? `${citation.path}, within lines ${citation.startLine}–${citation.endLine}${citation.origin === "draft" ? " (unsaved at capture)" : ""}`
         : "Assistant quote";
     return (
       `\n\n> ${escapeMarkdown(label)}:\n${escapeMarkdown(composerCitationText(citation))

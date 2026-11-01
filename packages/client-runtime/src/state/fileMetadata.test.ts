@@ -137,6 +137,7 @@ describe("file metadata", () => {
     }).pipe(Effect.scoped),
   );
 
+  // SCIENT-FORK:START
   it.effect(
     "keeps literal filename whitespace and POSIX backslashes distinct through invalidation",
     () =>
@@ -172,6 +173,7 @@ describe("file metadata", () => {
       }).pipe(Effect.scoped),
   );
 
+  // SCIENT-FORK:END
   it.effect("retries only paths invalidated while their response is in flight", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

@@ -374,6 +374,59 @@ describe("useManagedRuntimeUpdates", () => {
       { status: "failed", line: "lab · Codex: No catalog." },
     ]);
   });
+
+  it("retries a failed start through the live update owner and reports the verified version", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    testState.startRuntimeAction.mockRejectedValueOnce(new Error("The plan changed."));
+    await act(async () => {
+      await _fixture.current!.update(_fixture.current!.targets);
+    });
+    expect(testState.toasts.at(-1)).toEqual({ type: "error", title: "Codex update failed" });
+    let retried: Runs = [];
+    await act(async () => {
+      void _fixture.current!.update(_fixture.current!.targets).then((runs) => {
+        retried = runs;
+      });
+    });
+    expect(testState.startRuntimeAction).toHaveBeenCalledTimes(2);
+    expect(testState.startRuntimeAction).toHaveBeenLastCalledWith({
+      environmentId: lab,
+      instanceId: "codex",
+      action: "update",
+    });
+    await act(async () => {
+      publish(
+        connected([codex({ managedVersion: "0.157.1", operation: { status: "succeeded" } })]),
+      );
+    });
+    expect(retried[0]?.outcome).toEqual({ status: "succeeded", version: "0.157.1" });
+    expect(testState.toasts.at(-1)).toEqual({
+      type: "success",
+      title: "Codex updated to v0.157.1",
+    });
+  });
+
+  it("settles cancellation without a success or failure notice", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    let cancelled: Runs = [];
+    await act(async () => {
+      void _fixture.current!.update(_fixture.current!.targets).then((runs) => {
+        cancelled = runs;
+      });
+    });
+    const progressNotices = [...testState.toasts];
+    await act(async () => {
+      publish(connected([codex({ operation: { status: "cancelled", message: "Cancelled." } })]));
+    });
+    expect(cancelled[0]?.outcome).toEqual({ status: "cancelled" });
+    expect(managedRuntimeRunOutcomes(cancelled)).toEqual([{ status: "interrupted" }]);
+    expect(testState.toasts).toEqual(progressNotices);
+  });
 });
 
 describe("managed runtime pass helpers", () => {

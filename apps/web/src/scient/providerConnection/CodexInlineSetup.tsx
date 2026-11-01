@@ -61,6 +61,7 @@ type PendingAction =
   | "device-sign-in"
   | "cancel-runtime"
   | "cancel-sign-in"
+  | "check"
   | null;
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
@@ -239,6 +240,23 @@ export function CodexInlineSetup(props: {
         setLocalError(
           providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
         );
+      }
+    } catch (cause) {
+      actionFailure = { cause };
+    }
+    setPendingAction(null);
+    if (actionFailure) throw actionFailure.cause;
+  };
+
+  const checkAgain = async () => {
+    setLocalError(null);
+    setPendingAction("check");
+    let actionFailure: { readonly cause: unknown } | undefined;
+    try {
+      try {
+        await props.controller.refresh();
+      } catch (error) {
+        setLocalError(providerLifecycleFailureMessage(error, "Scient could not check Codex."));
       }
     } catch (cause) {
       actionFailure = { cause };
@@ -510,6 +528,53 @@ export function CodexInlineSetup(props: {
           </>
         }
       />
+    );
+  }
+
+  // The status check could not read the account, usually because Codex cannot reach OpenAI.
+  // A sign-in would fail the same way, so checking again comes first.
+  if (
+    connectionOperation?.status !== "failed" &&
+    props.provider.status === "error" &&
+    props.provider.auth.status === "unknown"
+  ) {
+    return (
+      <SetupFrame>
+        <AssistedSetupStatus
+          body={localError ?? "Check your internet connection or VPN, then try again."}
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role="alert"
+          title="Codex can’t check your account"
+        />
+        <AssistedSetupActions>
+          {signInMethod ? (
+            <Button
+              disabled={pendingAction !== null}
+              onClick={() => void signIn()}
+              size="sm"
+              type="button"
+              variant="ghost-muted"
+            >
+              Sign in again
+            </Button>
+          ) : null}
+          <Button
+            aria-label="Check Codex again"
+            disabled={pendingAction !== null}
+            onClick={() => void checkAgain()}
+            size="sm"
+            type="button"
+            variant="ghost-primary"
+          >
+            {pendingAction === "check" ? (
+              <LoaderIcon aria-hidden className="animate-spin" />
+            ) : (
+              <RefreshCwIcon aria-hidden />
+            )}
+            Try again
+          </Button>
+        </AssistedSetupActions>
+      </SetupFrame>
     );
   }
 

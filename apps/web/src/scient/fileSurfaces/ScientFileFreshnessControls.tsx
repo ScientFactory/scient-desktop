@@ -93,7 +93,7 @@ export function ScientFileReloadButton(props: {
   const actionLabel = props.isPending
     ? "Reloading file…"
     : props.automaticRefreshUnavailable
-      ? `Automatic updates paused — ${label.toLowerCase()}`
+      ? `Automatic updates paused: ${label.toLowerCase()}`
       : label;
   return (
     <Tooltip>

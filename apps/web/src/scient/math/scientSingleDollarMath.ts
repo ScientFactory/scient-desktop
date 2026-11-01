@@ -1,18 +1,7 @@
 /**
- * Guarded single-dollar `$...$` math, recognized at the micromark tokenizer —
- * the only altitude where recognition can be both safe and complete. The
- * tokenizer sees raw source before emphasis fragments a span (`$a*b*c$`
- * arrives whole), markdown's escape construct has already consumed `\$`
- * before this construct ever runs, and a rejected candidate unwinds without
- * disturbing surrounding structure, so links and prices cannot be corrupted
- * the way parser-level `singleDollarTextMath` corrupts them.
- *
- * The construct emits the same `mathText`/`mathTextSequence`/`mathTextData`
- * tokens as `micromark-extension-math`, so `mdast-util-math` (registered by
- * remark-math) converts accepted spans to `inlineMath` nodes with no further
- * wiring. Content is consumed as one contiguous `mathTextData` token — the
- * mdast buffer ignores standalone `space` tokens, and this construct never
- * produces the padding shapes the upstream resolver exists for.
+ * Tokenize raw source before emphasis so rejected dollar spans unwind safely and escapes stay
+ * consumed. Emit upstream math token shapes for mdast compatibility; keep content in one
+ * mathTextData token because its buffer ignores standalone spaces.
  */
 
 /** micromark character codes: null is EOF, negatives are virtual (line endings, tabs). */
@@ -44,6 +33,11 @@ const CODE_SPACE = 32;
 const CODE_DOLLAR = 36;
 const CODE_BACKSLASH = 92;
 const CODE_LEFT_BRACE = 123;
+// ו ה ב כ ל מ ש
+const HEBREW_PREFIX_CODES = new Set([0x5d5, 0x5d4, 0x5d1, 0x5db, 0x5dc, 0x5de, 0x5e9]);
+// Text a dollar stays glued to as prose. Dashes count, as they join prices (`$5–$10`);
+// the Hebrew maqaf joins a prefix to its word instead (`ו־$x$`).
+const PROSE_BEFORE_OPENER_PATTERN = /(?!\u05be)[\p{L}\p{M}\p{N}\p{Pd}]/u;
 
 /**
  * Longer candidates are overwhelmingly two unrelated dollars pairing up, not
@@ -55,13 +49,22 @@ export const MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH = 300;
 const IDENTIFIER_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 // Numeric subscripts are mathematical structure, even on uppercase symbols.
 const NUMERIC_SUBSCRIPT_PATTERN = /^[A-Z]+_\d+$/;
-// Admit a complete unbraced charge, not an arbitrary trailing operator.
-const CHARGE_END_PATTERN = /[\p{L}\p{N})\]}]\^[+-]$/u;
+// Up to three capitals are symbols (`$Q$`, `$AB$`, `$NPV$`); variable names
+// such as `PATH` or `USER_ID` are longer or carry an underscore.
+const SHORT_CAPITALS_PATTERN = /^[A-Z][A-Z0-9]{0,2}$/;
+// Admit a complete unbraced charge or star (`HCO_3^-`, `x^*`), not an
+// arbitrary trailing operator.
+const CHARGE_END_PATTERN = /[\p{L}\p{N})\]}]\^[+\-*]$/u;
 const IDENTIFIER_PATH_PATTERN = /^[A-Z][A-Z0-9_]*[/:.]/;
 // `*` is deliberately absent: in spaced prose an asterisk is almost always
 // the author's emphasis delimiter, and letting it qualify a span would let
 // `*a $b* c$` destroy the emphasis and render "b* c" as a formula.
 const SPACED_CONTENT_SIGNAL_PATTERN = /[\\^_{}=+\-<>|]/;
+// A list of terms (`x, y`, `[0, 1]`, `K(x, y)`) spaces only after its commas
+// and holds no words; `5, and 10`, `echo A, B` and `$USER, localhost$` are prose.
+function isCommaList(content: string): boolean {
+  return /^\S+(?:, \S+)+$/.test(content) && !/\p{L}{2}/u.test(content);
+}
 const COLON_SIGNAL_PATTERN = /[\\^_{}=<>]/;
 // Every plausible formula ends in an alphanumeric (any script), a closing
 // bracket, factorial, prime, or percent. Content ending in a bare binder —
@@ -75,11 +78,8 @@ const HTML_TAG_LIKE_PATTERN = /<\/?[a-zA-Z][^<>]*>/;
 const INTERPOLATION_SIGNAL_PATTERN = /[\\^_+\-*=<>|]/;
 const BARE_BRACKET_GROUP_PATTERN = /^!?\[[^\][]*\]$/;
 const DOMAIN_LIKE_PATTERN = /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+){2,}$/u;
-// A TeX backslash starts a control word (two-plus letters: `\alpha`, `\to`)
-// or a control symbol (`\%`, `\$`, `\,`). A backslash followed by a single
-// alphanumeric — `\n`, `\t`, `\E`, `\1` — is a string escape or regex
-// backreference, the signature of `echo -e "$a\n$b"` glue; KaTeX rejects
-// those anyway, so such spans could only ever show the literal fallback.
+// Single-alphanumeric backslash escapes signal shell/regex glue rather than TeX control
+// words/symbols, and KaTeX rejects them; leave such spans literal.
 const STRING_ESCAPE_PATTERN = /\\(?![a-zA-Z]{2,})[a-zA-Z0-9]/;
 const TEX_CONTROL_WORD_PATTERN = /\\[a-zA-Z]{2,}/;
 // A call with a multi-letter or dotted name (`foo(1)`, `el.fadeOut(200)`) is
@@ -159,26 +159,25 @@ function isWhitespaceCode(code: Code): boolean {
 }
 
 /**
- * Whether an accepted candidate reads as TeX rather than prose or code.
- * Shell identifiers (`$PATH$`) and identifier paths (`$HOME/bin:` between two
- * shell variables) stay text; content must end the way formulas end (an
- * alphanumeric, `)]}`, `!`, `'`, `%`), which rejects the glued-variable class
- * (`$src/$dst`, `$a=$b`, `awk '$1==$NF'`); interpolation-shaped content
- * starting with `(` or `{` needs a TeX operator (`$(a+b)^2$` has one,
- * `$(pwd)$` and `${row}$` do not); spaced prose needs an operator or control
- * sequence; a colon needs a strong TeX signal (`f: X \to Y` has one,
- * `HOME/bin:` does not); markdown structure is never math content — the `](`
- * inline-link and `][` reference-link boundaries, bare reference labels
- * (`[foo]`, but `[0,1]` intervals stay math), footnote references (`[^1]`),
- * and HTML-tag or autolink shapes (`</b>`, `<https://…>`); and bare
- * domain-like content (`www.x.test`) is prose. Compact spans — `$42$`,
- * `$1/2$`, `$f(x)$`, `$a*b*c$` — are math.
+ * Require plausible TeX endings and signals for interpolation, spaced prose, and colons. Shell
+ * variables/paths, Markdown link/reference/HTML boundaries, and domains must stay text; compact
+ * formulas and numeric intervals remain eligible.
  */
+/** `$A$B` and `$PWD$HOME` join shell variables; a symbol is never glued to the next word. */
+export function isScientShellConcatenation(content: string, next: string | undefined): boolean {
+  return SHORT_CAPITALS_PATTERN.test(content) && next !== undefined && /^[A-Za-z_]/.test(next);
+}
+
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
   content = content.replaceAll(SCIENT_MATH_TABLE_PIPE, "|");
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
   if (STRING_ESCAPE_PATTERN.test(content)) return false;
-  if (IDENTIFIER_PATTERN.test(content) && !NUMERIC_SUBSCRIPT_PATTERN.test(content)) return false;
+  if (
+    IDENTIFIER_PATTERN.test(content) &&
+    !NUMERIC_SUBSCRIPT_PATTERN.test(content) &&
+    !SHORT_CAPITALS_PATTERN.test(content)
+  )
+    return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
   if (
     !CONTENT_END_PATTERN.test(content) &&
@@ -190,7 +189,8 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (content.endsWith("'") && !PRIME_END_PATTERN.test(content)) return false;
   // An unescaped trailing % is a TeX comment and always renders wrong.
   if (content.endsWith("%") && !content.endsWith("\\%")) return false;
-  if (/\s/.test(content) && !SPACED_CONTENT_SIGNAL_PATTERN.test(content)) return false;
+  if (/\s/.test(content) && !SPACED_CONTENT_SIGNAL_PATTERN.test(content) && !isCommaList(content))
+    return false;
   if (content.includes(":") && !COLON_SIGNAL_PATTERN.test(content)) return false;
   if (content.includes("](") || content.includes("][") || content.includes("[^")) return false;
   if (BARE_BRACKET_GROUP_PATTERN.test(content) && !/[\d\\^_+\-*/=,]/.test(content)) return false;
@@ -216,11 +216,11 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   // A brace group in TeX always carries a control word (`{a \over b}`); a
   // bare `{` start is interpolation (`${PREFIX:-app}`, `${dir//\//_}`).
   if (content.startsWith("{") && !TEX_CONTROL_WORD_PATTERN.test(content)) return false;
-  // A parenthesized span needs a TeX operator, and once it contains spaces a
-  // shell flag's `-`/`+` is not enough (`$(date -u)$`, `$(date +%F)$`).
+  // A parenthesized span needs a TeX operator or a list of terms, and once it
+  // contains spaces a shell flag's `-`/`+` is not enough (`$(date -u)$`).
   if (content.startsWith("(")) {
-    const signal = /\s/.test(content) ? /[\\^_=]/ : /[\\^_+\-*/=]/;
-    if (!signal.test(content)) return false;
+    const signal = /\s/.test(content) ? /[\\^_=]/ : /[\\^_+\-*/=,]/;
+    if (!signal.test(content) && !isCommaList(content)) return false;
   }
   if (DOMAIN_LIKE_PATTERN.test(content) && !INTERPOLATION_SIGNAL_PATTERN.test(content)) {
     return false;
@@ -232,11 +232,8 @@ function scientSingleDollarMathText(): Construct {
   return { name: "scientMathTextSingleDollar", tokenize, previous };
 
   /**
-   * Mirrors `micromark-extension-math`: not after an unescaped dollar. This
-   * hook only helps micromark decide whether a position can break text at
-   * all — when several constructs share a code, an attempt runs them all
-   * regardless of their individual `previous` hooks — so the real Scient
-   * guards live at the start of `tokenize`, where they always execute.
+   * Micromark may try all constructs sharing a code regardless of individual previous hooks. Keep
+   * real guards inside tokenize so they always execute.
    */
   function previous(this: TokenizeContext, code: Code): boolean {
     if (code === CODE_DOLLAR) {
@@ -260,12 +257,15 @@ function scientSingleDollarMathText(): Construct {
     return start;
 
     function start(code: Code): State | undefined {
-      // The opener must not follow a word character (`file$x$`, `US$5$`) or
-      // an unescaped dollar. Characters beyond ASCII stay conservative: a
-      // dollar glued to non-ASCII text reads as prose, not an opener.
+      // The opener must not follow a word character (`file$x$`, `US$5$`, `מחיר$5$`) or an
+      // unescaped dollar. Other punctuation is not a word (`ו־$x$`, `“$x$”`). Hebrew's
+      // one-letter prefixes are the exception: they attach to the next word (`ש$x$`).
       if (
         isAsciiAlphanumericCode(openerPrevious) ||
-        (openerPrevious !== null && openerPrevious > 127) ||
+        (openerPrevious !== null &&
+          openerPrevious > 127 &&
+          PROSE_BEFORE_OPENER_PATTERN.test(String.fromCodePoint(openerPrevious)) &&
+          !HEBREW_PREFIX_CODES.has(openerPrevious)) ||
         (openerPrevious === CODE_DOLLAR && openerPreviousEventType !== "characterEscape")
       ) {
         return nok(code);
@@ -313,6 +313,13 @@ function scientSingleDollarMathText(): Construct {
     }
 
     function afterCloser(code: Code): State | undefined {
+      if (
+        code !== null &&
+        code > 0 &&
+        isScientShellConcatenation(content, String.fromCodePoint(code))
+      ) {
+        return nok(code);
+      }
       // A digit after the closer is a price range (`$5-$10`); another dollar
       // means this closer was really part of a `$$` sequence; a brace is the
       // next interpolation (`"$dir${file}"`) — real math never abuts `{`.

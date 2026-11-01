@@ -1,13 +1,4 @@
-import type { OrchestrationV2ConversationMessage, ScientThreadQueueItem } from "@t3tools/contracts";
-
 import type { ChatMessage, SessionPhase } from "../../types";
-
-/** Server-owned user IDs retire queue previews before the queue snapshot arrives. */
-export function deriveQueueAcknowledgedUserMessages(
-  messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
-): ReadonlyArray<Pick<ChatMessage, "id">> {
-  return messages.filter((message) => message.role === "user");
-}
 
 export type OptimisticUserMessage = ChatMessage & {
   readonly queueAdmission?: {
@@ -48,22 +39,6 @@ export function settleQueueAdmissionPreview(
     const { queueAdmission: _queueAdmission, ...sentMessage } = message;
     return [sentMessage];
   });
-}
-
-/** Hide duplicates immediately, even when the stream beats the command response. */
-export function pendingQueueAdmissionPreviews(
-  messages: ReadonlyArray<OptimisticUserMessage>,
-  threadKey: string,
-  items: ReadonlyArray<ScientThreadQueueItem>,
-  serverMessages: ReadonlyArray<Pick<ChatMessage, "id">>,
-) {
-  const pending = messages.filter((message) => message.queueAdmission?.threadKey === threadKey);
-  if (pending.length === 0) return pending;
-  const knownIds = new Set([
-    ...items.flatMap((item) => (item.messageId ? [item.messageId] : [])),
-    ...serverMessages.map((message) => message.id),
-  ]);
-  return pending.filter((message) => !knownIds.has(message.id));
 }
 
 /** Admission previews belong to the queue strip until the receipt selects ordinary delivery. */

@@ -43,7 +43,8 @@ block. What you typed is what the agent receives, markers and numbering
 included, and `#1234` without a space still looks up a pull request.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
-on an empty line leaves it; **Tab** nests a list item. In a code block, Enter
+on an empty line moves out one level, then leaves it; **Tab** nests a list item
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
@@ -71,26 +72,25 @@ receives the attachment directly or a server-local path it can read using its
 available tools. Uploaded files are not automatically executed.
 
 Click a video attachment to play it. If its format cannot play in the app, use
-**Download video**. Sent PDF and HTML attachments open in the file viewer;
-other files keep their filename and can be downloaded.
+**Download video**. Select another attachment to preview it when its format is
+supported, or save the original file to open it elsewhere.
 
 ## Send while the agent is working
 
-On web and desktop, choose **Settings → General → Follow-up behavior** to queue
+On web and desktop, choose **Settings → Chat → Follow-up behavior** to queue
 new messages for a later turn or steer the running turn immediately. The setting
 applies to this client; already queued messages keep their place. Queued messages
-are saved on the server and can be edited, reordered, or removed above the composer.
+are saved on the server and can be edited or removed before they send.
 
-On web and desktop, a message sent during a running turn appears in the queue
-above the composer. The server keeps its order across navigation and restarts,
-then sends it after the current turn finishes successfully. Use **Steer** on a
-queued message to send it into the running turn, or edit, reorder, or delete it
-from the queue. **Stop**, interruptions, and failed starts hold the remaining
-queue until you choose **Resume**. A later successful answer does not release
-that hold. When the thread is idle, **Send** on the first waiting message starts
-only that message; the other messages stay held in order. Reorder first if you
-want to send a different one. Once resumed, the queue sends each message after
-the preceding answer finishes successfully.
+On web and desktop, a message sent during a running turn joins the queue at the
+end of the thread. The server keeps its order across navigation and restarts,
+then sends it after the current turn finishes successfully. Use **Send now** on
+a queued message to send it into the running turn, or edit or delete it from
+the queue. **Stop**, interruptions, and failed starts hold the remaining queue
+until you choose **Resume**. A later successful answer does not release that
+hold. When the thread is idle, **Send now** on any held message starts it, and
+the rest of the queue continues after it in order. Once resumed, the queue
+sends each message after the preceding answer finishes successfully.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
@@ -108,7 +108,7 @@ Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at t
 start of the composer to edit the most recently queued message. Change
 `thread.editQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
 
-Mobile has the same choice under **Settings → Follow-ups**. While a turn is
+Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
@@ -137,7 +137,7 @@ On desktop and web, supported file attachments stay with the message when it is 
 Editing a fork from a sent message with file attachments is not supported yet;
 fork from a completed response to retain the conversation and its files.
 
-On web and desktop, **Settings → General → Collapse composer** defaults to **Never**,
+On web and desktop, **Settings → Chat → Collapse composer** defaults to **Never**,
 so the composer stays expanded. Saved preferences are preserved. You can enable **On unfocus**,
 **On scroll**, or both. With **On unfocus** enabled, an existing thread settles its composer into
 a single-line resting state when it loses focus. At wider sizes, **On scroll** also rests a focused composer,
@@ -190,7 +190,9 @@ still come from the provider's own configuration.
 
 In a workspace Markdown file's rendered view, select text and choose **Ask in chat**.
 Scient adds a file-quote chip to the current chat and opens the same optional
-comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
+comment bubble used for assistant quotes. **Ask in side chat**, offered beside it
+wherever a quote can be taken, adds the chip to the open side chat instead, or
+starts one. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
 interactive chart is not part of this action. When an editable diagram's source
 is visible, selecting that source is supported like any other code block; selecting
@@ -315,7 +317,7 @@ The list mixes kinds (built-in, other wired, other Bluetooth, CarPlay) with wire
 Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
 for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
-microphone.
+microphone. Swipe a device left to forget it.
 
 Transcription runs on your device. Scient deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
@@ -323,27 +325,30 @@ transcription or cancellation; only the message text is sent when you submit.
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is
-empty. Adding text or attachments replaces it with a steer arrow. Click it to send a message into
-the active turn, or press `Enter` on desktop. Hold `Cmd` on macOS or `Ctrl` on Windows and Linux to
-switch the button to a queue icon. Click while holding that key, or press `Cmd+Enter` or
-`Ctrl+Enter` on desktop, to queue the message for after the active turn.
+empty. Adding text or attachments replaces it with a send button that shows your
+[Follow-up behavior](#send-while-the-agent-is-working): a queue icon for Queue or a steer arrow for
+Steer. Click it or press your send shortcut to use that action. Hold `Cmd` on macOS or `Ctrl` on
+Windows and Linux to switch the button to the opposite action, then click, or use the opposite-action
+shortcut described above.
 
-Queued messages appear above the composer. Rows show a thumbnail of any attached image alongside
-the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
-to a steer, or remove it.
+On web and desktop, queued messages appear at the end of the thread as dashed messages that have
+not been sent yet. On mobile they appear above the composer. Each shows its text and any attached
+images. **Send now** sends a message right away, into the running turn if there is one. While a
+compaction runs, **Send now** skips the compaction and sends the message instead. You can also
+edit or remove it.
 
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
-While the agent is idle, every held message shows **Send**, on mobile too. Send starts that
-message now, and the rest of the queue continues after it in order. Sending a new message
+While the agent is idle, every held message shows **Send now**, on mobile too. Send now starts
+that message, and the rest of the queue continues after it in order. Sending a new message
 directly also continues the held queue after that message. On web or desktop, **Resume** in an
-empty composer continues the queue too. You can edit, reorder, or remove held messages without
-starting them. If the thread stopped at a usage limit, Send is not offered: use **Resume thread**
-in an empty composer on web or desktop to continue the thread, and the queue follows.
+empty composer continues the queue too, as does **Resume queue** on mobile. You can edit or remove held messages without starting
+them. If the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an
+empty composer on web or desktop to continue the thread, and the queue follows.
 
-The pencil on a queued row opens that message in the composer for editing. The original message
-stays in the queue until you save, and its row is highlighted while you edit. The message's
+The pencil on a queued message opens it in the composer for editing. The original message
+stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-The checkmark saves the queued message in place; **Cancel** on its row leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
@@ -354,8 +359,8 @@ Type `/` for commands or `$` to add a skill from the selected environment and
 provider. On mobile, both are also available before starting a thread on
 **New task**.
 
-The slash menu also includes skills unless you turn off **Settings → General →
-Show skills in slash menu**. Only skills enabled for the provider are listed.
+The slash menu also includes skills unless you turn off **Settings → Chat →
+Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
 
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
@@ -367,24 +372,26 @@ Provider commands must start the message to run. Scient commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
-Enable **Compact idle Claude threads (beta)** in **Settings > General** to compact
-an idle Claude thread with at least 200,000 tokens of context shortly before its
-prompt cache expires, so coming back does not reprocess the whole conversation.
-The cache lasts 1 hour on Claude subscriptions and 5 minutes with an API key. The
-compaction appears in the thread as a `/compact` turn sent by Scient.
+Claude instances can also compact idle threads for you. See
+[compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
-row above the composer shows the goal and its progress.
+line at the end of the thread (above the composer on mobile) shows the goal and
+its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
 - Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
-  pauses it.
+  pauses it, and so does Codex ending its work without meeting the goal.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
+- Sending a new goal, or `/goal resume`, while the agent works stops the current
+  turn and starts the goal, unless you queue it. `/goal clear` and `/goal pause`
+  stop the turn only when it is working on the goal. Other goal commands wait for
+  the turn to end.
 
 ## Context in your message
 
@@ -405,13 +412,16 @@ pull request is older than the recent list. Type a single word after `#` to sear
 the repository by text. Choose a result to insert it as a chip.
 
 Another thread can be context too. Type `@` followed by part of its title to pick one from
-the same server, or on web and desktop drag a thread out of the sidebar and drop it on the
-composer; a multi-selection drops together. The chip shows the thread's current title and
-opens it when selected. Your prompt only carries a reference: the agent reads the thread's
+the same server, or from a machine it links to while the Linked environments beta is on; those
+show the machine's name. On web and desktop you can also drag a thread out of the sidebar and
+drop it on the composer; a multi-selection drops together. On any client, **Copy thread** puts a
+thread on the clipboard that pastes into a composer as its chip. The chip shows the thread's
+current title and opens it when selected. Your prompt only carries a reference: the agent reads the thread's
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
-Dropping a thread from another environment attaches a saved transcript file. The source
+A thread from a linked machine, picked, pasted or dropped, stays a reference that the agent reads
+on that machine. Dropping a thread from any other environment attaches a saved transcript file. The source
 environment must be connected and up to date. The transcript includes the visible history and
 saved text context at the time of the drop; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
@@ -439,15 +449,20 @@ files show the copy that was attached to the message.
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
-highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
-playback controls. Large text files show a limited preview; save the file to read it in full.
+highlighting; Markdown, HTML, Mermaid, CSV, and TSV offer rendered and raw views. Audio files have
+playback controls. Supported Office documents, notebooks, archives, fonts and SQLite files
+have read-only previews. A notebook shows its saved cells and outputs; opening it does not
+execute its code or load external chart data. Large text files load indexed pages as you
+scroll; save the original file when you need it outside Scient.
 
 On web and desktop, files open beside the conversation with the same controls as a workspace
 file: a header row with the view toggle, **Copy contents** and **Save file**. On mobile, documents
 open in the same file screen as workspace files; its menu holds **Copy contents**, **Save or
 share** and **Open in file viewer**. Pictures, videos and PDFs keep their native viewers, and
 other document formats such as Word or Pages open in the device's own viewer when it has one.
-If nothing on the device can show a format, save or share it to open it elsewhere.
+If nothing on the device can show a format, save or share it to open it elsewhere. A ZIP up to
+50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
+save, or add it to chat.
 
 ## Images and videos in messages
 
@@ -572,7 +587,7 @@ use the skills and commands from the selected environment and provider.
 In a thread with prior conversation context, send `/compact` to reduce context usage. Web and desktop also offer this action from the context meter, and the work log records token counts when the provider reports them.
 
 On web and desktop, new profiles leave **Show skills in slash menu** off. Type `$` to select a skill,
-or turn on this option in **Settings → General** to include skill aliases in `/` as well. Saved
+or turn on this option in **Settings → Chat** (under Advanced) to include skill aliases in `/` as well. Saved
 preferences are preserved. Provider-native slash commands are still shown when skill aliases are off.
 
 When enabled, skill results use the `/skill:Skill Name` label and add the
@@ -728,37 +743,40 @@ clients must update before sending to a server using the new queue protocol.
 
 ## Reading while an answer arrives
 
-By default, an answer grows below your reading position. Reaching the bottom
-or clicking Scroll to end does not enable automatic following, and tool
-activity does not pull the conversation downward. "The bottom" means the end
-of the latest answer's text, and you still count as at the bottom with up to
-its last three lines hidden behind the composer. A changed-files list, tool
-activity, timestamps or your own message sent after that answer do not count
-as unread. While the agent is working, everything it has produced since your
-latest message is new: when its latest step or answer is below you, **Scroll
-to end** appears. The same holds after you stop the turn or it fails, and
-when it finishes without writing an answer.
+While the agent works and you are at the bottom, the view follows it: thinking,
+tool steps and short progress notes scroll by at a calm pace, so you always see
+what it is doing now. It stops for things you read: when an answer, a plan or a
+card arrives, the view follows it only until its start reaches the top of the
+reading area, then stays there while the rest grows below. Work you opened
+yourself, such as an expanded tool group, counts as something you read too.
+After that stop, a newer message pushed below the screen shows just its first
+lines. "The bottom" means the end of the latest content, and you still count as
+at the bottom with up to its last three lines hidden behind the composer.
 
-Sending at the bottom (by that same rule) gently reveals your message and its
-answer. The first message retains its existing placement
-near the top. After a later message, the view follows everything the agent
-produces (thinking, tool steps and text) at a calm pace, staying at the bottom.
-Movement stops when your sent message's first line reaches the top
-of the reading area; only the bubble's padding may pass above it. It then stays there
-while the rest grows below the screen. When progress notes, reasoning or tool
-activity push the message the agent is writing below the screen, the reveal
-continues just far enough to show that message's first lines, never its end. A
-queued message that is sent while you are at the bottom is revealed the same way.
-Messages sent from another window are not followed.
-If you were reading earlier content, sending leaves that position alone.
-Scrolling back up cancels both pending placement and limited answer following,
-including during an upload; clicking, selecting text, or scrolling down does not.
+This works the same however the agent's turn started: from this window, another
+window or device, a schedule, another agent, or a queued message that starts
+while you are at the bottom. Opening a working thread at its end follows it too.
+Your own message is part of the work going by; it may scroll away above.
+
+Scrolling up stops following, and the agent's activity then never pulls the
+view down. Scroll back to the bottom, or click **Scroll to end**, and you follow
+it again; what you scrolled past is treated as read, except an answer still
+arriving, which is never followed down. Selecting text holds the view still
+until you clear the selection. Clicking does not stop following. If you send a
+message while reading earlier content, your position stays where it is.
+
+Your queued messages stay reachable. While you follow the agent they are part
+of the end it keeps in view; queuing a message at the bottom brings it and its
+**Send now** into view; and a queue that is fully in view stays in view when it
+grows or the composer grows while you edit. When your queue is below where you
+are reading, **Scroll to end** appears and says how many messages are queued.
 
 While nothing is running and you are at the end, the end stays in view when the
 window resizes or a diagram or image finishes rendering.
 
-Use the existing **Scroll to end** button for a single jump. It appears when more
-content remains below you, not just blank space reserved for message placement.
+**Scroll to end** jumps to the bottom. It appears when more content remains
+below you, not just blank space reserved for message placement, or when your
+queued messages are out of view.
 Its small count shows
 new answers below your view that you have not reached yet: once per response,
 not once per progress note or streaming update. It excludes your messages and

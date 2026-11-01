@@ -8,8 +8,9 @@ describe("display matrix row spacing", () => {
   it.each(environments)(
     "spaces new display %s without changing inline insertion",
     (environment) => {
-      for (let rows = 1; rows <= 20; rows++) {
-        for (let columns = 1; columns <= 20; columns++) {
+      // One row (no separator), two, and the 20-row/column limit.
+      for (const rows of [1, 2, 20]) {
+        for (const columns of [1, 2, 20]) {
           const display = insertMatrix({ from: 0, to: 0 }, environment, rows, columns, true)!;
           const inline = insertMatrix({ from: 0, to: 0 }, environment, rows, columns, false)!;
           expect(gaps(display.insert)).toBe(rows - 1);

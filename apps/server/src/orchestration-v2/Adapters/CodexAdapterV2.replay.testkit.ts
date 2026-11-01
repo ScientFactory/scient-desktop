@@ -33,8 +33,9 @@ import {
   ProviderAdapterOpenSessionError,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 
 export const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -245,6 +246,7 @@ export function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
               kind: "application",
@@ -455,7 +457,7 @@ export const INTERRUPT_NATIVE_TURN = "native-codex-interrupt-turn";
 
 const INTERRUPT_COMMAND_ITEM = "exec-codex-interrupt-command";
 
-export const INTERRUPT_COMMAND = "bash -c 'sleep 30; echo SHOULD_NOT_FINISH_CMD_INTERRUPT_FIXTURE'";
+const INTERRUPT_COMMAND = "bash -c 'sleep 30; echo SHOULD_NOT_FINISH_CMD_INTERRUPT_FIXTURE'";
 
 export const INTERRUPT_PROMPT = "Run a long foreground command and wait until interrupted.";
 

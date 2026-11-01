@@ -1,5 +1,7 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { ProviderDriverKind, ProviderSessionId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -365,7 +367,7 @@ it.live(
             ).toEqual(fresh);
           }).pipe(Effect.provide(recovered)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -424,7 +426,7 @@ it.live("retains absent, mismatched and incomplete canonical receipt evidence ac
           }
         }).pipe(Effect.provide(recovered)),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   ),
 );
 
@@ -508,7 +510,7 @@ it.live(
               expect(yield* fs.readFileString(file.filename)).toBe("evidence");
           }).pipe(Effect.provide(recovered)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -585,7 +587,7 @@ it.live(
             }
           }).pipe(Effect.provide(recovered)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -640,10 +642,18 @@ it.live(
             expect(yield* fs.readFileString(published.filename)).toBe("evidence");
           }).pipe(
             Effect.provide(
-              RuntimeLayer.layerProviderEventIngestorProvided.pipe(Layer.provideMerge(services)),
+              RuntimeLayer.layerProviderEventIngestorProvided.pipe(
+                Layer.provide(
+                  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+                    // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+                    getInstance: () => Effect.succeed(undefined),
+                  }),
+                ),
+                Layer.provideMerge(services),
+              ),
             ),
           ),
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );

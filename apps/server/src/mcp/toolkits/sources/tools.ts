@@ -10,6 +10,7 @@ import {
   ScientSourceOrigin,
   ScientSourceType,
 } from "@scientfactory/scient-sources";
+import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
@@ -17,7 +18,7 @@ import { ScientOperation, type OperationMetadata } from "../../ScientOperationTo
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
-const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
+const NonEmptyString = Schema.String.check(isTrimmedUnadvertised(), Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
 const dependencies = [AgentInvocationContext.AgentInvocationContext, WorkspaceBindingResolver];
 

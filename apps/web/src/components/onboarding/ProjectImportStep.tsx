@@ -64,6 +64,7 @@ export function ProjectImportStep({
   const importWarningRef = useRef("");
   const importedThreadCountRef = useRef(0);
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the modal-dismissal hold to the parent while import commands or navigation run
   useEffect(() => {
     // Hold modal dismissal only while commands or navigation are running.
     // A delayed shell snapshot after completed imports must not trap the user.
@@ -89,6 +90,7 @@ export function ProjectImportStep({
   const importEnvironmentRef = useRef(environmentId);
   // Candidate paths are per-environment; a target switch would otherwise
   // leave stale entries in the deselection set (and stale success records).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the per-environment import refs and bumps the generation guard when the target environment changes
   useEffect(() => {
     importGenerationRef.current += 1;
     importEnvironmentRef.current = environmentId;
@@ -109,6 +111,7 @@ export function ProjectImportStep({
       setIsImporting(false),
     );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finishes the landing navigation once the created project appears in the projects query data
   useEffect(() => {
     if (
       landingProject !== null &&
@@ -160,11 +163,8 @@ export function ProjectImportStep({
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
-    // Interrupted imports are neither failures nor successes — the command was
-    // superseded or the environment dropped — but they still didn't land, so
-    // they must not read as "imported everything". Retries skip paths that
-    // already landed this session (re-creating them would only trip the
-    // duplicate-root invariant and read as a failure).
+    // Interrupted imports did not land and must not read as complete. Retries skip paths already
+    // imported in this session, since recreating them trips the duplicate-root invariant.
     let importedProjectsCount =
       importedProjects.size > 0
         ? selection.filter((candidate) => importedProjects.has(candidate.path)).length
@@ -422,6 +422,7 @@ export function ProjectImportStep({
   );
 }
 
-function formatSource(source: "claudeAgent" | "codex"): string {
-  return source === "claudeAgent" ? "Claude" : "Codex";
+function formatSource(source: "claudeAgent" | "codex" | "pi"): string {
+  if (source === "pi") return "Pi";
+  return source === "codex" ? "Codex" : "Claude Code";
 }

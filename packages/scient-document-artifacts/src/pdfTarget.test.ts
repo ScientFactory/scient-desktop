@@ -61,7 +61,7 @@ describe("PDF target", () => {
   it("round-trips through JSON and rejects an inconsistent quote", () => {
     const json = Schema.fromJsonString(PdfTarget);
     const value = target();
-    expect(Schema.decodeUnknownSync(json)(Schema.encodeSync(json)(value))).toEqual(value);
+    expect(Schema.decodeSync(json)(Schema.encodeSync(json)(value))).toEqual(value);
     const page = value.selector.pages[0]!;
     expect(() =>
       PdfTarget.make({

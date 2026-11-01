@@ -46,8 +46,6 @@ const withImporter = Effect.fnUntraced(function* () {
   const root = helium.userDataDirectory(context);
   if (root === undefined) throw new Error("Helium has no macOS user-data directory");
   yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
-  // The cookie database is what marks a source as installed, so a fixture
-  // without one is reported as absent before any other check runs.
   yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "db");
 
   const importer = yield* BrowserImport.BrowserImport.pipe(
@@ -96,8 +94,6 @@ describe("BrowserImport.importCookies", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const { importer, root } = yield* withImporter();
-        // The lock Chromium leaves while it is running, dangling target and
-        // all. This must stop the import before it ever asks the keychain.
         yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
 
         const error = yield* importer
@@ -118,6 +114,47 @@ describe("BrowserImport.importCookies", () => {
 });
 
 describe("BrowserImport.writeCookies", () => {
+  it.effect("leaves the sites it is told to keep alone", () =>
+    Effect.gen(function* () {
+      const written: Array<string> = [];
+      const result = yield* BrowserImport.writeCookies(
+        {
+          cookies: {
+            set: (details: { readonly url: string }) => {
+              written.push(details.url);
+              return Promise.resolve();
+            },
+            flushStore: () => Promise.resolve(),
+          },
+        },
+        {
+          cookies: [
+            "https://accounts.google.com/",
+            "https://mail.google.com/",
+            "https://notgoogle.com/",
+            "https://portal.example.org/",
+            "https://example.org/",
+          ].map((url) => ({
+            url,
+            name: "fixture",
+            value: "synthetic",
+            domain: undefined,
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            expirationDate: undefined,
+            sameSite: "no_restriction" as const,
+          })),
+          undecryptable: 0,
+          undecryptableHosts: [],
+        },
+        ["google.com", "https://portal.example.org"],
+      );
+      assert.deepStrictEqual(written, ["https://notgoogle.com/"]);
+      assert.equal(result.imported, 1);
+    }),
+  );
+
   it.effect("flushes the store after writing, and reports success if the flush fails", () =>
     Effect.gen(function* () {
       const events: Array<string> = [];

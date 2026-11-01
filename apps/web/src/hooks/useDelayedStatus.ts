@@ -1,26 +1,28 @@
 import {
-  createDelayedStatus,
-  type ShownStatus,
+  delayedStatusDeadline,
+  shownDelayedStatus,
+  stepDelayedStatus,
   // SCIENT-FORK:START delayed-status-show-delay
   type DelayedStatusOptions,
   // SCIENT-FORK:END delayed-status-show-delay
 } from "@t3tools/client-runtime/delayed-status";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
+import { useDeadlinePassed } from "./useDeadline";
 
 export function useDelayedStatus<A>(
   key: string,
   value: A | null,
-  // SCIENT-FORK:START delayed-status-show-delay — read once, when the hook mounts.
   options?: DelayedStatusOptions,
-  // SCIENT-FORK:END delayed-status-show-delay
 ): A | null {
-  const [shown, setShown] = useState<ShownStatus<A> | null>(null);
-  // SCIENT-FORK:START delayed-status-show-delay
-  const [status] = useState(() => createDelayedStatus<A>(setShown, options));
+  // SCIENT-FORK:START delayed-status-show-delay — options belong to this mounted owner.
+  const [initialOptions] = useState(() => (options === undefined ? undefined : { ...options }));
   // SCIENT-FORK:END delayed-status-show-delay
-  useEffect(() => () => status.dispose(), [status]);
-  useEffect(() => {
-    status.update(key, value);
-  }, [status, key, value]);
-  return shown?.key === key ? shown.value : null;
+  const [state, setState] = useState(() =>
+    stepDelayedStatus<A>(null, { key, value, deadlinePassed: false }, Date.now, initialOptions),
+  );
+  const deadlinePassed = useDeadlinePassed(delayedStatusDeadline(state));
+  const next = stepDelayedStatus(state, { key, value, deadlinePassed }, Date.now, initialOptions);
+  if (next !== state) setState(next);
+  return shownDelayedStatus(next, key);
 }

@@ -9,11 +9,9 @@ import {
 } from "./contentDirection";
 
 /**
- * The direction a chat message renders in: the requested one, or the scoped
- * conversation direction. While an `auto` message streams, its first resolved
- * direction is held so the text does not flip as tokens arrive. After it
- * completes, that direction stays the fallback for text with no strong script,
- * on every render, until the message streams again.
+ * Hold the first resolved auto direction during streaming to prevent token-by-token flips. After
+ * completion retain it only as fallback for text without strong script, until streaming starts
+ * again.
  */
 export function useChatContentDirection(input: {
   readonly text: string;

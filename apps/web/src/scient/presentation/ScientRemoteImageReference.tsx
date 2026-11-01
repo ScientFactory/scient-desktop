@@ -22,14 +22,8 @@ function useRemoteImagePermission(url: string) {
 }
 
 /**
- * A web image shown as a referenced link: what it is, where it lives, and a button to fetch
- * it. Nothing is requested from the address until the user presses **Load image**; opening
- * the address hands it to the system browser like any chat link.
- *
- * Inside a link the surrounding link keeps its own target, so the address is plain text
- * rather than a second link, and the button does not follow the link.
- *
- * `children` is the media exactly as chat would draw it; it mounts only once loaded.
+ * Do not mount or fetch remote media until Load image is pressed. Inside a surrounding link, keep
+ * the address plain and prevent the load button from following that link.
  */
 export function ScientRemoteImageReference(props: {
   readonly address: RemoteImageAddress;

@@ -68,6 +68,14 @@ describe("currentLiveActivityRowId while compacting or preparing a worktree", ()
     });
     expect(currentLiveActivityRowId([working, setup, thinking], true)).toBe("setup");
   });
+  it("gives it to the header while a compaction owns the working row", () => {
+    const compacting = row({
+      kind: "working",
+      id: "working-indicator-row",
+      compacting: "Compacting after being idle…",
+    });
+    expect(currentLiveActivityRowId([compacting])).toBe("working-indicator-row");
+  });
 });
 
 describe("currentLiveActivityRowId for a setup that has just begun", () => {

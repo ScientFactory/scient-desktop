@@ -166,7 +166,7 @@ function sameBlock(previous: DocumentNode, next: DocumentNode): boolean {
  * Visual is continuous paper. Pages exist only in the compiled PDF; these
  * markers show where its pages began, take no space, and never move text.
  */
-function latexPageMarkers() {
+export function latexPageMarkers() {
   return new Plugin<PageMarkerState>({
     key: latexPageMarkersKey,
     state: {

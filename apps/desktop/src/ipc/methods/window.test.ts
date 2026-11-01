@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+// SCIENT-FORK:START scient-window-ipc
 import * as NodeEvents from "node:events";
+// SCIENT-FORK:END scient-window-ipc
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
@@ -21,6 +23,7 @@ vi.mock("electron", () => ({
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+// SCIENT-FORK:START scient-window-ipc
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
@@ -29,10 +32,11 @@ import {
   getRelayTelemetryEnabled,
   getWindowFullscreenState,
   pasteAsText,
-  reloadMainWindow,
   pickProjectFavicon,
-  probeRemoteEditors,
+  reloadMainWindow,
   revealWindow,
+  // SCIENT-FORK:END scient-window-ipc
+  probeRemoteEditors,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -183,7 +187,9 @@ describe("getLocalEnvironmentBootstraps", () => {
 });
 
 describe("getRelayTelemetryEnabled", () => {
+  // SCIENT-FORK:START scient-window-ipc
   it.effect("keeps relay tracing disabled by Scient policy regardless of ambient opt-in", () =>
+    // SCIENT-FORK:END scient-window-ipc
     Effect.gen(function* () {
       assert.isFalse(
         yield* getRelayTelemetryEnabled.handler().pipe(
@@ -192,6 +198,7 @@ describe("getRelayTelemetryEnabled", () => {
           }),
         ),
       );
+      // SCIENT-FORK:START scient-window-ipc
       assert.isFalse(
         yield* getRelayTelemetryEnabled
           .handler()
@@ -205,66 +212,6 @@ describe("getRelayTelemetryEnabled", () => {
           ),
       );
     }),
-  );
-});
-
-describe("getWindowFullscreenState", () => {
-  it.effect("reads the current native window state", () => {
-    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
-
-    return Effect.gen(function* () {
-      assert.isTrue(yield* getWindowFullscreenState.handler());
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({
-          currentMainOrFirst: Effect.succeedSome(window),
-        }),
-      ),
-    );
-  });
-});
-
-describe("pasteAsText", () => {
-  it.effect(
-    "pastes into the focused guest only after the main renderer acknowledges the menu action",
-    () => {
-      const paste = vi.fn();
-      const mainPaste = vi.fn();
-      const window = {
-        webContents: { id: 42, paste: mainPaste },
-        isDestroyed: () => false,
-      } as unknown as Electron.BrowserWindow;
-      focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
-      ownerWindow.mockReturnValue(window);
-
-      return Effect.gen(function* () {
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        assert.equal(mainPaste.mock.calls.length, 0);
-
-        yield* pasteAsText.handler(undefined, { sender: { id: 99 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue({}); // A focused PiP/other BrowserWindow.
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue(null); // Detached contents.
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue(window);
-        focusedWebContents.mockReturnValue({ paste, isDestroyed: () => true });
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        focusedWebContents.mockReturnValue(null);
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mock(ElectronWindow.ElectronWindow)({
-            main: Effect.succeedSome(window),
-          }),
-        ),
-      );
-    },
   );
 });
 
@@ -300,32 +247,15 @@ describe("reloadMainWindow", () => {
       assert.equal(contents.listenerCount("will-prevent-unload"), 0);
     }).pipe(
       Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeed(Option.some(window)) }),
-      ),
-    );
-  });
-});
-
-describe("revealWindow", () => {
-  it.effect("reveals the main window only when it asks", () => {
-    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
-    const reveal = vi.fn(() => Effect.void);
-    return Effect.gen(function* () {
-      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
-      assert.equal(reveal.mock.calls.length, 0);
-      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
-      assert.deepEqual(reveal.mock.calls, [[window]]);
-    }).pipe(
-      Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({
           main: Effect.succeedSome(window),
-          reveal,
+          appWindows: Effect.succeed([window]),
         }),
       ),
     );
   });
 });
-
+// SCIENT-FORK:END scient-window-ipc
 describe("pickProjectFavicon", () => {
   const pickerLayer = (
     pickFiles: () => Effect.Effect<Array<string>>,
@@ -339,6 +269,7 @@ describe("pickProjectFavicon", () => {
       DesktopAppSettings.layerTest(settings),
     );
 
+  // regression: 44e4a7071d feat(desktop): choose external project icons (#7823) - sole guard of the picker options
   it.effect("opens a single-image picker from the project directory", () =>
     Effect.gen(function* () {
       const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
@@ -356,7 +287,22 @@ describe("pickProjectFavicon", () => {
             filters: [
               {
                 name: "Images",
-                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp", "icns"],
+                extensions: [
+                  "avif",
+                  "bmp",
+                  "gif",
+                  "ico",
+                  "heic",
+                  "heif",
+                  "jpeg",
+                  "jpg",
+                  "png",
+                  "svg",
+                  "tif",
+                  "tiff",
+                  "webp",
+                  "icns",
+                ],
               },
             ],
           },
@@ -365,6 +311,7 @@ describe("pickProjectFavicon", () => {
     }),
   );
 
+  // regression: cba7dd7781 feat(desktop): allow disabling the local environment (#9194) - sole guard of the disabled-environment check
   it.effect("does not open a picker while the local environment is off", () =>
     Effect.gen(function* () {
       const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
@@ -413,3 +360,94 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+// SCIENT-FORK:START scient-window-ipc - fix guards upstream's snap dropped; no other test covers them.
+describe("getWindowFullscreenState", () => {
+  // regression: 0418301de7 Fix macOS fullscreen titlebar spacing (#4019)
+  it.effect("reads the current native window state", () => {
+    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.isTrue(yield* getWindowFullscreenState.handler());
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.succeedSome(window),
+        }),
+      ),
+    );
+  });
+});
+
+describe("revealWindow", () => {
+  // regression: bb86c24139 fix(desktop): raise the window when a thread notification is clicked … (#12567)
+  it.effect("reveals the main window only when it asks", () => {
+    const window = {
+      webContents: { id: 42, isDestroyed: () => false },
+    } as unknown as Electron.BrowserWindow;
+    const reveal = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
+      assert.equal(reveal.mock.calls.length, 0);
+      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
+      assert.deepEqual(reveal.mock.calls, [[window]]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          main: Effect.succeedSome(window),
+          appWindows: Effect.succeed([window]),
+          reveal,
+        }),
+      ),
+    );
+  });
+});
+// SCIENT-FORK:END scient-window-ipc
+
+// SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the guarded checks left every other desktop test green.
+describe("pasteAsText", () => {
+  // regression: 68c2277f50 feat(composer): fold large pastes into text attachments (#11442) - sole guard of the sender-ID check
+  it.effect(
+    "pastes into the focused guest only after the main renderer acknowledges the menu action",
+    () => {
+      const paste = vi.fn();
+      const mainPaste = vi.fn();
+      const window = {
+        webContents: { id: 42, paste: mainPaste, isDestroyed: () => false },
+        isDestroyed: () => false,
+      } as unknown as Electron.BrowserWindow;
+      focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
+      ownerWindow.mockReturnValue(window);
+
+      return Effect.gen(function* () {
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        assert.equal(mainPaste.mock.calls.length, 0);
+
+        yield* pasteAsText.handler(undefined, { sender: { id: 99 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue({}); // A focused PiP/other BrowserWindow.
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue(null); // Detached contents.
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue(window);
+        focusedWebContents.mockReturnValue({ paste, isDestroyed: () => true });
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        focusedWebContents.mockReturnValue(null);
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            main: Effect.succeedSome(window),
+            appWindows: Effect.succeed([window]),
+          }),
+        ),
+      );
+    },
+  );
+});
+// SCIENT-FORK:END restored-sole-guards

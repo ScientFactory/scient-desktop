@@ -76,6 +76,9 @@ import {
   type SourceRemovalAnchorPoint,
 } from "./SourceRemovalConfirmation";
 import { useScientSources } from "./useScientSources";
+import { accountsState } from "../accounts/accountsState";
+import { useAccountBrowser } from "../accounts/useAccountBrowser";
+import { useAccountCommand } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type SourceContextAction = "view" | "edit" | "open-pdf" | "remove";
@@ -127,7 +130,7 @@ function rememberRecentSourceAdds(
   return readRecentSourceAdds(contextKey);
 }
 
-export function MetadataReviewIndicator(props: {
+function MetadataReviewIndicator(props: {
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onOpen: () => void;
 }) {
@@ -161,10 +164,7 @@ export function MetadataReviewIndicator(props: {
   );
 }
 
-export function SourceErrorBanner(props: {
-  readonly message: string;
-  readonly onDismiss: () => void;
-}) {
+function SourceErrorBanner(props: { readonly message: string; readonly onDismiss: () => void }) {
   return (
     <div className="m-3 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
       <span className="min-w-0 flex-1">{props.message}</span>
@@ -251,6 +251,8 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
+  const openBrowser = useAccountBrowser(props.environmentId);
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
@@ -282,10 +284,12 @@ export function ScientSourcesPanel(props: {
     readonly sourceIds: ReadonlySet<string>;
   } | null>(null);
   const panelContextRef = useRef(panelContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps panelContextRef holding the current panel context
   useLayoutEffect(() => {
     panelContextRef.current = panelContext;
   }, [panelContext]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state in panelMounted for async callbacks
   useEffect(() => {
     panelMounted.current = true;
     return () => {
@@ -331,6 +335,7 @@ export function ScientSourcesPanel(props: {
   }
 
   const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expires recent-add highlights on a timer
   useEffect(() => {
     const panelContext = expirySchedule.context;
     const entries = recentSourceAdds.get(panelContext);
@@ -343,6 +348,7 @@ export function ScientSourcesPanel(props: {
     return () => window.clearTimeout(timeout);
   }, [expirySchedule, setRecentlyAddedSourceIds]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads recent-add state from the recent-adds store when the panel context changes
   useEffect(() => {
     importRevealRequest.current += 1;
     setRecentlyAddedSourceIds(readRecentSourceAdds(panelContext));
@@ -368,6 +374,7 @@ export function ScientSourcesPanel(props: {
     { key: `scient-sources:${panelContext}` },
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records newly added sources in the recent-adds store and mirrors them into state
   useEffect(() => {
     const records = sources.overview?.records;
     if (!records) return;
@@ -413,6 +420,7 @@ export function ScientSourcesPanel(props: {
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
   const loadSource = sources.loadSource;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected source record from the server when missing
   useEffect(() => {
     if (!selectedSourceId || selectedRecord || !selectedSummary) return;
     void loadSource(selectedSourceId).catch(() => undefined);
@@ -948,6 +956,42 @@ export function ScientSourcesPanel(props: {
               "This source changed after you opened it. Review the latest version, then try again.",
             );
           }
+        }}
+        onGetPdf={async () => {
+          const doi = selectedRecord.identifiers.find(
+            (identifier) => identifier.scheme.toLowerCase() === "doi",
+          )?.value;
+          const result = await getPaper({
+            root: props.root,
+            sourceId: selectedRecord.sourceId,
+            expectedRevision: selectedRecord.revision,
+            ...(doi ? { doi } : {}),
+            ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
+          });
+          if (!result.ok) return;
+          if (result.value.status === "attached") {
+            await sources.refreshOverview();
+            toastManager.add({
+              type: "success",
+              title: result.value.published
+                ? "PDF attached"
+                : "PDF attached: an accepted manuscript or preprint",
+            });
+            return;
+          }
+          const { landingUrl: openUrl, profileId } = result.value;
+          toastManager.add({
+            type: "error",
+            title: result.value.message,
+            ...(openUrl
+              ? {
+                  actionProps: {
+                    children: "Open",
+                    onClick: () => void openBrowser(openUrl, profileId),
+                  },
+                }
+              : {}),
+          });
         }}
         onOpenPdf={props.onOpenPdf}
       />
@@ -1499,7 +1543,7 @@ function PanelHeader(props: {
   readonly onBack?: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-border p-3">
+    <div className="flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
       {props.onBack ? (
         <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Go back">
           <ChevronLeft />

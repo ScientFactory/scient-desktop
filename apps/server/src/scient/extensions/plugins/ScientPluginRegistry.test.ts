@@ -300,13 +300,9 @@ describe("Scient plugin registry", () => {
         const registry = yield* ScientPluginRegistry;
         const { plugins, diagnostics } = yield* registry.list();
         expect(diagnostics).toEqual([]);
-        expect(plugins.map((plugin) => plugin.pluginId)).toEqual([
-          "scient.sources",
-          "scient.documents",
-          "scient.compute",
-          "scient.browser-devices",
-          "scient.pull-requests",
-        ]);
+        // Which built-ins ship is product data; the guarantee is that every one is read-only.
+        expect(plugins.map((plugin) => plugin.pluginId)).toContain("scient.sources");
+        expect(plugins.every((plugin) => plugin.origin === "built-in")).toBe(true);
         expect(plugins.every((plugin) => !plugin.canSetEnabled && !plugin.canRemove)).toBe(true);
         expect(
           (yield* expectRejected(registry.remove({ pluginId: "scient.sources" }))).reason,

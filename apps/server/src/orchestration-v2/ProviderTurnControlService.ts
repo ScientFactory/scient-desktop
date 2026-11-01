@@ -11,6 +11,7 @@ import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -48,6 +49,8 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
+    /** The provider never confirmed the stop; Force stop is the way out. */
+    unresponsive: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -102,6 +105,7 @@ export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
   | ServerConfig
+  | FileSystem.FileSystem
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | McpProviderSessions.McpProviderSessions
@@ -113,6 +117,7 @@ export const layer: Layer.Layer<
     const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const serverConfig = yield* ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -150,7 +155,11 @@ export const layer: Layer.Layer<
       const interruptProviderThread = targetsRecordedSession
         ? providerThread
         : { ...providerThread, providerSessionId: input.providerSessionId };
-      if (providerTurn.status !== "running") {
+      const continuingRun =
+        input.operation === "steer" &&
+        context.run?.status === "running" &&
+        context.run.activeAttemptId === providerTurn.runAttemptId;
+      if (providerTurn.status !== "running" && !continuingRun) {
         if (input.operation === "steer") {
           return yield* new ProviderTurnControlError({
             threadId: input.threadId,
@@ -227,17 +236,29 @@ export const layer: Layer.Layer<
               : { requestedAt: input.subagent.requestedAt }),
           });
         }
-        // A settled turn reaches its adapter too: only the adapter knows
-        // whether it still runs work for the thread, and each one either
-        // stops it or reports there is nothing left to stop. Background work
-        // the projection still shows is settled by the orchestrator after.
-        yield* session.value.interruptTurn({
-          providerThread: loaded.providerThread,
-          providerTurnId: loaded.providerTurn.id,
-          requestRuntimeRestart: true,
-        });
-        // The wait is real time: ingestion runs on other fibers and never
-        // advances a test clock, so a test clock would hold Stop forever.
+        // Settled turns still reach adapters, which alone know whether background work remains.
+        // The orchestrator settles background work still shown by the projection afterward.
+        yield* session.value
+          .interruptTurn({
+            providerThread: loaded.providerThread,
+            providerTurnId: loaded.providerTurn.id,
+            requestRuntimeRestart: true,
+          })
+          .pipe(
+            Effect.catchTags({
+              ProviderAdapterInterruptTimeoutError: (cause) =>
+                Effect.fail(
+                  new ProviderTurnControlError({
+                    threadId: input.threadId,
+                    operation: "interrupt",
+                    providerTurnId: input.providerTurnId,
+                    unresponsive: true,
+                    cause,
+                  }),
+                ),
+            }),
+          );
+        // Use real time; ingestion fibers do not advance TestClock and would leave Stop blocked.
         yield* Effect.gen(function* () {
           const deadline = (yield* Clock.currentTimeMillis) + 2_000;
           while (
@@ -280,9 +301,7 @@ export const layer: Layer.Layer<
         function* (input) {
           const loaded = yield* load({ ...input, operation: "restart" });
           if (Option.isNone(loaded.session)) {
-            // No live adapter: nothing can emit a terminal provider-turn update
-            // from interrupt. Do not poll for projection terminalization or the
-            // restart effect stalls; let detach/start proceed.
+            // Without a live adapter, no terminal event can arrive; proceed to detach/start without polling.
             if (loaded.providerTurn.status === "running") {
               yield* Effect.logWarning(
                 "Provider restart interrupt skipped; no live session for a still-projected running turn",
@@ -318,10 +337,7 @@ export const layer: Layer.Layer<
             ) {
               return;
             }
-            // Provider terminal events are projected on a detached ingestion
-            // fiber. Yield through the Node event loop instead of sleeping on
-            // Effect's clock so deterministic runtimes cannot deadlock a
-            // command that is waiting for that projection.
+            // Yield through Node's event loop; detached ingestion cannot advance a deterministic Effect clock.
             yield* yieldToRuntime;
           }
           return yield* new ProviderTurnControlError({
@@ -390,7 +406,7 @@ export const layer: Layer.Layer<
             useFallback: (fallback) => {
               text = fallback;
             },
-          });
+          }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END
           const current = yield* load({ ...input, operation: "steer" });
           if (

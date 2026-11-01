@@ -353,13 +353,9 @@ async function readStatus(
 }
 
 /**
- * Transactional activation boundary for one app-owned Scientific Python.
- *
- * The provisioner builds directly in a fresh final generation path because a
- * Python environment may embed absolute paths and cannot safely be assembled
- * elsewhere and renamed. Discovery only sees a generation after its exact
- * executable passes verification and one atomic state replacement names it.
- * Existing project and system environments are never written or removed.
+ * Python environments embed absolute paths: provision into the fresh final generation, never
+ * stage-and-rename. Publish discovery only after exact-executable verification and atomic state
+ * replacement; never alter project/system environments.
  */
 export function makeManagedPythonEnvironmentManager(
   computeDir: string,

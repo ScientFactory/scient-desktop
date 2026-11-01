@@ -228,6 +228,7 @@ describe("visual-card toolbar movement", () => {
     expect(f.position()).toEqual([-50, 50]);
   });
 
+  // regression: 618e73cf1e feat(web): simplify visual cards with movable toolbars (#220)
   it.each([
     "button",
     "a",

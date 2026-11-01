@@ -2,10 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import * as Schema from "effect/Schema";
@@ -55,6 +55,38 @@ const respondTo = (stdout: Queue.Queue<Uint8Array, Cause.Done<void>>, request: s
 };
 
 describe("PiRpcClient transport", () => {
+  // Keep Scient's production trace namespace stable across transport implementations.
+  it.effect("preserves production request and event-fence span names", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const test = yield* makeIo();
+        const client = yield* makePiRpcTransport(test.io);
+        const pending = yield* client.prompt("trace probe").pipe(Effect.forkScoped);
+        yield* respondTo(test.stdout, yield* Queue.take(test.writes));
+        yield* Fiber.join(pending);
+        yield* client.events.pipe(Stream.runDrain, Effect.forkScoped);
+        yield* client.synchronizeEvents();
+        expect(
+          spans
+            .map((span) => span.name)
+            .filter((name) => name.endsWith(".request") || name.endsWith(".synchronizeEvents")),
+        ).toEqual(["PiRpcClient.request", "PiRpcClient.synchronizeEvents"]);
+      }),
+    ).pipe(
+      Effect.provideService(
+        Tracer.Tracer,
+        Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        }),
+      ),
+    );
+  });
+
   it.effect("correlates 200 overlapping requests returned in reverse order", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -368,7 +400,7 @@ describe("PiRpcClient process", () => {
           );
         });
         const error = yield* makePiRpcClient({ command: "fake-pi" }).pipe(
-          Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.flip,
         );
         expect(error).toBeInstanceOf(PiRpcProtocolError);
@@ -402,7 +434,7 @@ describe("PiRpcClient process", () => {
       });
 
       yield* makePiRpcClient({ command: "fake-pi" }).pipe(
-        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       expect(spawnOptions).toMatchObject({ stdin: { stream: "pipe", endOnDone: false } });
     }).pipe(Effect.scoped),

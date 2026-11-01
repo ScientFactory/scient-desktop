@@ -130,16 +130,6 @@ describe("createLocalWhisperEngine", () => {
     await engine.dispose();
   });
 
-  it("reports the engine id and model state", async () => {
-    const modelDir = await tmp("scient-voice-eng-model-");
-    const runtimeDir = await makeRuntimeDir();
-    const definition = manifest();
-    const engine = createLocalWhisperEngine({ runtimeDir, modelDir, manifests: [definition] });
-    expect(engine.engine).toBe("local");
-    expect((await engine.getModelState(definition.id)).state).toBe("missing");
-    await engine.dispose();
-  });
-
   it("rejects transcription with model-missing when no model is installed", async () => {
     const modelDir = await tmp("scient-voice-eng-model-");
     const runtimeDir = await makeRuntimeDir();

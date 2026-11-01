@@ -32,6 +32,7 @@ export function useLatexPinchZoom(
     if (apply) apply();
     else latest.current.onZoom(next);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps callback refs current and adjusts the scroll DOM node to keep the pinch anchor stable after zoom
   useLayoutEffect(() => {
     latest.current = { zoom, onZoom, onNavigation };
     const point = anchor.current;
@@ -45,6 +46,7 @@ export function useLatexPinchZoom(
     scroll.scrollTop += bounds.top + point.y * zoom - point.clientY;
   }, [zoom, onZoom, onNavigation, scrollRef]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for ctrl-wheel pinch gestures on the scroll DOM node until unmount
   useEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll) return;

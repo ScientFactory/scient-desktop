@@ -1,15 +1,7 @@
 /**
- * Context transfers for imported conversations (migration 18).
- *
- * A fork's transfer names its local source thread; an imported thread has
- * none, so `source_thread_id` becomes nullable. SQLite cannot relax NOT NULL
- * in place: the table is rebuilt and every existing (fork) row is copied
- * unchanged. The new columns carry what an import records instead of a
- * lineage row: its external provenance (`origin_json`) and the turns holding
- * imported history (`inherited_turn_ids_json`), which revert keeps.
- *
- * The checks keep the two kinds apart: a fork always names its source; an
- * import never does, so an external id can never pose as a local thread id.
+ * SQLite cannot relax NOT NULL in place, so rebuild without changing existing fork rows. Forks must
+ * name a local source; imports must not, preventing external IDs from posing as local threads.
+ * Retain inherited turn IDs for revert.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

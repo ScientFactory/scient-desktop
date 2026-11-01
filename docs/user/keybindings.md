@@ -122,7 +122,7 @@ there is no separate shortcut list to maintain.
 
 ## Composer controls
 
-In **Settings → General → Send shortcut**, choose whether Enter sends, requires
+In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.
 
@@ -130,18 +130,19 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 `mod+Enter` to do the opposite for one message, even when the send shortcut
 requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
 background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`
-does the same. Change these shortcuts in **Settings → Keybindings** under
+does the same. Change these shortcuts in **Settings → Shortcuts** under
 **Composer: Opposite Queue or Steer Action**, **Composer: Start in Background**,
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
 
-When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
-steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
+When a thread has queued messages, `mod+Shift+Enter` sends the first one as a steer
+while a turn is running, or as a new turn when the thread is stopped. Change it under
+**Queue: Send First Queued Message** in Keybindings.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
 To step a new thread to the next machine instead of opening the menu, bind
 **Composer: Cycle Host** in Keybindings. It has no default shortcut.
-Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the
+Use `mod+shift+e` for effort, `mod+shift+a` for permissions, `mod+shift+x` for the
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
 current checkout, a new worktree, and the previous worktree when available.
 Use `mod+shift+l` to reuse the previous worktree directly.
@@ -153,7 +154,8 @@ lowest, and decrease wraps from the lowest level to the highest.
 
 In the model picker, press Left in an empty search field or Shift+Tab to reach
 the provider list. Use Up/Down to move and Enter to choose. Right returns to
-model search. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the
+model search. Right at the end of the search moves to the highlighted model's effort
+levels, and Left comes back. Choosing a model keeps the picker open on its effort. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the
 search. These provider shortcuts can also be changed in Settings.
 
 These shortcuts run inside the focused web or desktop client. `mod` uses Command
@@ -163,10 +165,12 @@ in Settings.
 
 ## Copy pull request references
 
-With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`
+With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`
 to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
-Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
+Both shortcuts can be changed in Settings. Search for “Copy Link or Thread”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
+Without a PR, `mod+shift+c` copies the thread itself, which pastes into a
+composer as a thread chip.
 
 ## Find in a diff
 
@@ -189,8 +193,8 @@ to show only actions.
 In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends. To make Return insert a new line instead, change the Return key
-behavior in Settings → Keyboard.
+also sends. To make Return insert a new line instead, change **Send shortcut** in
+Settings → Chat.
 
 Common searchable commands include opening the command palette, creating a
 thread, toggling the terminal or right panel, finding a project file, searching
@@ -203,7 +207,12 @@ Useful current commands include:
 - `projectSearch.toggle` (`mod+shift+f`) searches inside project files;
 - `themeEditor.toggle` (`mod+alt+shift+t`) opens the floating theme editor;
 - `thread.settle` (`mod+shift+s`) settles or restores the active thread;
-- `thread.pin` (`mod+shift+p`) pins or unpins the active thread; and
+- `thread.pin` (`mod+shift+p`) pins or unpins the active thread;
+- `rightPanel.new` (`mod+t`) opens a side-panel tab on the Tools page;
+- `rightPanel.nextTab` and `rightPanel.previousTab` (`ctrl+tab`, `ctrl+shift+tab`) move between
+  side-panel tabs;
+- `rightPanel.toggleFiles` (`mod+alt+e`) shows or hides the file list beside a side-panel tab;
+- `rightPanel.duplicateTab` (`mod+shift+d`) opens a second copy of a browser or terminal tab; and
 - `rightPanel.toggleMaximized` maximizes or restores the open right panel and has no default shortcut.
 
 Repeating either search shortcut closes it; opening the other replaces the current search. The theme
@@ -212,8 +221,8 @@ editor's **Inspect** mode selects one visible element and reveals its color toke
 
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
-section. Message search begins after two characters and keeps the matching thread's project, branch,
-and machine context visible.
+section. Message search needs at least one word of three or more letters, or two for Chinese,
+Japanese, and Korean, and keeps the matching thread's project, branch, and machine context visible.
 
 ## Edit the JSON directly
 
@@ -269,8 +278,9 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Shortcuts** if you want to use it.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `composerDraft`,
+`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `draftThreadRoute`,
 `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
@@ -280,6 +290,21 @@ the next tab. With the terminal focused, `mod+w` closes the terminal instead, an
 to close it closes the desktop window as before. Browsers reserve `mod+w` for closing their own tab
 and never pass it to the page, so in a browser rebind this command (and `terminal.close`) to a
 shortcut the browser leaves alone, such as `alt+w`.
+
+`rightPanel.new` opens a new tab in the side panel and defaults to `mod+t`. A new tab shows the
+**Tools** page, where you choose what the tab becomes. With the panel closed, the shortcut opens it
+on a new tab. It does not run while the terminal has focus.
+`rightPanel.nextTab` and `rightPanel.previousTab` move to the next or previous side-panel tab,
+wrapping at either end. They default to `ctrl+tab` and `ctrl+shift+tab`, which is Control on every
+platform, as in Chrome. Browsers keep `ctrl+tab` for their own tabs, so in a browser rebind these
+two commands to keys the browser leaves alone. To open a second copy of a browser page or a
+terminal, right-click its tab and choose **Duplicate**, or use `rightPanel.duplicateTab`, which
+defaults to `mod+shift+d` outside the terminal. In the terminal, `mod+shift+d` still splits it.
+While the keyboard is in a side-panel Files or file tab, `navigation.back` and
+`navigation.forward` (`mod+[` and `mod+]`) move back and forward in that tab's own history
+instead of between threads.
+`rightPanel.toggleFiles` shows or hides the project's file list beside the open side-panel tab and
+defaults to `mod+alt+e`. It does not run while the terminal has focus.
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
 model picker is open. The thread jumps do not run while the model picker is open.
 Those defaults use `isDesktop` so they do not steal the
@@ -308,8 +333,8 @@ and **Escape** to close find.
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
 section. Message matches show one labeled excerpt while keeping the thread's project, branch, and
-machine context visible. Message search begins after two characters and uses SQLite's ASCII
-case-insensitive matching.
+machine context visible. Message search finds threads whose messages contain all your words, and
+needs at least one word of three or more letters, or two for Chinese, Japanese, and Korean.
 
 The full command list and the current defaults are shown in **Settings** → **Shortcuts**, which
 always matches the build you are running. Use that rather than a copied list.
@@ -346,6 +371,11 @@ current machine when available. It uses the same flow as **No project** in the p
 Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
+
+In the desktop app, `mod+w` closes the focused terminal or the active right-panel
+tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`
+closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
+shortcut such as `alt+w`.
 
 `mod+shift+t` reopens the last closed tab across the app, including files,
 diffs, pull requests, browsers, and devices, in the order you closed them.

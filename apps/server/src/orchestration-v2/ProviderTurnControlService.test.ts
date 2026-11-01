@@ -220,9 +220,16 @@ it.effect(
         ProjectionStore.ProjectionStoreV2.of({
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
+          getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
+          getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
+          countThreads: () => Effect.die("unused countThreads"),
+          listActiveShellIndex: () => Effect.die("unused listActiveShellIndex"),
+          listOlderSettledThreads: () => Effect.die("unused listOlderSettledThreads"),
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
+          findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
           getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
@@ -247,6 +254,7 @@ it.effect(
           getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
+          getSubagentCount: () => Effect.die("unused subagent count"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
           getTurnItem: () => Effect.die("unused turn item read"),
           getThreadRecords: () => Effect.die("unused record read"),
@@ -275,6 +283,7 @@ it.effect(
           getRunMessage: () => Effect.die("not used"),
           isNodeStored: () => Effect.die("not used"),
           canStartQueuedRun: () => Effect.die("not used"),
+          getHeldQueuedRuns: () => Effect.die("not used"),
           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
@@ -284,7 +293,6 @@ it.effect(
       const layerSessionManager = Layer.succeed(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
-          inspectExecution: () => Effect.succeed("unknown"),
           withProviderWorkAdmission: () => Effect.die("Unused native generation admission"),
           resolveMcpInvocationPolicy: () =>
             Effect.die("MCP invocation policy is not used in this fixture."),
@@ -299,6 +307,8 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          otherWorkingThreads: () => Effect.succeed([]),
+          releaseUnlessBusy: () => Effect.succeed(true),
         }),
       );
       const controlLayer = ProviderTurnControlService.layer.pipe(
@@ -308,7 +318,7 @@ it.effect(
             layerProjection,
             layerSessionManager,
             ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-              Layer.provide(NodeServices.layer),
+              Layer.provideMerge(NodeServices.layer),
             ),
           ),
         ),
@@ -431,7 +441,7 @@ it.effect(
       const dependencies = Layer.mergeAll(
         Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
         ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-          Layer.provide(NodeServices.layer),
+          Layer.provideMerge(NodeServices.layer),
         ),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getProviderControlContext: () =>
@@ -476,7 +486,7 @@ it.effect(
             ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          get: () => Effect.succeed(Option.some(runtime)),
+          get: () => Effect.succeedSome(runtime),
         }),
         Layer.succeed(ScientSkillSession.ScientSkillSessionPlanner, {
           resolve: () =>
@@ -776,7 +786,7 @@ it.effect.each([
         const dependencies = Layer.mergeAll(
           McpProviderSessions.layer,
           ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-            Layer.provide(NodeServices.layer),
+            Layer.provideMerge(NodeServices.layer),
           ),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadRecords: () => Ref.get(projection),

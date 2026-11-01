@@ -18,13 +18,9 @@ type ComputeContentHash = ComputeImageOutput["contentHash"];
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
 /**
- * Stable identity of one figure presentation.
- *
- * Snapshots name immutable retained bytes. Followable references name a
- * logical project file or a runtime display position. Runtime displays are
- * scoped to one explicit session lifetime. Ordinal references include restarts;
- * explicit display IDs additionally require their emitting generation. Project-file
- * references remain path-scoped because they are workspace viewers, not execution claims.
+ * Snapshots bind immutable bytes; runtime references bind an explicit session lifetime, with
+ * restarts for ordinals and emitting generation for display IDs. Project-file references are
+ * path-scoped viewers and cannot establish execution identity.
  */
 export type ComputeFigureReference =
   | {

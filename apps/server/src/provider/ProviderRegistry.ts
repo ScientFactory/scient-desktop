@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,6 +30,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -45,10 +47,12 @@ import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
+  latestProviderVersionCacheKeys,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
 
 // SCIENT-FORK:START — model merge, transient state, reload and instance actions.
+import * as Random from "effect/Random";
 import {
   mergeScientProviderModel,
   scientRetainMissingProviderModels,
@@ -96,13 +100,14 @@ export interface ProviderRegistryShape {
 
   readonly refresh: (provider?: ProviderDriverKind) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-  /**
-   * When the instance id is unknown the call resolves with the currently
-   * cached list (no error) — matching the legacy `refresh` shim behaviour so
-   * transport layers don't have to special-case unknowns.
-   */
+  /** Unknown instance ids return the cached list without error. */
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
+  readonly reloadSecretsAndRefresh: (
+    instanceId?: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /** Only refreshed instances can verify an update; the published list still includes every row. */
@@ -115,6 +120,9 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly cwd: string;
     readonly fresh?: boolean;
+    // SCIENT-FORK:START — explicit full-inventory reads await native listing publication.
+    readonly awaitNativeInventory?: boolean;
+    // SCIENT-FORK:END
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
@@ -321,9 +329,7 @@ export function upsertProviderWorkspaceSnapshot(
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   if (provider.driver === ProviderDriverKind.make("pi")) {
-    // Pi reports known auth only after RPC inventory discovery completes.
-    // An empty inventory is warning/unauthenticated; failed or interactive
-    // discovery stays ready/unknown and must keep the last known models.
+    // Pi auth becomes known only after inventory discovery: empty means unauthenticated; failed/interactive discovery preserves unknown auth and cached models.
     return !(
       provider.installed &&
       (provider.status === "ready" || provider.status === "warning") &&
@@ -336,18 +342,18 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   // SCIENT-FORK:END
 
   if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
-    // ACP Registry discovery probes return the agent's complete inventory, so
-    // a completed probe replaces the model list — otherwise agents that rename
-    // or collapse models leave stale entries pinned forever through the
-    // snapshot cache. Only a completed probe reports `nativeSessions`;
-    // readiness-only and failed probe snapshots only know the "default"
-    // placeholder and stay partial. Auth is no signal here: agents without
-    // sign-in stay "unknown" after every probe.
+    // Only completed ACP discovery provides nativeSessions and inventory; placeholder probes cannot establish auth for agents without sign-in.
     return !(
       provider.installed &&
       provider.status === "ready" &&
       provider.nativeSessions !== undefined
     );
+  }
+
+  if (provider.driver === ProviderDriverKind.make("grok")) {
+    // Grok reports ready only after it discovers a model list; the pending,
+    // ACP-failed, empty-inventory, and logged-out probes are warning/error.
+    return !(provider.installed && provider.status === "ready");
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
@@ -415,11 +421,7 @@ const mergeProviderModels = (
     : mergedModels;
 };
 
-/**
- * Antigravity's health check only initializes the agent, so after a server
- * restart it reports the account as unchecked. The saved Google login still
- * works, and the previous snapshot proves it.
- */
+/** Antigravity health checks only initialize; preserve previously verified Google auth across restarts. */
 const carrySavedAntigravityAccount = (
   previousProvider: ServerProvider,
   nextProvider: ServerProvider,
@@ -455,11 +457,14 @@ export const mergeProviderSnapshot = (
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
+    // SCIENT-FORK:START — workspace inventory belongs to one live instance generation.
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousProvider.workspaceSnapshots !== undefined
+      : previousProvider.workspaceSnapshots !== undefined &&
+          previousProvider.nativeInventoryGeneration === nextProvider.nativeInventoryGeneration
         ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
         : {}),
+    // SCIENT-FORK:END
     ...(shouldRetainMissingDynamicMetadata(nextProvider)
       ? {
           slashCommands:
@@ -502,9 +507,7 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
 
-// Each call re-captures the instance's `snapshot` closures, so after
-// `ProviderInstanceRegistry` rebuilds an instance (e.g. because its settings
-// changed), a fresh source rides the new PubSub instead of a closed one.
+// Rebuilt instances have new PubSubs; capture their fresh closures instead of a closed source.
 const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
@@ -517,6 +520,8 @@ export const layer = Layer.effect(
   ProviderRegistry,
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const instanceRegistryMutator =
+      yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
     const manifestService = yield* ModelManifest.ModelManifest;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serviceScope = yield* Effect.scope;
@@ -600,7 +605,7 @@ export const layer = Layer.effect(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -610,6 +615,17 @@ export const layer = Layer.effect(
     const scientTransientState = yield* makeScientProviderTransientState();
     const { authenticationFailuresRef } = scientTransientState;
     const nativeInventory = yield* makeScientProviderNativeInventory;
+    const inventoryEpoch = yield* Random.nextInt;
+    let nextInventoryGeneration = 0;
+    const inventoryGenerations = new WeakMap<ProviderInstance, string>();
+    const inventoryGeneration = (instance: ProviderInstance) => {
+      let generation = inventoryGenerations.get(instance);
+      if (generation === undefined) {
+        generation = `${inventoryEpoch}:${++nextInventoryGeneration}`;
+        inventoryGenerations.set(instance, generation);
+      }
+      return generation;
+    };
     // SCIENT-FORK:END
 
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ScientProviderInstance>>(
@@ -629,8 +645,12 @@ export const layer = Layer.effect(
         cacheDir: config.providerStatusCacheDir,
         instanceId: key,
       }).pipe(Effect.provideService(Path.Path, path));
-      const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
       // SCIENT-FORK:START — Scient Extensions: provider-native inventory is live state, never cached.
+      const {
+        workspaceSnapshots: _workspaceSnapshots,
+        nativeInventoryGeneration: _nativeInventoryGeneration,
+        ...machineProvider
+      } = provider;
       const cachedProvider = withoutProviderNativeInventory(machineProvider);
       yield* writeProviderStatusCache({ filePath, provider: cachedProvider }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -649,16 +669,25 @@ export const layer = Layer.effect(
       // SCIENT-FORK:START — overlay the connection, account-failure, runtime and
       // live-session inventory states.
       const scientStates = yield* scientTransientState.read(provider.instanceId);
+      const instance = yield* instanceRegistry.getInstance(provider.instanceId);
+      const generation = instance ? inventoryGeneration(instance) : undefined;
+      const { nativeInventoryGeneration: priorGeneration, ...withoutGeneration } = provider;
+      const { workspaceSnapshots: _snapshots, ...machineSnapshot } = withoutGeneration;
+      const currentInventory =
+        priorGeneration !== undefined && priorGeneration !== generation
+          ? withoutProviderNativeInventory(machineSnapshot)
+          : withoutGeneration;
+      const currentProvider =
+        generation === undefined
+          ? currentInventory
+          : { ...currentInventory, nativeInventoryGeneration: generation };
       const providerWithUpdateState = updateState
-        ? { ...provider, updateState }
-        : (({ updateState: _updateState, ...rest }) => rest)(provider);
+        ? { ...currentProvider, updateState }
+        : (({ updateState: _updateState, ...rest }) => rest)(currentProvider);
       return overlayProviderNativeInventory(
         overlayScientProviderTransientState(providerWithUpdateState, scientStates),
         // Only the current generation's reports describe this configuration.
-        yield* nativeInventory.read(
-          provider.instanceId,
-          yield* instanceRegistry.getInstance(provider.instanceId),
-        ),
+        yield* nativeInventory.read(provider.instanceId, instance),
       );
       // SCIENT-FORK:END
     });
@@ -746,8 +775,7 @@ export const layer = Layer.effect(
         // canonical cache entry until a verified account transition clears it.
         persist: !hasAuthenticationFailure,
       });
-      // Reclassify the current read model after fetching. Never republish the
-      // probe captured before the fetch: a newer health result may have landed.
+      // Reclassify the current model after fetch; republishing the old probe could overwrite newer health results.
       if (!(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {
         yield* manifestService.refresh.pipe(
           Effect.andThen(upsertProviders([], { persist: false })),
@@ -905,9 +933,10 @@ export const layer = Layer.effect(
         },
       );
       if (claimed.owner) {
-        // Detached so an interrupted first caller cannot cancel the pass that
-        // other callers are already awaiting.
-        yield* getLiveSources.pipe(
+        // Detach shared passes so the first caller's interruption cannot cancel other callers' work.
+        // Syncing first keeps a refresh right after a rebuild from probing the replaced instance.
+        yield* syncLiveSourcesAndContinue.pipe(
+          Effect.andThen(getLiveSources),
           Effect.flatMap((sources) =>
             Effect.forEach(sources, (source) => refreshOneSource(source), {
               concurrency: "unbounded",
@@ -944,12 +973,20 @@ export const layer = Layer.effect(
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
+      yield* syncLiveSourcesAndContinue;
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
         return yield* Ref.get(providersRef);
       }
       return yield* refreshOneSource(providerSource);
+    });
+
+    const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      yield* instanceRegistryMutator.reloadSecrets(instanceId);
+      return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
     });
 
     const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
@@ -992,9 +1029,11 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             yield* instance.invalidateCaches ?? Effect.void;
             const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
-            if (maintenance.packageName) {
-              yield* latestVersions.invalidate(maintenance.packageName);
-            }
+            yield* Effect.forEach(
+              latestProviderVersionCacheKeys(maintenance),
+              latestVersions.invalidate,
+              { discard: true },
+            );
           }).pipe(Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause))),
         { concurrency: "unbounded", discard: true },
       );
@@ -1023,9 +1062,7 @@ export const layer = Layer.effect(
       provider: ProviderDriverKind,
       options?: { readonly fresh?: boolean },
     ) {
-      // Read the instance registry, not `liveSubsRef`: the latter trails
-      // reconciliation, and an update must never run a retired instance's
-      // command against a freshly configured executable.
+      // liveSubsRef trails reconciliation and could run a retired instance's command; read the registry.
       const instance = yield* instanceRegistry.getInstance(instanceId);
       if (!instance || instance.driverKind !== provider) {
         return makeManualProviderMaintenanceCapabilities(provider);
@@ -1089,9 +1126,14 @@ export const layer = Layer.effect(
             (previousProviders) => {
               const providers = previousProviders.map((provider) => {
                 if (!rebuiltInstanceIds.has(provider.instanceId)) return provider;
-                const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = provider;
                 // SCIENT-FORK:START — Scient Extensions: a rebuilt configuration reports its own inventory.
-                return withoutProviderNativeInventory(machineSnapshot);
+                const generation = inventoryGeneration(nextByInstance.get(provider.instanceId)!);
+                if (provider.nativeInventoryGeneration === generation) return provider;
+                const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = provider;
+                return {
+                  ...withoutProviderNativeInventory(machineSnapshot),
+                  nativeInventoryGeneration: generation,
+                };
                 // SCIENT-FORK:END
               });
               return [[previousProviders, providers] as const, providers];
@@ -1102,10 +1144,7 @@ export const layer = Layer.effect(
           }
         }
 
-        // Fork long-lived subscriptions to each new/rebuilt instance's
-        // change stream before reading its current snapshot. If the
-        // driver's own initial probe finishes during this sync, either
-        // the current read or the active subscriber observes the result.
+        // Subscribe before reading so a probe completing mid-sync is observed by at least one path.
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
@@ -1186,6 +1225,7 @@ export const layer = Layer.effect(
           },
         );
       }),
+      Scope.provide(serviceScope),
     );
 
     yield* upsertProviders(fallbackProviders, { publish: false });
@@ -1264,12 +1304,25 @@ export const layer = Layer.effect(
         if (workspaceInventory) yield* workspaceInventory.retain(publishedWorkspaces(instanceId));
       }
     });
+    const awaitWorkspaceInventoryPublication = Effect.fn("awaitWorkspaceInventoryPublication")(
+      function* (instance: ScientProviderInstance | undefined, cwd: string) {
+        if (instance?.workspaceInventory) {
+          const scan = (yield* Ref.get(workspaceRefreshesRef)).get(instance)?.get(cwd);
+          if (scan) yield* Deferred.await(scan);
+          yield* instance.workspaceInventory.awaitCurrent(cwd);
+        }
+        return yield* Ref.get(providersRef);
+      },
+    );
     // SCIENT-FORK:END
 
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
+      // SCIENT-FORK:START — explicit full-inventory reads await native listing publication.
+      readonly awaitNativeInventory?: boolean;
+      // SCIENT-FORK:END
     }) {
       if (input.fresh) {
         // SCIENT-FORK:START — Scient Extensions: the snapshots this drops stop their plugin listings.
@@ -1293,27 +1346,31 @@ export const layer = Layer.effect(
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
       const now = yield* DateTime.now;
+      if (!provider || !provider.enabled) return providers;
       if (
-        !provider ||
-        !provider.enabled ||
-        (!input.fresh &&
-          scannedFrom &&
-          !scannedFrom.slashCommandsPending &&
-          isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
+        !input.fresh &&
+        scannedFrom &&
+        !scannedFrom.slashCommandsPending &&
+        isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now))
       ) {
+        // SCIENT-FORK:START — a cached scan can still have an unfinished native listing.
+        if (input.awaitNativeInventory) {
+          return yield* awaitWorkspaceInventoryPublication(
+            yield* instanceRegistry.getInstance(input.instanceId),
+            input.cwd,
+          );
+        }
+        // SCIENT-FORK:END
         return providers;
       }
-      // Drivers spread their machine snapshot, whose `checkedAt` is the last
-      // health check. The TTL needs the time this scan started reading files.
+      // Use scan start for TTL, not checkedAt inherited from the machine health check.
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
       // SCIENT-FORK:START — Scient Extensions: kept narrowed for the claim-guarded scan below.
       const snapshotForCwd = instance.snapshotForCwd;
       // SCIENT-FORK:END
-      const token = Symbol();
-      // SCIENT-FORK:START — Scient Extensions: the claim is released after every step that follows
-      // admission, including listing cleanup that a cancelled caller abandons.
+      const token = yield* Deferred.make<void>();
       const releaseClaim = Ref.update(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
         if (current?.get(input.cwd) !== token) return refreshes;
@@ -1323,91 +1380,114 @@ export const layer = Layer.effect(
         if (nextCwds.size) next.set(instance, nextCwds);
         else next.delete(instance);
         return next;
-      });
-      return yield* Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
-            const current = refreshes.get(instance);
-            if (!input.fresh && current?.has(input.cwd)) return [false, refreshes] as const;
-            const next = new Map(refreshes);
-            next.set(instance, new Map(current).set(input.cwd, token));
-            return [true, next] as const;
-          });
-          if (!claimed) return yield* Ref.get(providersRef);
-          return yield* restore(
-            Effect.gen(function* () {
-              // A newer scan supersedes a workspace plugin listing, and listings
-              // of this workspace that began before it no longer apply.
-              if (instance.workspaceInventory) {
-                yield* instance.workspaceInventory.cancel(input.cwd);
-              }
-              const scanSequence = yield* nextInventoryReadSequence;
-              const refreshMachineSnapshot = input.fresh
-                ? (instance.invalidateCaches ?? Effect.void).pipe(
-                    Effect.andThen(refreshInstance(input.instanceId)),
-                  )
-                : Effect.void;
-              return yield* refreshMachineSnapshot.pipe(
-                Effect.andThen(snapshotForCwd(input.cwd)),
-                // A failed scan fails this effect, so a returned snapshot is a real
-                // inventory even while the provider's health check reports an error.
-                Effect.flatMap((scopedSnapshot) =>
-                  instanceRegistry.getInstance(input.instanceId).pipe(
-                    Effect.flatMap((currentInstance) => {
-                      if (currentInstance !== instance) return Ref.get(providersRef);
-                      return updateProviders((currentProviders) => {
-                        // Read ownership inside the update so a newer claim cannot race publication.
-                        if (
-                          Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !==
-                          token
-                        ) {
-                          return currentProviders;
-                        }
-                        return currentProviders.map((candidate) =>
-                          candidate.instanceId === input.instanceId &&
-                          Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                            ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                                ...scopedSnapshot,
-                                checkedAt: scannedAt,
-                                // Unless the driver reports its own command discovery,
-                                // commands come from the health check. A failed check
-                                // leaves them unknown, so keep the last ones and retry.
-                                slashCommandsPending:
-                                  scopedSnapshot.slashCommandsPending ??
-                                  scopedSnapshot.status === "error",
-                              })
-                            : candidate,
-                        );
-                      }).pipe(
-                        // List the workspace's plugins once its scan is
-                        // published, if the update kept it; evicted snapshots stop theirs.
-                        Effect.tap((afterScan) =>
-                          Effect.gen(function* () {
-                            yield* nativeInventory.markWorkspaceScan(
-                              input.instanceId,
-                              instance,
-                              input.cwd,
-                              scanSequence,
-                            );
-                            const published = afterScan
-                              .find((candidate) => candidate.instanceId === input.instanceId)
-                              ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === input.cwd);
-                            if (published && instance.workspaceInventory) {
-                              yield* instance.workspaceInventory.refresh(input.cwd);
-                            }
-                            yield* retainWorkspaceListings([input.instanceId]);
-                          }),
-                        ),
+      }).pipe(Effect.andThen(Deferred.succeed(token, undefined)));
+      const runScan = Effect.gen(function* () {
+        // SCIENT-FORK:START — workspace plugin listings share the admitted scan's lifetime.
+        if (instance.workspaceInventory) {
+          yield* instance.workspaceInventory.cancel(input.cwd);
+        }
+        const scanSequence = yield* nextInventoryReadSequence;
+        // SCIENT-FORK:END
+        const refreshMachineSnapshot = input.fresh
+          ? (instance.invalidateCaches ?? Effect.void).pipe(
+              Effect.andThen(refreshInstance(input.instanceId)),
+            )
+          : Effect.void;
+        return yield* refreshMachineSnapshot.pipe(
+          Effect.andThen(snapshotForCwd(input.cwd)),
+          // Scans fail on error; returned inventory remains valid even when provider health reports an error.
+          Effect.flatMap((scopedSnapshot) =>
+            instanceRegistry.getInstance(input.instanceId).pipe(
+              Effect.flatMap((currentInstance) => {
+                if (currentInstance !== instance) return Ref.get(providersRef);
+                return updateProviders((currentProviders) => {
+                  // Read ownership inside the update so a newer claim cannot race publication.
+                  if (
+                    Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token
+                  ) {
+                    return currentProviders;
+                  }
+                  return currentProviders.map((candidate) =>
+                    candidate.instanceId === input.instanceId &&
+                    Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                      ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                          ...scopedSnapshot,
+                          checkedAt: scannedAt,
+                          // Without driver command discovery, retain previous commands after failed health checks and retry.
+                          slashCommandsPending:
+                            scopedSnapshot.slashCommandsPending ??
+                            scopedSnapshot.status === "error",
+                        })
+                      : candidate,
+                  );
+                }).pipe(
+                  // SCIENT-FORK:START — list plugins after publication and stop evicted listings.
+                  Effect.tap((afterScan) =>
+                    Effect.gen(function* () {
+                      if (
+                        Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token
+                      )
+                        return;
+                      yield* nativeInventory.markWorkspaceScan(
+                        input.instanceId,
+                        instance,
+                        input.cwd,
+                        scanSequence,
                       );
+                      const published = afterScan
+                        .find((candidate) => candidate.instanceId === input.instanceId)
+                        ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === input.cwd);
+                      if (published && instance.workspaceInventory) {
+                        yield* instance.workspaceInventory.refresh(input.cwd, (inventory) =>
+                          applyNativeInventory(instance, inventory).pipe(Effect.asVoid),
+                        );
+                      }
+                      yield* retainWorkspaceListings([input.instanceId]);
                     }),
                   ),
-                ),
-              );
-              // Release the claim (see above).
-            }),
-          ).pipe(Effect.ensuring(releaseClaim));
+                  // SCIENT-FORK:END
+                );
+              }),
+            ),
+          ),
+        );
+      }).pipe(Effect.ensuring(releaseClaim));
+      // The claim and the fork happen together, so the token is always completed. The scan is
+      // detached so a disconnecting owner cannot cancel the result its waiters depend on.
+      const claim = yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const inFlight = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+            const current = refreshes.get(instance);
+            const running = current?.get(input.cwd);
+            if (!input.fresh && running) return [running, refreshes] as const;
+            const next = new Map(refreshes);
+            next.set(instance, new Map(current).set(input.cwd, token));
+            return [undefined, next] as const;
+          });
+          if (inFlight) return { inFlight } as const;
+          return {
+            // Starting now attaches the scan's `ensuring` before anything can close the scope.
+            scan: yield* Effect.forkIn(runScan, serviceScope, { startImmediately: true }),
+          } as const;
         }),
       );
+      // Wait for the running scan: on-demand clients get its result only in this reply.
+      if ("inFlight" in claim) {
+        return yield* Deferred.await(claim.inFlight).pipe(
+          // SCIENT-FORK:START — shared scans retain their instance-owned listing lifetime.
+          Effect.andThen(
+            input.awaitNativeInventory
+              ? awaitWorkspaceInventoryPublication(instance, input.cwd)
+              : Ref.get(providersRef),
+          ),
+          // SCIENT-FORK:END
+        );
+      }
+      const scanned = yield* Fiber.join(claim.scan);
+      // SCIENT-FORK:START — the reply follows accepted native publication, not just scan completion.
+      return input.awaitNativeInventory
+        ? yield* awaitWorkspaceInventoryPublication(instance, input.cwd)
+        : scanned;
       // SCIENT-FORK:END
     });
 
@@ -1422,6 +1502,8 @@ export const layer = Layer.effect(
       reloadInstance: (instanceId: ProviderInstanceId) =>
         reloadInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadInstanceStrict,
+      reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
+        reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,

@@ -2,7 +2,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type { MessageId, OrchestrationV2RunStatus } from "@t3tools/contracts";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../../types";
-import { shouldRevealArrivedPrompt } from "./readerScrollPolicy";
+import { shouldFollowArrivedPrompt } from "./readerScrollPolicy";
 
 /**
  * Where a sent prompt's own V2 run is: not started yet (sent, queued,
@@ -21,11 +21,9 @@ type PromptMessage = Pick<ChatMessage, "id" | "runId">;
 const NO_RUNS: readonly PromptRun[] = [];
 
 /**
- * The run answering a prompt: the run its listed message belongs to now (its
- * own run, or the run a steer or a queued prompt promoted to a steer went
- * into), else the run it started (its userMessageId) while it is not listed
- * with one yet. A promoted prompt's own queued run is cancelled at promotion;
- * the receiving run is the one that answers it.
+ * A promoted steer is answered by the receiving run, not its cancelled queued run. Prefer the
+ * listed message's actual run, falling back to its initiating run only until that association
+ * arrives.
  */
 function promptRun(
   promptId: string,
@@ -72,42 +70,42 @@ export function promptRunStarting(input: {
 
 /** What the timeline needs to run the follow ChatView owns. */
 export interface TimelineResponseFollow {
-  /** A later prompt: follow its whole response to the end, not only its answer. */
-  readonly followsResponse: boolean;
   /** The followed prompt's own run has ended: no more of its response will arrive. */
   readonly settled: boolean;
+  /** Changes each time the reader (re)joins the follow at the end. */
+  readonly joined: number;
   /** The follow ended (revealed or cancelled by the reader). */
   readonly onFinished: (promptId: string) => void;
   /** A reader came back to a thread they left while following this prompt. */
   readonly onResume: (promptId: string) => void;
+  /** The reader arrived at the end: on their own, by Scroll to end, or by opening the thread. */
+  readonly onReachedEnd: () => void;
 }
 
 interface FollowIntent {
   readonly threadKey: string | null;
   readonly promptId: MessageId;
-  readonly followsResponse: boolean;
+  readonly joined: number;
 }
 
 /**
- * The one owner of the send follow: which prompt's response the view
- * follows in this thread, if any. A send at the end, a queued delivery at
- * the end, and a reader coming back to a thread they left while following
- * start it; scrolling up, Scroll to end, a thread switch, the response
- * settling, or the prompt's send failing end it. Settling is judged from the
- * prompt's own V2 run, never from the thread looking busy.
+ * Settle follow from the prompt's own V2 run, never thread-wide busy state. Reader navigation and
+ * failed/settled sends end ownership; returning to a thread may resume only the follow left there.
+ * A reader arriving at the end of a working thread joins its follow, whoever started the run.
  */
 export function useResponseFollow(input: {
   threadKey: string | null;
   /** The thread's V2 runs; none before the projection loads. */
   runs: readonly PromptRun[] | undefined;
   /** The listed messages, including prompts this window has not had confirmed yet. */
-  messages: readonly PromptMessage[];
+  messages: readonly Pick<ChatMessage, "id" | "runId" | "role">[];
   /** Whether `runs` and `messages` are the thread's (the projection has loaded). */
   loaded: boolean;
 }) {
   const [intent, setIntent] = useState<FollowIntent | null>(null);
   const runs = input.runs ?? NO_RUNS;
   const latest = useRef({ ...input, runs });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latest.current in step with the newest inputs for the stable follow callbacks
   useLayoutEffect(() => {
     latest.current = { ...input, runs };
   });
@@ -117,54 +115,62 @@ export function useResponseFollow(input: {
     : null;
   // A prompt whose send failed has nothing left to follow.
   const current = input.loaded && state === "missing" ? null : own;
-  const start = useStableCallback((promptId: MessageId, followsResponse: boolean) => {
-    setIntent({ threadKey: latest.current.threadKey, promptId, followsResponse });
+  /** Follow a prompt's whole response from now; joining the current one again keeps its motion. */
+  const start = useStableCallback((promptId: MessageId) => {
+    const threadKey = latest.current.threadKey;
+    setIntent((existing) => ({ threadKey, promptId, joined: (existing?.joined ?? 0) + 1 }));
   });
-  /**
-   * A prompt sent from this window at the end: a thread's first prompt keeps
-   * its placement and has its answer revealed; a later prompt's whole
-   * response is followed to the end.
-   */
-  const followSent = useStableCallback((promptId: MessageId, firstMessage: boolean) =>
-    start(promptId, !firstMessage),
-  );
   const clear = useStableCallback(() => setIntent(null));
   const onFinished = useStableCallback((promptId: string) => {
     setIntent((existing) => (existing?.promptId === promptId ? null : existing));
   });
-  const onResume = useStableCallback((promptId: string) => {
-    const { threadKey, runs, messages } = latest.current;
-    const resumedState = promptResponseState({ promptId, runs, messages });
-    if (resumedState === "awaiting" || resumedState === "running")
-      setIntent({ threadKey, promptId: promptId as MessageId, followsResponse: true });
+  /** The prompt's run is starting or working; one still waiting in the queue is not live yet. */
+  const followable = useStableCallback((promptId: string) => {
+    const { runs, messages } = latest.current;
+    if (promptRun(promptId, runs, messages)?.status === "queued") return false;
+    const promptState = promptResponseState({ promptId, runs, messages });
+    return promptState === "awaiting" || promptState === "running";
   });
-  const followsResponse = current?.followsResponse ?? false;
+  const onResume = useStableCallback((promptId: string) => {
+    if (followable(promptId)) start(promptId as MessageId);
+  });
+  /** Join the follow of the latest prompt whose run is live. */
+  const join = useStableCallback(() => {
+    const { runs, messages } = latest.current;
+    const prompt = messages.findLast(
+      (message) =>
+        message.role === "user" && promptRun(message.id, runs, messages)?.status !== "queued",
+    );
+    if (prompt && followable(prompt.id)) start(prompt.id);
+  });
   const settled = state === "settled";
   const timeline = {
-    followsResponse,
     settled,
+    joined: current?.joined ?? 0,
     onFinished,
     onResume,
+    onReachedEnd: join,
   } satisfies TimelineResponseFollow;
-  return { promptId: current?.promptId ?? null, timeline, start, followSent, clear };
+  return { promptId: current?.promptId ?? null, timeline, start, join, followable, clear };
 }
 
 /**
- * A queued prompt the server delivers while the reader is at the end gets the
- * same follow as a send. Delivery is V2's own word for it (the delivered
- * prompt's input intent), so it holds however the projection's updates were
- * batched, and whichever of the send's receipt and the delivery comes first:
- * the decision runs again when the latest prompt becomes a delivered one.
+ * Follow the thread's latest prompt when it arrives while the reader is at the end, whoever sent
+ * it. V2 input intent marks a queued prompt delivered regardless of projection batching or receipt
+ * order, so this window's queued send is followed even when its delivery arrives first.
  */
-export function useQueuedDeliveryFollow(input: {
+export function useArrivedPromptFollow(input: {
   threadKey: string | null;
   latestPrompt: Pick<ChatMessage, "id" | "inputIntent"> | null;
   /** Read when the prompt arrives, before the timeline measures it. */
   readerAtEnd: () => boolean;
+  /** The prompt already followed: this window's own send at the end. */
+  followingPromptId: string | null;
   follow: (promptId: MessageId) => void;
 }) {
   const { threadKey } = input;
   const callbacks = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps callbacks.current in step with the newest input for the delivery-transition check
   useLayoutEffect(() => {
     callbacks.current = input;
   });
@@ -177,12 +183,14 @@ export function useQueuedDeliveryFollow(input: {
     id: string | null;
     delivered: boolean;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a follow when a queued prompt becomes delivered, reading the at-end position at arrival
   useLayoutEffect(() => {
     const previous = previousRef.current;
     previousRef.current = { threadKey, id: latestPromptId, delivered };
     if (
       latestPromptId !== null &&
-      shouldRevealArrivedPrompt({
+      latestPromptId !== callbacks.current.followingPromptId &&
+      shouldFollowArrivedPrompt({
         previous,
         threadKey,
         latestPromptId,

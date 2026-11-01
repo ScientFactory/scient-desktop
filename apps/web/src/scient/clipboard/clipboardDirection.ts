@@ -1,16 +1,7 @@
 /**
- * Direction marks for the `text/html` clipboard flavour of copied chat content.
- *
- * Word, Google Docs, and Pages do not see Scient's stylesheet, so a Hebrew or
- * Arabic paragraph pasted without explicit direction lands left-to-right and
- * its punctuation moves to the wrong end. Copies that contain right-to-left
- * text therefore carry each block's direction as both `dir` and inline CSS,
- * and left-to-right islands inside right-to-left blocks (inline code, math
- * source, link text, file paths, URLs) are wrapped as `<span dir="ltr">`.
- *
- * Everything here runs on a detached copy. The displayed message, its
- * direction resolution, and the `text/plain` flavour are never touched, and
- * no invisible bidi control characters are added.
+ * External editors lack Scient's stylesheet: carry block direction in dir and inline CSS, with LTR
+ * islands for code/math/paths. Transform only a detached copy; preserve displayed/plain text and
+ * add no invisible bidi controls.
  */
 import {
   countStrongScripts,

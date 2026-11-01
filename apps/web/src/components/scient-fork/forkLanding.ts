@@ -1,9 +1,7 @@
 /**
- * Scient-owned landing for a fork opened from the fork dialog. The fork's
- * messages stay invisible until its own history is loaded and positioned, and
- * then appear once, so the switch never paints the origin's rows, an empty
- * frame or the scroll settling. The mark is one-shot per destination thread
- * and expires on its own, so a fork that never settles is shown anyway.
+ * Reveal a fork only after its own history is loaded and positioned, preventing
+ * origin/empty/settling frames. Expire the one-shot mark so a fork that never settles still becomes
+ * visible.
  */
 
 /** The longest a landing fork stays hidden, whatever its state. */

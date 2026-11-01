@@ -1,5 +1,6 @@
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useLayoutEffect, useState } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -54,6 +55,24 @@ async function render(_fixture: _Fixture, approvals: Props["approvals"], activeT
 }
 
 describe("live approval response ownership", () => {
+  it("retains feedback failures on the requesting approval and releases its response fence", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const failure = await settlePromise(async () => {
+      throw new Error("Reply rejected");
+    });
+    native.respond.mockResolvedValueOnce(failure);
+    await render(_fixture, [{ requestId, responseCapability: "live" }]);
+    await act(async () => {
+      await _fixture.reply(requestId, "decline", "Keep the tests");
+    });
+    expect(onResponseError).toHaveBeenCalledExactlyOnceWith(
+      requestId,
+      "Approval could not be sent. Try again.",
+    );
+    expect(_fixture.responding).toEqual([]);
+  });
   it("responds to a late-arriving live request and uses the current thread after navigation", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -110,13 +129,17 @@ describe("live approval response ownership", () => {
     await render(_fixture, [{ requestId, responseCapability: "live" }]);
     let first!: ReturnType<typeof _fixture.reply>;
     await act(() => {
-      first = _fixture.reply(requestId, "accept");
+      first = _fixture.reply(requestId, "decline", "Keep the tests");
     });
     expect(_fixture.responding).toEqual([requestId]);
     await act(async () => {
       await _fixture.reply(requestId, "decline");
     });
     expect(native.respond).toHaveBeenCalledTimes(1);
+    expect(native.respond).toHaveBeenCalledWith({
+      environmentId,
+      input: { threadId, requestId, decision: "decline", feedback: "Keep the tests" },
+    });
     await act(async () => {
       finish({ _tag: "Success", value: undefined });
       await first;

@@ -1,13 +1,11 @@
 /**
- * The extensions WebSocket RPCs. The inventory is a projection: connectors from
- * ConnectorRuntime, Scient plugins from ScientPluginRegistry and provider
- * compatibility from provider snapshots. Every mutation is dispatched to its
- * owner and the inventory is re-read afterwards.
- *
- * @module ExtensionsRpcHandlers
+ * Mutations belong to each extensions owner; re-read the inventory projection after dispatch rather
+ * than predicting its resulting state.
  */
 import {
+  ExtensionsError,
   type ExtensionsChangedEvent,
+  type PluginKeyTarget,
   type ExtensionsInventory,
   type ServerProviders,
   WS_METHODS,
@@ -23,6 +21,11 @@ import * as Stream from "effect/Stream";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
+import { resolveBrandIcon } from "./BrandIcons.ts";
+import { AccountsService } from "../accounts/AccountsService.ts";
+import { PluginKeyBindings, pluginKeyAccountsEligibilityKey } from "./PluginKeyBindings.ts";
+import { readPluginKeyTransport } from "./PluginKeyStartup.ts";
+import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
   ConnectorRuntime,
@@ -36,13 +39,11 @@ import {
 } from "./ExtensionsServices.ts";
 
 /**
- * One monotonically increasing revision across every extensions owner:
- * connector and selection changes, Scient plugin changes, newly recorded
- * delivery receipts, and provider changes that alter connector compatibility
- * (instances added or removed, a driver or display name replaced; health and
- * status refreshes are not news).
+ * Use one revision across extension owners and compatibility-changing provider updates.
+ * Health/status refreshes alone must not invalidate the inventory.
  */
 export interface ExtensionsChangeFeedShape {
+  readonly notify: Effect.Effect<void>;
   readonly current: Effect.Effect<number>;
   readonly changes: Stream.Stream<ExtensionsChangedEvent>;
 }
@@ -52,12 +53,29 @@ export class ExtensionsChangeFeed extends Context.Service<
   ExtensionsChangeFeedShape
 >()("t3/scient/extensions/ExtensionsRpcHandlers/ExtensionsChangeFeed") {}
 
-/** The compatibility projection of a provider snapshot, as compared between snapshots. */
+/** Provider capabilities and native inventory; health and discovery timestamps stay out. */
 const providerSupportKey = (providers: ServerProviders): string =>
-  JSON.stringify(connectorProviderSupport(providers));
+  JSON.stringify({
+    support: connectorProviderSupport(providers),
+    native: providers
+      .map((provider) => ({
+        instanceId: provider.instanceId,
+        plugins: provider.plugins?.toSorted((left, right) => left.id.localeCompare(right.id)),
+        mcpServers: provider.mcpServers?.toSorted((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+        workspaces: provider.workspaceSnapshots
+          ?.map((snapshot) => ({
+            cwd: snapshot.cwd,
+            plugins: snapshot.plugins?.toSorted((left, right) => left.id.localeCompare(right.id)),
+          }))
+          .toSorted((left, right) => left.cwd.localeCompare(right.cwd)),
+      }))
+      .toSorted((left, right) => left.instanceId.localeCompare(right.instanceId)),
+  });
 
 /**
- * One element per provider snapshot whose connector compatibility differs from
+ * One element per provider snapshot whose connector support or native inventory differs from
  * the one before it (starting from `initial`).
  */
 export const providerSupportChanges = (
@@ -73,6 +91,8 @@ export const providerSupportChanges = (
 export const changeFeedLayer = Layer.effect(
   ExtensionsChangeFeed,
   Effect.gen(function* () {
+    const keyBindings = yield* Effect.serviceOption(PluginKeyBindings);
+    const accounts = yield* Effect.serviceOption(AccountsService);
     const connectors = yield* ConnectorRuntime;
     const plugins = yield* ScientPluginRegistry;
     const receipts = yield* ExtensionDeliveryReceipts;
@@ -83,23 +103,34 @@ export const changeFeedLayer = Layer.effect(
       providerSupportChanges(yield* providers.getProviders, providers.streamChanges),
       () => undefined,
     );
+    const notify = Ref.updateAndGet(revision, (value) => value + 1).pipe(
+      Effect.flatMap((next) => PubSub.publish(events, { revision: next })),
+      Effect.asVoid,
+    );
     yield* Stream.mergeAll(
       [
         Stream.map(connectors.changes, () => undefined),
         plugins.changes,
+        ...(Option.isSome(keyBindings) ? [keyBindings.value.changes] : []),
+        ...(Option.isSome(accounts)
+          ? [
+              accounts.value.changes.pipe(
+                Stream.map(pluginKeyAccountsEligibilityKey),
+                Stream.changes,
+                Stream.map(() => undefined),
+              ),
+            ]
+          : []),
         Stream.map(receipts.changes, () => undefined),
         supportChanges,
       ],
       { concurrency: "unbounded" },
     ).pipe(
-      Stream.runForEach(() =>
-        Ref.updateAndGet(revision, (value) => value + 1).pipe(
-          Effect.flatMap((next) => PubSub.publish(events, { revision: next })),
-        ),
-      ),
+      Stream.runForEach(() => notify),
       Effect.forkScoped,
     );
     return ExtensionsChangeFeed.of({
+      notify,
       current: Ref.get(revision),
       changes: Stream.fromPubSub(events),
     });
@@ -116,6 +147,7 @@ export const makeExtensionsRpcHandlers = ({
   providerPlugins,
   providerRegistry,
   changeFeed,
+  pluginKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly connectorRuntime: ConnectorRuntimeShape;
   readonly pluginRegistry: ScientPluginRegistryShape;
@@ -124,6 +156,7 @@ export const makeExtensionsRpcHandlers = ({
   readonly providerPlugins: ProviderPluginManagementShape;
   readonly providerRegistry: ProviderRegistryShape;
   readonly changeFeed: ExtensionsChangeFeedShape;
+  readonly pluginKeys?: PluginKeyBindings["Service"] | undefined;
 }) => {
   const traceAttributes = { "rpc.aggregate": "extensions" } as const;
   const inventory = Effect.fn("ExtensionsRpc.inventory")(function* () {
@@ -149,11 +182,114 @@ export const makeExtensionsRpcHandlers = ({
     } satisfies ExtensionsInventory;
   });
 
+  const contents = makePluginContents(providerRegistry, pluginRegistry);
+  const keyStatus = Effect.fn("ExtensionsRpc.keyStatus")(function* (input: PluginKeyTarget) {
+    if (!pluginKeys)
+      return yield* new ExtensionsError({
+        reason: "state-unavailable",
+        message: "Plugin key bindings are unavailable.",
+      });
+    const detail = yield* contents.read({
+      pluginId: input.pluginId,
+      ...(input.agent ? { instanceId: input.agent } : {}),
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+    });
+    const transport = yield* readPluginKeyTransport(providerRegistry, input).pipe(
+      Effect.mapError(
+        () =>
+          new ExtensionsError({
+            reason: "state-unavailable",
+            message: "Could not check this plugin's key destinations.",
+          }),
+      ),
+    );
+    const state = yield* pluginKeys.list(input, detail.requiredKeys, transport.origins);
+    return transport.commandLineBlocked
+      ? { ...state, status: "needs-key" as const, commandLineBlocked: true }
+      : state;
+  });
+  const keyMutation = Effect.fn("ExtensionsRpc.keyMutation")(function* (
+    input: PluginKeyTarget & {
+      readonly envName: string;
+      readonly accountRef?: import("@t3tools/contracts").VaultSecretRef;
+    },
+  ) {
+    if (!pluginKeys)
+      return yield* new ExtensionsError({
+        reason: "state-unavailable",
+        message: "Plugin key bindings are unavailable.",
+      });
+    if (input.accountRef) {
+      const status = yield* keyStatus(input);
+      if (!status.keys.some((key) => key.envName === input.envName))
+        return yield* new ExtensionsError({
+          reason: "invalid-input",
+          message: "This key is not declared by the installed plugin.",
+        });
+      yield* pluginKeys.bind({
+        ...(input.agent ? { agent: input.agent } : {}),
+        pluginId: input.pluginId,
+        envName: input.envName,
+        accountRef: input.accountRef,
+      });
+    } else yield* pluginKeys.unbind(input);
+    return yield* keyStatus(input);
+  });
   return WsExtensionsRpcGroup.of({
+    [WS_METHODS.extensionsPluginKeys]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginKeys, keyStatus(input), traceAttributes),
+    [WS_METHODS.extensionsPluginKeyBind]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginKeyBind, keyMutation(input), traceAttributes),
+    [WS_METHODS.extensionsPluginKeyUnbind]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginKeyUnbind, keyMutation(input), traceAttributes),
+    [WS_METHODS.extensionsBrandIcon]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsBrandIcon,
+        Effect.sync(() => ({
+          icons: Object.fromEntries(
+            input.names.flatMap((name) => {
+              const icon = resolveBrandIcon(name);
+              return icon === undefined ? [] : [[name, icon]];
+            }),
+          ),
+        })),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsPluginContents]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginContents, contents.read(input), traceAttributes),
+    [WS_METHODS.extensionsSkillDocument]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsSkillDocument,
+        contents.document(input),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsList]: () =>
       observeRpcEffect(WS_METHODS.extensionsList, inventory(), traceAttributes),
     [WS_METHODS.extensionsSubscribeChanges]: () =>
-      observeRpcStream(WS_METHODS.extensionsSubscribeChanges, changeFeed.changes, traceAttributes),
+      observeRpcStream(
+        WS_METHODS.extensionsSubscribeChanges,
+        Stream.unwrap(
+          Effect.gen(function* () {
+            for (const provider of yield* providerRegistry.getProviders) {
+              if (!provider.enabled) continue;
+              const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+                provider.instanceId,
+              );
+              if (actions?.store?.changes)
+                yield* actions.store.changes.pipe(
+                  Stream.runForEach(() => changeFeed.notify),
+                  Effect.forkScoped,
+                );
+              if (actions?.refreshInventory)
+                yield* actions
+                  .refreshInventory({ force: false })
+                  .pipe(Effect.ignore, Effect.forkScoped);
+            }
+            return changeFeed.changes;
+          }),
+        ),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsConnectorAdd]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorAdd,
@@ -192,6 +328,54 @@ export const makeExtensionsRpcHandlers = ({
       ),
     [WS_METHODS.extensionsDiscoverCatalog]: () =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverCatalog, discover.catalog(), traceAttributes),
+    [WS_METHODS.extensionsProviderStoreSearch]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsProviderStoreSearch,
+        Effect.gen(function* () {
+          const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+            input.instanceId,
+          );
+          if (!actions?.store || (yield* actions.isRetired))
+            return yield* new ExtensionsError({
+              reason: "unsupported",
+              message: "This agent has no available plugin store.",
+            });
+          return yield* actions.store.search(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ExtensionsError({
+                  reason: "state-unavailable",
+                  message: cause.message,
+                }),
+            ),
+          );
+        }),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsProviderStoreEntry]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsProviderStoreEntry,
+        Effect.gen(function* () {
+          const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+            input.instanceId,
+          );
+          if (!actions?.store || (yield* actions.isRetired))
+            return yield* new ExtensionsError({
+              reason: "unsupported",
+              message: "This agent has no available plugin store.",
+            });
+          return yield* actions.store.entry(input.entryId).pipe(
+            Effect.mapError(
+              () =>
+                new ExtensionsError({
+                  reason: "not-found",
+                  message: "This plugin is no longer available.",
+                }),
+            ),
+          );
+        }),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsDiscoverEntry]: (input) =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverEntry, discover.entry(input), traceAttributes),
     [WS_METHODS.extensionsPluginInstall]: (input) =>

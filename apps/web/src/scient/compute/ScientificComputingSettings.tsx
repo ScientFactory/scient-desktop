@@ -256,6 +256,7 @@ function LanguageRuntimeSummary({
   };
   const operationId = runtime.status?.operation?.operationId ?? null;
   const previousOperationId = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads runtime state over the environment connection when a managed operation ends
   useEffect(() => {
     if (previousOperationId.current !== null && operationId === null) void onRefresh();
     previousOperationId.current = operationId;

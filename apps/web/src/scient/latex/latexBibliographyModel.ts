@@ -325,8 +325,7 @@ function publishedManualEntries(source: string) {
   const clean = latexWithoutComments(source);
   const entries: BibliographyPublicationEntry[] = [];
   const containers = /\\begin\s*\{thebibliography\}\s*\{/gu;
-  let opening: RegExpExecArray | null;
-  while ((opening = containers.exec(clean))) {
+  while (containers.exec(clean)) {
     const widthEnd = groupEnd(clean, containers.lastIndex - 1);
     if (widthEnd < 0) continue;
     const ending = /\\end\s*\{thebibliography\}/gu;

@@ -117,13 +117,8 @@ function droidModelsFromSettings(
 }
 
 /**
- * Builds the provider model list from one config-options snapshot, taken
- * when the session starts. Only the snapshot's currently selected model (the
- * default) carries an observed reasoning-effort
- * ladder (Droid refreshes ladders asynchronously after each selection);
- * other models stay listed with unknown (`null`) capabilities until they are
- * selected. Known-empty is reserved for a model that was selected and
- * genuinely exposed no reasoning-effort option.
+ * Only the selected model has an observed effort ladder. Keep others unknown (null), reserving
+ * known-empty for selected models that genuinely expose no option.
  */
 function buildDroidDiscoveredModelsFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
@@ -168,14 +163,8 @@ function buildDroidDiscoveredModelsFromConfigOptions(
 const DROID_ACP_MODEL_WALK_TIMEOUT_MS = 8_000;
 
 /**
- * Classifies the Droid-specific unauthenticated signal surfaced by
- * `session/new`: JSON-RPC `-32000` with an "Authentication required"
- * message. Verified against a real `@factory/cli` binary by the probe test.
- * The code alone is NOT sufficient: `-32000` is the generic server-error
- * range, so a protocol defect or internal Factory error must fall through to
- * the generic startup-failure branch instead of masquerading as a sign-in
- * prompt. Message OR code+message keeps the match scoped while tolerating
- * minor wording drift around the required phrase.
+ * JSON-RPC -32000 alone is generic and cannot prove unauthenticated state. Require the
+ * Authentication required message so internal/protocol failures do not become sign-in prompts.
  */
 export function isDroidAuthenticationRequiredError(error: unknown): boolean {
   const candidates: Array<unknown> = [error];
@@ -260,13 +249,9 @@ const makeDroidAcpProbeRuntime = Effect.fn("DroidProvider.makeDroidAcpProbeRunti
 });
 
 /**
- * Passive ACP probe over one disposable session: read the model
- * inventory from the session-setup config options, then walk every catalog
- * entry to observe its own reasoning-effort ladder (restoring the original
- * selection afterwards, inside `discoverDroidModels`). The walk is
- * best-effort and bounded: if it fails or times out, the snapshot inventory
- * stands with per-model ladders unknown rather than wrong — models never
- * disappear because a ladder could not be observed.
+ * Observe ladders by selecting each model and restore the original selection. On timeout/failure,
+ * retain the snapshot inventory with unknown ladders; missing effort evidence must not hide usable
+ * models.
  */
 const probeAndDiscoverDroidViaAcp = (
   droidSettings: DroidSettings,

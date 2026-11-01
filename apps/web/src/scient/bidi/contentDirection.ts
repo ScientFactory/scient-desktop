@@ -137,12 +137,8 @@ export function resolveMarkdownDirectionHint(markdown: string): FixedContentDire
 }
 
 /**
- * Resolves one stable base direction for a complete Markdown message.
- *
- * Automatic mode is intentionally resolved here instead of delegated to
- * `dir="auto"` on every rendered element. The browser's auto mode chooses a
- * direction independently for each block, so a Hebrew list beginning with an
- * English abbreviation can otherwise become an LTR list inside an RTL reply.
+ * Resolve one message-wide auto direction instead of per-element dir=auto; an English abbreviation
+ * must not turn a Hebrew list LTR inside an RTL reply.
  */
 export function resolveMarkdownDirection(
   markdown: string,
@@ -163,12 +159,8 @@ export function resolveMarkdownDirection(
 }
 
 /**
- * Resolves the message base during a streaming response.
- *
- * Automatic mode uses a stable seed for the lifetime of one assistant
- * message. The preceding user message is preferred because the first model
- * token is often an English label or acronym. Completed messages are resolved
- * from their full text, preserving the normal dominant-language rule.
+ * Seed streaming direction from the preceding user message because early model tokens can be
+ * English labels. Resolve completed messages from their full dominant-language content.
  */
 export function resolveStreamingMarkdownDirection(input: {
   readonly markdown: string;
@@ -347,13 +339,9 @@ export function resolveTableColumnDirectionFromCounts(
 }
 
 /**
- * Normalizes only obvious right-flow arrows in a message whose base direction
- * is RTL. The renderer additionally excludes technical and non-prose nodes.
- *
- * Arrow glyphs are not Unicode-mirrored by `dir="rtl"`, but arrows also carry
- * scientific meaning. Requiring whitespace boundaries and nearby RTL text
- * keeps this presentation fallback conservative; callers must still exclude
- * code, links, and other technical content before invoking it.
+ * Arrows do not mirror under RTL and may carry scientific meaning. Require whitespace boundaries
+ * and nearby RTL text, and exclude code/links/technical nodes before applying this conservative
+ * presentation fallback.
  */
 export function findRtlFlowArrowSpans(text: string): ReadonlyArray<RtlFlowArrowSpan> {
   if (!containsStrongRtl(text)) return [];
@@ -411,13 +399,8 @@ export function normalizeRtlFlowArrows(text: string): string {
 }
 
 /**
- * Resolves the direction of an unlabelled/plain-text copy box.
- *
- * This deliberately has a much narrower job than message direction. It does
- * not inspect adjacent messages, strip paths, score words, or retain a
- * streaming history. Source-code fences always remain LTR; plain text uses
- * its own content when unambiguous and the conversation mode only for mixed
- * content.
+ * Code fences stay LTR. Resolve plain copy boxes from their own unambiguous content, using
+ * conversation mode only for mixed text; do not inherit adjacent-message or streaming heuristics.
  */
 export function resolvePlainTextBoxDirection(input: {
   readonly code: string;

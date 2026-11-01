@@ -135,9 +135,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
       withWatermark: (turnId, watermark, use) =>
         flushLock.withPermit(
           Effect.suspend(() =>
-            (watermarks.get(turnId) ?? 0) === watermark
-              ? Effect.map(use, Option.some)
-              : Effect.succeed(Option.none()),
+            (watermarks.get(turnId) ?? 0) === watermark ? Effect.asSome(use) : Effect.succeedNone,
           ),
         ),
       append: ({ turnId, itemId, delta }) =>

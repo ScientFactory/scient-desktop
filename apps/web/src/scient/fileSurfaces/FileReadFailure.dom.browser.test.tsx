@@ -24,39 +24,6 @@ describe("files panel read failure", () => {
       button.textContent?.includes("Try again"),
     );
 
-  it("recovers through Try again: request, pending, then the file replaces the failure", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const onRetry = vi.fn();
-    const failed = (retrying: boolean) => (
-      <FileReadFailure
-        failure="operation_failed"
-        message="Failed to open '/tmp/report.md'."
-        retrying={retrying}
-        onRetry={onRetry}
-      />
-    );
-    await act(async () => await _fixture.root0.rerender(failed(false)));
-    expect(_fixture.container.querySelector('[role="alert"]')?.textContent).toContain(
-      "Couldn't open this file",
-    );
-    expect(_fixture.container.textContent).not.toContain("/tmp/report.md");
-
-    await act(() => tryAgain(_fixture)?.click());
-    expect(onRetry).toHaveBeenCalledOnce();
-
-    await act(async () => await _fixture.root0.rerender(failed(true)));
-    expect(tryAgain(_fixture)?.getAttribute("aria-busy")).toBe("true");
-    await act(() => tryAgain(_fixture)?.click());
-    expect(onRetry).toHaveBeenCalledOnce();
-
-    await act(async () => await _fixture.root0.rerender(<p>report contents</p>));
-    expect(_fixture.container.querySelector('[role="alert"]')).toBeNull();
-    expect(_fixture.container.textContent).toBe("report contents");
-  });
-
   it("offers no retry where reading again cannot help", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

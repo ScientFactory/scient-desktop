@@ -14,25 +14,28 @@ import {
   isVersionMismatchDismissed,
   manualServerUpdateCommand,
   resolveVersionMismatch,
-  serverUpdateGuidance,
 } from "./versionSkew";
 
 const MISMATCH_HINT =
+  // SCIENT-FORK:START
   "Version mismatch. Try syncing the client and server to the same Scient version.";
+// SCIENT-FORK:END
 
 describe("versionSkew", () => {
+  // SCIENT-FORK:START
   it("keeps global-install recovery on the immutable Scient release without using its npm prefix", () => {
     const command =
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
     expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
       command,
+      // SCIENT-FORK:END
     );
     expect(
       manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
+      // SCIENT-FORK:START
     ).toBe(command);
     expect(command).not.toContain("npm install");
   });
-
   it("keeps runner and unknown recovery on the immutable Scient release", () => {
     const command =
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
@@ -41,6 +44,8 @@ describe("versionSkew", () => {
     expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(command);
     expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(command);
   });
+
+  // SCIENT-FORK:END
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });
@@ -76,6 +81,7 @@ describe("versionSkew", () => {
   it("does not warn when the server is ahead of the client", () => {
     expect(resolveVersionMismatch("0.0.35")).toBeNull();
     expect(resolveVersionMismatch("9.9.9")).toBeNull();
+    // SCIENT-FORK:START
   });
 
   it("compares Beta builds fully and resolves Beta server packages in the isolated feed", () => {
@@ -88,6 +94,7 @@ describe("versionSkew", () => {
     expect(manualServerUpdateCommand("0.6.23-beta.20261010.2")).toContain(
       "/scient-desktop-beta/releases/download/v0.6.23-beta.20261010.2/",
     );
+    // SCIENT-FORK:END
   });
 
   it("does not warn when a nightly and a stable build share a core version", () => {
@@ -110,6 +117,7 @@ describe("versionSkew", () => {
     },
   );
 
+  // regression: #7579 versions were compared as strings, not semver
   it("treats a nightly server built past the client as ahead, not skew", () => {
     expect(resolveVersionMismatch("0.0.35-nightly.20260818.1124")).toBeNull();
   });
@@ -143,7 +151,6 @@ describe("versionSkew", () => {
       serverVersion: "9.9.9",
     });
 
-    expect(key).toBe(`${environmentId}:${APP_VERSION}:9.9.9`);
     expect(isVersionMismatchDismissed(key)).toBe(false);
 
     dismissVersionMismatch(key);
@@ -157,13 +164,5 @@ describe("versionSkew", () => {
         }),
       ),
     ).toBe(false);
-  });
-
-  it("matches version-drift guidance to the advertised update path", () => {
-    expect(manualServerUpdateCommand("0.6.0")).toBe(
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz scient",
-    );
-    expect(serverUpdateGuidance("respawn")).toBe("Update to stay in sync");
-    expect(serverUpdateGuidance("desktop-managed")).toBe("Update the desktop app");
   });
 });

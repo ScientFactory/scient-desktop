@@ -85,6 +85,7 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
   const runPendingValidationRef = useRef<() => void>(() => undefined);
   const schedulePendingValidationRef = useRef<() => void>(() => undefined);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending validation timer and mounted flag on unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -155,13 +156,16 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
     );
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps runPendingValidationRef holding the latest validation runner
   useLayoutEffect(() => {
     runPendingValidationRef.current = runPendingValidation;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps schedulePendingValidationRef holding the latest scheduler
   useLayoutEffect(() => {
     schedulePendingValidationRef.current = schedulePendingValidation;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules deferred fence validation tracked in refs and a timer
   useEffect(() => {
     isNearViewportRef.current = isNearViewport;
     const previous = previousInputRef.current;

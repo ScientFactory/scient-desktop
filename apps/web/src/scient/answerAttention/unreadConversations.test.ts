@@ -39,7 +39,14 @@ const count = (
   threads: ReadonlyArray<ReturnType<typeof thread>>,
   localVisits: Record<string, string> = {},
   serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig> = configs,
-) => countUnreadConversations({ threads, localVisits, serverConfigs, now });
+) =>
+  countUnreadConversations({
+    threads,
+    localVisits,
+    serverConfigs,
+    now,
+    delegatedUnderParent: new Set(),
+  });
 const key = (id: string, environmentId = local) =>
   scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(id)));
 

@@ -16,7 +16,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
-import { isCurrentPreviewRuntimeTab, previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { waitForNavigationReadiness } from "./htmlPdfNavigationReadiness";
 import { readThreadPreviewState, useThreadPreviewState } from "~/previewStateStore";
@@ -182,7 +182,7 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
         current?.tabId === tabId &&
         preview.sessions[tabId]?.runtime === session.runtime &&
         (lease.owner === "server" || preview.desktopByTabId[tabId]?.hasWebContents) &&
-        isCurrentPreviewRuntimeTab(latest.threadRef, preview.serverEpoch, tabId, runtimeTabId),
+        previewRuntimeTabId(latest.threadRef, preview.serverEpoch, tabId) === runtimeTabId,
       );
     };
     const isCurrent = () => {
@@ -263,6 +263,7 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
     }
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the PDF update queue while mounted and disposes it on unmount
   useEffect(() => {
     const queue = createHtmlPdfUpdateQueue(performUpdate);
     updateQueueRef.current = queue;
@@ -273,6 +274,7 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forwards source-file watch events to the PDF update queue
   useEffect(() => {
     if (!fileChange || lastFileChangeRef.current === fileChange) return;
     lastFileChangeRef.current = fileChange;
@@ -281,6 +283,7 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
     updateQueueRef.current?.schedule(false);
   }, [fileChange, relation?.artifactId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forwards manual update requests from the source store to the PDF update queue
   useEffect(() => {
     const requestId = relation?.manualRequestId ?? 0;
     if (requestId === lastManualRequestRef.current) return;
@@ -288,6 +291,7 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
     updateQueueRef.current?.schedule(true, 0);
   }, [relation?.manualRequestId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports a failed source-file watch to the source store
   useEffect(() => {
     if (fileChangeResult._tag !== "Failure" || !relation?.artifactId) return;
     useHtmlPdfSourceStore

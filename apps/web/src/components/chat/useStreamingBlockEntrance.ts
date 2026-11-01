@@ -3,11 +3,8 @@ import { observeResize } from "~/lib/observeResize";
 import { motionClock } from "./motionClock";
 
 /**
- * A streaming answer is revealed as one continuous flow, even though providers
- * send it a paragraph at a time: lines appear top to bottom at a steady pace,
- * a little lighter, and the full tone follows one line behind. The first lines
- * wait a moment, so the next paragraphs are usually in hand and the flow never
- * stops and starts. Masking only (`.streamed-reveal`): nothing moves.
+ * Mask streaming lines without moving content. Briefly delay the start to buffer provider paragraph
+ * bursts and avoid a stop-start reveal.
  */
 const REVEAL_BUFFER_MS = 1000;
 const REVEAL_LINES_PER_SECOND = 4;
@@ -137,9 +134,11 @@ export function useStreamingBlockEntrance(
   messageId: string | null | undefined,
 ) {
   const streamingRef = useRef(isStreaming);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps streamingRef current with isStreaming for the reveal loop
   useLayoutEffect(() => {
     streamingRef.current = isStreaming;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the line-by-line reveal: rAF loop, mutation/resize observers and CSS variable writes on the message DOM node
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root || !messageId || typeof window === "undefined") return;

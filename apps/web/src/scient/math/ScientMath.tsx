@@ -1,7 +1,8 @@
-import { Suspense, use } from "react";
+import { Suspense, use, useLayoutEffect, useRef, useState } from "react";
 
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { LRUCache } from "~/lib/lruCache";
+import { observeResize } from "~/lib/observeResize";
 
 import "./scient-math.css";
 
@@ -39,12 +40,9 @@ export function renderCachedScientMath(
 }
 
 /**
- * What highlight-and-copy emits for a math node: the dollar-form source, so a
- * copied message re-renders as the same math (`markdown-clipboard.ts` returns
- * `data-markdown-copy` verbatim instead of walking KaTeX's DOM). Both modes
- * use `$$`: it re-renders unconditionally, while a single-dollar form would
- * be subject to the guarded tokenizer's plausibility rules on paste. The
- * newline framing keeps display math a block.
+ * Copy both inline and display math with double dollars so paste bypasses single-dollar
+ * plausibility guards. Frame display source with newlines to preserve block intent; do not copy
+ * KaTeX DOM.
  */
 export function mathMarkdownCopySource(tex: string, displayMode: boolean): string {
   return displayMode ? `$$\n${tex}\n$$\n\n` : `$$${tex}$$`;
@@ -58,15 +56,33 @@ interface ScientMathProps {
 }
 
 // SCIENT-FORK:START — shared clipboard metadata and keyboard access stay on the Scient surface.
-function mathSurfaceProps(tex: string, displayMode: boolean, focusable: boolean) {
+/** Math is reading, not a control: only a formula too wide to show needs keyboard scrolling. */
+function useMathOverflow<T extends HTMLElement>(focusable: boolean, content: string) {
+  const ref = useRef<T>(null);
+  const [overflows, setOverflows] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures rendered math against its box, which only the browser knows
+  useLayoutEffect(() => {
+    const surface = ref.current;
+    if (!focusable || !surface) return;
+    const measure = () => setOverflows(surface.scrollWidth > surface.clientWidth);
+    measure();
+    // Fonts and streamed TeX change the formula's width without resizing its box.
+    const formula = surface.firstElementChild;
+    return observeResize(formula ? [surface, formula] : surface, measure);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- New content replaces the formula element, so it needs a new measure and observer.
+  }, [focusable, content]);
+  return { ref, scrollable: focusable && overflows };
+}
+
+function mathSurfaceProps(tex: string, displayMode: boolean, scrollable: boolean) {
   return {
     className: displayMode ? "scient-math-display" : "scient-math-inline",
     dir: "ltr" as const,
     "data-markdown-math": displayMode ? "display" : "inline",
     "data-markdown-copy": mathMarkdownCopySource(tex, displayMode),
-    role: focusable ? "group" : undefined,
-    tabIndex: focusable ? 0 : undefined,
-    "aria-label": focusable
+    role: scrollable ? "group" : undefined,
+    tabIndex: scrollable ? 0 : undefined,
+    "aria-label": scrollable
       ? displayMode
         ? "Scroll display equation"
         : "Scroll inline equation"
@@ -76,7 +92,8 @@ function mathSurfaceProps(tex: string, displayMode: boolean, focusable: boolean)
 
 /** Loading and unsupported TeX retain the same atomic source-copy surface. */
 function ScientMathLiteral({ tex, displayMode, focusable }: Omit<ScientMathProps, "isStreaming">) {
-  return <code {...mathSurfaceProps(tex, displayMode, focusable)}>{`$$${tex}$$`}</code>;
+  const { ref, scrollable } = useMathOverflow<HTMLElement>(focusable, tex);
+  return <code ref={ref} {...mathSurfaceProps(tex, displayMode, scrollable)}>{`$$${tex}$$`}</code>;
 }
 
 function ScientMathHtml({
@@ -85,10 +102,12 @@ function ScientMathHtml({
   displayMode,
   focusable,
 }: Omit<ScientMathProps, "isStreaming"> & { html: string }) {
+  const { ref, scrollable } = useMathOverflow<HTMLSpanElement>(focusable, html);
   // KaTeX's escaped, untrusted-command-disabled output is the only injected markup.
   return (
     <span
-      {...mathSurfaceProps(tex, displayMode, focusable)}
+      ref={ref}
+      {...mathSurfaceProps(tex, displayMode, scrollable)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

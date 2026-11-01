@@ -1,10 +1,6 @@
-// Delivery of committed composer dictation to the draft it was started from.
-//
-// The origin is fixed at the stop click. Delivery never reads the route or the
-// visible composer to choose a destination: it looks up the endpoint that the
-// origin's own composer registered, and otherwise writes to the origin's draft
-// in the store. Foreground Send happens only through that registered endpoint,
-// re-checked in the frame that submits.
+// Fix the origin at stop; never choose a destination from the current route/composer. Deliver
+// through the origin's registered endpoint or draft store, and recheck that endpoint in the frame
+// that submits Send.
 
 import type { EnvironmentId } from "@t3tools/contracts";
 

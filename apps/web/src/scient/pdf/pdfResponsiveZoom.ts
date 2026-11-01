@@ -59,9 +59,9 @@ function fitWidthScale(target: PdfResponsiveZoomTarget, containerWidth: number):
   ) {
     return null;
   }
-  // Matches PDF.js's page-width calculation for the reader's default vertical
-  // scroll mode and visible page borders. Keep this with the runtime config.
-  const scale = pdfFitWidthScale(containerWidth, pageView.width / pageView.scale);
+  // Matches PDF.js's page-width calculation with removePageBorders, which uses the
+  // whole clientWidth. Keep this with the runtime config.
+  const scale = pdfFitWidthScale(containerWidth, pageView.width / pageView.scale, 0);
   return scale === null ? null : normalizePdfZoom(scale);
 }
 

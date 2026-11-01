@@ -694,14 +694,11 @@ describe("ProviderRuntimeSection", () => {
     expect(actionMarkup).toContain("text-primary");
   });
 
+  // regression: 2d693058ea fix(providers): install managed runtimes without version confirmation
+  // The section branches on the driver only for Cursor (its CLI naming); every
+  // other driver takes the Codex row's path.
   describe.each([
     { driver: "codex", name: "Codex" },
-    { driver: "claudeAgent", name: "Claude" },
-    { driver: "antigravity", name: "Antigravity" },
-    { driver: "droid", name: "Droid" },
-    { driver: "grok", name: "Grok" },
-    { driver: "opencode", name: "OpenCode" },
-    { driver: "pi", name: "Pi" },
     { driver: "cursor", name: "Cursor" },
   ] as const)("$name one-click managed selection", ({ driver, name }) => {
     const id = ProviderInstanceId.make(driver);
@@ -740,10 +737,10 @@ describe("ProviderRuntimeSection", () => {
       systemVersion,
       olderThanSystem,
     });
+    // The web never reads the plan's version comparison. The older and unknown
+    // rows are the two cases that used to ask for confirmation.
     it.each([
       ["older", "1.3.0", true],
-      ["equal", "1.2.0", false],
-      ["newer", "1.1.0", false],
       ["unknown", null, false],
     ] as const)(
       "starts when the managed version is %s without another decision",

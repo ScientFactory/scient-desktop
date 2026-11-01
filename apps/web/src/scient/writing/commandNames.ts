@@ -20,10 +20,3 @@ export const WRITING_COMMAND_LABELS = {
 } as const;
 
 export type WritingCommandId = keyof typeof WRITING_COMMAND_LABELS;
-
-/** Glyphs whose shape depends on their original line weight. */
-export const WRITING_COMMANDS_KEEPING_ICON_WEIGHT: ReadonlySet<WritingCommandId> = new Set([
-  "bold",
-  "inlineCode",
-  "link",
-]);

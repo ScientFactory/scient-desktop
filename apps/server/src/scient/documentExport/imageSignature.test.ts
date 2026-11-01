@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { hasImageSignature, imageFormatLabel } from "./imageSignature.ts";
+import { hasImageSignature } from "./imageSignature.ts";
 
 const bytes = (...parts: ReadonlyArray<string | ReadonlyArray<number>>) =>
   new Uint8Array(
@@ -34,10 +34,5 @@ describe("image signatures", () => {
     expect(hasImageSignature(bytes([0xff, 0xd8, 0xff]), "image/png")).toBe(false);
     expect(hasImageSignature(bytes("RIFF", [0, 0, 0, 0], "WAVE"), "image/webp")).toBe(false);
     expect(hasImageSignature(bytes("GIF89a"), "image/tiff")).toBe(false);
-  });
-
-  it("names formats for messages", () => {
-    expect(imageFormatLabel("IMAGE/JPEG")).toBe("JPEG");
-    expect(imageFormatLabel("image/tiff")).toBe("image");
   });
 });

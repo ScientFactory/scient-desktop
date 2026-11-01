@@ -236,8 +236,8 @@ const make = Effect.gen(function* () {
     });
   });
   return LatexTikzPreview.of({
-    render: (input) =>
-      gate
+    render: Effect.fn("LatexTikzPreview.render")(function (input) {
+      return gate
         .withPermits(1)(render(input))
         .pipe(
           Effect.catchCause((cause) =>
@@ -245,7 +245,8 @@ const make = Effect.gen(function* () {
               Effect.as(unavailable("The drawing preview is unavailable. Check the LaTeX build.")),
             ),
           ),
-        ),
+        );
+    }),
   });
 });
 

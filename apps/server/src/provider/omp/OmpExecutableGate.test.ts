@@ -156,20 +156,30 @@ describe("OmpExecutableGate", () => {
       // Exactly one of many concurrent activations wins while it is held.
       const latch = yield* Deferred.make<void>();
       const refused = yield* Ref.make(0);
+      // Every contender settles once: it holds the activation or is refused.
+      const settled = yield* Ref.make(0);
+      const allSettled = yield* Deferred.make<void>();
+      const settle = Ref.updateAndGet(settled, (count) => count + 1).pipe(
+        Effect.flatMap((count) =>
+          count === 8 ? Deferred.succeed(allSettled, undefined) : Effect.void,
+        ),
+      );
       const contenders = yield* Effect.forEach(Array.from({ length: 8 }), () =>
         Effect.scoped(
-          gate
-            .acquireActivation(IDENTITY, { target: ompTarget })
-            .pipe(Effect.andThen(Deferred.await(latch))),
+          gate.acquireActivation(IDENTITY, { target: ompTarget }).pipe(
+            Effect.tap(() => settle),
+            Effect.andThen(Deferred.await(latch)),
+          ),
         ).pipe(
-          Effect.tapError(() => Ref.update(refused, (count) => count + 1)),
+          Effect.tapError(() =>
+            Ref.update(refused, (count) => count + 1).pipe(Effect.andThen(settle)),
+          ),
           Effect.exit,
           Effect.forkChild,
         ),
       );
-      for (let turn = 0; turn < 1000 && (yield* Ref.get(refused)) < 7; turn += 1) {
-        yield* Effect.yieldNow;
-      }
+      yield* Deferred.await(allSettled);
+      expect(yield* Ref.get(refused)).toBe(7);
       yield* Deferred.succeed(latch, undefined);
       const activations = yield* Fiber.joinAll(contenders);
       expect(activations.filter(Exit.isSuccess)).toHaveLength(1);

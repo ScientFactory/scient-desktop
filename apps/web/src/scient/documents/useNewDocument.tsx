@@ -125,6 +125,7 @@ function caretInTitle(): boolean {
 
 function useCaretInTitle(enabled: boolean): boolean {
   const [inTitle, setInTitle] = useState(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks document focus and selection events on a per-frame basis to know whether the caret sits in the title
   useEffect(() => {
     if (!enabled) return;
     // Focus moves through `body` between fields; judge once it has landed.
@@ -188,21 +189,25 @@ export function useNewDocument(input: {
   // The document on screen now: work that finishes later puts the caret back
   // only if its document is still the one showing.
   const shown = useRef<string | null>(relativePath);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the shown relative path for async rename handlers to read
   useLayoutEffect(() => {
     shown.current = relativePath;
   }, [relativePath]);
   const onRenamed = useEffectEvent(input.onRenamed);
   // The lease this view shows now, for a rename that started on another one.
   const boundLease = useRef(input.lease);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the bound rename lease for async rename handlers to read
   useLayoutEffect(() => {
     boundLease.current = input.lease;
   });
   const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [, setRetryTick] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the busy-retry timer held in a ref on unmount
   useEffect(() => () => clearTimeout(busyRetry.current), []);
   const cancelBusyRetry = useEffectEvent((..._changes: readonly unknown[]) =>
     clearTimeout(busyRetry.current),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the busy-retry timer when the rename lease changes
   useEffect(() => cancelBusyRetry(input.lease), [input.lease]);
 
   const draft = snapshot?.draftSource ?? null;
@@ -216,6 +221,7 @@ export function useNewDocument(input: {
   // The first edit beyond the title ends the choice of template. Only an edit
   // seen after the untouched document counts: an editor can briefly show what
   // it held before the file was read.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates the new-documents registry when the draft passes its untouched/settled boundaries
   useEffect(() => {
     if (!key || entry?.format !== "latex" || entry.settled || draft === null) return;
     if (untouched && !entry.seenUntouched) newDocuments.update(key, { seenUntouched: true });
@@ -322,11 +328,9 @@ export function useNewDocument(input: {
   };
 
   /**
-   * A new document that is a folder takes its title's name. The open document
-   * is held first, so nothing on its page can change meanwhile; then the files
-   * Scient made move, each only as made, and the open document last. A
-   * definitive refusal may compensate confirmed moves. Any terminal or
-   * unconfirmed outcome stops compensation and keeps the source draft.
+   * Hold the open document before moving owned files, each only as created, and move the document
+   * last. Compensate confirmed moves only after a definitive refusal; terminal/unknown outcomes
+   * stop compensation and retain the source draft.
    */
   const moveFolderToTitle = useEffectEvent(async (stem: string) => {
     if (!key || !entry || !lease || !snapshot || !input.moveInPlace) return;
@@ -406,6 +410,7 @@ export function useNewDocument(input: {
     );
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- performs the title-driven file rename or folder move over the workspace connection once the title is saved
   useEffect(() => {
     if (!ready || renaming.current || !key || !entry || !lease || !snapshot) return;
     const stem = newDocumentStem(savedTitle);
@@ -481,11 +486,8 @@ export function useNewDocument(input: {
   });
 
   /**
-   * Into or out of a template that is a folder: the document is made again in
-   * its new place, the tab follows it there, and its old place is removed while
-   * still exactly as made; the files it made go only once the document itself
-   * is gone. Bound to the document it started on, whatever shows meanwhile.
-   * Returns the document's new place, or null.
+   * Bind replacement to the starting document despite navigation. Remove the old document only
+   * while unchanged, and remove its companions only after the document is gone.
    */
   const relocate = async (
     document: {

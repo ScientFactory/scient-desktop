@@ -30,6 +30,7 @@ export const SCIENT_SKILL_DELIVERY = {
   codex: "mcp",
   cursor: "mcp",
   droid: "mcp",
+  fx: "mcp",
   grok: "mcp",
   muse: "mcp",
   opencode: "mcp",

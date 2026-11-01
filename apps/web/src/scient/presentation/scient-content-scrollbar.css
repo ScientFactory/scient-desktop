@@ -1,8 +1,10 @@
 /* Math, code, and data surfaces share the same quiet scrollbar presentation. */
 .scient-content-scrollbar,
 .scient-math-display,
+.scient-math-inline,
 .scient-markdown-document .tableWrapper,
 .chat-markdown .chat-markdown-codeblock pre,
+.messages-timeline-scroll .chat-markdown pre,
 .scient-markdown-code-editor .cm-scroller,
 .scient-markdown-code-render,
 .scient-markdown-code-editor.is-source-fallback,
@@ -15,7 +17,23 @@
     scrollbar-width: auto;
     scrollbar-color: auto;
   }
+}
 
+/* So does anything that scrolls inside the chat timeline; the timeline's own
+   scrollbar keeps the app's. Only the WebKit parts apply there, so a surface
+   that hides its native bar (scrollbar-width: none, as scroll areas do) stays hidden. */
+:is(
+  .scient-content-scrollbar,
+  .scient-math-display,
+  .scient-math-inline,
+  .scient-markdown-document .tableWrapper,
+  .chat-markdown .chat-markdown-codeblock pre,
+  .scient-markdown-code-editor .cm-scroller,
+  .scient-markdown-code-render,
+  .scient-markdown-code-editor.is-source-fallback,
+  .scient-markdown-source-island-editor,
+  .messages-timeline-scroll *
+) {
   &::-webkit-scrollbar {
     width: 4px;
     height: 4px;

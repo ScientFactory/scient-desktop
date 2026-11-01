@@ -43,13 +43,11 @@ const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-art
         verbose,
       });
       if (hostPlatform !== "win32" || hostArch !== arch)
-        return yield* Effect.fail(
-          new BuildCommandFailedError({
-            command: "verify Windows desktop artifact",
-            exitCode: 1,
-            stderrTail: `Native verification requires win32/${arch}, not ${hostPlatform}/${hostArch}.`,
-          }),
-        );
+        return yield* new BuildCommandFailedError({
+          command: "verify Windows desktop artifact",
+          exitCode: 1,
+          stderrTail: `Native verification requires win32/${arch}, not ${hostPlatform}/${hostArch}.`,
+        });
       yield* Effect.log(`[verify-windows-desktop-artifact] ${appDir} passed.`);
     }),
   ),

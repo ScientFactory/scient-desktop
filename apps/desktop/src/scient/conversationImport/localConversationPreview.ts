@@ -151,7 +151,6 @@ const isSafePath = (name: string) =>
   !name.startsWith("/") &&
   !name.includes("\\") &&
   !/^[a-zA-Z]:/u.test(name) &&
-  // oxlint-disable-next-line no-control-regex -- ZIP paths must exclude control bytes.
   !/[\u0000-\u001f\u007f]/u.test(name) &&
   name.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 

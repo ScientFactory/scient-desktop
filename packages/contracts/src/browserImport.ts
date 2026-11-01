@@ -11,6 +11,7 @@ const BROWSER_IMPORT_SOURCE_IDS = [
   "arc",
   "helium",
   "firefox",
+  "zen",
   "safari",
 ] as const;
 
@@ -58,6 +59,9 @@ export const BrowserImportInput = Schema.Struct({
   sourceId: BrowserImportSourceId,
   sourceProfileDirectory: TrimmedNonEmptyString,
   targetProfileId: BrowserProfileId,
+  // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+  keepSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  // SCIENT-FORK:END
 });
 export type BrowserImportInput = typeof BrowserImportInput.Type;
 
@@ -66,6 +70,9 @@ export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   sourceId: BrowserImportSourceId,
   sourceProfileDirectory: TrimmedNonEmptyString,
   targetProfileId: BrowserProfileId,
+  // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+  keepSites: BrowserImportInput.fields.keepSites,
+  // SCIENT-FORK:END
 });
 
 export const BrowserImportResult = Schema.Struct({
@@ -79,7 +86,7 @@ const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<Record<BrowserImportUnavailableR
   notInstalled: "Not installed on this machine.",
   needsKeychainApproval: "Needs Keychain access to read its cookies.",
   keychainItemMissing:
-    "No encryption key in your Keychain — sign in to that browser once, then retry.",
+    "No encryption key in your Keychain. Sign in to that browser once, then retry.",
   needsFullDiskAccess:
     "Give Scient Full Disk Access in System Settings → Privacy & Security, then retry.",
   browserRunning: "Quit the browser first so its cookie database can be read.",

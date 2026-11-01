@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
-import { applyPiModelSelection } from "./PiModelSelection.ts";
+import { applyPiModelSelection } from "@t3tools/provider-pi/server/modelSelection";
 import { piDiscoveredModelToServerProviderModel } from "./PiModel.ts";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;

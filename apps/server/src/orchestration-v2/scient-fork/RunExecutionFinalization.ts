@@ -1,11 +1,13 @@
 /** Scient-owned terminal admission and per-subscription cleanup for native execution. */
 import type {
   OrchestrationV2DomainEvent,
+  OrchestrationV2ProviderTurn,
   ProviderTurnId,
   RunAttemptId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -160,3 +162,28 @@ export const isCommittedRootProviderTurn = (
   storedEvent.payload.nodeId === input.rootNode.id &&
   storedEvent.payload.runAttemptId === input.attemptId &&
   storedEvent.payload.providerThreadId === input.providerThread.id;
+
+/** Native terminal observations may settle a committed receipt without replacing its acceptance or usage. */
+export function abandonedCommittedRootTurn(input: {
+  readonly receipt: OrchestrationV2ProviderTurn | null;
+  readonly observed: OrchestrationV2ProviderTurn | null;
+  readonly interrupted: boolean;
+  readonly completedAt: DateTime.Utc;
+}): OrchestrationV2ProviderTurn | undefined {
+  const { receipt, observed } = input;
+  if (!input.interrupted || receipt === null || !["pending", "running"].includes(receipt.status))
+    return undefined;
+  const terminal =
+    observed?.id === receipt.id &&
+    observed.nodeId === receipt.nodeId &&
+    observed.providerThreadId === receipt.providerThreadId &&
+    observed.runAttemptId === receipt.runAttemptId &&
+    ["completed", "failed", "interrupted", "cancelled"].includes(observed.status)
+      ? observed
+      : undefined;
+  return {
+    ...receipt,
+    status: terminal?.status ?? "failed",
+    completedAt: terminal?.completedAt ?? input.completedAt,
+  };
+}

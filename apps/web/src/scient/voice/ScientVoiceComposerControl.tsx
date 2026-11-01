@@ -16,11 +16,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import type { EnvironmentId, VoiceModelId, VoiceModelsSnapshot } from "@t3tools/contracts";
 
-import {
-  ComposerControl,
-  ComposerControlChevron,
-  ComposerControlIcon,
-} from "../../components/chat/ComposerControl.tsx";
+import { ComposerControl, ComposerControlIcon } from "../../components/chat/ComposerControl.tsx";
 import { Badge } from "../../components/ui/badge.tsx";
 import { Button, InlineButton } from "../../components/ui/button.tsx";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover.tsx";
@@ -61,8 +57,6 @@ export interface ScientVoiceComposerControlProps {
   readonly presentation?: "composer" | "compact";
   readonly readyModelOnly?: boolean;
 }
-
-export { EMPTY_TRANSCRIPT_MESSAGE } from "./voiceProcessing.ts";
 
 function formatModelSize(byteSize: number): string {
   return `~${Math.round(byteSize / 1024 / 1024)} MiB`;
@@ -136,7 +130,7 @@ interface VoiceModelSetupPickerProps {
   readonly onSelect: (modelId: VoiceModelId) => void;
 }
 
-export function VoiceModelSetupPicker({
+function VoiceModelSetupPicker({
   disabled,
   snapshot,
   onSelect,
@@ -149,7 +143,6 @@ export function VoiceModelSetupPicker({
       <PopoverTrigger render={<ComposerControl disabled={disabled || models.length === 0} />}>
         <ComposerControlIcon icon={MicIcon} />
         Choose voice model
-        <ComposerControlChevron />
       </PopoverTrigger>
       <PopoverPopup
         align="end"
@@ -245,9 +238,11 @@ export function ScientVoiceComposerControl({
     controller.phase === "recording" ||
     controller.phase === "transcribing" ||
     controller.phase === "correcting";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports recording busy state to the parent callback
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports busy=false to the parent callback on unmount
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const readyModelBecameUnavailable =

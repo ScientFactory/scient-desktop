@@ -36,15 +36,9 @@ const LEVELS: readonly ModelReasoningLevel[] = [
 ];
 type Evidence = Omit<ModelReasoningMetadata, "checkedAt" | "stale" | "source">;
 
-// Reviewed 2026-09-06. Exact IDs only; snapshots/aliases require their own review.
-// https://developers.openai.com/api/docs/models/gpt-6-astra
-// https://developers.openai.com/api/docs/models/gpt-5.6-luna
-// https://developers.openai.com/api/docs/models/gpt-4.1
-// https://developers.openai.com/api/docs/models/gpt-5.1
-// https://developers.openai.com/api/docs/models/gpt-5.2
-// https://developers.openai.com/api/docs/models/gpt-5.4
-// https://developers.openai.com/api/docs/models/gpt-5.5
-// `off` is the normalized spelling of the documented API value `none`.
+// Exact model IDs only; snapshots/aliases require separate review. See
+// https://developers.openai.com/api/docs/models for source contracts. off normalizes the documented
+// API value none.
 const openAiCatalog = new Map<string, Evidence>([
   [
     "gpt-6-astra",
@@ -102,12 +96,9 @@ const openAiCatalog = new Map<string, Evidence>([
     },
   ]),
 ]);
-// https://docs.x.ai/developers/model-capabilities/text/reasoning
-// https://docs.x.ai/developers/models/grok-4.5
-// https://docs.x.ai/developers/models/grok-4.6
-// These exact model pages report context and image input, but no output token limit.
-// xhigh on 4.5 aliases high; do not advertise it as a distinct level.
-// Multi-agent effort controls agent count, so it is not in this reasoning catalog.
+// xAI's exact model pages report context/image input but no output-token limit. In
+// https://docs.x.ai/developers/model-capabilities/text/reasoning, 4.5 xhigh aliases high;
+// multi-agent effort controls agent count and is outside this catalog.
 const xAiCatalog = new Map<string, Evidence>([
   [
     "grok-4.5",

@@ -10,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -132,10 +133,7 @@ export interface AcpSessionRuntimeOptions {
     | string
     | ((initializeResult: EffectAcpSchema.InitializeResponse) => string | undefined)
     | undefined;
-  /**
-   * Antigravity selects its credential source (Google account vs API key) from
-   * the method, so the session must not open first.
-   */
+  /** Authenticate before opening: Antigravity selects its credential source from the method. */
   readonly authenticateEagerly?: boolean;
   /**
    * Extra `_meta` merged into the `authenticate` request. Agents use it to
@@ -145,12 +143,8 @@ export interface AcpSessionRuntimeOptions {
   readonly authenticateMeta?: { readonly [key: string]: Schema.Json };
   // SCIENT-FORK:START
   /**
-   * Always send config writes as requests. `request-confirmed` also requires
-   * the selected value in an authoritative response or config_option_update;
-   * an empty acknowledgement alone cannot provide a model's new option ladder.
-   * Confirmed writes run one at a time, and the first update that arrives
-   * after the write's response settles it, failing at once when it holds
-   * another value (see `confirmConfigWrite`).
+   * Always request config writes; request-confirmed needs an authoritative value, not an empty acknowledgement.
+   * Serialize confirmed writes; the first update after the response settles the write or rejects a different value.
    */
   readonly configOptionTransport?:
     | "request"
@@ -164,9 +158,7 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
-  /**
-   * Redact secrets before logging. A failure closes the runtime.
-   */
+  /** Redact secrets before logging. Failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Disable only for non-interactive discovery that must surface auth-required immediately. */
   readonly authenticateOnAuthRequired?: boolean;
@@ -174,6 +166,7 @@ export interface AcpSessionRuntimeOptions {
     result: EffectAcpSchema.InitializeResponse,
   ) => Effect.Effect<void, never>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -184,10 +177,7 @@ export interface AcpSessionRuntimeOptions {
   readonly onTermination?: (error: EffectAcpErrors.AcpError) => Effect.Effect<void>;
   readonly onOutgoingResponseFailure?: EffectAcpClient.AcpClientOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: EffectAcpClient.AcpClientOptions["onOutgoingResponse"];
-  /**
-   * The model config option accepts them even when the agent does not advertise
-   * them, and the agent validates them instead.
-   */
+  /** Unadvertised model IDs accepted by the config option; the agent validates them. */
   readonly customModels?: ReadonlyArray<string>;
 }
 
@@ -288,12 +278,6 @@ export function parseCgroup2Mounts(
   return mounts;
 }
 
-export function parseCgroup2Mount(
-  contents: string,
-): { readonly mountPoint: string; readonly root: string } | undefined {
-  return parseCgroup2Mounts(contents)[0];
-}
-
 export function wrapCommandForLinuxCgroup(
   lease: AcpLinuxCgroupLease,
   command: string,
@@ -314,13 +298,7 @@ export function wrapCommandForLinuxCgroup(
         '[ "$actual" = "$expected" ] || exit 126',
         "unset ELECTRON_RUN_AS_NODE T3_ACP_CGROUP_WRAPPER",
         "trap 'exit 125' 0",
-        // The trap alone does not cover a failed `exec`: bash — which is
-        // /bin/sh on Arch derivatives — exits 127 without running the EXIT
-        // trap, so a missing agent binary reported "killed by the wrapper"
-        // instead of "never launched". The caller always hands us an absolute
-        // target, so test it as an executable file rather than asking the
-        // shell to resolve it. Name the target before exiting: exit 125 alone
-        // does not say which path was rejected.
+        // Bash can skip EXIT traps on failed exec; reject invalid targets with path and exit 125.
         '[ -f "$1" ] && [ -x "$1" ] || { printf "%s: %s: not an executable file\\n" "$0" "$1" >&2; exit 125; }',
         'exec "$@"',
       ].join("\n"),
@@ -338,8 +316,7 @@ export function resolveLinuxCgroupTargetCommand(
   cwd: string,
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
-  // Match Node spawn PATH fallback when PATH is undefined. An explicitly empty
-  // PATH stays empty (lookup only via empty-segment → cwd).
+  // Match Node spawn: only undefined PATH gets a fallback; empty PATH searches cwd.
   const pathEnv = environment.PATH === undefined ? "/usr/bin:/bin" : environment.PATH;
   const candidates = command.includes(NodePath.sep)
     ? [NodePath.resolve(cwd, command)]
@@ -514,8 +491,7 @@ export function makeLinuxCgroupController(): AcpLinuxCgroupController {
   };
 }
 
-// OS-state polls (cgroup emptiness, process trees) must use wall time. Under
-// TestClock, Effect.sleep never resolves unless the test advances the clock.
+// OS-state polls need wall time; TestClock sleep requires explicit advancement.
 const wallClock = Clock.Clock.defaultValue();
 const withWallClock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, Clock.Clock, wallClock);
@@ -532,19 +508,18 @@ export function terminateLinuxCgroupLease(
     let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
-      try {
-        lease.kill();
-      } catch (cause) {
+      const killed = yield* Effect.try(() => lease.kill()).pipe(Effect.result);
+      if (Result.isFailure(killed)) {
+        const cause = killed.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code !== "ENOENT") return yield* failure("kill", cause);
         if (!lease.exists()) return;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      let populated: boolean;
-      try {
-        populated = lease.populated();
-      } catch (cause) {
+      const populated = yield* Effect.try(() => lease.populated()).pipe(Effect.result);
+      if (Result.isFailure(populated)) {
+        const cause = populated.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code === "ENOENT") {
@@ -553,21 +528,22 @@ export function terminateLinuxCgroupLease(
         }
         return yield* failure("read state for", cause);
       }
-      if (populated) {
+      if (populated.success) {
         lastRemovalFailure = null;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      try {
-        lease.remove();
-        lastRemovalFailure = null;
-      } catch (cause) {
+      const removed = yield* Effect.try(() => lease.remove()).pipe(Effect.result);
+      if (Result.isFailure(removed)) {
+        const cause = removed.failure.cause;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
           return yield* failure("remove", cause);
         }
         lastRemovalFailure = { cause };
+      } else {
+        lastRemovalFailure = null;
       }
       if (!lease.exists()) return;
       yield* Effect.sleep("10 millis");
@@ -876,10 +852,7 @@ export function capturePosixOwnershipLedger(input: {
     input.ledger.set(processIdentityKey(rootIdentity), ownedRoot);
     if (input.root !== undefined) input.root.value = ownedRoot;
   }
-  // Drop non-root ledger entries whose PID is free or whose identity no longer
-  // matches the live process at that PID. Either case can block admission of a
-  // legitimate child after PID reuse. Keep the root reservation even if the
-  // root briefly disappears mid-teardown (finalizer retry still needs it).
+  // Expire stale identities to allow PID reuse; retain the root reservation for finalizer retries.
   for (const [key, owned] of input.ledger.entries()) {
     if (owned.pid === input.rootPid) continue;
     const live = byPid.get(owned.pid);
@@ -937,9 +910,7 @@ export function terminatePosixOwnedProcessTree(input: {
   readonly root?: AcpPosixOwnershipRoot;
   readonly rootPid: number;
 }): Effect.Effect<void, AcpProcessGroupTerminationError> {
-  // This portable fallback can only admit processes whose exact parent chain is
-  // visible before it breaks. A descendant that double-forks before discovery
-  // requires pre-exec cgroup containment for a hard ownership guarantee.
+  // Parent-chain discovery misses early double-forks; only pre-exec cgroups guarantee ownership.
   const ledger = input.ledger ?? new Map<string, AcpOwnedPosixProcess>();
 
   const fail = (detail: string, cause?: unknown) =>
@@ -1021,8 +992,7 @@ export function terminatePosixOwnedProcessTree(input: {
         }
       }
       try {
-        // Linux starttime prevents PID reuse across observations, but Node does
-        // not expose pidfd_send_signal. A final read-to-kill race remains.
+        // Node lacks pidfd_send_signal, so starttime checks still leave a read-to-kill race.
         input.controller.signalProcess(candidate.pid, signal);
         signalled.add(candidate.pid);
       } catch (cause) {
@@ -1145,6 +1115,7 @@ export interface AcpSessionRuntimeStartResult {
 export interface AcpSessionActivationOptions {
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   // SCIENT-FORK:START — Trusted fork-only identity fence.
   /** Trusted same-instance fork fence; never transmitted to the agent. */
   readonly rejectSourceSessionId?: boolean;
@@ -1173,10 +1144,7 @@ export class AcpSessionRuntime extends Context.Service<
     readonly handleUnknownExtNotification: EffectAcpClient.AcpClient["Service"]["handleUnknownExtNotification"];
     readonly handleExtRequest: EffectAcpClient.AcpClient["Service"]["handleExtRequest"];
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
-    /**
-     * Health probes use this to read advertised capabilities without authenticating or opening
-     * a session, so a probe can never start an interactive login or boot MCP servers.
-     */
+    /** Reads capabilities without authentication, session creation, or MCP startup. */
     readonly initialize: () => Effect.Effect<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
@@ -1231,11 +1199,7 @@ export class AcpSessionRuntime extends Context.Service<
       providerId: string,
     ) => Effect.Effect<EffectAcpSchema.DisableProviderResponse, EffectAcpErrors.AcpError>;
     readonly logout: Effect.Effect<EffectAcpSchema.LogoutResponse, EffectAcpErrors.AcpError>;
-    /**
-     * `options.dispatched` settles once the `session/prompt` RPC is registered as the
-     * active prompt, so a caller that forks this effect knows when a later `cancel` will
-     * target this prompt.
-     */
+    /** options.dispatched settles when cancel can target this prompt. */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: {
@@ -1245,19 +1209,10 @@ export class AcpSessionRuntime extends Context.Service<
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
-     * Sends `session/cancel` and waits, at most `timeout`, for the agent to
-     * answer the prompt it cancelled, so that what the agent sends on its way
-     * out (text it had buffered, the final tool states) is received and
-     * handed on before this returns. The prompt ends with the agent's own
-     * answer; one whose request was not written yet is never written. Never
-     * fails: the caller closes the session afterwards.
+     * Cancel waits for the agent's prompt response so buffered text and final tool states are delivered.
+     * Never send a prompt already cancelled before its write. Bound the wait; callers close the session on failure.
      */
     readonly cancelAndAwaitPrompt: (timeout: Duration.Input) => Effect.Effect<void>;
-    readonly processContainment:
-      | "cgroup-v2"
-      | "process-ledger-reduced-guarantee"
-      | "process-group"
-      | "none";
     readonly terminateProcessGroup?: Effect.Effect<void, AcpProcessGroupTerminationError>;
     readonly setMode: (
       modeId: string,
@@ -1266,9 +1221,16 @@ export class AcpSessionRuntime extends Context.Service<
       modelId: string,
       meta?: EffectAcpSchema.SetSessionModelRequest["_meta"],
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Writes a session configuration option. A select value the option does
+     * not list is refused unless `allowUnlistedValue` is set, for agents that
+     * take any value and judge it themselves (a custom model id the agent
+     * does not list).
+     */
     readonly setConfigOption: (
       configId: string,
       value: string | boolean,
+      options?: { readonly allowUnlistedValue?: boolean },
     ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly request: (
@@ -1515,19 +1477,24 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             cause: new Error("Contained ACP command was not found on PATH"),
           });
         });
-  const scopedSpawnCommand =
+  const agentScope = yield* AgentScope;
+  const scopedLaunch =
     linuxCgroupLease !== undefined || spawnCommand.shell
-      ? spawnCommand
-      : {
-          ...(yield* (yield* AgentScope).wrap({
-            command: spawnCommand.command,
-            args: spawnCommand.args,
-            name: "acp",
-            threadId: yield* AgentScopeThreadId,
-            env: { ...process.env, ...options.spawn.env },
-          })),
-          shell: false,
-        };
+      ? undefined
+      : yield* agentScope.wrap({
+          command: spawnCommand.command,
+          args: spawnCommand.args,
+          name: "acp",
+          threadId: yield* AgentScopeThreadId,
+          env: { ...process.env, ...options.spawn.env },
+        });
+  const scopedSpawnCommand =
+    scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
+  // Finalizers run in reverse order: reap detached work after terminating the agent.
+  const scopeUnit = scopedLaunch?.unit;
+  const stopScope =
+    scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+  yield* Scope.addFinalizer(runtimeScope, stopScope);
   const containedSpawnCommand =
     linuxCgroupLease === undefined
       ? scopedSpawnCommand
@@ -1574,6 +1541,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
     );
 
+  // Detached children can keep stdout open, delaying protocol termination.
+  if (scopeUnit !== undefined) {
+    yield* child.exitCode.pipe(
+      Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
+      Effect.forkIn(runtimeScope),
+    );
+  }
+
   const posixOwnershipLedger = new Map<string, AcpOwnedPosixProcess>();
   const posixOwnershipFrontier = new Map<number, AcpOwnedPosixProcess>();
   const posixOwnershipChildQueues = new Map<number, Array<number>>();
@@ -1611,14 +1586,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       catch: (cause) =>
         new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
     });
-    yield* observePosixOwnershipLedgerContinuously({
-      childQueues: posixOwnershipChildQueues,
-      controller: posixController,
-      frontier: posixOwnershipFrontier,
-      ledger: posixOwnershipLedger,
-      root: posixOwnershipRoot,
-      rootPid: Number(child.pid),
-    }).pipe(Effect.forkIn(runtimeScope));
+    // Cgroup teardown needs only the root identity captured above.
+    if (linuxCgroupLease === undefined) {
+      yield* observePosixOwnershipLedgerContinuously({
+        childQueues: posixOwnershipChildQueues,
+        controller: posixController,
+        frontier: posixOwnershipFrontier,
+        ledger: posixOwnershipLedger,
+        root: posixOwnershipRoot,
+        rootPid: Number(child.pid),
+      }).pipe(Effect.forkIn(runtimeScope));
+    }
   }
 
   const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
@@ -1914,6 +1892,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...options.clientCapabilities?.fs,
     },
     terminal: options.clientCapabilities?.terminal ?? false,
+    // ACP v1 agents send session notices only to clients that advertise them; v2 needs no capability.
+    session: { ...options.clientCapabilities?.session, notices: {} },
     ...(options.clientCapabilities?.auth ? { auth: options.clientCapabilities.auth } : {}),
     ...(options.clientCapabilities?.elicitation
       ? { elicitation: options.clientCapabilities.elicitation }
@@ -1937,6 +1917,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     function* (
       configId: string,
       value: string | boolean,
+      allowUnlistedValue: boolean,
     ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
       const snapshot = yield* Ref.get(configOptionsRef);
       const configOptions = options.resolveConfigOptions?.(snapshot) ?? snapshot;
@@ -1970,7 +1951,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         });
       }
       const allowedValues = collectSessionConfigOptionValues(configOption);
-      if (allowedValues.includes(value)) {
+      if (allowUnlistedValue || allowedValues.includes(value)) {
         return;
       }
       if (
@@ -2083,18 +2064,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
-              Option.match(result, {
-                onNone: () =>
-                  Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/load",
-                      detail: "session/load timed out waiting for RPC response or replay idle gap",
-                      cause: undefined,
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
+              Effect.fromOption(
+                result,
+                () =>
+                  new EffectAcpErrors.AcpTransportError({
+                    operation: "call-rpc",
+                    method: "session/load",
+                    detail: "session/load timed out waiting for RPC response or replay idle gap",
+                    cause: undefined,
+                  }),
+              ),
             ),
             Effect.tap((result) =>
               logRequest({
@@ -2129,9 +2108,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const writeConfigOption = (
     configId: string,
     value: string | boolean,
+    writeOptions?: { readonly allowUnlistedValue?: boolean },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-    validateConfigOptionValue(configId, value).pipe(
-      Effect.flatMap(() => getStartedState),
+    validateConfigOptionValue(configId, value, writeOptions?.allowUnlistedValue === true).pipe(
+      Effect.andThen(getStartedState),
       Effect.flatMap((started) =>
         Ref.get(configOptionsRef).pipe(
           Effect.flatMap((configOptions) => {
@@ -2201,8 +2181,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const setConfigOption = (
     configId: string,
     value: string | boolean,
+    writeOptions?: { readonly allowUnlistedValue?: boolean },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-    configWrites.serialize(writeConfigOption(configId, value));
+    configWrites.serialize(writeConfigOption(configId, value, writeOptions));
   // SCIENT-FORK:END
 
   const initializeOnce = Effect.gen(function* () {
@@ -2259,12 +2240,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     initializeResult: EffectAcpSchema.InitializeResponse,
     activationOptions?: AcpSessionActivationOptions,
   ): ReadonlyArray<EffectAcpSchema.McpServer> => {
+    const mcpCapabilities = initializeResult.agentCapabilities?.mcpCapabilities;
     const acpServers = activationOptions?.acpMcpServers ?? options.acpMcpServers ?? [];
-    if (
-      initializeResult.agentCapabilities?.mcpCapabilities?.acp === true &&
-      acpServers.length > 0
-    ) {
+    if (mcpCapabilities?.acp === true && acpServers.length > 0) {
       return acpServers;
+    }
+    const httpServers = activationOptions?.httpMcpServers ?? options.httpMcpServers ?? [];
+    if (mcpCapabilities?.http === true && httpServers.length > 0) {
+      return httpServers;
     }
     return activationOptions?.mcpServers ?? options.mcpServers ?? [];
   };
@@ -2398,10 +2381,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       );
     }
     const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
-      Effect.catch((error) =>
-        !isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false
-          ? Effect.fail(error)
-          : authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
+      Effect.catchIf(
+        (error) =>
+          !(!isAcpAuthenticationRequired(error) || options.authenticateOnAuthRequired === false),
+        (error) => authenticateAfterRequired(error).pipe(Effect.andThen(setupSession)),
       ),
     );
 
@@ -2486,7 +2469,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   const cancelAndAwaitPrompt = Effect.fn("AcpSessionRuntime.cancelAndAwaitPrompt")(
-    function* (timeout: Duration.Input) {
+    function* (_timeout: Duration.Input) {
       const started = yield* getStartedState;
       const activePrompt = yield* Ref.get(activePromptRef);
       // SCIENT-FORK:START — A prompt registered but not yet written (its
@@ -2556,14 +2539,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   return {
-    processContainment:
-      linuxCgroupLease !== undefined
-        ? "cgroup-v2"
-        : options.ownDescendantProcessGroups === true
-          ? "process-ledger-reduced-guarantee"
-          : options.ownDetachedProcessGroup === true
-            ? "process-group"
-            : "none",
     handleRequestPermission: acp.handleRequestPermission,
     handleElicitation: acp.handleElicitation,
     handleMcpConnect: acp.handleMcpConnect,
@@ -2811,25 +2786,22 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           ),
           (activePrompt) =>
             Fiber.join(activePrompt.fiber).pipe(
-              // SCIENT-FORK:START — the process was closed under this prompt:
-              // say why, not how it broke.
+              // SCIENT-FORK:START — config-write closure and runtime teardown keep their failure identity.
               Effect.mapError((error) => configWrites.unreported ?? error),
-              // SCIENT-FORK:END
-              Effect.catchCause((cause) =>
-                options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                  ? // SCIENT-FORK:START — teardown interrupts requests that have not reached the
-                    // transport. Only a live runtime's explicit cancellation is a successful response.
-                    Ref.get(terminationErrorRef).pipe(
-                      Effect.flatMap((error) =>
-                        Option.isSome(error)
-                          ? Effect.fail(error.value)
-                          : Effect.succeed({
-                              stopReason: "cancelled",
-                            } satisfies EffectAcpSchema.PromptResponse),
-                      ),
-                    )
-                  : // SCIENT-FORK:END
-                    Effect.failCause(cause),
+              Effect.catchCauseIf(
+                (cause) =>
+                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+                () =>
+                  Ref.get(terminationErrorRef).pipe(
+                    Effect.flatMap((error) =>
+                      Option.isSome(error)
+                        ? Effect.fail(error.value)
+                        : Effect.succeed({
+                            stopReason: "cancelled",
+                          } satisfies EffectAcpSchema.PromptResponse),
+                    ),
+                  ),
+                // SCIENT-FORK:END
               ),
               Effect.tap(() =>
                 closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),

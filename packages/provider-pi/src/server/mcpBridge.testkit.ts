@@ -69,8 +69,11 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
+    readonly inputSchema?: Record<string, unknown>;
     // SCIENT-FORK:START — Scient Extensions connectors: fixture servers and response encoding.
     readonly connectors?: ReadonlyArray<FixtureConnector>;
+    /** Pi's process arguments, read by the project trust notice. */
+    readonly argv?: ReadonlyArray<string>;
     /** Encodes a JSON-RPC response; undefined keeps the plain `application/json` reply. */
     readonly respond?: (
       message: { readonly jsonrpc: "2.0"; readonly id: number; readonly result: unknown },
@@ -106,7 +109,7 @@ export async function loadMcpBridge(
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
   ].map((tool) => ({
     ...tool,
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: options.inputSchema ?? { type: "object", properties: {} },
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
   const source = NodeModule.stripTypeScriptTypes(
@@ -117,6 +120,9 @@ export async function loadMcpBridge(
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {
+      // SCIENT-FORK:START — the project trust notice reads Pi's arguments.
+      argv: options.argv ?? [],
+      // SCIENT-FORK:END
       env: {
         T3_MCP_URL: "http://fixture.invalid/mcp",
         T3_MCP_BEARER_TOKEN: "fixture-token",

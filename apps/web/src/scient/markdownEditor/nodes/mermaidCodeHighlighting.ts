@@ -7,24 +7,64 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 
+import { createHighlighterCore, type HighlighterCore, type ThemeRegistrationAny } from "shiki/core";
+import { createOnigurumaEngine } from "shiki/engine/oniguruma";
+
 import { resolveDiffThemeName } from "~/lib/diffRendering";
-import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
+import { READABLE_LIGHT_THEME_NAME, readableSyntaxColor } from "~/lib/readableSyntaxTheme";
 
 const highlighterReady = StateEffect.define<void>();
+
+type PierreTheme = (typeof import("@pierre/theme/pierre-light"))["default"];
+
+// resolveDiffThemeName names the readable light palette, a Pierre Diffs theme Shiki cannot load.
+function readableLightTheme(theme: PierreTheme): ThemeRegistrationAny {
+  return {
+    ...theme,
+    name: READABLE_LIGHT_THEME_NAME,
+    tokenColors: theme.tokenColors.map((rule) =>
+      rule.settings.foreground
+        ? {
+            ...rule,
+            settings: {
+              ...rule.settings,
+              foreground: readableSyntaxColor(rule.settings.foreground),
+            },
+          }
+        : rule,
+    ),
+  } as ThemeRegistrationAny;
+}
+
+// The app's shared highlighter has no Mermaid lexer, so Mermaid sources get a
+// small Shiki instance of their own, loaded only when one is edited.
+let mermaidHighlighter: Promise<HighlighterCore> | undefined;
+export function getMermaidHighlighter(): Promise<HighlighterCore> {
+  mermaidHighlighter ??= createHighlighterCore({
+    // Pierre's themes are TextMate themes typed as deeply readonly.
+    themes: [
+      import("@pierre/theme/pierre-light").then((theme) => readableLightTheme(theme.default)),
+      import("@pierre/theme/pierre-dark").then((theme) => theme.default as ThemeRegistrationAny),
+    ],
+    langs: [import("shiki/langs/mermaid.mjs")],
+    engine: createOnigurumaEngine(import("shiki/wasm")),
+  });
+  return mermaidHighlighter;
+}
 // Shiki's Mermaid grammar enters diagram rules inside a Markdown fence.
 // Supply that grammar context without adding it to the editable document.
 const grammarPrefix = "```mermaid\n";
 
-// CodeMirror has no bundled Mermaid parser. Reuse the preview's grammar and
-// palette as decorations; the existing editor still owns text and selection.
+// CodeMirror has no bundled Mermaid parser. Paint Shiki's tokens in the
+// preview's palette as decorations; the editor still owns text and selection.
 export const mermaidCodeHighlighting: Extension = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet = Decoration.none;
-    private highlighter: Awaited<ReturnType<typeof getSyntaxHighlighterPromise>> | null = null;
+    private highlighter: HighlighterCore | null = null;
     private destroyed = false;
 
     constructor(private readonly view: EditorView) {
-      void getSyntaxHighlighterPromise("mermaid")
+      void getMermaidHighlighter()
         .then((highlighter) => {
           if (this.destroyed) return;
           this.highlighter = highlighter;

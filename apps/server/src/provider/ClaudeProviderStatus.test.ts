@@ -145,6 +145,7 @@ it.layer(NodeServices.layer)("Claude provider account status", (it) => {
 
       const snapshot = yield* checkClaudeProviderStatus(
         decodeClaudeSettings({ binaryPath: executablePath }),
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
         () => Effect.succeed(undefined),
         process.env,
         tempDir,

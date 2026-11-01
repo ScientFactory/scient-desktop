@@ -1,3 +1,5 @@
+import { usePluginKeys, pluginKeyStatusLabel } from "./PluginKeys";
+import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
   ConnectorSummary,
   ConnectorTestResult,
@@ -6,11 +8,14 @@ import type {
   ServerProvider,
   ServerProviderMcpServer,
   ServerProviderPlugin,
+  ProviderStoreApp,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
+import { useAtomCommand } from "../../state/use-atom-command";
+import { actOnProviderPlugin } from "./extensionsState";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import {
@@ -18,6 +23,7 @@ import {
   type ConnectorActionsState,
   type PluginActionsState,
   useAddEntry,
+  useActionLock,
   useConnectorActions,
   usePluginActions,
   useProviderPluginActions,
@@ -27,20 +33,30 @@ import { ActionError, SignInBlockedNotice } from "./ExtensionsFeedback";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
 import {
+  providerExtensionAudience,
+  providerServerDisplayName,
   connectorActions,
   connectorStatusText,
   entryName,
+  entryNeedsSetup,
+  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
   TEST_OUTCOME_LABELS,
 } from "./extensionsView";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 /** Navigates to a detail page, for menu items that cannot be links themselves. */
 function useOpenExtension() {
   const navigate = useNavigate();
   return (target: ExtensionTarget) => {
     switch (target.kind) {
+      case "provider-store":
+        return void navigate({
+          to: "/settings/extensions/item/store/$instanceId/$entryId",
+          params: { instanceId: target.instanceId, entryId: target.entryId },
+        });
       case "connector":
         return void navigate({
           to: "/settings/extensions/item/connector/$connectorId",
@@ -151,9 +167,9 @@ function ConnectorMenuItems({
       <MenuItem disabled={actions.locked || !allowed.canTest} onClick={() => void actions.test()}>
         Test
       </MenuItem>
-      {allowed.signIn ? (
+      {connector.auth.type === "oauth" ? (
         <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-          {allowed.signIn === "sign-in" ? "Sign in" : "Reconnect"}
+          {connector.status === "connected" ? "Sign in again" : "Sign in"}
         </MenuItem>
       ) : null}
       <MenuItem
@@ -190,6 +206,9 @@ export function ConnectorItem({
       name={entry ? entryName(entry) : connector.displayName}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
+      facts={entryFacts(entry)
+        .map(([, value]) => value)
+        .join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
@@ -224,34 +243,58 @@ export function EntryItem({ entry }: { readonly entry: DiscoverEntry }) {
 }
 
 function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
+  const { environmentId, callbackOrigin } = useExtensionsEnvironment();
+  const [showToken, setShowToken] = useState(false);
   const actions = useAddEntry(entry);
   const open = useOpenExtension();
   const target: ExtensionTarget = { kind: "server", name: entry.name };
   const name = entryName(entry);
   return (
-    <ExtensionRow
-      target={target}
-      name={name}
-      iconUrl={entry.iconUrl}
-      tagline={entryTagline(entry)}
-      status={actions.busy === "add" ? "Adding…" : null}
-      trailing={
-        entry.installedConnectorId === undefined ? (
-          <Button
-            size="icon-sm"
-            variant="ghost-muted"
-            aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
-            disabled={actions.canAdd && actions.locked}
-            onClick={() => (actions.canAdd ? void actions.add() : open(target))}
-          >
-            <PlusIcon aria-hidden />
-          </Button>
-        ) : null
-      }
-      feedback={
-        hasFeedback(actions.feedback, false) ? <ActionFeedback feedback={actions.feedback} /> : null
-      }
-    />
+    <>
+      <ExtensionRow
+        target={target}
+        name={name}
+        iconUrl={entry.iconUrl}
+        tagline={entryTagline(entry)}
+        facts={entryFacts(entry)
+          .map(([, value]) => value)
+          .join(" · ")}
+        status={actions.busy === "add" ? "Adding…" : null}
+        trailing={
+          entry.installedConnectorId === undefined ? (
+            <Button
+              size="icon-sm"
+              variant="ghost-muted"
+              aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
+              disabled={actions.canAdd && actions.locked}
+              onClick={() =>
+                entryNeedsSetup(entry)
+                  ? setShowToken(true)
+                  : actions.canAdd
+                    ? void actions.add()
+                    : open(target)
+              }
+            >
+              <PlusIcon aria-hidden />
+            </Button>
+          ) : null
+        }
+        feedback={
+          hasFeedback(actions.feedback, false) ? (
+            <ActionFeedback feedback={actions.feedback} />
+          ) : null
+        }
+      />
+      {showToken ? (
+        <AddConnectorDialog
+          open
+          onOpenChange={setShowToken}
+          environmentId={environmentId}
+          callbackOrigin={callbackOrigin}
+          entry={entry}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -320,6 +363,12 @@ export function ProviderPluginItem({
   readonly workspace: string | undefined;
 }) {
   const actions = useProviderPluginActions(provider, label, plugin, workspace);
+  const keyState = usePluginKeys({
+    instanceId: provider.instanceId,
+    pluginId: plugin.id,
+    ...(workspace ? { cwd: workspace } : {}),
+  });
+  const keyStatus = pluginKeyStatusLabel(keyState.data, provider);
   const name = plugin.displayName ?? plugin.name;
   const target: ExtensionTarget = {
     kind: "provider-plugin",
@@ -331,10 +380,33 @@ export function ProviderPluginItem({
     <ExtensionRow
       target={target}
       name={name}
-      tagline={plugin.description ?? `${label} plugin`}
-      status={plugin.enabled ? null : "Off"}
+      audience={providerExtensionAudience(provider, plugin)}
+      tagline={[plugin.description, plugin.sourceLabel ?? `${label} plugin`]
+        .filter(Boolean)
+        .join(" · ")}
+      status={
+        !plugin.enabled
+          ? "Off"
+          : keyStatus
+            ? keyStatus
+            : plugin.apps?.length
+              ? plugin.apps.some((app) => !app.enabled)
+                ? "Disabled in Codex"
+                : plugin.apps.every((app) => app.connected)
+                  ? "Connected"
+                  : "Needs sign-in"
+              : null
+      }
       trailing={
         <ItemMenu name={name} target={target}>
+          {plugin.canSetEnabled ? (
+            <MenuItem
+              disabled={actions.locked}
+              onClick={() => void actions.setEnabled(!plugin.enabled)}
+            >
+              {plugin.enabled ? "Turn off" : "Turn on"}
+            </MenuItem>
+          ) : null}
           {plugin.canUninstall === true ? (
             <MenuItem
               variant="destructive"
@@ -355,7 +427,6 @@ export function ProviderPluginItem({
 
 export function mcpServerSummary(server: ServerProviderMcpServer): string {
   return [
-    "MCP server",
     server.toolCount === undefined
       ? null
       : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`,
@@ -383,14 +454,15 @@ export function ProviderServerItem({
   return (
     <ExtensionRow
       target={target}
-      name={server.name}
+      name={providerServerDisplayName(server)}
+      audience={providerExtensionAudience(provider, server)}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={
         <ItemMenu name={server.name} target={target}>
-          {server.canStartSignIn === true ? (
+          {server.canStartSignIn === true || server.connectUrl ? (
             <MenuItem disabled={actions.locked} onClick={() => void actions.signIn()}>
-              Sign in
+              {server.connectUrl ? "Connect on claude.ai" : "Sign in"}
             </MenuItem>
           ) : null}
         </ItemMenu>
@@ -399,5 +471,59 @@ export function ProviderServerItem({
         hasFeedback(actions.feedback, false) ? <ActionFeedback feedback={actions.feedback} /> : null
       }
     />
+  );
+}
+
+export function ProviderAppConnect({
+  provider,
+  pluginId,
+  app,
+  disabled = false,
+  onConnectionChange,
+}: {
+  readonly provider: ServerProvider;
+  readonly pluginId: string;
+  readonly app: ProviderStoreApp;
+  readonly disabled?: boolean;
+  readonly onConnectionChange?: (() => void) | undefined;
+}) {
+  const { environmentId } = useExtensionsEnvironment();
+  const act = useAtomCommand(actOnProviderPlugin);
+  const waiting = useRef(false);
+  useWindowFocusRefresh(() => {
+    if (!waiting.current) return;
+    waiting.current = false;
+    void act({
+      environmentId,
+      input: {
+        instanceId: provider.instanceId,
+        action: { type: "refresh-inventory", connectionsOnly: true },
+      },
+    }).then(() => onConnectionChange?.());
+  });
+  const lock = useActionLock(
+    JSON.stringify(["provider-app", provider.instanceId, pluginId, app.name]),
+  );
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost-primary"
+        disabled={lock.locked || disabled || !app.enabled}
+        onClick={() =>
+          void lock.signIn(
+            "sign-in",
+            () => {
+              waiting.current = true;
+              return Promise.resolve(app.installUrl ?? null);
+            },
+            null,
+          )
+        }
+      >
+        Connect {app.name}
+      </Button>
+      <ActionFeedback feedback={lock.feedback} />
+    </>
   );
 }

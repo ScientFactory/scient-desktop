@@ -19,6 +19,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Claude from "../Adapters/ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { EventSinkV2 } from "../EventSink.ts";
@@ -77,6 +78,7 @@ it.live(
         const crypto = yield* Crypto.Crypto;
         const path = yield* Path.Path;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const adapter = Claude.makeClaudeAdapterV2({
           crypto,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -172,7 +174,7 @@ it.live(
             subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
-        });
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, processSpawner));
         yield* Effect.gen(function* () {
           const orchestrator = yield* OrchestratorV2;
           const sink = yield* EventSinkV2;

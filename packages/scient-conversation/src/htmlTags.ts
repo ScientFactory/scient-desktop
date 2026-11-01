@@ -1,9 +1,6 @@
 /**
- * A small HTML start-tag scanner for raw HTML inside Markdown. It follows the
- * HTML tokenizer's rules for tag names and attributes: values are read within
- * their own quotes, so text inside one attribute is never taken for another,
- * comments are skipped, and the contents of raw-text elements (`script`,
- * `style`, `textarea`, `title`) are not scanned for tags.
+ * Respect quoted attribute values and skip comments/raw-text element contents so text inside them
+ * cannot masquerade as another tag or attribute.
  */
 
 export interface HtmlStartTag {

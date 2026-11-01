@@ -1,0 +1,461 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "ownedRoots": [
+    "apps/server/src/scient/accounts",
+    "apps/web/src/scient/accounts",
+    "apps/desktop/src/scient/accounts",
+    "apps/server/src/scient/papers"
+  ],
+  "ownedFiles": [
+    "packages/contracts/src/scient/accounts.ts",
+    "packages/contracts/src/scient/accountRpcs.ts",
+    "packages/contracts/src/scient/desktopAccountsBridge.ts",
+    "packages/contracts/src/scient/secrets.ts",
+    "apps/web/src/routes/_chat.settings.accounts.tsx",
+    "packages/contracts/src/clientRpcPermissions.scient.test.ts",
+    "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
+    "packages/shared/src/scientAccountSecretRequest.ts",
+    "packages/shared/src/scientBrowserProfileChoice.ts",
+    "packages/shared/src/scientSignInPage.ts",
+    "apps/mobile/src/state/accounts.ts",
+    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx"
+  ],
+  "accountsDiffSignals": [
+    "scient/accounts",
+    "SCIENT_ACCOUNT_WS_METHODS",
+    "WsAccounts",
+    "AccountsService",
+    "Scient Accounts",
+    "scient_accounts?_"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "packages/contracts/src/browserProfile.ts",
+      "anchor": "SCIENT-FORK:START \u2014 distinguish original browser storage from the new-tab preference.",
+      "purpose": "Name the built-in original browser profile Main while preserving its default id."
+    },
+    {
+      "path": "apps/desktop/src/preload.ts",
+      "anchor": "accounts: makeDesktopAccountsBridge",
+      "purpose": "Expose the desktop Accounts bridge to the application renderer."
+    },
+    {
+      "path": "apps/desktop/src/ipc/DesktopIpcHandlers.ts",
+      "anchor": "yield* installAccountsIpc()",
+      "purpose": "Register Accounts IPC beside voice handlers."
+    },
+    {
+      "path": "apps/desktop/src/preview-pick-preload.ts",
+      "anchor": "installSignInCapture(",
+      "purpose": "Install submitted sign-in capture and login-form reporting in preview guest preloads."
+    },
+    {
+      "path": "apps/desktop/src/preview/Manager.ts",
+      "anchor": "accountsWebContents: requireWebContents",
+      "purpose": "Resolve registered guest contents and bind sessions to profile identities."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserSession.ts",
+      "anchor": "if (persistent) keepSessionCookies(browserSession);",
+      "purpose": "Sign-ins marked as ending with the browser outlive the app."
+    },
+    {
+      "path": "apps/server/src/relay/AgentAwarenessRelay.ts",
+      "anchor": "withAccountRequest(",
+      "purpose": "A sign-in waiting for the user reaches their phone."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
+      "anchor": "<ThreadAccountRequests",
+      "purpose": "The phone answers approvals and shows sign-ins waiting for the user."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/runtimeLayer.ts",
+      "anchor": "Layer.provide(secretRequestStoreLayer),",
+      "purpose": "One-time card answers are encrypted at rest."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserImport/Sources.ts",
+      "anchor": "const counted = (profiles: ReadonlyArray<BrowserImportSourceProfile>) =>",
+      "purpose": "Allow metadata discovery without reading browser cookie counts."
+    },
+    {
+      "path": "scripts/build-desktop-artifact.ts",
+      "anchor": "electronFuses: { enableCookieEncryption: true }",
+      "purpose": "Keep packaged profile cookies encrypted with Electron Safe Storage."
+    },
+    {
+      "path": "apps/desktop/vite.config.ts",
+      "anchor": "src/scient/accounts/loginForm.test.ts",
+      "purpose": "Run Accounts guest DOM verification in the existing isolated preload test project."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
+      "anchor": "Scient Accounts: discover supported Accounts environments.",
+      "purpose": "Show Accounts in the first settings group only on a server that supports its snapshot."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsBreadcrumb.tsx",
+      "anchor": "Scient Accounts: label account settings.",
+      "purpose": "Name the Accounts route in Settings breadcrumbs."
+    },
+    {
+      "path": "apps/web/src/components/settings/settingsSearch.ts",
+      "anchor": "Scient Accounts: place Accounts after Voice.",
+      "purpose": "Index Accounts and password stores, place Accounts after Voice in the first headingless group, and move Diffs & pull requests after Source Control in Code."
+    },
+    {
+      "path": "apps/web/src/components/settings/IntegrationsSettings.tsx",
+      "anchor": "Scient Accounts: reuse the browser import and registration transaction.",
+      "purpose": "Reuse browser import transactions and link to Accounts while preserving the older-server profile panel."
+    },
+    {
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "Scient Accounts: approvals belong to the active thread.",
+      "purpose": "Show account approvals above the active thread composer."
+    },
+    {
+      "path": "apps/web/src/components/preview/PreviewChromeRow.tsx",
+      "anchor": "Scient Accounts: fill and capture stay anchored to this tab.",
+      "purpose": "Anchor desktop sign-in capture and autofill controls to preview chrome."
+    },
+    {
+      "path": "apps/web/src/components/preview/PreviewView.tsx",
+      "anchor": "Scient Accounts: native credentials use the desktop runtime tab id.",
+      "purpose": "Pass the owning environment, thread, runtime tab and profile to preview account controls, and show the profile switcher in place of the profile-name badge."
+    },
+    {
+      "path": "apps/web/src/routeTree.gen.ts",
+      "anchor": "import { Route as ChatSettingsAccountsRouteImport }",
+      "purpose": "Generated registration for Settings Accounts; regenerated from routes without hand edits or fork markers."
+    },
+    {
+      "path": "packages/contracts/src/clientRpcPermissions.ts",
+      "anchor": "Scient Accounts: recheck credential and settings authority at execution.",
+      "purpose": "Require destination settings-write authorization for account mutations, CLI password-store connections and discovery, and credential reads."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "Scient Accounts: service-backed transport.",
+      "purpose": "Mount the Accounts RPC handlers on the shared server service."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "Scient Accounts: encrypted store and shared account service.",
+      "purpose": "Provide one Accounts service for RPC and agent consumers."
+    },
+    {
+      "path": "apps/server/src/auth/RpcAuthorization.ts",
+      "anchor": "Scient Accounts: declare read and settings-write permissions.",
+      "purpose": "Require read or settings-write authority for every Accounts RPC, including CLI store unlock and item discovery."
+    },
+    {
+      "path": "apps/server/src/observability/RpcInstrumentation.ts",
+      "anchor": "Scient Accounts: instrument sensitive account RPCs without payloads.",
+      "purpose": "Label Accounts RPCs, including CLI unlock, without capturing their sensitive inputs."
+    },
+    {
+      "path": "scripts/lib/cli-external-packages.ts",
+      "anchor": "the Accounts 1Password SDK loads WASM",
+      "purpose": "Keep 1Password native and WASM runtime dependencies on disk."
+    },
+    {
+      "path": "third-party-licenses.config.json",
+      "anchor": "\"name\": \"@1password/sdk\"",
+      "purpose": "Supply the SDK and SDK core notices omitted from their npm packages."
+    },
+    {
+      "path": "packages/client-runtime/src/rpc/client.ts",
+      "anchor": "WS_METHODS.accountsSubscribeChanges",
+      "purpose": "Treat the Accounts change feed as a subscription stream in the shared RPC client."
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scient/accounts.ts",
+      "purpose": "Export the fork-owned Accounts contracts."
+    },
+    {
+      "path": "packages/contracts/src/rpc.ts",
+      "anchor": "...SCIENT_ACCOUNT_WS_METHODS",
+      "purpose": "Register the Accounts RPC group and method names."
+    },
+    {
+      "path": "apps/server/src/mcp/McpInvocationContext.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: grant account tools to authenticated provider sessions.",
+      "purpose": "Grant account tools to authenticated provider sessions."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: all provider sessions can use user-granted accounts.",
+      "purpose": "All provider sessions can use user-granted accounts."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: mount account tools on the existing MCP transport.",
+      "purpose": "Mount account tools on the existing MCP transport."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/preview/handlers.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: enforce profile grants at preview discovery and open.",
+      "purpose": "Enforce profile grants at discovery and open, and recheck access before every existing-tab action with safe denials."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/preview/tools.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: declare profile authorization dependencies and safe denials.",
+      "purpose": "Declare profile authorization dependencies and safe denials."
+    },
+    {
+      "path": "packages/contracts/src/previewAutomation.ts",
+      "anchor": "Scient Accounts: server browser supports internal account operations.",
+      "purpose": "Internal account operations use the authenticated browser rail."
+    },
+    {
+      "path": "apps/server/src/preview/ServerBrowser.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: execute account operations over server and desktop CDP sessions.",
+      "purpose": "Execute account operations over server and desktop CDP sessions."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
+      "anchor": "Scient Accounts: provider sessions receive account tools.",
+      "purpose": "Expect the account capability in provider session grants."
+    },
+    {
+      "path": "apps/server/src/serverSettings.ts",
+      "anchor": "Scient Accounts: encrypt only Custom models credentials through the shared vault.",
+      "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
+      "anchor": "coveredBySite",
+      "purpose": "Leave working sign-ins alone when a browser refresh copies cookies."
+    },
+    {
+      "path": "packages/contracts/src/browserImport.ts",
+      "anchor": "keepSites",
+      "purpose": "Carry the sites a refresh must leave alone."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/SecretRequestCard.tsx",
+      "anchor": "isSignInCodeRequest",
+      "purpose": "Let the phone offer a sign-in code in one tap on a card that asks for one."
+    },
+    {
+      "path": "apps/server/src/secrets/SecretRequests.ts",
+      "anchor": "startup must not wait for the keychain",
+      "purpose": "Sweep sealed card answers without holding up startup, and keep a record a locked store can't read yet."
+    },
+    {
+      "path": "packages/contracts/src/ipc.ts",
+      "anchor": "keepSites",
+      "purpose": "Carry the sites a refresh must leave alone through the desktop preview bridge."
+    },
+    {
+      "path": "apps/web/src/appInit.tsx",
+      "anchor": "./scient/accounts/accountWatchers",
+      "purpose": "Start saved sign-in autofill and session checks with the app, whatever the notification settings."
+    },
+    {
+      "path": "apps/web/src/components/ThreadNotificationCoordinator.tsx",
+      "anchor": "../scient/accounts/accountNotifications",
+      "purpose": "Present account approvals and sign-in hand-offs through the existing thread notification path."
+    },
+    {
+      "path": "apps/desktop/src/electron/ElectronShell.ts",
+      "anchor": "const store = openAccountStore(rawUrl, platform);",
+      "purpose": "Open only fixed password-store app targets through the existing shell bridge."
+    },
+    {
+      "path": "apps/web/src/components/settings/BrowserImportWizard.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts shares the browser import quit step.",
+      "purpose": "Reuse the browser quit step in the Accounts browser picker."
+    },
+    {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
+    {
+      "path": "packages/client-runtime/src/secretRequest.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: an Accounts card keeps the key in Accounts.",
+      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, on web and mobile."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: only scient_account_add may open an Accounts card.",
+      "purpose": "Reserve the Accounts card id prefix so request_secret cannot imitate an Accounts card."
+    },
+    {
+      "path": "apps/web/src/components/preview/openPreviewSession.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/web/src/browser/openFileInPreview.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/web/src/components/preview/openTerminalLinkInPreview.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/web/src/scient/browser/BrowserHome.tsx",
+      "anchor": "~/scient/accounts/useAccounts",
+      "purpose": "Show a university's Moodle on the empty tab from the addresses a profile signs in with."
+    },
+    {
+      "path": "apps/web/src/scient/browser/browserShortcuts.ts",
+      "anchor": "~/scient/accounts/sessionDetection",
+      "purpose": "Keep identity providers out of suggested shortcuts, and take the Gmail link from accounts."
+    },
+    {
+      "path": "apps/server/src/provider/ScientAgentCopy.ts",
+      "anchor": "scient_account_add",
+      "purpose": "Agents look in Accounts first and keep a new key there; one-time secrets stay with request_secret."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/PluginKeySessionCache.ts",
+      "anchor": "bindingRevision",
+      "purpose": "Keep Redacted plugin keys in memory per credential, invalidate through the lock-free Accounts epoch and changes feed, and throttle allowed audit only."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/PluginKeyStdioSessions.ts",
+      "anchor": "makeSessionFiles",
+      "purpose": "Reuse Accounts private per-session directory, atomic 0600 writes and startup sweep for plugin-key launch envelopes."
+    },
+    {
+      "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
+      "anchor": "Scient Accounts: scope account grants to one server.",
+      "purpose": "Choose one environment for account state and project grant controls."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ExtensionsLayers.ts",
+      "anchor": "Scient Accounts: migrate and encrypt connector envelopes",
+      "purpose": "Replace plaintext connector credentials with the encrypted Accounts implementation."
+    },
+    {
+      "path": "apps/server/src/scient/ScientWsServices.ts",
+      "anchor": "Scient Accounts: capture the shared owner",
+      "purpose": "Capture the server-lifetime Accounts owner for all WebSocket connections."
+    },
+    {
+      "path": "apps/server/src/customModels.ts",
+      "anchor": "Scient Accounts: linked keys use Custom models' validation",
+      "purpose": "Expose the owning key resolver for Accounts links."
+    },
+    {
+      "path": "packages/contracts/src/scient/desktopBridge.ts",
+      "anchor": "accounts?: DesktopAccountsBridge",
+      "purpose": "Expose the Accounts desktop bridge as a Scient member of the desktop bridge."
+    },
+    {
+      "path": "apps/server/src/mcp/ScientOperationCatalog.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: register account operation definitions.",
+      "purpose": "Register account operation definitions."
+    },
+    {
+      "path": "apps/server/src/mcp/ScientMcpInvocation.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: carry the MCP grant into Scient operations.",
+      "purpose": "Carry the MCP grant into Scient operations."
+    },
+    {
+      "path": "packages/shared/src/scientMcpToolPresentation.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: group account operations in the work log.",
+      "purpose": "Group account operations in the work log."
+    },
+    {
+      "path": "packages/scient-operations/src/operation.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: declare the account operation grant.",
+      "purpose": "Declare the account operation grant."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.scient.test.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: keep credential-policy fixtures complete.",
+      "purpose": "Keep Scient credential-reuse fixtures complete when accounts is granted."
+    },
+    {
+      "path": "scient-extensions-seams.json",
+      "anchor": "Accounts reuses Extensions public-address validation and credential-response redaction.",
+      "purpose": "Record the cross-feature mount for Accounts outbound policy reuse."
+    },
+    {
+      "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
+      "anchor": "\"scient_accounts_list\",",
+      "purpose": "Include the account tools in the eager schema inventory."
+    },
+    {
+      "path": "packages/scient-analytics/src/wireContract.ts",
+      "anchor": "\"accounts\",",
+      "purpose": "Accept Accounts as a settings section in analytics events."
+    },
+    {
+      "path": "apps/server/src/server.test.ts",
+      "anchor": "Scient Accounts: isolate account storage and key handling",
+      "purpose": "Provide a synthetic Accounts owner to the shared server test harness."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
+      "anchor": "Scient Accounts: keep MCP fixtures away",
+      "purpose": "Provide an in-memory Accounts owner to MCP registration tests."
+    },
+    {
+      "path": "apps/server/src/scient/skills/ScientV2SkillTurn.test.ts",
+      "anchor": "Scient Accounts: retain account grants during skill-scope changes.",
+      "purpose": "Keep skill-authority tests complete when every provider session also receives account tools."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorRuntime.ts",
+      "anchor": "const accounts = yield* Effect.serviceOption(AccountsService);",
+      "purpose": "Resolve bound account tokens for each connector request while preserving optional Accounts availability."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorStateStore.ts",
+      "anchor": "storage: Schema.Literals([\"owned\", \"bound\"]),",
+      "purpose": "Persist account bindings as refs without copying their values into owned credentials."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorRuntime.test.ts",
+      "anchor": "describe(\"bound connector credentials\"",
+      "purpose": "Verify live account rotation and loss across connector runtime reloads."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/AddConnectorDialog.tsx",
+      "anchor": "ApiKeyAccountPicker",
+      "purpose": "Offer API-key accounts from the selected environment whose sites match the connector."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/extensionsView.ts",
+      "anchor": "`${kind} from Accounts`",
+      "purpose": "Identify bound connector credentials as Accounts keys in the shared Extensions presentation."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/AddConnectorDialog.browser.test.tsx",
+      "anchor": "binds a matching account without retaining the entered key",
+      "purpose": "Verify account selection drops typed key material and rejects a binding after an endpoint-origin change."
+    },
+    {
+      "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
+      "anchor": "apps/server/src/scient/accounts/AccountsSecretStore.ts",
+      "purpose": "Void provider runtime publications when the store that seals Custom models keys changes."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/PluginKeyBindings.ts",
+      "anchor": "makePluginKeyBindings",
+      "purpose": "Resolve plugin bindings through Accounts without exposing credential values."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ExtensionsRpcHandlers.ts",
+      "anchor": "AccountsService",
+      "purpose": "Invalidate plugin eligibility after account authorization or token metadata changes, excluding usage-only events."
+    },
+    {
+      "path": "scripts/lib/cli-external-packages.scient.test.ts",
+      "anchor": "\"@1password/sdk\"",
+      "purpose": "Expect the 1Password SDK to stay on disk, outside the server bundle."
+    }
+  ]
+}

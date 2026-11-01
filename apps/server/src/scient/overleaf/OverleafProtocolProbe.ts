@@ -8,8 +8,14 @@ import type { SchemaError } from "effect/Schema";
 import type * as Terminal from "effect/Terminal";
 import type * as Prompt from "effect/cli/Prompt";
 import type { OverleafGitError } from "./OverleafGitExecutor.ts";
-import { OverleafGitExecutor, type OverleafGitExecuteResult } from "./OverleafGitExecutor.ts";
+import {
+  isRateLimited,
+  OverleafGitExecutor,
+  type OverleafGitExecuteResult,
+} from "./OverleafGitExecutor.ts";
 import * as Repository from "./OverleafRepository.ts";
+
+const decodeProbeUrl = Schema.decodeOption(Schema.URLFromString);
 
 export interface ProbeObservation {
   readonly name: string;
@@ -48,7 +54,7 @@ export interface ProbeHooks {
 }
 
 export function cloudProbeGitUrl(input: string): string | null {
-  const parsed = Schema.decodeUnknownOption(Schema.URLFromString)(input.trim());
+  const parsed = decodeProbeUrl(input.trim());
   if (Option.isNone(parsed)) return null;
   const url = parsed.value;
   if (
@@ -90,25 +96,32 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
   const category =
     error.reason === "timeout"
       ? "timeout"
-      : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied/iu.test(
-            detail,
-          )
-        ? "authentication-or-access-denied"
-        : /repository not found|project not found|\b404\b/iu.test(detail)
-          ? "project-not-found"
-          : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
-            ? "tls"
-            : /could not resolve|name or service not known/iu.test(detail)
-              ? "dns"
-              : /redirect/iu.test(detail)
-                ? "redirect"
-                : /failed to connect|connection reset|connection refused|network is unreachable/iu.test(
-                      detail,
-                    )
-                  ? "connection"
-                  : /askpass|could not read username|could not read password/iu.test(detail)
-                    ? "credential-prompt"
-                    : "unclassified";
+      : isRateLimited(error)
+        ? "rate-limited"
+        : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied|not authori[sz]ed|\bforbidden\b/iu.test(
+              detail,
+            )
+          ? "authentication-or-access-denied"
+          : // Overleaf answers "remote error: no git access" for a project that does not exist
+            // or has no Git access (found in a live check).
+            /(?:repository|project)\b[^\r\n]*\bnot found\b|\b404\b|\bno git access\b/iu.test(detail)
+            ? "project-not-found"
+            : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
+              ? "tls"
+              : /could not resolve|name or service not known/iu.test(detail)
+                ? "dns"
+                : /redirect/iu.test(detail)
+                  ? "redirect"
+                  : /failed to connect|connection reset|connection refused|network is unreachable/iu.test(
+                        detail,
+                      )
+                    ? "connection"
+                    : /askpass|could not read username|could not read password/iu.test(detail)
+                      ? "credential-prompt"
+                      : // Overleaf's server answered, in words not listed above: it refused.
+                        /^(?:remote: \S|fatal: remote error:)/mu.test(detail)
+                        ? "server-refused"
+                        : "unclassified";
   return { reason: error.reason, exitCode: error.exitCode ?? -1, category };
 }
 
@@ -124,8 +137,17 @@ export const probeAcceptance = Effect.fnUntraced(function* (input: {
   const history = yield* input.repository
     .treesSince({ repo: input.repo, after: input.before, head: input.head.commit, limit: 64 })
     .pipe(Effect.option);
-  if (Option.isSome(history) && history.value.some((entry) => entry.tree === input.candidate.tree))
-    return "bounded-history-tree" as const;
+  // A match counts only after the recorded parent: when history was rewritten,
+  // `before..head` also lists unrelated commits, which prove nothing.
+  if (Option.isSome(history))
+    for (const entry of history.value)
+      if (
+        entry.tree === input.candidate.tree &&
+        (yield* input.repository
+          .isAncestor({ repo: input.repo, ancestor: input.before, descendant: entry.commit })
+          .pipe(Effect.orElseSucceed(() => false)))
+      )
+        return "bounded-history-tree" as const;
   const reachable = yield* input.repository
     .isAncestor({
       repo: input.repo,
@@ -147,7 +169,7 @@ export const runProtocolProbe = Effect.fn("OverleafProtocolProbe.run")(function*
   readonly prefix: string;
   readonly hooks: ProbeHooks;
 }) {
-  const { repository: repository, git, hooks, token, repo, prefix } = input;
+  const { repository, git, hooks, token, repo, prefix } = input;
   if (!/^scient-probe-[0-9a-f-]{36}$/u.test(prefix))
     return yield* new Repository.OverleafRepositoryError({
       reason: "invalid-tree",

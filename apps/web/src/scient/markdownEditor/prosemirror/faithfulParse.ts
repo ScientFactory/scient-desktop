@@ -8,14 +8,9 @@ interface ParseState {
 type TokenHandler = (state: ParseState, ...rest: ReadonlyArray<unknown>) => void;
 
 /**
- * Returns a parse function that refuses instead of losing content.
- *
- * prosemirror-markdown builds each node with `createAndFill`. When a node's
- * content does not fit the schema (math inside a heading whose content allows
- * only text), the library drops that node and everything in it, and returns a
- * document that looks valid. The returned function reports such a parse as
- * `null`, so callers can keep the source as an editable island instead of
- * showing an empty or partial block.
+ * prosemirror-markdown createAndFill can silently drop schema-incompatible content while returning
+ * a valid document. Refuse such parses so callers retain editable source islands instead of
+ * displaying partial/empty blocks.
  */
 export function makeFaithfulMarkdownParse(
   parser: MarkdownParser,

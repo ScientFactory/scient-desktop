@@ -1,8 +1,14 @@
+// SCIENT-FORK:START — Scient Accounts: register the desktop accounts transport.
+import { installAccountsIpc } from "../scient/accounts/ipc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer badge owns the app icon (docs/internals/answer-attention.md).
 import { installUnreadAnswerBadge } from "../scient/answerAttention/ipc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 import { noteSpellingSample } from "../scient/spelling/ipc.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { openNewWindow } from "../scient/multiWindow/ipc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 import {
@@ -14,23 +20,19 @@ import {
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 
-// SCIENT-FORK:START keep-awake mount
+// SCIENT-FORK:START — keep the computer awake while threads work.
 import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
-
 // SCIENT-FORK:END
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
-import {
-  clearConnectionCatalog,
-  getConnectionCatalog,
-  setConnectionCatalog,
-} from "./methods/connectionCatalog.ts";
+import { getConnectionCatalog, setConnectionCatalog } from "./methods/connectionCatalog.ts";
 import {
   renderDocumentPagePdf,
   revealSavedAsset,
   saveAssetCopy,
+  savePdfBytesCopy,
 } from "./methods/documentArtifacts.ts";
 import {
   getLocalEnvironmentEnabled,
@@ -49,7 +51,6 @@ import {
   ensureSshEnvironment,
   fetchSshEnvironmentDescriptor,
   fetchSshSessionState,
-  issueSshWebSocketTicket,
   resolveSshHost,
   resolveSshPasswordPrompt,
 } from "./methods/sshEnvironment.ts";
@@ -108,10 +109,8 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
-
-  // SCIENT-FORK:START keep-awake mount
+  // SCIENT-FORK:START — keep the computer awake while threads work.
   yield* ipc.handle(keepAwake);
-
   // SCIENT-FORK:END
   // SCIENT-FORK:START — replaces upstream's installNotificationBadge(): one owner for the app icon.
   yield* installUnreadAnswerBadge();
@@ -156,7 +155,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(dismissSnapShotAnimation);
   yield* ipc.handle(acknowledgeSnapShot);
   yield* ipc.handle(setConnectionCatalog);
-  yield* ipc.handle(clearConnectionCatalog);
 
   yield* ipc.handle(discoverSshHosts);
   yield* ipc.handle(resolveSshHost);
@@ -165,7 +163,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(fetchSshEnvironmentDescriptor);
   yield* ipc.handle(bootstrapSshBearerSession);
   yield* ipc.handle(fetchSshSessionState);
-  yield* ipc.handle(issueSshWebSocketTicket);
   yield* ipc.handle(resolveSshPasswordPrompt);
 
   yield* ipc.handle(getServerExposureState);
@@ -181,6 +178,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(saveAssetCopy);
+  yield* ipc.handle(savePdfBytesCopy);
   yield* ipc.handle(revealSavedAsset);
   yield* ipc.handle(renderDocumentPagePdf);
   yield* ipc.handle(pickThemeFiles);
@@ -195,6 +193,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(reloadMainWindow);
   yield* ipc.handle(revealWindow);
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  yield* ipc.handle(openNewWindow);
+  // SCIENT-FORK:END
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
@@ -209,6 +210,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
     yield* ipc.handle(voiceMethod);
   }
   yield* ipc.handle(VoiceIpc.requestMicrophoneAccess);
+  // SCIENT-FORK:START — Scient Accounts: install handlers beside the voice bridge.
+  yield* installAccountsIpc();
+  // SCIENT-FORK:END
 
   for (const previewMethod of PreviewIpc.methods) {
     // Explicit types preserve the error/service union of these heterogeneous preview methods.

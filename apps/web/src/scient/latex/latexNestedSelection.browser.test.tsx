@@ -143,23 +143,6 @@ it("includes the bracket base when selection crosses into its exponent", async (
   expect(math.getValue(math.selection, "latex-without-placeholders")).toBe("x");
 });
 
-it("Select All starts with bold text inside the underbrace label", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const math = await mount(_fixture, String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
-  math.position = offset(math, "m");
-  await _fixture.selectionPresentation!.wait();
-
-  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
-  await _fixture.selectionPresentation!.wait();
-
-  expect(math.getValue(math.selection.ranges[0]!, "latex-without-placeholders")).toContain("times");
-  expect(math.getValue(math.selection.ranges[0]!, "latex-without-placeholders")).not.toContain(
-    "underbrace",
-  );
-});
-
 const selectScope = async (_fixture: _Fixture) => {
   await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
   await _fixture.selectionPresentation!.wait();

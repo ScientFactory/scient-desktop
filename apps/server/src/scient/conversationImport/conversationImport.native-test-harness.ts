@@ -72,11 +72,12 @@ export function nativeImportTestLayer(controls: NativeImportTestControls = {}) {
       const commit = yield* Commit.ConversationImportCommit;
       const sink = yield* EventSink.EventSinkV2;
       return Commit.ConversationImportCommit.of({
-        dispatch: (plan) =>
-          (controls.beforeDispatch?.(plan) ?? Effect.void).pipe(
+        dispatch: Effect.fn("ConversationImportCommit.dispatch")(function (plan) {
+          return (controls.beforeDispatch?.(plan) ?? Effect.void).pipe(
             Effect.provideService(EventSink.EventSinkV2, sink),
             Effect.andThen(controls.dispatch?.(plan, commit) ?? commit.dispatch(plan)),
-          ),
+          );
+        }),
       });
     }),
   );
@@ -178,7 +179,7 @@ export function nativeImportRuntimeTestLayer(
   const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
     Layer.provide(
-      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.succeed(undefined) }),
+      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.sync(() => undefined) }),
     ),
     Layer.orDie,
   );

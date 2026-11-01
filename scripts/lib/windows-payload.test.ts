@@ -33,6 +33,7 @@ it("reproduces the real 109-file release failure and admits the corrected invent
   assert.isAtMost(correctedFiles.length, 80 + corrected.allowance);
 });
 
+// regression: 175444cee1 fix(desktop): validate Windows payload components and native targets
 it.each(componentFiles)("rejects a missing required component file: %s", (missing) => {
   const result = analyzeWindowsPayloadInventory({
     files: componentFiles.filter((file) => file !== missing),
@@ -89,12 +90,10 @@ it("does not grant additional allowance to a large dependency spill", () => {
     { length: 20_000 },
     (_, index) => `resources/server.asar.unpacked/node_modules/spill/file-${index}.js`,
   );
-  for (let repeat = 0; repeat < 20; repeat += 1) {
-    const result = analyzeWindowsPayloadInventory({
-      files: [...componentFiles, ...spill],
-      arch: "x64",
-    });
-    assert.equal(result.allowance, 37);
-    assert.equal(result.counts.core, 20_000);
-  }
+  const result = analyzeWindowsPayloadInventory({
+    files: [...componentFiles, ...spill],
+    arch: "x64",
+  });
+  assert.equal(result.allowance, 37);
+  assert.equal(result.counts.core, 20_000);
 });

@@ -1,0 +1,20 @@
+{
+  "name": "get_paper",
+  "description": "\nGet details about a paper by its id.\n\nArgs:\n    paper_id: The id of the paper to get. The following types of IDs are supported:\n        <sha> - a Semantic Scholar ID, e.g. 649def34f8be52c8b66281af98ae884c09aef38b\n        CorpusId:<id> - a Semantic Scholar numerical ID, e.g. CorpusId:215416146\n        DOI:<doi> - a Digital Object Identifier, e.g. DOI:10.18653/v1/N18-3011\n        ARXIV:<id> - arXiv.rg, e.g. ARXIV:2106.15928\n        MAG:<id> - Microsoft Academic Graph, e.g. MAG:112218234\n        ACL:<id> - Association for Computational Linguistics, e.g. ACL:W12-3903\n        PMID:<id> - PubMed/Medline, e.g. PMID:19872477\n        PMCID:<id> - PubMed Central, e.g. PMCID:2323736\n        URL:<url> - URL from one of the sites listed below, e.g. URL:https://arxiv.org/abs/2106.15928v1\n\n    fields: String of comma-separated fields to include in the response. E.g \"url,year,authors\".\n    Default is \"title\". Available fields are: abstract, authors, citations, fieldsOfStudy, isOpenAccess,\n    journal, publicationDate, references, tldr, url, venue, year.\n\nReturns:\n    The paper object.\n",
+  "inputSchema": {
+    "properties": {
+      "paper_id": {
+        "title": "Paper Id",
+        "type": "string"
+      },
+      "fields": {
+        "default": "title",
+        "title": "Fields",
+        "type": "string"
+      }
+    },
+    "required": ["paper_id"],
+    "title": "get_paperArguments",
+    "type": "object"
+  }
+}

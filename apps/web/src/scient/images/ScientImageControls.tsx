@@ -122,15 +122,18 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
     setExpanded(false);
   };
   useImperativeHandle(ref, () => ({ expand }), [expand]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks component liveness in a ref so async image actions do not set state after unmount
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports background changes to the parent through its imperative callback
   useEffect(() => {
     onBackgroundChange?.(background);
   }, [background, onBackgroundChange]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a CSS class on the anchor DOM node in step with this control while mounted
   useEffect(() => {
     props.anchor?.classList.add("group/scient-image");
     return () => props.anchor?.classList.remove("group/scient-image");
@@ -198,12 +201,14 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
       });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the timer that clears the Copied message, cleared on unmount or next copy
   useEffect(() => {
     if (message !== "Copied") return;
     const timer = setTimeout(() => setMessage(null), 1_500);
     return () => clearTimeout(timer);
   }, [message]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches context-menu mouse and keyboard listeners to the anchor DOM node until unmount
   useEffect(() => {
     const anchor = props.anchor;
     const show = props.showContextMenu;

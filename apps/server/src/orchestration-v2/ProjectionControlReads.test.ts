@@ -20,7 +20,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Stream from "effect/Stream";
@@ -193,13 +192,12 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
   ];
 }
 
-const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
-  storage,
-  storeLayer:
-    storage === "sqlite"
-      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))
-      : ProjectionStore.layerMemory,
-}));
+const storageCases = [
+  {
+    storage: "sqlite" as const,
+    storeLayer: ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  },
+];
 
 it.effect.each(storageCases)(
   "$storage: finds the active root turn without an attempt reverse link",
@@ -319,7 +317,7 @@ it.effect.each(storageCases)(
         forkThread: () => Effect.die("unused forkThread"),
       };
       const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-        get: () => Effect.succeed(Option.some(runtime)),
+        get: () => Effect.succeedSome(runtime),
       });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -375,7 +373,7 @@ it.effect.each(storageCases)(
               Layer.merge(
                 sessions,
                 ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-                  Layer.provide(NodeServices.layer),
+                  Layer.provideMerge(NodeServices.layer),
                 ),
               ),
             ),

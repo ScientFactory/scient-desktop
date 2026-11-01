@@ -6,6 +6,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 
 /** A block can override wrapping locally; a new global preference resets it. */
 export function useCodeBlockWordWrap() {
@@ -38,6 +39,7 @@ export function CodeBlockActions({
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copy-feedback timer and tracks mounted state on unmount
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -58,8 +60,8 @@ export function CodeBlockActions({
     !/[\p{Cc}\p{Cf}]/u.test(source.slice(0, -1));
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(readCode());
-      if (!mounted.current) return;
+      const didCopy = await writeTextToClipboard(readCode(), "code");
+      if (!didCopy || !mounted.current) return;
       if (timer.current !== null) clearTimeout(timer.current);
       setCopied(true);
       timer.current = setTimeout(() => {
@@ -83,7 +85,7 @@ export function CodeBlockActions({
           render={
             <Button
               type="button"
-              // As upstream's code block (#13208): a wrapped block shows its toggle on.
+              // A wrapped block shows its toggle on.
               variant={wrapped ? "secondary" : "ghost-muted"}
               size="icon-xs"
               aria-pressed={wrapped}

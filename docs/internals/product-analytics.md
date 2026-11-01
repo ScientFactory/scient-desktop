@@ -3,12 +3,11 @@
 Scient has a first-party analytics contract, outbox, worker, and privacy UI.
 Recognized packaged release builds make the feature available through
 `SCIENT_ANALYTICS_ENABLED=true`; development and unknown-channel builds stay
-disabled. When available, an absent saved preference and absent environment
-override default to `diagnostic` (usage, reliability and delivery counters).
-Saved choices, including Off, remain authoritative; malformed or unreadable
-preferences fail closed. Off creates no collection worker and sends nothing.
+disabled. When available, analytics is on for everyone at `diagnostic` (usage,
+reliability and delivery counters), like T3: there is no in-app switch, and a
+preference saved by an older build no longer applies.
 Native and WSL backend configuration receive the same bounded release metadata.
-An explicit `SCIENT_ANALYTICS_ENABLED=false` remains an operator kill switch.
+An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch.
 For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can expose the controls
 in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
@@ -25,14 +24,11 @@ and instrumentation guarantees.
 When an owner deliberately enables the runtime, events still pass through the strict allowlist in
 [`packages/scient-analytics/src/contract.ts`](../../packages/scient-analytics/src/contract.ts).
 Unknown event names and properties are dropped. Consent level is enforced before queueing, delivery
-uses only Scient's first-party gateway, and failures cannot block normal product behavior. The
-Settings privacy surface can change consent and request deletion of the installation's analytics
-data and random installation identifier.
+uses only Scient's first-party gateway, and failures cannot block normal product behavior.
 
-Settings exposes one “Share usage and reliability” switch. An explicit on action
-selects `diagnostic`; off selects `off`. The wire levels and event classifications
-remain unchanged. Saved `essential` and `product` choices display as on without
-upgrading them; the information panel explains the narrower choice.
+The Settings privacy section, including its switch, “What’s shared?” panel and
+“Delete data” request, is hidden: `AnalyticsPrivacySettings` is not mounted. The
+service's consent and deletion controls remain so the section can return.
 
 The notification is implemented but disabled by default at its component boundary
 pending an approved audience and timing policy. This gate does not change analytics
@@ -68,7 +64,19 @@ installed runtime. Revision 5 names every settings page in `settings.viewed`
 the desktop derives its page list from the settings sidebar, and a test fails
 when a page is missing from the contract. Revision 6 adds `feature.viewed` with
 `feature: latex-visual` and UI-owned `scient.operation.*` with
-`operationKind: latex-visual-edit`. Installation state is aggregated per provider driver: it is
+`operationKind: latex-visual-edit`. Revision 7 names Scient Agent (`scient`),
+Oh My Pi (`omp`), Muse (`muse`) and ACP Registry (`acpRegistry`) instead of
+collapsing them into `other`. Only these fixed driver kinds are added; custom
+provider labels, configured instance IDs and runtime paths remain private.
+Revision 8 names the Synced folders settings page with the fixed `synced-folders`
+category; no folder names, paths, tokens, or project identifiers enter it.
+Revision 9 adds thread and project counts to `server.boot.heartbeat`, who started
+a turn to `provider.turn.usage`, and `install.owner_observed`,
+`client.turn.requested`, `client.thread.started`, `feature.used`,
+`mcp.tool.invoked` and `mcp.delegated_task.finished`. Feature, tool, variant and
+error names use a bounded identifier pattern, so upstream's new closed names
+arrive without a revision; each one still comes from server code, never user text.
+Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
@@ -80,8 +88,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v6.json \
-  /absolute/website/workers/events/fixtures/contract-v6.json
+  packages/scient-analytics/fixtures/contract-v9.json \
+  /absolute/website/workers/events/fixtures/contract-v9.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -194,8 +202,45 @@ rather than attributing an unproven interval. Terminal failures/stops can consum
 tokens but usage remains Product-class, separate from Essential failures.
 
 Existing provider discovery/readiness events mean observed ready, not a current
-signed-in account inventory; existing sent-turn events measure attempted model
-use and attachment-count buckets. Existing voice/import/compute/export outcomes
+signed-in account inventory. V2 `provider.turn.sent` measures a live,
+committed run admission (including queued work) or a new accepted steering
+message on an existing run, deduplicated by the local message identity. It is an accepted prompt
+submission, not proof of provider delivery, an answer, or a human action.
+Progress updates, queued-to-steer promotions, retries, restart continuations,
+restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
+uses the canonical run event or configured instance's driver, never the instance
+name. Consent/identity changes clear the bounded observation state and never
+backfill earlier admissions. Consent/deletion controls establish the sequenced
+event tail's committed watermark before acknowledging the new collection period;
+recording checks the captured epoch again synchronously. Buffered earlier-period
+events are excluded without dropping the first fresh prompt after acknowledgement.
+Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
+held Droid re-delivery and queue promotion are not first admissions, even after
+local correlation state resets. Unknown legacy provenance is not counted.
+An unavailable watermark fails closed without preventing Off or erasure.
+The event subscription waits for the first valid watermark and can initialize
+after a later successful boundary; the fail-closed sentinel never becomes a
+permanent upstream stream cursor.
+The observer does not read message text or
+attachments; unknown input presence is omitted and attachment count stays
+`unknown`, rather than claiming an empty prompt. Existing explicit input
+booleans and attachment buckets from older producers remain accepted.
+
+`provider.turn.usage` also carries who started the turn: `createdBy`,
+`creationSource`, `scheduled` and `subagent`. Most turns start without a person
+(provider continuations, agent sends, delegated subagents), so filter on these to
+count user turns.
+
+Scient Agent uses the existing installation observations, installed-state
+changes, lifecycle operations, submissions, terminal outcomes and token usage.
+Latest observed installed profiles, successful install operations, and profiles
+that submitted prompts are separate measures, not unique people or all-time
+installation totals. The gateway's `analytics:insights` report exposes these
+per-provider measures and daily submission counts for non-development builds.
+Old `other` labels and missing submission events cannot be recovered from
+collected data. Deploy the revision-8 gateway before releasing this producer;
+accurate coverage requires updating clients with sharing enabled.
+Existing voice/import/compute/export outcomes
 remain their authoritative measurements. This pass does not add generic error
 capture, arbitrary preference values, precise attention tracking, or reconstruct
 unreported history. Offline/retry durability starts at local outbox acceptance;
@@ -214,6 +259,9 @@ from the source implementation alone.
 | Source owner                           | Observed meaning                                                                                                       | Important limit                                                                                            |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `AnalyticsService` and startup         | Server session, startup outcome, heartbeat                                                                             | A missing graceful shutdown does not prove a crash                                                         |
+| `ws.ts` and `FeatureUsage`             | Client turn requests, thread starts and feature use, by connecting surface                                             | A retried command records nothing again; guests have no surface                                            |
+| `McpHttpServer`                        | Agent tool calls: tool, caller, targets, outcome and duration                                                          | A handoff to several threads records one event per target, so events are not calls                         |
+| `DelegatedTaskAnalytics`               | Delegated tasks reaching a final status                                                                                | Counted once per process                                                                                   |
 | `DesktopWindow` through host telemetry | Renderer termination reported by Electron                                                                              | Best-effort live signal only; no replay, raw crash details, or detection of a crashed desktop main process |
 | `AnalyticsEventObservers`              | Canonical provider turns, fork completions, revert completions and reported failures                                   | Stop request and terminal stop are distinct; fork-failure names remain reserved                            |
 | `ProviderLifecycleAnalytics`           | Observed provider discovery, readiness/source changes, runtime install/update/repair/remove, sign-in, inherited update | Initial historical terminal states are not replayed; no raw provider error parsing                         |
@@ -441,12 +489,15 @@ are normalized into bounded families; unrecognized values collapse to safe categ
 instrumentation is not automatically authorized by appearing in upstream code: it must either map to
 an existing Scient event or be explicitly reviewed and added to the Scient contract.
 
-Upstream's `installId`, `install.owner_observed`, and hashed Connect, OpenAI,
-Claude, or client-device owner graph are not Scient analytics. The inherited
-`recordOwners` service method is a no-op compatibility boundary, not permission
-to read or transmit those identities. Hashing an account or device identifier
-does not make its collection authorized. Generic T3 delivery and relay tracing
-remain disabled independently of Scient's sharing preference.
+Who an install belongs to is sent as `install.owner_observed`, at most once per
+owner per process. `distinct_id` stays the random installation identifier; owners
+are a separate fact so a rule can change and apply to all history. The server
+reads the OpenAI `user_id` from the Codex login and the Claude `accountUuid`, then
+sends only their SHA-256 hash from `hashTelemetryId`. A Codex `account_id` is a
+workspace a whole Team shares, so it is not used. API-key logins have no owner.
+Owner events are Product class, so they are kept for the raw-event retention period
+and exported to PostHog. Client-reported owners are not wired up. Generic T3
+delivery and relay tracing remain disabled.
 
 The detailed current event schema and tests live in `packages/scient-analytics`. Historical design
 and capability evidence remains in

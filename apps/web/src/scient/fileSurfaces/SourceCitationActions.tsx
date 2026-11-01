@@ -40,6 +40,7 @@ export function SourceCitationActions<Annotation>({
   const { environmentId, threadId, cwd, path, latexRootRelativePath } = target;
   const ownerId = useId();
   const currentStaticSource = useRef(staticSource);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the static source for imperative citation handlers to read
   useLayoutEffect(() => {
     currentStaticSource.current = staticSource;
   });
@@ -103,6 +104,7 @@ export function SourceCitationActions<Annotation>({
     };
   };
   const handled = useRef<{ editor: typeof editor; id: number } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the editor selection or posts a warning toast when a citation reveal request arrives
   useEffect(() => {
     if (!reveal?.sourceSelection || !ready()) return;
     const source = editor?.getFile() ? editor.getText() : staticSource;
@@ -133,7 +135,7 @@ export function SourceCitationActions<Annotation>({
       preserveSelection
       selectionOwnerId={ownerId}
       allowPreventedSelectionStart={allowSourceSelection}
-      onCite={(citation, anchor) => {
+      onCite={(citation, anchor, destination) => {
         // Activating the action can move focus or collapse the native selection.
         // Validate the captured offsets against the source, not that live selection.
         const source = editor ? editor.getFile()?.contents : currentStaticSource.current;
@@ -168,7 +170,7 @@ export function SourceCitationActions<Annotation>({
           });
           return false;
         }
-        const accepted = onCite(current, anchor);
+        const accepted = onCite(current, anchor, destination);
         if (!accepted)
           toastManager.add({
             type: "warning",

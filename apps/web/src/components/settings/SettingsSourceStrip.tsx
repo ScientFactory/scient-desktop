@@ -20,6 +20,7 @@ export function SettingsSourceGroup({
     width: number;
     height: number;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures strip/trigger/panel DOM geometry and observes resize to draw the outline path
   useLayoutEffect(() => {
     const host = ref.current;
     if (!host || !activePanelId) return;

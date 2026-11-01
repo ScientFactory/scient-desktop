@@ -6,10 +6,12 @@ import { useState } from "react";
 import { Platform, View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
-import { SCIENT_BRAND_MARK_SOURCE } from "./brandAssets";
+import { T3_CODE_BRAND_MARK_SOURCE } from "./brandAssets";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
+
+const BRAND_MAX_FONT_SCALE = 1.4;
 
 export function brandTitleOffset(): number {
   if (Platform.OS !== "ios") return 0;
@@ -20,10 +22,7 @@ export function CompactBrandTitle(
   props: {
     readonly allowFontScaling?: boolean;
     readonly accessibilityLabel?: string;
-    /**
-     * Fills the parent row and drops the stage badge when the full title does not fit.
-     * Narrow Android sidebar headers otherwise draw their actions over the badge.
-     */
+    /** Fills the row and hides the stage badge when the full title does not fit. */
     readonly fit?: boolean;
   } = {},
 ) {
@@ -42,11 +41,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
-      accessibilityLabel={
-        // SCIENT-FORK:START product-accessibility-label
-        props.accessibilityLabel ?? "Scient, Threads"
-        // SCIENT-FORK:END product-accessibility-label
-      }
+      accessibilityLabel={props.accessibilityLabel ?? "Scient, Threads"}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -57,12 +52,14 @@ export function CompactBrandTitle(
       ]}
     >
       <Image
-        source={SCIENT_BRAND_MARK_SOURCE}
+        source={T3_CODE_BRAND_MARK_SOURCE}
         accessibilityIgnoresInvertColors
         style={{ width: 24 * scale, height: 24 * scale, borderRadius: 6 * scale }}
       />
+      {/* A logo beside a fixed-size wordmark: it may grow with Dynamic Type, not crowd the bar. */}
       <Text
         allowFontScaling={props.allowFontScaling}
+        maxFontSizeMultiplier={BRAND_MAX_FONT_SCALE}
         className="font-t3-medium text-foreground-muted"
         style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
       >
@@ -79,6 +76,7 @@ export function CompactBrandTitle(
         >
           <Text
             allowFontScaling={props.allowFontScaling}
+            maxFontSizeMultiplier={BRAND_MAX_FONT_SCALE}
             className="font-t3-bold text-foreground-muted uppercase"
             style={{ fontSize: 9 * scale, letterSpacing: 0.9 * scale }}
           >
@@ -101,7 +99,7 @@ export function CompactBrandTitle(
   );
 }
 
-export function renderCompactBrandTitle() {
+function renderCompactBrandTitle() {
   return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
 }
 

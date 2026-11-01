@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 
 import {
+  // SCIENT-FORK:START
   canonicalizeUneditedBrowseQuery,
+  // SCIENT-FORK:END
   createBrowseNavigationCoordinator,
   getFilesystemBrowsePath,
   resolveFilesystemReadAccess,
@@ -72,7 +74,9 @@ describe("filesystem browse model", () => {
   it("derives the browse target and navigation state", () => {
     expect(getFilesystemBrowsePath("~/projects/t3")).toEqual({
       isBrowsing: true,
+      // SCIENT-FORK:START
       resolvedQuery: "~/projects/t3",
+      // SCIENT-FORK:END
       directoryPath: "~/projects/",
       filterQuery: "t3",
       parentPath: "~/",
@@ -81,6 +85,7 @@ describe("filesystem browse model", () => {
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
+  // SCIENT-FORK:START
 
   it("keeps add-project browsing active while a user filters by folder name", () => {
     expect(
@@ -145,6 +150,7 @@ describe("filesystem browse model", () => {
       canBrowseUp: false,
     });
   });
+  // SCIENT-FORK:END
 });
 
 describe("browse navigation", () => {

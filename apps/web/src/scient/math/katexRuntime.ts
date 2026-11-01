@@ -5,14 +5,8 @@ import katex from "katex";
 import "katex/dist/katex-swap.min.css";
 
 /**
- * The lazily loaded half of the module: everything that pulls KaTeX and its
- * stylesheet into a chunk of their own. KaTeX escapes the TeX it echoes back,
- * so the returned markup is safe to inject.
- *
- * `maxSize` caps user-specified dimensions so a pathological command like
- * `\rule{500em}{500em}` cannot distort the conversation layout. Returns null
- * for TeX KaTeX cannot parse; the caller shows the literal source instead of
- * KaTeX's red error markup.
+ * KaTeX escapes echoed TeX, allowing markup injection. Cap dimensions to protect layout from
+ * pathological commands; show literal source on parse failure rather than red error markup.
  */
 export function renderScientTexToHtml(tex: string, displayMode: boolean): string | null {
   try {

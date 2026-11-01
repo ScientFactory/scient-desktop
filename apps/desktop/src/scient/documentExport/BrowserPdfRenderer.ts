@@ -12,12 +12,9 @@ const MAX_TITLE_LENGTH = 512;
 // small readable fallback; controlled document builds instead let the
 // source's @page rule own physical page geometry without a second margin.
 const READABLE_FALLBACK_MARGIN_INCHES = 1 / 6;
-// Chromium lays an un-sized PDF onto Letter paper at scale 1, leaving only
-// about 784 CSS pixels for content. Repeated page canvases authored for a
-// desktop viewport can consequently reflow and spill onto a second PDF page.
-// A 0.75 scale gives those canvases a roughly 1,045 CSS-pixel print viewport.
-// Apply it only to repeated, explicitly paginated HTML without an authored
-// paper size; ordinary flowing documents and @page-sized documents stay at 1.
+// Unsized repeated page canvases can spill at Chromium's Letter-width scale 1. Use 0.75 only for
+// explicitly paginated HTML without authored paper size; flowing and @page-sized documents stay at
+// 1.
 const SCREEN_AUTHORED_PAGE_SCALE = 0.75;
 // Keep headings with what follows, but not captions. A trailing caption's
 // break-after can propagate to its figure/table and bind the whole container

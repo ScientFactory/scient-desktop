@@ -103,6 +103,7 @@ function MuseAccountSetup(props: {
   const { openAuthorizationPage } = props.controller;
 
   // Like other providers' sign-in, open the provider's page for the flow this view started.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the provider's authorization page in the browser once per device-code flow started here
   useEffect(() => {
     if (!deviceCode || !startedHere.current || openedInteraction.current === deviceCode.id) return;
     openedInteraction.current = deviceCode.id;

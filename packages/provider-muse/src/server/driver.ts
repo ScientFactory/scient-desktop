@@ -22,6 +22,8 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
+import { museUsageReader } from "./usage.ts";
+import type * as MuseUsageHome from "./MuseUsageHome.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -91,7 +93,11 @@ export interface MuseDriverOptions<Requirements = never, Extension extends objec
 export interface MuseDriverFactory<
   Requirements = never,
   Extension extends object = {},
-> extends ProviderDriver<MuseSettings, MuseDriverEnv | Requirements> {
+> extends ProviderDriver<
+  MuseSettings,
+  MuseDriverEnv | Requirements,
+  Path.Path | MuseUsageHome.MuseUsageHome
+> {
   readonly create: (
     input: ProviderDriverCreateInput<MuseSettings>,
   ) => Effect.Effect<
@@ -109,6 +115,7 @@ export const makeMuseDriver = <Requirements = never, Extension extends object = 
   // SCIENT-FORK:END
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
+  usage: museUsageReader,
   configSchema: MuseSettings,
   defaultConfig: () => decodeMuseSettings({}),
   // SCIENT-FORK:START — the runtime hook receives the complete create input.
@@ -272,5 +279,9 @@ export const makeMuseDriver = <Requirements = never, Extension extends object = 
 
 /** @public Upstream-compatible default for hosts without an app-owned prompt composition. */
 // SCIENT-FORK:START — instantiate the package default through the same host-copy factory.
-export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = makeMuseDriver();
+export const MuseDriver: ProviderDriver<
+  MuseSettings,
+  MuseDriverEnv,
+  Path.Path | MuseUsageHome.MuseUsageHome
+> = makeMuseDriver();
 // SCIENT-FORK:END

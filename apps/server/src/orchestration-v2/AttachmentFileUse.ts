@@ -147,8 +147,9 @@ export const attachmentHasReservations = Effect.fn("AttachmentFileUse.hasReserva
   const config = yield* ServerConfig;
   return yield* fs.readDirectory(reservationDirectory(config.stateDir, attachmentId)).pipe(
     Effect.map((entries) => entries.length > 0),
-    Effect.catch((error) =>
-      error.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(error),
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(false),
     ),
   );
 });
@@ -157,6 +158,7 @@ export const attachmentHasReservations = Effect.fn("AttachmentFileUse.hasReserva
 export const reserveGeneratedImagePublication = (attachmentsDir: string, attachmentId: string) =>
   Effect.runPromise(
     Effect.gen(function* () {
+      const runPromise = Effect.runPromiseWith(yield* Effect.context());
       const arbitration = yield* AttachmentFileArbitration;
       const path = yield* randomUuidV4;
       const directory = NodePath.join(
@@ -174,7 +176,7 @@ export const reserveGeneratedImagePublication = (attachmentsDir: string, attachm
         .pipe(Effect.uninterruptible);
       return {
         published: (attachment: ChatAttachment, threadId: ThreadId) =>
-          Effect.runPromise(
+          runPromise(
             arbitration
               .withPermit(
                 Effect.promise(async () => {

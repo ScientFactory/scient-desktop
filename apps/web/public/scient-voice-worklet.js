@@ -1,15 +1,6 @@
-// Scient local-voice AudioWorklet processor (static, same-origin asset).
-//
-// Loaded via `audioWorklet.addModule(new URL("scient-voice-worklet.js",
-// document.baseURI))`. It is served same-origin, so it satisfies the renderer
-// CSP `script-src 'self'` — unlike a `blob:` URL, which the CSP blocks (blob:
-// is only allowed for `worker-src`, and AudioWorklet modules load under
-// script-src). Runs in AudioWorkletGlobalScope: no DOM, no imports.
-//
-// The registered name MUST stay in sync with VOICE_WORKLET_PROCESSOR_NAME in
-// voiceWorkletProcessor.ts. Emit 20 measurements per second at the actual
-// sample rate, rounding chunks to whole samples. The 112-bar waveform fills
-// in 5.6 seconds, then scrolls at the same cadence.
+// AudioWorklet modules obey script-src, so CSP requires a same-origin asset rather than a blob URL.
+// Keep the registered name synchronized with VOICE_WORKLET_PROCESSOR_NAME. Round chunks to whole
+// samples at the actual rate to maintain the 20 Hz waveform cadence.
 
 const CHUNK_SAMPLES = Math.round(sampleRate / 20);
 
@@ -18,7 +9,6 @@ class ScientVoiceRecorderProcessor extends AudioWorkletProcessor {
     super();
     this._buffer = new Float32Array(CHUNK_SAMPLES);
     this._offset = 0;
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- AudioWorklet MessagePort starts automatically through onmessage; addEventListener would also require an explicit start().
     this.port.onmessage = (event) => {
       const message = event.data;
       if (!message || message.type !== "flush") return;

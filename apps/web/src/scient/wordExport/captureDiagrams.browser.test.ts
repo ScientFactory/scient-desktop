@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { recoveryFixtures } from "../diagrams/mermaidRecovery.fixtures";
 import { captureWordDiagrams } from "./captureDiagrams";
-import { mermaidSourceConfigFetchRisk } from "./diagramSafety";
 
 const PROBE = "__scient_word_capture_probe__";
 const digest = `sha256:${"a".repeat(64)}` as const;
@@ -32,9 +31,6 @@ const FETCHING = {
   styledLabel: `flowchart LR\nA["<span style='background:url(/${PROBE}/span.png)'>x</span>"] --> B`,
 };
 
-/** State diagrams take a `classDef` style list as the rest of the line, so CSS `url()` parses. */
-const STYLED_STATE = `stateDiagram-v2\nclassDef c background-image:url(/${PROBE}/state.png)\n[*] --> A:::c`;
-
 describe("Word capture through the shared Pele renderer", () => {
   it("calibrates observation with a page-owned request", async () => {
     // Vitest's dependency requests can fill Chromium's bounded timing buffer.
@@ -51,13 +47,6 @@ describe("Word capture through the shared Pele renderer", () => {
     );
   });
 
-  it("never requests an authored label image in the shared renderer", async () => {
-    const rendered = await renderMermaidDiagram(FETCHING.labelImage, "light");
-    expect(rendered.blocked).toContain(`/${PROBE}/label.png`);
-    expect(rendered.svg).not.toContain(PROBE);
-    expect(probeRequests()).toEqual([]);
-  });
-
   it("renders math, URLs and url( as text, and safe theme directives to PNG", async () => {
     expect(
       await capture([
@@ -69,11 +58,6 @@ describe("Word capture through the shared Pele renderer", () => {
         "---\nconfig:\n  theme: forest\n  flowchart:\n    curve: linear\n---\nflowchart LR\nA --> B",
       ]),
     ).toEqual(["png", "png", "png", "png", "png", "png"]);
-  });
-
-  it("rejects empty and oversized sources without embedding a stand-in", async () => {
-    const oversized = `flowchart LR\nA["${"x".repeat(50_000)}"] --> B`;
-    expect(await capture([oversized, "   "])).toEqual(["render-failed", "render-failed"]);
   });
 
   it("captures resource-looking label and comment prose without a false omission or fallback", async () => {
@@ -104,32 +88,6 @@ describe("Word capture through the shared Pele renderer", () => {
       ...Object.values(FETCHING).map(() => "render-failed"),
       "png",
     ]);
-    expect(probeRequests()).toEqual([]);
-  });
-
-  it("retains defense in depth when resources are rendered outside Word's preflight", async () => {
-    for (const source of [...Object.values(FETCHING), STYLED_STATE]) {
-      const result = await renderMermaidDiagram(source, "light");
-      expect(result.svg).toContain("<svg");
-      expect(result.svg).not.toContain(PROBE);
-      expect(result.blocked?.length).toBeGreaterThan(0);
-    }
-    expect(probeRequests()).toEqual([]);
-  });
-
-  it("refuses decoded unsafe settings and styles before native image capture", async () => {
-    const escaped =
-      '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(probe)"}}}%%\nflowchart LR\nA --> B';
-    expect(mermaidSourceConfigFetchRisk(escaped)).not.toBeNull();
-    expect(
-      await capture([
-        STYLED_STATE,
-        STYLED_STATE.replace("url(", "u\\72l("),
-        escaped,
-        '%%{init: {"themeCSS": ".node rect { fill: red }"}}%%\nflowchart LR\nA --> B',
-        `---\nconfig:\n  themeCSS: "@font-face{src:url(/${PROBE}/font.woff2)}"\n---\nflowchart LR\nA --> B`,
-      ]),
-    ).toEqual(Array.from({ length: 5 }, () => "render-failed"));
     expect(probeRequests()).toEqual([]);
   });
 

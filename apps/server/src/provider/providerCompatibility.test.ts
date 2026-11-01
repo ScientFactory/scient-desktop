@@ -14,6 +14,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as Schema from "effect/Schema";
@@ -27,7 +28,12 @@ import {
   resolveProviderCompatibility,
 } from "./providerCompatibility.ts";
 import preReleaseScopingCompatibility from "./testFixtures/pre-release-scoping-compatibility.json" with { type: "json" };
+import { resolveAntigravityReleaseAsset } from "./antigravityRelease.ts";
+import bundledManifest from "./model-manifest.json" with { type: "json" };
 
+const decodeCompatibilityPolicies = Schema.decodeUnknownSync(
+  Schema.Array(ProviderCompatibilityPolicy),
+);
 const driver = ProviderDriverKind.make("codex");
 const policy: ProviderCompatibilityPolicy = {
   driver,
@@ -321,8 +327,7 @@ describe("provider compatibility", () => {
   });
 
   it("keeps releases before V2 on the OpenCode 1 policy they shipped with", () => {
-    // Every installed build fetches main's manifest, and 0.6.17 and older run the
-    // V1 orchestrator, which cannot drive OpenCode 2.
+    // Older builds fetch main's manifest; their V1 orchestrator cannot drive OpenCode 2.
     const opencode = ProviderDriverKind.make("opencode");
     for (const [version, expected] of [
       ["1.14.19", "supported"],
@@ -433,6 +438,19 @@ describe("provider compatibility", () => {
         expected,
       );
     }
+  });
+
+  it("supports the managed Antigravity runtime in the bundled manifest", () => {
+    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
+    const release = resolveAntigravityReleaseAsset("darwin", "arm64");
+    assert.strictEqual(
+      resolveProviderCompatibility(
+        policies,
+        ProviderDriverKind.make("antigravity"),
+        `agy_acp_server_${release?.version}`,
+      )?.status,
+      "supported",
+    );
   });
 
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
@@ -602,6 +620,15 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       assert.strictEqual(updated?.compatibilityAdvisory?.status, "supported");
       assert.strictEqual(updated?.status, "error");
       assert.strictEqual(updated?.message, "Authentication failed");
-    }).pipe(Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(
+      Effect.provide(
+        ProviderRegistry.layer.pipe(
+          Layer.provide(layerDependencies),
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
+          ),
+        ),
+      ),
+    );
   }).pipe(Effect.scoped),
 );

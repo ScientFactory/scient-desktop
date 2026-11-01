@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+// SCIENT-FORK:START
 import {
   cliArchiveTarCommand,
   cliReleaseChannelOf,
@@ -31,6 +32,7 @@ describe("Scient release channel isolation", () => {
 });
 
 describe("CLI archive extraction", () => {
+  // SCIENT-FORK:END
   it("extracts with the System32 bsdtar on Windows and plain tar elsewhere", () => {
     expect(cliArchiveTarCommand("linux", {})).toBe("tar");
     expect(cliArchiveTarCommand("win32", { SystemRoot: "D:\\Win" })).toBe(

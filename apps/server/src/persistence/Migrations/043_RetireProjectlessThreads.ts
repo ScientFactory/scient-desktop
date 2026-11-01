@@ -2,14 +2,9 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * Removes every thread that still has no project at upgrade time.
- *
- * The cleanup table bridges the transactional database migration and the
- * subsequent filesystem cleanup. It stays empty after successful startup,
- * and makes attachment deletion safely retryable after an interrupted run.
- * Historical projectless creation/move events for threads that now belong to
- * a project are intentionally retained so those surviving streams still
- * replay without rewriting immutable history.
+ * Keep a durable cleanup table across database commit and filesystem deletion so interrupted
+ * attachment cleanup retries safely. Preserve projectless historical events of surviving
+ * now-project-bound threads; immutable history must still replay.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

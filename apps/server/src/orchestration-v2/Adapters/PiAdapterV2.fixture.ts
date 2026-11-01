@@ -35,6 +35,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { PiAdapterV2Options } from "@t3tools/provider-pi/server";
 import { makePiRpcConnection, type PiRpcRecord } from "@t3tools/provider-pi/testing";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
@@ -44,11 +45,20 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-pi-v2-adapter-",
 }).pipe(Layer.provide(NodeServices.layer));
 
+// Like ProviderHostLive, Scient's host is strict about current-request attachments.
+const scientProviderHostLayer = Layer.effect(
+  ProviderHost.ProviderHost,
+  Effect.gen(function* () {
+    const host = yield* ProviderHost.ProviderHost;
+    return ProviderHost.ProviderHost.of({ ...host, preserveAttachmentContext: true });
+  }),
+).pipe(Layer.provide(TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer))));
+
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   serverConfigLayer,
-  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  scientProviderHostLayer,
   McpProviderSessions.layer,
 );
 

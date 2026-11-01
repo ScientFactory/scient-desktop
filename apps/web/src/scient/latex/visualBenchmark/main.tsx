@@ -14,6 +14,7 @@ import { latexBenchmarkDocument } from "./latexBenchmarkDocument";
 function BenchmarkEditor(props: { source: string; draftKey: string }) {
   const [value, setValue] = useState(props.source);
   const owner = useLatexVisualTestOwner(value);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the current value to the imperative benchmark harness
   useLayoutEffect(() => {
     benchmark.published = value;
   }, [value]);

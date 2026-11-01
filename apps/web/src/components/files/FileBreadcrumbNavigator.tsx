@@ -207,7 +207,8 @@ export function FileBreadcrumbNavigator({
   }
 
   return (
-    <div className="flex h-full w-max min-w-full items-center scient-reading-ui text-xs">
+    // ps-1 keeps the first crumb's hover inside the scrolling strip, which clips at its edge.
+    <div className="flex h-full w-max min-w-full items-center ps-1 scient-reading-ui text-xs">
       {breadcrumbs.map((crumb, index) => {
         const currentFile = crumb.kind === "file";
         // FilePreviewPanel uses this marker to keep the current file visible after path changes.

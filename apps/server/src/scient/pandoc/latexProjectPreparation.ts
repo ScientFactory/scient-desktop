@@ -1,13 +1,7 @@
 /**
- * Bounded structural preparation before Pandoc's sandboxed LaTeX reader.
- *
- * Includes, figures, and bibliographies resolve relative to the root `.tex`
- * file's folder, as LaTeX resolves them, and are read only when they are
- * inside the Scient project the document belongs to, both as written and
- * after symbolic links are followed. Anything else becomes a visible
- * placeholder and a note. Every file is read through a handle bound to the
- * file that check saw (`verifiedWorkspaceRead.ts`), so a file or folder
- * swapped for a link after the check is refused rather than read.
+ * Resolve dependencies relative to the root TeX folder and require both lexical and physical
+ * project containment. Use verified handles so path/link swaps refuse instead of reading outside;
+ * unsupported inputs become visible placeholders and notes.
  */
 import { parse } from "@unified-latex/unified-latex-util-parse";
 import type { DocumentWarning } from "@t3tools/contracts";

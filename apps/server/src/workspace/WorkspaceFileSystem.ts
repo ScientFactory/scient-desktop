@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 
 import type {
   ProjectFilePublicationAttention,
@@ -16,6 +15,7 @@ import type {
 import { PROJECT_MISSING_FILE_REVISION } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,10 +24,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 // SCIENT-FORK:START — saves, creates, renames and the open-file watch.
+import { isInSourceFileStore } from "../scient/sources/sourceFileStore.ts";
 import {
   isNodeError,
   WorkspaceFileExistsError,
@@ -56,8 +58,7 @@ import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
-// Windows also reaches `.git` through trailing dots or spaces, a `:` stream
-// suffix, or the 8.3 short name `GIT~1`. Names compare upcased, as NTFS does.
+// NTFS reaches .git through trailing dots/spaces, stream suffixes and GIT~1; compare uppercased names.
 const isGitMetadataName = (segment: string) => {
   const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
   return name === ".GIT" || name === "GIT~1";
@@ -187,13 +188,8 @@ export class WorkspaceFileSystem extends Context.Service<
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
     // SCIENT-FORK:START viewer-only reads outside the workspace.
-    /**
-     * Read a file to show it. Viewing never depends on the project boundary: a
-     * relative path that climbs out of the root and a symlink that leads out of
-     * it are read in place, read-only, like an absolute host path. Only the
-     * file viewer uses this; nothing that changes or processes project files
-     * should.
-     */
+    /** Viewer-only reads may follow absolute paths, escaping relatives and symlinks read-only.
+     * Project processing and mutations must use contained reads. */
     readonly viewFile: (
       input: ProjectReadFileInput,
     ) => Effect.Effect<
@@ -217,7 +213,7 @@ export class WorkspaceFileSystem extends Context.Service<
   // SCIENT-FORK:END
 >()("t3/workspace/WorkspaceFileSystem") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -229,8 +225,7 @@ export const make = Effect.gen(function* () {
     resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
   );
   const configuredRetentionStorageDirectory =
-    config.filePublicationRetentionRoot ??
-    path.join(NodeOS.homedir(), ".scient-next", "file-publications");
+    config.filePublicationRetentionRoot ?? path.join(config.baseDir, "file-publications");
   // Resolve only ancestors: the final private directory must still reject a symlink.
   // Missing optional storage stays absent until a publication provisions it.
   const canonicalAncestor = async (directory: string): Promise<string> => {
@@ -296,10 +291,13 @@ export const make = Effect.gen(function* () {
     }
     return directory;
   };
+  const isServerInternalPath = yield* makeIsServerInternalPath;
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
-    if (!path.isAbsolute(expandedPath)) return null;
+    // Chips ask as soon as an agent's message renders, and touching a network
+    // path makes Windows sign in to its host with the user's NTLM credentials.
+    if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
     if (stat._tag === "None") return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
@@ -322,7 +320,7 @@ export const make = Effect.gen(function* () {
           }
         },
         catch: () => undefined,
-      }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+      }).pipe(Effect.orElseSucceed(() => undefined));
     }
     return {
       kind: "file",
@@ -350,13 +348,8 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  /**
-   * Git runs config and hooks from its own folders, so a write never lands in one:
-   * a `.git` entry, or a repository folder under another name such as `.bare`.
-   * Folders are checked upward to a linked worktree's top, which holds a `.git`
-   * file, since worktrees can sit inside a bare repository. `absolutePath` must
-   * be normalized.
-   */
+  // Reject Git folders, including renamed bare repos whose config/hooks can execute; paths must be normalized.
+  // Stop at linked worktrees' .git files since worktrees can sit inside bare repos.
   const isInGitFolder = async (absolutePath: string) => {
     if (absolutePath.split(path.sep).some(isGitMetadataName)) return true;
     for (let folder = path.dirname(absolutePath); ; folder = path.dirname(folder)) {
@@ -369,8 +362,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
-      // What git reads as a repository: HEAD, plus objects and refs here or in
-      // the folder a `commondir` file names, as in a linked worktree's git folder.
+      // Git recognizes HEAD with commondir or objects/refs as a repository.
       if (head && (commondir || (objects && refs))) return true;
       if (dotGit?.isFile() || path.dirname(folder) === folder) return false;
     }
@@ -404,17 +396,22 @@ export const make = Effect.gen(function* () {
   };
   // SCIENT-FORK:END
 
-  /**
-   * Resolves the file a read targets, for one of two purposes.
-   *
-   * - `view`: viewing never depends on the project boundary. An absolute path,
-   *   a relative path that climbs out of the root and a symlink that leads out
-   *   of it all read the host file in place, read-only.
-   * - `contained`: the read for anything that works on project files, and the
-   *   one a save or rename relies on to confirm what it is about to change. A
-   *   relative path stays inside the root, symlinks included, and fails
-   *   otherwise, exactly as writes do.
-   */
+  const assertNetworkPathWithinRoot = Effect.fn("WorkspaceFileSystem.assertNetworkPathWithinRoot")(
+    function* (input: ProjectReadFileInput, targetPath = input.relativePath) {
+      if (
+        isNetworkPath(targetPath) &&
+        !KnownWorkspaces.isWithinRoot(path, path.resolve(targetPath), path.resolve(input.cwd))
+      ) {
+        return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+      }
+    },
+  );
+
+  /** Viewer reads may leave the project root, read-only.
+   * Processing, save and rename require contained paths, including symlink targets. */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
     purpose: "view" | "contained",
@@ -428,10 +425,14 @@ export const make = Effect.gen(function* () {
     // A host path is always read-only here. It is reported as outside the
     // workspace only when it is: an absolute spelling of a workspace file is
     // read-only for being addressed that way, not for where it lives.
-    const readHostFile = (hostPath: string) =>
-      Effect.tryPromise({
+    const readHostFile = Effect.fn("WorkspaceFileSystem.readHostFile")(function* (
+      hostPath: string,
+    ) {
+      const absolutePath = isNetworkPath(hostPath) ? path.resolve(hostPath) : hostPath;
+      yield* assertNetworkPathWithinRoot({ ...input, relativePath: hostPath });
+      return yield* Effect.tryPromise({
         try: async () => {
-          const resolved = await canonicalReadTarget(hostPath, input.allowMissing);
+          const resolved = await canonicalReadTarget(absolutePath, input.allowMissing);
           const realRoot = await NodeFSP.realpath(input.cwd).catch(() => null);
           return {
             relativePath: requestedPath,
@@ -444,17 +445,26 @@ export const make = Effect.gen(function* () {
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: hostPath,
-            operationPath: hostPath,
+            resolvedPath: absolutePath,
+            operationPath: absolutePath,
             operation: "realpath-target",
             cause,
           }),
       });
+    });
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
       : requestedPath;
+    const resolvedHostPath = path.isAbsolute(hostPath)
+      ? isNetworkPath(hostPath)
+        ? path.resolve(hostPath)
+        : hostPath
+      : path.resolve(input.cwd, hostPath);
+    if (isNetworkPath(resolvedHostPath)) {
+      yield* assertNetworkPathWithinRoot(input, resolvedHostPath);
+    }
     if (path.isAbsolute(hostPath)) {
-      return yield* readHostFile(hostPath);
+      return yield* readHostFile(resolvedHostPath);
     }
 
     const resolveWithinRoot = workspacePaths.resolveRelativePathWithinRoot({
@@ -538,15 +548,17 @@ export const make = Effect.gen(function* () {
     };
     const realTargetPath = target.realTargetPath;
     if (realTargetPath === null) return absentResult;
+    if (yield* isServerInternalPath(realTargetPath)) {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
 
     const currentRead = Effect.acquireUseRelease(
       Effect.tryPromise({
-        // Non-blocking so a FIFO cannot hang the open; the stat below rejects
-        // it. Regular files ignore the flag. The target was already resolved,
-        // so its last component is not a link: refusing to follow one means a
-        // file swapped for a symlink after that check fails here instead of
-        // being read under the flags decided for the original. Windows lacks
-        // both flags.
+        // Non-blocking opens prevent FIFO hangs before stat rejects them; Windows lacks the flag.
+        // O_NOFOLLOW rejects symlink swaps after resolution; Windows lacks both flags.
         try: () =>
           NodeFSP.open(
             realTargetPath,
@@ -616,11 +628,13 @@ export const make = Effect.gen(function* () {
             });
           }
 
+          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
           return {
             relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
+            // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
+            contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
             byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated,
             revision: revisionForBytes(fileBytes),
             ...(target.readOnly ? { readOnly: true } : {}),
             ...(target.outsideWorkspace ? { outsideWorkspace: true } : {}),
@@ -676,6 +690,7 @@ export const make = Effect.gen(function* () {
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
+    yield* assertNetworkPathWithinRoot(input);
     if (!path.isAbsolute(input.relativePath)) {
       yield* workspacePaths.resolveRelativePathWithinRoot({
         workspaceRoot: input.cwd,
@@ -696,6 +711,7 @@ export const make = Effect.gen(function* () {
   const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = Effect.fn(
     "WorkspaceFileSystem.viewFile",
   )(function* (input) {
+    yield* assertNetworkPathWithinRoot(input);
     const rootExists = yield* fileSystem.exists(input.cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -721,12 +737,7 @@ export const make = Effect.gen(function* () {
   });
   // SCIENT-FORK:END
 
-  /**
-   * Resolves the file a write targets. The deepest existing ancestor resolves to
-   * its real path before the root check, so neither the file nor the directories
-   * created for it can follow a symlink out of the root. A dangling symlink is
-   * rejected rather than written through.
-   */
+  // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
   const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
     input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
   ) {
@@ -819,7 +830,9 @@ export const make = Effect.gen(function* () {
     resolveRetentionStorageDirectory,
     retentionDirectoryFor,
     retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
-    isProtectedPath: isInGitFolder,
+    // Sources' content-addressed files are shared by every attachment with their bytes.
+    isProtectedPath: async (absolutePath) =>
+      isInSourceFileStore(absolutePath) || (await isInGitFolder(absolutePath)),
   });
   // SCIENT-FORK:END
 
@@ -867,6 +880,7 @@ export const make = Effect.gen(function* () {
     );
   const {
     registerRetainedFileHistory,
+    retainedWriteFolders,
     prepareRetainedDirectory,
     listFileVersions,
     discardFileVersion,
@@ -891,6 +905,9 @@ export const make = Effect.gen(function* () {
     replaceFileRetained,
     removeFileRetained,
     registerRetainedFileHistory,
+    // SCIENT-FORK:START — Overleaf preflights the folders each retained write needs.
+    retainedWriteFolders,
+    // SCIENT-FORK:END
     prepareRetainedDirectory,
     listFileVersions,
     discardFileVersion,

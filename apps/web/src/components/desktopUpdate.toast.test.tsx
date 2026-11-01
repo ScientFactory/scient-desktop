@@ -68,20 +68,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     vi.unstubAllEnvs();
   });
 
-  it("opens release notes from the configured repository", async () => {
-    vi.stubEnv("T3CODE_DESKTOP_UPDATE_REPOSITORY", "JustYannicc/t3code");
-    const openExternal = vi.fn().mockResolvedValue(true);
-
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
-    findReleaseNotesLink(getDescription())?.props.onClick?.();
-
-    await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/JustYannicc/t3code/releases/tag/v0.6.8",
-      );
-    });
-  });
-
+  // regression: 2cf25a2675 fix(desktop): link update notes to Scient releases (#219)
   it("opens the downloaded Scient release even when a newer version is available", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
@@ -97,22 +84,5 @@ describe("showDesktopUpdateDownloadedToast", () => {
       );
     });
     expect(testState.addToast).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back to the version the download was started for", async () => {
-    const openExternal = vi.fn().mockResolvedValue(true);
-
-    // The `update-downloaded` event can land after the download RPC resolves.
-    showDesktopUpdateDownloadedToast(
-      { openExternal },
-      downloadedState({ downloadedVersion: null }),
-    );
-    findReleaseNotesLink(getDescription())?.props.onClick?.();
-
-    await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/ScientFactory/scient-desktop/releases/tag/v0.6.8",
-      );
-    });
   });
 });

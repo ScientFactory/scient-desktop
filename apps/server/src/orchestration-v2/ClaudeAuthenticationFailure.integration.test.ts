@@ -30,6 +30,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { layer as ProviderRegistryLive } from "../provider/ProviderRegistry.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "../provider/ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Claude from "./Adapters/ClaudeAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -37,11 +38,12 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessions from "./ProviderSessionManager.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
-const settings = Schema.decodeUnknownSync(ClaudeSettings)({});
+const settings = Schema.decodeSync(ClaudeSettings)({});
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
@@ -213,6 +215,7 @@ it.effect.each(
       Layer.provide(
         Layer.mergeAll(
           instanceLayer,
+          Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
           ModelManifest.layerTest,
           ProviderLatestVersions.layer,
           Layer.succeed(ServerConfig.ServerConfig, config),
@@ -353,7 +356,7 @@ it.effect.each(
         const fresh = yield* ProjectionStore.ProjectionStoreV2;
         for (const row of persisted) yield* fresh.apply(row.event);
         return yield* fresh.getThreadProjection(badThreadId);
-      }).pipe(Effect.provide(ProjectionStore.layerMemory));
+      }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory))));
       assert.equal(rebuilt.runs[0]?.status, "failed");
       assert.equal(rebuilt.providerTurns.filter((turn) => turn.status === "failed").length, 1);
     }).pipe(Effect.provide(Layer.merge(replay, snapshots)));

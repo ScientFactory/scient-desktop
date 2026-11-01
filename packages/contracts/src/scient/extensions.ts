@@ -3,6 +3,20 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
+import { ExtensionIconDataUri } from "./extensionIcon.ts";
+import { ProviderStoreApp } from "./providerStore.ts";
+import { ExtensionAgentStores } from "./extensionAudience.ts";
+export {
+  ExtensionAudience,
+  ExtensionAgentStores,
+  supportsScientClaudePlugins,
+} from "./extensionAudience.ts";
+
+export * from "./providerStore.ts";
+export { storeCategories } from "./storeCategories.ts";
+export * from "./pluginContents.ts";
+export * from "./pluginKeys.ts";
+
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 
 /**
@@ -86,12 +100,7 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  * icons travel only as base64 `data:` URIs of PNG, JPEG, WebP or SVG, at most
  * 64 KiB of image (about 87,400 base64 characters).
  */
-export const ExtensionIconDataUri = Schema.String.check(
-  Schema.isMaxLength(90_000),
-  Schema.isPattern(/^data:image\/(?:png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/u),
-);
-export type ExtensionIconDataUri = typeof ExtensionIconDataUri.Type;
-export const isExtensionIconDataUri = Schema.is(ExtensionIconDataUri);
+export { ExtensionIconDataUri, isExtensionIconDataUri } from "./extensionIcon.ts";
 
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
@@ -104,11 +113,8 @@ export const ConnectorSummary = Schema.Struct({
   status: ConnectorStatus,
   enabled: Schema.Boolean,
   /**
-   * Generation of the credential behind this connector. Increases whenever that
-   * credential changes (every sign-in, replacement, sign-out, or a refresh
-   * failure or revocation that loses it), even when `auth` looks identical.
-   * Anything derived from the credential (such as a tool list) belongs to one
-   * revision.
+   * Credential generation changes even if auth presentation is identical. Tool lists and other
+   * derived evidence bind that revision, not merely connected status.
    */
   authRevision: NonNegativeInt,
   /** Projects whose sessions receive this connector. Shared model with Secrets. */
@@ -281,6 +287,16 @@ export const ConnectorToolSummary = Schema.Struct({
   description: Schema.optional(Schema.String),
   readOnly: Schema.optional(Schema.Boolean),
   destructive: Schema.optional(Schema.Boolean),
+  parameters: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+        type: Schema.optional(Schema.String.check(Schema.isMaxLength(100))),
+        required: Schema.Boolean,
+        description: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+      }),
+    ).check(Schema.isMaxLength(50)),
+  ),
 });
 export type ConnectorToolSummary = typeof ConnectorToolSummary.Type;
 
@@ -298,12 +314,17 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 /** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
 export const ExtensionCategory = Schema.Literals([
   "featured",
-  "research",
+  "papers",
+  "biology",
+  "chemistry",
+  "earth",
+  "physics-math",
+  "social-science",
   "data",
-  "code",
   "writing",
-  "communication",
-  "design",
+  "figures",
+  "code",
+  "teamwork",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
@@ -317,7 +338,7 @@ export type DiscoverSearchScope = typeof DiscoverSearchScope.Type;
 export const DiscoverSearchInput = Schema.Struct({
   scope: DiscoverSearchScope,
   query: Schema.optional(Schema.String),
-  /** Restrict a `curated` search to one category; invalid with `registry`. */
+  /** Curated membership or server-owned Registry keyword searches. */
   category: Schema.optional(ExtensionCategory),
   /** `registry` only: the registry's paging cursor. */
   cursor: Schema.optional(TrimmedNonEmptyString),
@@ -335,6 +356,28 @@ export const DiscoverRemote = Schema.Struct({
 export type DiscoverRemote = typeof DiscoverRemote.Type;
 
 export const DiscoverEntry = Schema.Struct({
+  agentStores: Schema.optional(ExtensionAgentStores),
+  accountRequired: Schema.optional(Schema.Boolean),
+  oauthClientRequired: Schema.optional(Schema.Boolean),
+  hosting: Schema.optional(TrimmedNonEmptyString),
+  paidPlan: Schema.optional(Schema.Boolean),
+  beta: Schema.optional(Schema.Boolean),
+  accessNote: Schema.optional(TrimmedNonEmptyString),
+  apiKey: Schema.optional(
+    Schema.Struct({
+      strategy: CredentialStrategy,
+      headerName: Schema.optional(TrimmedNonEmptyString),
+      fieldLabel: TrimmedNonEmptyString,
+      helpUrl: TrimmedNonEmptyString,
+    }),
+  ),
+  address: Schema.optional(
+    Schema.Struct({
+      urlTemplate: TrimmedNonEmptyString,
+      fieldLabel: TrimmedNonEmptyString,
+      placeholder: TrimmedNonEmptyString,
+    }),
+  ),
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -378,6 +421,7 @@ export const DiscoverEntryInput = Schema.Struct({ name: TrimmedNonEmptyString })
 export type DiscoverEntryInput = typeof DiscoverEntryInput.Type;
 
 export const DiscoverPage = Schema.Struct({
+  message: Schema.optional(Schema.String),
   entries: Schema.Array(DiscoverEntry),
   nextCursor: Schema.optional(TrimmedNonEmptyString),
   fetchedAt: IsoDateTime,
@@ -450,6 +494,21 @@ export type ExtensionDeliveryReceiptResult = typeof ExtensionDeliveryReceiptResu
 export const ProviderPluginActionInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   action: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("refresh-inventory"),
+      connectionsOnly: Schema.optional(Schema.Boolean),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("install"),
+      entryId: TrimmedNonEmptyString,
+      sourceInstanceId: Schema.optional(ProviderInstanceId),
+    }),
+    Schema.Struct({ type: Schema.Literal("add-official-store") }),
+    Schema.Struct({
+      type: Schema.Literal("set-enabled"),
+      pluginId: TrimmedNonEmptyString,
+      enabled: Schema.Boolean,
+    }),
     Schema.Struct({ type: Schema.Literal("uninstall"), pluginId: TrimmedNonEmptyString }),
     Schema.Struct({ type: Schema.Literal("mcp-sign-in"), serverName: TrimmedNonEmptyString }),
   ]),
@@ -459,6 +518,8 @@ export const ProviderPluginActionInput = Schema.Struct({
 export type ProviderPluginActionInput = typeof ProviderPluginActionInput.Type;
 
 export const ProviderPluginActionResult = Schema.Struct({
+  appsNeedingAuth: Schema.optional(Schema.Array(ProviderStoreApp)),
+  authPolicy: Schema.optional(Schema.String),
   /** Provider-owned sign-in page to open in the user's browser. */
   authorizationUrl: Schema.optional(TrimmedNonEmptyString),
   providers: ServerProviders,
@@ -480,3 +541,28 @@ export class ExtensionsError extends Schema.TaggedError<ExtensionsError>()("Exte
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+/** Match a single tenant label without credentials or extra URL components. */
+export function matchesExtensionAddressTemplate(value: string, template: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const expected = new URL(template.replace("<tenant>", "tenant"));
+    const suffix = expected.hostname.slice("tenant".length);
+    const tenant = url.hostname.slice(0, -suffix.length);
+    if (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === expected.pathname &&
+      url.hostname.endsWith(suffix) &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(tenant)
+    )
+      return true;
+  } catch {
+    // Invalid URLs cannot match a template.
+  }
+  return false;
+}

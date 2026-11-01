@@ -298,7 +298,7 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
       ),
     );
 
-  const request = Effect.fn("rpcClient.request")(function* <A>(
+  const request = Effect.fn("PiRpcClient.request")(function* <A>(
     command: string,
     payload: object,
     decode: (data: unknown) => Effect.Effect<A, PiRpcError>,
@@ -363,12 +363,12 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
             Effect.as(Option.none<PiRpcEvent>()),
           );
         queuedCharacters -= entry.size;
-        return Effect.succeed(Option.some(entry.event));
+        return Effect.succeedSome(entry.event);
       }),
       Stream.filter(Option.isSome),
       Stream.map((value) => value.value),
     ),
-    synchronizeEvents: Effect.fn("rpcClient.synchronizeEvents")(
+    synchronizeEvents: Effect.fn("PiRpcClient.synchronizeEvents")(
       function* () {
         if (yield* Ref.get(closed)) return;
         const fence = yield* Deferred.make<void>();

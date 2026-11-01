@@ -6,9 +6,14 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useDelegatedUnderParent,
+  useThreadShells,
+} from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
+import { useIsNotificationPresenter } from "../multiWindow/notificationPresenter";
 import { countUnreadConversations, environmentCatalogComplete } from "./unreadConversations";
 
 /** Per device; on unless turned off in Settings. */
@@ -26,21 +31,26 @@ function UnreadAnswerBadge() {
   const threads = useThreadShells();
   const localVisits = useUiStateStore((state) => state.threadLastVisitedAtById);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const delegatedUnderParent = useDelegatedUnderParent();
   // Snoozes end on their own; a minute late is fine for a badge. The clock omits its UTC zone.
   const now = `${useNowMinute()}:00.000Z`;
+  // Windows overlays each window's own taskbar button; elsewhere one icon has one owner.
+  const owner =
+    useIsNotificationPresenter() || window.desktopBridge?.getClientPlatform?.() === "win32";
   // Until every environment is known and has its threads, the badge keeps its last value.
   const ready =
     environmentCatalogComplete(catalog, isLocalEnvironmentDisabled()) && shellsBootstrapped;
   const count = !enabled
     ? 0
     : ready
-      ? countUnreadConversations({ threads, localVisits, serverConfigs, now })
+      ? countUnreadConversations({ threads, localVisits, serverConfigs, now, delegatedUnderParent })
       : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the count to the OS app badge through the desktop bridge
   useEffect(() => {
     const bridge = window.desktopBridge;
     const setBadge = bridge?.setUnreadAnswerBadge;
-    if (!setBadge || count === null) return;
+    if (!setBadge || count === null || !owner) return;
     const image = bridge.getClientPlatform?.() === "win32" ? taskbarOverlay(count) : null;
     const update = () => {
       void setBadge({ count, image }).catch((error: unknown) => {
@@ -51,7 +61,7 @@ function UnreadAnswerBadge() {
     // Reapply after a user changes the OS badge permission while Scient is open.
     window.addEventListener("focus", update);
     return () => window.removeEventListener("focus", update);
-  }, [count]);
+  }, [count, owner]);
   return null;
 }
 

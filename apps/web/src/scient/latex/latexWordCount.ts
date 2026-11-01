@@ -157,7 +157,7 @@ export function countLatexWords(source: string): number {
       ),
       " ",
     )
-    .replace(/\\(?:begin|end)\{[^{}]*\}(?:\[[^\]\[]*\])?/gu, " ")
+    .replace(/\\(?:begin|end)\{[^{}]*\}(?:\[[^\][]*\])?/gu, " ")
     // An accent belongs to its letter: caf\'e is one word.
     .replace(/\\['"`^~=.]\s*\{?\\?([a-zA-Z])\}?/gu, "$1")
     .replace(/\\[cHbdruvtk](?![a-zA-Z])\s*\{?([a-zA-Z])\}?/gu, "$1")
@@ -168,7 +168,7 @@ export function countLatexWords(source: string): number {
     .replace(/\\([%&$#_])/gu, "$1")
     .replace(/\\[{}]/gu, "")
     // Any other command: drop its name and optional arguments, keep its text.
-    .replace(/\\[a-zA-Z@]+\*?(?:\[[^\]\[]*\])*/gu, " ")
+    .replace(/\\[a-zA-Z@]+\*?(?:\[[^\][]*\])*/gu, " ")
     .replace(/\\./gu, " ")
     // Grouping braces do not split a word: co{oper}ate is one word.
     .replace(/[{}]/gu, "");

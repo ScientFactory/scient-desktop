@@ -7,11 +7,17 @@ import {
   type ProjectListDirectoryInput,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+import { dismissContextMenu, showContextMenuFallback } from "~/contextMenuFallback";
 import { act, render } from "../../../test/render";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+// SCIENT-FORK:START
+import { resetOverleafStoreForTests } from "~/scient/overleaf/overleafStore";
+// SCIENT-FORK:END
 
 const files = vi.hoisted(() => ({
   directories: {} as Record<string, ProjectDirectoryEntry[]>,
@@ -20,6 +26,7 @@ const files = vi.hoisted(() => ({
   searchError: null as string | null,
   listDirectory: vi.fn(),
   refresh: vi.fn(),
+  localApi: undefined as unknown,
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
@@ -38,15 +45,55 @@ vi.mock("~/state/queries", () => ({
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
 vi.mock("~/composerHandleContext", () => ({ useComposerHandleContext: () => null }));
-vi.mock("~/fileContextMenu", () => ({ useFileContextMenu: () => ({}) }));
-vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
+vi.mock("~/fileContextMenu", () => ({
+  useFileContextMenu: () => ({ buildItems: () => [], activate: () => Promise.resolve() }),
+}));
+vi.mock("~/localApi", () => ({ readLocalApi: () => files.localApi }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
+// SCIENT-FORK:START — Overleaf links of the workspace, for the Connect dialog and the marks
+const overleaf = vi.hoisted(() => ({ folders: [] as string[] }));
+vi.mock("~/scient/overleaf/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/scient/overleaf/client")>()),
+  listOverleafConnections: async () => ({
+    connections: overleaf.folders.map((folder, index) => ({
+      connectionId: `c${index}`,
+      checkoutRoot: "/workspace",
+      folder,
+      projectId: "0123456789abcdef01234567",
+      branch: "master",
+      state: "active",
+      completedSyncCount: 1,
+      createdAt: "2026-10-24T10:00:00.000Z",
+      updatedAt: "2026-10-24T10:00:00.000Z",
+      linkedHere: true,
+    })),
+  }),
+  readOverleafStatus: async () => {
+    throw new Error("not needed");
+  },
+  readOverleafToken: async () => ({ saved: true }),
+}));
+// SCIENT-FORK:END
 vi.mock("~/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => children,
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render }: { render: ReactNode }) => render,
   TooltipPopup: () => null,
 }));
+
+/** Refresh and expand-all live in the Files menu ("⋯") at the end of the bar. */
+async function chooseFromFilesMenu(container: HTMLElement, label: string) {
+  const findItem = () =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+  await act(() =>
+    container.querySelector<HTMLButtonElement>('button[aria-label="Files menu"]')!.click(),
+  );
+  await expect.poll(findItem).toBeDefined();
+  await act(() => findItem()!.click());
+}
 
 function entry(
   relativePath: string,
@@ -179,11 +226,7 @@ describe("Files panel search", () => {
           finishRefresh = resolve;
         }),
     );
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Refresh workspace files"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Refresh files");
     expect(screen.rowTop("package.json")).toBe(initialTop);
     await act(() =>
       finishRefresh(AsyncResult.success({ entries: files.directories[""], complete: true })),
@@ -197,6 +240,19 @@ describe("Files panel search", () => {
     files.searchPending = false;
     await screen.rerender();
     expect(screen.rowTop("package.json")).toBe(filteredTop);
+  });
+
+  it("catches up with changes made in other apps on coming back to the window", async () => {
+    setup();
+    await using screen = await renderPanel();
+    await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+    files.directories[""]!.push(entry("from-elsewhere.tex"));
+    window.dispatchEvent(new Event("focus"));
+    await act(async () => undefined);
+    expect(screen.visiblePaths()).not.toContain("from-elsewhere.tex");
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    await expect.poll(screen.visiblePaths).toContain("from-elsewhere.tex");
   });
 
   it("shows no matching files instead of the full tree when a filename is absent", async () => {
@@ -280,27 +336,115 @@ describe("Files panel search", () => {
     files.directories["src/lib"] = [entry("src/lib/util.ts")];
     await using screen = await renderPanel();
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Expand all folders"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Expand all folders");
     await expect.poll(screen.visiblePaths).toContain("src/lib/");
     expect(
       files.listDirectory.mock.calls.map(([request]) => request.input.relativeDirectory),
     ).toEqual(["", "src"]);
     expect(screen.visiblePaths()).not.toContain("src/lib/util.ts");
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Expand all folders"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Expand all folders");
     await expect.poll(screen.visiblePaths).toContain("src/lib/util.ts");
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Collapse all folders"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
   });
+  it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
+    setup();
+    files.directories = { "": [entry("README.md")] };
+    files.localApi = { contextMenu: { show: showContextMenuFallback } };
+    await using screen = await renderPanel();
+    using _menu = {
+      [Symbol.dispose]: () => {
+        dismissContextMenu();
+        files.localApi = undefined;
+      },
+    };
+    using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    await expect.poll(screen.visiblePaths).toEqual(["README.md"]);
+    const findRow = () =>
+      screen.container
+        .querySelector("file-tree-container")!
+        .shadowRoot!.querySelector<HTMLElement>('[data-item-path="README.md"]')!;
+    findRow().dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        button: 2,
+      }),
+    );
+    const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
+    await expect.element(action).toBeVisible();
+    await userEvent.click(action);
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
+
+    const row = findRow();
+    await userEvent.keyboard("{Tab}");
+    row.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await expect.element(action).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
+  });
+
+  it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
+    setup();
+    files.directories = { "": [entry("README.md")] };
+    await using screen = await renderPanel();
+    await expect.poll(screen.visiblePaths).toEqual(["README.md"]);
+    const row = screen.container
+      .querySelector("file-tree-container")!
+      .shadowRoot!.querySelector<HTMLElement>('[data-item-path="README.md"]')!;
+
+    const dataTransfer = new DataTransfer();
+    row.dispatchEvent(
+      new DragEvent("dragstart", { bubbles: true, cancelable: true, composed: true, dataTransfer }),
+    );
+    // The tree selects the row the drag picked up; mid-drag that must not open it.
+    row.click();
+    await expect.poll(() => row.getAttribute("aria-selected")).toBe("true");
+
+    expect(dataTransfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toContain("README.md");
+    expect(props.onOpenFile).not.toHaveBeenCalled();
+
+    row.dispatchEvent(new DragEvent("dragend", { bubbles: true, composed: true, dataTransfer }));
+    await expect.poll(() => row.getAttribute("aria-selected")).not.toBe("true");
+
+    row.click();
+    await expect.poll(() => props.onOpenFile.mock.calls.length).toBe(1);
+  });
+
+  // SCIENT-FORK:START — Overleaf in the Files panel
+  it("marks folders linked to Overleaf and opens Connect from the bar", async () => {
+    setup();
+    // Earlier tests already read this workspace's (empty) links.
+    resetOverleafStoreForTests();
+    overleaf.folders = ["src"];
+    await using screen = await renderPanel();
+    await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+    const mark = () =>
+      screen.container
+        .querySelector("file-tree-container")
+        ?.shadowRoot!.querySelector(
+          '[data-item-path="src/"] [data-icon-name="scient-tree-icon-overleaf"]',
+        ) ?? null;
+    await expect.poll(mark).not.toBeNull();
+
+    await act(() =>
+      screen.container
+        .querySelector<HTMLButtonElement>('button[aria-label="Connect an external folder"]')!
+        .click(),
+    );
+    const overleafItem = () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent?.trim() === "Overleaf…",
+      );
+    await expect.poll(overleafItem).toBeDefined();
+    await act(() => overleafItem()!.click());
+    // Nothing is selected, so the dialog offers the project's top folder.
+    await expect
+      .poll(() => document.querySelector('[role="dialog"]')?.textContent ?? "")
+      .toContain("Link the project's top folder");
+    overleaf.folders = [];
+  });
+  // SCIENT-FORK:END
 });

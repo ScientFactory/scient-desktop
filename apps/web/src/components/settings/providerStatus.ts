@@ -61,11 +61,8 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider.installed) {
     return {
       headline: "Not found",
-      // The lifecycle presentation already gives the user the actionable
-      // next step (for example, "Install Antigravity to connect your
-      // account."). Provider probe messages can contain absolute executable
-      // paths and PATH troubleshooting intended for diagnostics; repeating
-      // those in the collapsed settings row is noisy and exposes internals.
+      // Lifecycle presentation already provides the next action; passive probe details belong in diagnostics.
+      // Repeating executable paths and PATH troubleshooting in a collapsed row exposes internals.
       detail: null,
     };
   }
@@ -110,7 +107,6 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
 
 export function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
-  // Antigravity reports a release tag such as `agy_acp_server_20260818_01_RC01`.
   const antigravity = /^agy_acp_server_(\d{4})(\d{2})(\d{2})_\d+(?:_(\w+))?$/.exec(version);
   if (antigravity) {
     const [, year, month, day, candidate] = antigravity;
@@ -148,8 +144,7 @@ export function getProviderVersionAdvisoryPresentation(
   ) {
     const targetVersion = compatibility.recommendedVersion;
     const recommendation = getProviderVersionLabel(targetVersion) ?? compatibility.recommendedRange;
-    // An installed version that is already the package's latest cannot be fixed by
-    // updating it, e.g. when the recommendation needs a different package.
+    // Latest package versions cannot be updated into recommendations requiring another package.
     const isAlreadyLatest = advisory?.status === "current";
     return {
       title: COMPATIBILITY_TITLES[compatibility.status],

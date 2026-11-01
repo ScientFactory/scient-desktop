@@ -6,11 +6,8 @@ export interface DocumentSourcePatch {
   readonly end: number;
   readonly replacement: string;
   /**
-   * The text the planner saw in `[start, end)`. When given, the patch applies
-   * only if the source still holds exactly that text there. This guards the
-   * contents of the range; it cannot tell that the text around an insertion
-   * moved. Whether the whole source is still the one the plan was made on is
-   * the edit's `basedOnVersion`.
+   * Expected range text guards only that range; it cannot detect moved insertion context. Use
+   * basedOnVersion to establish whole-source identity.
    */
   readonly expected?: string;
 }

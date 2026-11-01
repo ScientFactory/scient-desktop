@@ -55,12 +55,8 @@ interface HeadingSection {
 }
 
 /**
- * Arrows that receive visual styling in RTL prose. The basic `←` (U+2190)
- * looks fine from its Arial fallback and is intentionally excluded. The
- * double `⇐`, long `⟵`, and long double `⟸` come from thinner fallback fonts
- * (Hiragino Sans, STIX Two Math) and need thickening. The long single `⟵`
- * additionally sits below the text baseline because STIX Two Math uses math
- * metrics, so it gets a small vertical lift.
+ * Arial's basic left arrow needs no adjustment. Thinner fallback fonts need thickening; STIX's long
+ * single arrow also needs lifting because math metrics place it below prose baseline.
  */
 const STYLED_RTL_ARROWS = new Set(["⇐", "⟵", "⟸"]);
 const LIFTED_RTL_ARROW = "⟵";

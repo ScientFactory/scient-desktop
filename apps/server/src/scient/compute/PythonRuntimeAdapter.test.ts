@@ -688,6 +688,7 @@ describe("python runtime adapter", () => {
     }),
   );
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
   it.effect("builds a launch plan through prepareLaunch", () =>
     Effect.gen(function* () {
       const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
@@ -700,6 +701,7 @@ describe("python runtime adapter", () => {
     }),
   );
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
   it("normalizes diagnostics through the adapter", () => {
     const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
     const diagnostics = adapter.normalizeDiagnostic(
@@ -714,6 +716,7 @@ describe("python runtime adapter", () => {
     expect(diagnostics[0]!.errorName).toBe("ValueError");
   });
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
   it.effect("computes a fingerprint through the adapter", () =>
     Effect.gen(function* () {
       const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
@@ -751,6 +754,7 @@ describe("python runtime adapter", () => {
     }),
   );
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
   it("reports the correct language and transport kind", () => {
     const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
     expect(adapter.languageId).toBe(PYTHON_LANGUAGE_ID);

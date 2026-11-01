@@ -47,22 +47,10 @@ import {
 import type { OmpTarget } from "./OmpTarget.ts";
 
 /**
- * The generated extension OMP loads. It registers Scient's custom models, then
- * long-polls the loopback endpoint for a newer model generation. Each refresh
- * is acknowledged with the generation it applied (and any registration
- * error), so the server can wait until OMP really knows a model before it
- * selects one. A change that arrives mid-refresh runs the refresh again.
- *
- * The endpoint, its token and the connection keys come from the bootstrap
- * file (`OmpExtensionBootstrap`), never the environment. Keys are handed to
- * OMP as literal values: OMP reads a provider `apiKey` that names an
- * environment variable from `process.env`, which its shell tools can see, and
- * runs one that starts with `!` as a command, so neither form is used.
- *
- * The first run in a process owns the bridge: the refresh loop, the
- * acknowledgements and the refresh command. OMP re-runs the extension for
- * each in-process subagent; a re-run replays the current registrations into
- * the subagent's API and starts nothing.
+ * Wait for the target generation's applied acknowledgement before selection; re-run refresh if it
+ * changes mid-flight. Bootstrap secrets never use env/command-shaped keys. Only the first extension
+ * run owns polling/acks; in-process subagent reruns replay registrations without starting another
+ * bridge.
  */
 const ompCustomModelsExtensionBody = (target: OmpTarget): string => `
 const scientModelsBridge = (bootstrap) => {
@@ -481,11 +469,8 @@ const OMP_MODELS_ACK_MAX_BYTES = 4096;
 const OMP_MODELS_MAX_AUTHORIZED_REQUESTS = 8;
 
 /**
- * Model generations. Scient bumps `generation` whenever the models it would
- * serve change (or a refresh is forced); OMP's extension acknowledges each
- * generation it applied. A selection waits until `applied` reaches the
- * generation current when it started, so an in-flight refresh of an older
- * generation never satisfies a newer target.
+ * Selection waits for the generation current when it began. An in-flight older refresh
+ * acknowledgement cannot satisfy a newer model target.
  */
 interface OmpModelBarrier {
   readonly generation: number;
@@ -510,20 +495,9 @@ const settingsRevision = (settings: ServerSettings): number | undefined => {
 };
 
 /**
- * Creates a process factory that loads a credential-free OMP extension. The
- * extension receives model definitions over an authenticated loopback endpoint.
- * The endpoint token and publishable connection keys reach it only through its
- * per-process bootstrap file (`OmpExtensionBootstrap`), which it deletes while
- * OMP loads; they are never in OMP's environment, arguments or extension file.
- *
- * Connections are resolved (which reads the secret store) once at start and
- * again only when the custom-model settings revision changes or a refresh is
- * forced. Guarded RPCs check the cached authority and never read secrets.
- *
- * The loopback server is not shared with Pi's (`PiCustomModels`): this one
- * also serves the generation long-poll and acknowledgement, and Pi's resolves
- * settings per request. Sharing only the token and listen code would change
- * Pi's error text for no behavioural gain.
+ * Pass tokens/keys only through the read-once/deleted bootstrap, never env/args/extension source.
+ * Resolve secrets only at start/settings change/forced refresh; guarded RPCs use cached authority.
+ * Keep Pi's per-request server separate because its resolution and error contracts differ.
  */
 export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeClientFactory")(
   function* (

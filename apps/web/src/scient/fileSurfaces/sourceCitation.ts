@@ -9,6 +9,7 @@ export type SourceCitationTarget = ScopedThreadRef & {
   path: string;
   latexRootRelativePath?: string | undefined;
 };
+const isFileCitation = Schema.is(FileCitation);
 const revisions = new Map<string, string>();
 function sourceCitationRevision(source: string) {
   const existing = revisions.get(source);
@@ -55,10 +56,14 @@ export function createSourceCitation(
     startLine: sourcePosition(source, from).line + 1,
     endLine: sourcePosition(source, to - 1).line + 1,
     text,
-    prefix: [...source.slice(Math.max(0, from - 33), from)].slice(-16).join(""),
-    suffix: [...source.slice(to, to + 33)].slice(0, 16).join(""),
+    prefix: Array.from(source.slice(Math.max(0, from - 33), from))
+      .slice(-16)
+      .join(""),
+    suffix: Array.from(source.slice(to, to + 33))
+      .slice(0, 16)
+      .join(""),
   };
-  return Schema.is(FileCitation)(citation) ? citation : null;
+  return isFileCitation(citation) ? citation : null;
 }
 
 export function resolveSourceCitation(source: string, citation: FileCitation) {

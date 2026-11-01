@@ -5,8 +5,14 @@ import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
+  // SCIENT-FORK:START
+  INCOGNITO_BROWSER_PROFILE_ID,
+  // SCIENT-FORK:END
   ThreadId,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+// SCIENT-FORK:END
 import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -23,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   runtime: undefined as "server" | undefined,
   sourceUrl: "http://example.com/",
   controller: "none" as "human" | "agent" | "none",
+  profileId: undefined as string | undefined,
+  noTab: false,
   // SCIENT-FORK:END
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
@@ -35,7 +43,6 @@ const mocks = vi.hoisted(() => ({
   pickElement: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
-  toast: vi.fn(),
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
@@ -100,7 +107,9 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
   ...(await original()),
   rememberPreviewUrl: mocks.rememberPreviewUrl,
   useThreadPreviewState: (() => ({
-    activeTabId: "tab-1",
+    // SCIENT-FORK:START — the panel can be open before its first tab exists.
+    activeTabId: mocks.noTab ? null : "tab-1",
+    // SCIENT-FORK:END
     serverEpoch: mocks.serverEpoch,
     desktopByTabId: {
       "tab-1": {
@@ -125,8 +134,11 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
           "tab-1": {
             threadId: "thread-1",
             tabId: "tab-1",
+            // SCIENT-FORK:START — PDF export cases choose the tab runtime and source URL.
             runtime: mocks.nativeServerTab ? "server" : (mocks.runtime ?? "desktop"),
             navStatus: { _tag: "Success", url: mocks.sourceUrl, title: "Example" },
+            ...(mocks.profileId ? { profileId: mocks.profileId } : {}),
+            // SCIENT-FORK:END
             canGoBack: false,
             canGoForward: false,
             updatedAt: "2026-07-13T00:00:00.000Z",
@@ -145,10 +157,6 @@ vi.mock(import("~/browser/browserRecording"), async (original) => ({
   findActiveBrowserRecordingRuntimeTabId: () => mocks.recordingRuntimeTabId,
   useActiveBrowserRecordingTabIds: () => mocks.recordingTabIds,
 }));
-vi.mock(import("~/components/ui/toast"), async (original) => {
-  const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: mocks.toast } };
-});
 vi.mock(import("./useDiscoveredLocalServers"), async (original) => ({
   ...(await original()),
   useDiscoveredLocalServers: () => mocks.servers,
@@ -157,9 +165,11 @@ vi.mock(import("./usePreviewSession"), async (original) => ({
   ...(await original()),
   usePreviewSession: () => {},
 }));
+// SCIENT-FORK:START — server tabs render Scient's server browser surface.
 vi.mock(import("~/browser/ServerBrowserSurface"), () => ({
   ServerBrowserSurface: () => <></>,
 }));
+// SCIENT-FORK:END
 
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
@@ -167,15 +177,23 @@ vi.mock(import("~/browser/previewRuntime"), async (original) => ({
 }));
 
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
+// SCIENT-FORK:START — the empty page's links name the profile they open in.
+vi.mock(import("./openPreviewSession"), { spy: true });
+// SCIENT-FORK:END
 
+import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { dispatchPreviewAction } from "./previewActionBus";
 // SCIENT-FORK:START
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useBrowserShortcuts } from "~/scient/browser/browserShortcuts";
+import { openPreviewSession } from "./openPreviewSession";
 // SCIENT-FORK:END
 import { PreviewView } from "./PreviewView";
+import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -209,12 +227,14 @@ function annotation(id: string, screenshot: unknown = null) {
   };
 }
 
+// SCIENT-FORK:START — fixtures for restored behavior guards.
 async function submitAddress(text: string) {
   const input = page.getByPlaceholder("Search or enter URL");
   await userEvent.click(input);
   await userEvent.fill(input, text);
   await userEvent.keyboard("{Enter}");
 }
+// SCIENT-FORK:END
 
 // The mocked modules and stores are shared by the whole file, so every test starts by
 // resetting them.
@@ -225,6 +245,9 @@ function setup() {
   mocks.pickElement.mockReset();
   mocks.pdfOwner = "desktop";
   mocks.controller = "none";
+  mocks.profileId = undefined;
+  mocks.noTab = false;
+  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
   mocks.exportDisabled = null;
   mocks.runtime = undefined;
   mocks.sourceUrl = "http://example.com/";
@@ -245,6 +268,179 @@ function setup() {
 }
 
 describe("PreviewView", () => {
+  // SCIENT-FORK:START — the empty page's Gmail link, and what shortcuts count.
+  it("opens Gmail in the empty tab itself, keeping its profile", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    await using _screen = await render(view());
+    await page.getByRole("button", { name: "Gmail" }).click();
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        TEST_RUNTIME_TAB_ID,
+        "https://mail.google.com/mail/",
+      ),
+    );
+    expect(mocks.recordVisitForThread).toHaveBeenCalled();
+    expect(useBrowserShortcuts.getState().visits["mail.google.com"]?.count).toBe(1);
+  });
+
+  it("opens Gmail in the profile the toolbar shows when there is no tab yet", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1" },
+    } as never);
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+    );
+    await page.getByRole("button", { name: "Gmail" }).click();
+    await vi.waitFor(() =>
+      expect(openPreviewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://mail.google.com/mail/",
+          profileId: DEFAULT_BROWSER_PROFILE_ID,
+        }),
+      ),
+    );
+  });
+
+  it("shows and opens the default profile from Settings when there is no tab yet", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    const stub = STUB_BROWSER_DEFAULTS as { profileId: string };
+    stub.profileId = INCOGNITO_BROWSER_PROFILE_ID;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1" },
+    } as never);
+    try {
+      await using _screen = await render(
+        <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+      );
+      await page.getByRole("button", { name: "Gmail" }).click();
+      await vi.waitFor(() =>
+        expect(openPreviewSession).toHaveBeenCalledWith(
+          expect.objectContaining({ profileId: INCOGNITO_BROWSER_PROFILE_ID }),
+        ),
+      );
+    } finally {
+      stub.profileId = DEFAULT_BROWSER_PROFILE_ID;
+    }
+  });
+
+  it("searches from the empty page in the profile the toolbar shows", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1" },
+    } as never);
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+    );
+    await userEvent.fill(page.getByRole("searchbox"), "protein folding");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(openPreviewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: expect.stringMatching(/\/search\?q=protein(%20|\+)folding/),
+          profileId: DEFAULT_BROWSER_PROFILE_ID,
+        }),
+      ),
+    );
+  });
+
+  it("opens an address typed in the empty page's search box directly", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    await using _screen = await render(view());
+    await userEvent.fill(page.getByRole("searchbox"), "example.org");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "https://example.org/"),
+    );
+  });
+
+  it("leaves Recently used to choose its own profile when there is no tab yet", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1" },
+    } as never);
+    useBrowserHistoryStore.setState({
+      byProjectKey: { project: [{ url: "https://example.org/a", lastVisitedAt: 1 }] },
+      projectKeyByThreadKey: { [scopedThreadKey(TEST_THREAD_REF)]: "project" },
+    });
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+    );
+    await page.getByText("example.org/a").click();
+    await vi.waitFor(() => expect(openPreviewSession).toHaveBeenCalled());
+    expect(vi.mocked(openPreviewSession).mock.calls[0]?.[0]).not.toHaveProperty("profileId");
+    useBrowserHistoryStore.setState({ byProjectKey: {}, projectKeyByThreadKey: {} });
+  });
+
+  it("counts a site opened from the address bar, but not in an incognito tab", async () => {
+    setup();
+    await using _first = await render(view());
+    await submitAddress("nature.com");
+    await vi.waitFor(() =>
+      expect(useBrowserShortcuts.getState().visits["nature.com"]?.count).toBe(1),
+    );
+    await _first[Symbol.asyncDispose]();
+    mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
+    await using _second = await render(view());
+    await submitAddress("science.org");
+    await vi.waitFor(() =>
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.anything(),
+        "https://science.org/",
+      ),
+    );
+    expect(useBrowserShortcuts.getState().visits["science.org"]).toBeUndefined();
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — restore the original behavior guard.
+
+  // regression: 72d673a855 feat(desktop): remember recently used sites in the Browser panel (#5270)
+  it("records a history visit with the normalized requested url on submit", async () => {
+    setup();
+    await using _screen = await render(view());
+    await submitAddress("localhost:3000/admin");
+    await vi.waitFor(() =>
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: expect.anything() }),
+        "http://localhost:3000/admin",
+      ),
+    );
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — restore the original behavior guard.
+
+  // regression: f4c394323d Add background preview capture and picture-in-picture support (#4397)
+  it("opens and closes a thread-scoped floating preview for the active tab", async () => {
+    setup();
+    await using _screen = await render(view());
+    await userEvent.click(page.getByRole("button", { name: "Float preview over chat" }));
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toMatchObject({
+      // SCIENT-FORK: the floating player holds content, which may also be a static artifact.
+      "environment-1:thread-1": { content: { kind: "browser", tabId: "tab-1" } },
+    });
+    const closeButton = page.getByRole("button", { name: "Close floating preview" });
+    await expect.element(closeButton).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(closeButton);
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
+  });
+  // SCIENT-FORK:END
+
   // SCIENT-FORK:START
   it("enables the PDF control for a remote server owner and disables it when no renderer owns export", async () => {
     setup();
@@ -276,17 +472,6 @@ describe("PreviewView", () => {
     await screen.rerender(view());
     expect(document.body.textContent).toContain("Agent controlling browser");
   });
-  it("records a history visit with the normalized requested url on submit", async () => {
-    setup();
-    await using _screen = await render(view());
-    await submitAddress("localhost:3000/admin");
-    await vi.waitFor(() =>
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: expect.anything() }),
-        "http://localhost:3000/admin",
-      ),
-    );
-  });
   it("opens the active browser in its thread, closes the panel, and closes the floating preview on repeat", async () => {
     setup();
     const player = usePreviewMiniPlayerStore.getState();
@@ -313,19 +498,22 @@ describe("PreviewView", () => {
   });
   // SCIENT-FORK:END
 
-  it("opens and closes a thread-scoped floating preview for the active tab", async () => {
-    setup();
-    await using _screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: "Float preview over chat" }));
-    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toMatchObject({
-      // SCIENT-FORK: the floating player holds content, which may also be a static artifact.
-      "environment-1:thread-1": { content: { kind: "browser", tabId: "tab-1" } },
-    });
-    const closeButton = page.getByRole("button", { name: "Close floating preview" });
-    await expect.element(closeButton).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(closeButton);
-    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
-  });
+  it.each(["mailto:alice@example.com", "http://"])(
+    "reports rejected address %s without navigating or recording it",
+    async (address) => {
+      setup();
+      await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+      const input = page.getByPlaceholder("Search or enter URL");
+      await input.fill(address);
+      await userEvent.keyboard("{Enter}");
+
+      await expect.element(page.getByText("Could not open this address")).toBeVisible();
+      await expect.element(page.getByText("Enter an http or https URL.")).toBeVisible();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(mocks.recordVisitForThread).not.toHaveBeenCalled();
+      await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
+    },
+  );
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
@@ -379,6 +567,20 @@ describe("PreviewView", () => {
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
+  });
+
+  it("focuses the address bar each time the focus-url shortcut fires", async () => {
+    setup();
+    await using _screen = await render(view());
+    const address = page.getByRole("textbox");
+
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+
+    (address.element() as HTMLInputElement).blur();
+    await expect.element(address).not.toHaveFocus();
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
   });
 });
 

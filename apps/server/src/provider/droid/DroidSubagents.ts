@@ -1,26 +1,7 @@
 /**
- * Droid's sub-agents, as protocol observations.
- *
- * Droid runs a sub-agent through its `Task` tool and reports nothing of the
- * sub-agent's own steps over ACP: the parent tool call is the only sign of it
- * (verified against Droid 0.213.0 and 0.231.0). A bare tool row therefore
- * says neither what runs nor whether it is alive, so each `Task` call becomes
- * one sub-agent in the shared task presentation (`task.started`,
- * `task.progress`, `task.updated`, `task.completed`) and its tool row is not
- * shown.
- *
- * What Droid 0.231.0 sends, from a real thread:
- *
- * - A foreground `Task` (`rawInput.await: true`) stays pending until the
- *   sub-agent finishes, then completes with its report, or fails with
- *   `Error: Tool execution cancelled by user` when the prompt is cancelled.
- *   After a cancel Droid can announce the same tool call id again, as a
- *   `tool_call` titled "Tool call" with empty input, and fail it again.
- * - A background `Task` completes at once with `Task launched in
- *   background.` and Droid's own `task_id`. The main agent then reads it with
- *   `TaskOutput`: `{ task_id, block: false }` returns the state so far
- *   (`Status: running`, `Latest progress: …`), and `{ task_id, block: true,
- *   timeout }` waits, silently, for up to `timeout` milliseconds.
+ * ACP exposes Droid Task calls, not child steps. Foreground cancellation may repeat the same empty
+ * call ID; background Task completes immediately and requires TaskOutput for later state. Derive
+ * one subagent presentation per Task and suppress its duplicate tool row.
  */
 import * as Predicate from "effect/Predicate";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";

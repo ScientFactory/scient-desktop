@@ -16,6 +16,8 @@ import * as TestClock from "effect/testing/TestClock";
 import type { ScientRpcServerTestHarness } from "../../server.test.ts";
 import { deriveServerPaths } from "../../config.ts";
 
+const encodeRuntimeSettings = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
 // Registered by server.test.ts so these cases exercise the same T3 server seam.
 export const registerAnalysisRpcTests = (
   it: Vitest.MethodsNonLive<NodeServices.NodeServices>,
@@ -39,7 +41,7 @@ export const registerAnalysisRpcTests = (
     // Runtime preferences read the real settings owner, not the router's mock.
     yield* fs.writeFileString(
       settingsPath,
-      yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
+      yield* encodeRuntimeSettings({
         scientificComputing: {
           schemaVersion: 1,
           languages: { matlab: { enabled: true, executable: "" } },

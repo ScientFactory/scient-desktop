@@ -146,6 +146,7 @@ export function LatexFigureToolbar(props: {
   const [uploading, setUploading] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   const live = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks component liveness in a ref so async upload replies do not set state after unmount
   useEffect(() => {
     live.current = true;
     return () => {

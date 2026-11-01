@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "ownedRoots": [],
+  "ownedFiles": [
+    "apps/web/src/scient/rightPanel/AllTabsMenu.tsx",
+    "apps/web/src/scient/rightPanel/PanelFilesColumn.tsx",
+    "apps/web/src/scient/rightPanel/SurfaceLauncher.tsx",
+    "apps/web/src/scient/rightPanel/panelTabCommands.ts",
+    "apps/web/src/scient/rightPanel/panelTabDuplication.ts",
+    "apps/web/src/scient/rightPanel/tabHistory.tsx",
+    "apps/web/src/scient/rightPanel/tabStrip.ts",
+    "apps/web/src/scient/rightPanel/usePanelTabShortcuts.ts",
+    "apps/web/src/scient/files/useScientFolderActions.tsx",
+    "apps/web/src/scient/files/FileBrowserToolbarActions.tsx",
+    "apps/web/src/scient/files/ExternalFolderMarks.tsx",
+    "apps/web/src/scient/documents/NewDocumentMenuItems.tsx",
+    "apps/web/src/scient/documents/useCreateNewDocument.ts",
+    "apps/web/src/scient/browser/BrowserControlChip.tsx",
+    "apps/web/src/scient/browser/useBrowserHistoryProjectLink.ts",
+    "apps/web/src/scient/presentation/AppTooltipTiming.tsx",
+    "apps/web/src/scient/presentation/scient-panel-tabstrip.css",
+    "apps/web/src/scient/presentation/scient-icon-weight.css"
+  ],
+  "sidePanelDiffSignals": [
+    "usePanelTabShortcuts",
+    "useScientTabStrip",
+    "SCIENT_PANEL_TAB_CLASS",
+    "useScientFolderActions",
+    "ScientSurfaceLauncher",
+    "AllTabsMenu",
+    "PanelFiles(Layout|Toggle)",
+    "usePanelFilesOpen",
+    "TabHistoryButtons",
+    "useRightPanelTabHistory",
+    "AppTooltipTiming",
+    "BrowserControlChip",
+    "useBrowserHistoryProjectLink",
+    "data-scient-(tabstrip|launcher)"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "usePanelTabShortcuts",
+      "purpose": "Tab shortcuts, duplicating a tab, the file list beside a tab, tab history and the browser history link."
+    },
+    {
+      "path": "apps/web/src/components/RightPanelTabs.tsx",
+      "anchor": "useScientTabStrip",
+      "purpose": "Scient's tab strip: tab look, New tab page, \"+\" beside the tabs, the all-tabs menu and the Files button."
+    },
+    {
+      "path": "apps/web/src/components/files/FileBrowserPanel.tsx",
+      "anchor": "useScientFolderActions",
+      "purpose": "The Files bar's New and Connect, and a folder's New document."
+    },
+    {
+      "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
+      "anchor": "TabHistoryButtons",
+      "purpose": "A file tab's Back and Forward; the file list's switch moved to the tab strip."
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "anchor": "AppTooltipTiming",
+      "purpose": "One tooltip timing for the whole app, around AppRoot."
+    },
+    {
+      "path": "apps/web/src/browser/ServerBrowserSurface.tsx",
+      "anchor": "BrowserControlChip",
+      "purpose": "Who drives a shared page, shown only when it matters."
+    },
+    {
+      "path": "apps/web/src/components/chat/composerFocusRedirect.ts",
+      "anchor": "[data-scient-launcher]",
+      "purpose": "The New tab page keeps its own letter shortcuts."
+    },
+    {
+      "path": "apps/server/src/preview/ServerBrowser.ts",
+      "anchor": "otherViewers",
+      "purpose": "Tells the window in control how many others watch the page."
+    },
+    {
+      "path": "packages/client-runtime/src/preview/serverBrowserStream.ts",
+      "anchor": "otherViewers",
+      "purpose": "Carries the other-viewer count to the browser chip."
+    },
+    {
+      "path": "packages/contracts/src/keybindings.ts",
+      "anchor": "rightPanel.toggleFiles",
+      "purpose": "The side panel's tab commands."
+    },
+    {
+      "path": "packages/shared/src/keybindings.ts",
+      "anchor": "rightPanel.toggleFiles",
+      "purpose": "Default keys for the side panel's tab commands."
+    },
+    {
+      "path": "apps/server/src/keybindings.ts",
+      "anchor": "rightPanel.new:mod+t-closed-panel",
+      "purpose": "Existing configs gain the closed-panel new-tab rule."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/web/src/scient/presentation/scient-utilities.css",
+      "anchor": "@import \"./scient-panel-tabstrip.css\";\n@import \"./scient-icon-weight.css\";",
+      "purpose": "Loads the tab strip and icon weight stylesheets."
+    }
+  ]
+}

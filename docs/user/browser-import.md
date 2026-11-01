@@ -1,6 +1,6 @@
 # Import browser logins
 
-In the desktop app, open **Settings → Integrations → Browser profiles → Add profile**
+In the desktop app, open **Settings → Browser → Browser profiles → Add profile**
 and choose a browser under **Import from**. The import copies cookies into a Scient browser
 profile so you can use existing logins in the preview browser. Changes made afterward stay
 separate from the source browser.
@@ -25,6 +25,8 @@ System Settings permission list, and turn access on. **Continue** becomes availa
 is detected. macOS may require you to quit and reopen Scient before the grant applies; reopen
 the import wizard afterward. You can revoke Full Disk Access once the import is done.
 
-On Windows, import supports Firefox and Helium profiles that use standard profile encryption.
+On Windows, import supports Firefox, Zen, and Helium profiles that use standard profile encryption.
 Other Chromium-based browsers use app-bound encryption and cannot be imported. Partitioned cookies
 are skipped on all platforms.
+
+Manage imported profiles and saved sign-ins in [Accounts](accounts.md).

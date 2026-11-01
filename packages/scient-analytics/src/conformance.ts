@@ -15,7 +15,7 @@ const representativeProperties = {
   reasoningTokens: 50,
   hasSubagents: false,
   category: "browser",
-  section: "providers",
+  section: "synced-folders",
   feature: "search",
   metric: "tokens",
   window: "7",
@@ -70,6 +70,40 @@ const representativeProperties = {
   operationKind: "latex-build",
   trigger: "agent",
   reviewRequired: true,
+  threadCount: 84,
+  projectCount: 6,
+  ownerSource: "openai",
+  ownerId: "9f2c47a1b0d3e6f58c1a7e4d92b03f6a15d8c7e2049ba6f13e5d7c8a01f4e01a",
+  observedBy: "server",
+  clientDeviceType: "desktop",
+  clientOs: "macOS",
+  connectionMethod: "direct",
+  workspaceStrategy: "worktree",
+  variant: "with_files",
+  tool: "delegate_task",
+  callerProvider: "claudeAgent",
+  callerModel: "gpt-5.6-sol",
+  callerOrigin: "user",
+  callerDepth: 1,
+  errorCode: "thread_not_found",
+  targetProvider: "codex",
+  targetModel: "gpt-5.6-sol",
+  targetRuntimeMode: "full-access",
+  targetInteractionMode: "default",
+  crossProvider: true,
+  targetChosen: true,
+  mode: "wait",
+  waitTimedOut: false,
+  batchSize: 2,
+  workspace: "worktree",
+  delivery: "auto",
+  bindToCurrentThread: true,
+  status: "completed",
+  completionWake: "settled_only",
+  durationSeconds: 90,
+  createdBy: "user",
+  scheduled: false,
+  subagent: false,
   // These must be stripped even when every useful property is supplied.
   path: "/private/fixture",
   email: "fixture@example.invalid",
@@ -81,16 +115,20 @@ const representativeProperties = {
 /** Generated wire examples are copied across repositories, never imported at runtime. */
 export function buildAnalyticsConformanceFixture() {
   const cases = ANALYTICS_EVENT_NAMES.flatMap((name) =>
-    [undefined, representativeProperties].map((properties, index) => {
+    [undefined, representativeProperties].flatMap((properties, index) => {
       const normalized = normalizeInheritedEvent(name, properties, context);
+      // An owner event without a valid hash is dropped, so it has no fallback case.
+      if (normalized === null && name === "install.owner_observed" && index === 0) return [];
       if (normalized === null) throw new Error(`Missing event normalizer: ${name}`);
-      return {
-        case: `${name}:${index === 0 ? "fallbacks" : "representative"}`,
-        name: normalized.name,
-        privacyLevel: normalized.privacyLevel,
-        consentLevel: normalized.privacyLevel,
-        properties: normalized.properties,
-      };
+      return [
+        {
+          case: `${name}:${index === 0 ? "fallbacks" : "representative"}`,
+          name: normalized.name,
+          privacyLevel: normalized.privacyLevel,
+          consentLevel: normalized.privacyLevel,
+          properties: normalized.properties,
+        },
+      ];
     }),
   );
   for (const name of [
@@ -117,6 +155,29 @@ export function buildAnalyticsConformanceFixture() {
       consentLevel: event.privacyLevel,
       properties: event.properties,
     });
+  }
+  for (const provider of ["scient", "omp", "muse", "acpRegistry"]) {
+    for (const name of [
+      "provider.turn.sent",
+      "provider.turn.completed",
+      "provider.turn.usage",
+      "provider.installation.observed",
+      "provider.installation.changed",
+      "provider.lifecycle.completed",
+    ] as const) {
+      const event = normalizeInheritedEvent(
+        name,
+        { ...representativeProperties, provider },
+        context,
+      )!;
+      cases.push({
+        case: `${name}:${provider}`,
+        name: event.name,
+        privacyLevel: event.privacyLevel,
+        consentLevel: event.privacyLevel,
+        properties: event.properties,
+      });
+    }
   }
   return {
     schemaVersion: ANALYTICS_SCHEMA_VERSION,

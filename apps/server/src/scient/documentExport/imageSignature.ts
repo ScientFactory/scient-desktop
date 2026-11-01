@@ -1,9 +1,6 @@
 /**
- * Whether image bytes begin the way their media type says they must. The
- * check is only the file signature: it catches a HEIC photo or a text file
- * named `.jpg`, or an empty file, before the capture copies it. Bytes that
- * pass can still fail to decode; the document page shows those as
- * placeholders.
+ * Signature checks establish media-type plausibility, not decode success. Reject obvious mismatches
+ * before capture; the document page must still turn decode failures into placeholders.
  */
 
 const ascii = (bytes: Uint8Array, start: number, text: string) =>

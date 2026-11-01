@@ -6,9 +6,10 @@ import {
   ScientLatexDiagnostic,
   ScientLatexToolchainStatus,
 } from "./scientLatex.ts";
+import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 
 const ProjectPath = Schema.String.check(
-  Schema.isTrimmed(),
+  isTrimmedUnadvertised(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
   Schema.isPattern(/^[^\x00]+$/u),
@@ -29,17 +30,15 @@ const PackageNames = Schema.Array(
 /** The deliberately small public input for a project-owned LaTeX document build. */
 export const ScientLatexPdfBuildInput = Schema.Struct({
   sourcePath: ProjectPath.annotate({
-    description: "Project-relative path to an existing .tex source document.",
+    description: "Project-relative .tex file.",
   }),
   rootSourcePath: Schema.optional(
     ProjectPath.annotate({
-      description:
-        "Optional project-relative root .tex file when the source belongs to several documents.",
+      description: "Project-relative main .tex file, when the source belongs to several documents.",
     }),
   ),
   outputPath: ProjectPath.annotate({
-    description:
-      "Project-relative .pdf path where the validated PDF should be written or replaced.",
+    description: "Project-relative .pdf path. An existing file is replaced.",
   }),
 });
 export type ScientLatexPdfBuildInput = typeof ScientLatexPdfBuildInput.Type;

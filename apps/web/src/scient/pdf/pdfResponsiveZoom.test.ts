@@ -50,12 +50,12 @@ describe("responsive PDF zoom", () => {
     const { target } = createTarget(1.25);
     controller.capturePreference(target);
 
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
     expect(target.currentScale).toBeCloseTo(0.7);
     expect(controller.isConstrained()).toBe(true);
     expect(controller.persistedScaleValue()).toBe("1.25");
 
-    controller.reconcile(target, 1_050);
+    controller.reconcile(target, 1_010);
     expect(target.currentScale).toBe(1.25);
     expect(controller.isConstrained()).toBe(false);
     expect(controller.persistedScaleValue()).toBe("1.25");
@@ -66,8 +66,8 @@ describe("responsive PDF zoom", () => {
     const { target, scaleWrites } = createTarget(1);
     controller.capturePreference(target);
 
-    controller.reconcile(target, 100);
-    controller.reconcile(target, 100);
+    controller.reconcile(target, 60);
+    controller.reconcile(target, 60);
 
     expect(target.currentScale).toBe(0.25);
     expect(scaleWrites()).toBe(1);
@@ -79,8 +79,8 @@ describe("responsive PDF zoom", () => {
     const { target, scaleValueWrites } = createTarget(0.8, "page-width");
     controller.capturePreference(target);
 
-    controller.reconcile(target, 420);
-    controller.reconcile(target, 900);
+    controller.reconcile(target, 380);
+    controller.reconcile(target, 860);
 
     expect(target.currentScaleValue).toBe("page-width");
     expect(scaleValueWrites()).toBe(2);
@@ -92,7 +92,7 @@ describe("responsive PDF zoom", () => {
     const controller = createPdfResponsiveZoomController();
     const { target } = createTarget(1.5);
     controller.capturePreference(target);
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
     expect(controller.isConstrained()).toBe(true);
 
     const manualScale = controller.rememberScale(0.55);
@@ -108,11 +108,11 @@ describe("responsive PDF zoom", () => {
     const controller = createPdfResponsiveZoomController();
     const { target } = createTarget(1.25);
     controller.capturePreference(target);
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
 
     const manualScale = controller.rememberScale(0.75);
     target.currentScale = manualScale;
-    controller.reconcile(target, 700);
+    controller.reconcile(target, 660);
 
     expect(target.currentScale).toBe(0.75);
     expect(controller.isConstrained()).toBe(false);
@@ -124,17 +124,17 @@ describe("responsive PDF zoom", () => {
     const { target, setPageWidth } = createTarget(1.25);
     controller.capturePreference(target);
 
-    controller.reconcile(target, 1_100);
+    controller.reconcile(target, 1_060);
     expect(target.currentScale).toBe(1.25);
 
     setPageWidth(1_200);
-    controller.reconcile(target, 1_100);
+    controller.reconcile(target, 1_060);
     expect(target.currentScale).toBeCloseTo(1_060 / 1_200);
     expect(controller.isConstrained()).toBe(true);
     expect(controller.persistedScaleValue()).toBe("1.25");
 
     setPageWidth(800);
-    controller.reconcile(target, 1_100);
+    controller.reconcile(target, 1_060);
     expect(target.currentScale).toBe(1.25);
     expect(controller.isConstrained()).toBe(false);
     expect(controller.persistedScaleValue()).toBe("1.25");
@@ -155,7 +155,7 @@ describe("responsive PDF zoom", () => {
         currentScaleValue = String(value);
         scaleWrites += 1;
         controller.observeScaleChange(target, value);
-        controller.reconcile(target, 600);
+        controller.reconcile(target, 560);
       },
       get currentScaleValue() {
         return currentScaleValue;
@@ -168,7 +168,7 @@ describe("responsive PDF zoom", () => {
     };
     controller.capturePreference(target);
 
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
 
     expect(scaleWrites).toBe(1);
     expect(target.currentScale).toBeCloseTo(0.7);
@@ -181,11 +181,11 @@ describe("responsive PDF zoom", () => {
     const { target } = createTarget(1, "page-actual");
     controller.capturePreference(target);
 
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
     expect(controller.isConstrained()).toBe(true);
     expect(target.currentScaleValue).not.toBe("page-actual");
 
-    controller.reconcile(target, 900);
+    controller.reconcile(target, 860);
     expect(controller.isConstrained()).toBe(false);
     expect(target.currentScaleValue).toBe("page-actual");
     expect(controller.persistedScaleValue()).toBe("page-actual");
@@ -195,7 +195,7 @@ describe("responsive PDF zoom", () => {
     const controller = createPdfResponsiveZoomController();
     const { target } = createTarget(1.25);
     controller.capturePreference(target);
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
     expect(controller.persistedScaleValue()).toBe("1.25");
 
     target.currentScaleValue = "0.9";
@@ -211,9 +211,9 @@ describe("responsive PDF zoom", () => {
     controller.capturePreference(target);
 
     for (let index = 0; index < 5_000; index += 1) {
-      controller.reconcile(target, 220 + (index % 700));
+      controller.reconcile(target, 180 + (index % 700));
     }
-    controller.reconcile(target, 1_200);
+    controller.reconcile(target, 1_160);
 
     expect(target.currentScale).toBe(1.4);
     expect(controller.isConstrained()).toBe(false);

@@ -6,6 +6,7 @@
 [data-slot="input-group"]:has(input:focus-visible, textarea:focus-visible),
 [data-slot="textarea-control"]:has(textarea:focus-visible),
 [data-slot="number-field-group"]:focus-within,
-[data-slot="select-trigger"].border-input:focus-visible {
+[data-slot="select-trigger"].border-input:focus-visible,
+[data-slot="native-select"].border-input:focus-visible {
   box-shadow: none;
 }

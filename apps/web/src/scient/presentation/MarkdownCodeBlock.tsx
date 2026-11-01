@@ -11,7 +11,10 @@ import { toHtml } from "hast-util-to-html";
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { HighlightedCodeLines } from "~/components/chat/HighlightedCodeLines";
 import { fnv1a32, resolveDiffThemeName, type DiffThemeName } from "~/lib/diffRendering";
-import { createIncrementalHighlightedDocument } from "~/lib/incrementalHighlighting";
+import {
+  createIncrementalHighlightedDocument,
+  highlightCodeToHast,
+} from "~/lib/incrementalHighlighting";
 import { LRUCache } from "~/lib/lruCache";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
@@ -75,10 +78,11 @@ export function MarkdownCodeBlock({
         resetKeys={[code, language, themeName, isStreaming]}
         fallback={plainSource}
       >
-        {/* As upstream (#11062): the plain code holds the block's size while the
-            highlighter loads, unseen, so it never flashes uncoloured. Not
-            aria-hidden: it is the only copy of the code until then, for screen
-            readers and for Copy message. */}
+        {/**
+         * The plain code reserves the block's size while highlighting loads, preventing an
+         * uncoloured flash. Keep it accessible: until then it is the only code copy for screen
+         * readers and Copy message.
+         */}
         <Suspense fallback={<div className="invisible">{plainSource}</div>}>
           <HighlightedCode
             code={code}
@@ -100,7 +104,7 @@ export function MarkdownCodeBlockFrame({
   theme,
   wrapped = true,
   className,
-  copyTextDirection,
+  copyTextDirection = "ltr",
   title,
   actions,
   headerProps,
@@ -190,33 +194,36 @@ function UncachedHighlightedCode({
   const incrementalHighlight = preserveLines
     ? createIncrementalHighlightedDocument(highlighter, language, themeName)
     : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes the incremental syntax highlighter when it is replaced or unmounted
+  useEffect(() => () => incrementalHighlight?.dispose(), [incrementalHighlight]);
   const highlighted = (() => {
-    try {
-      if (incrementalHighlight) return incrementalHighlight(code);
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: language, theme: themeName })
-        : highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
-        : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  })();
-
-  useEffect(() => {
+    const result = (() => {
+      try {
+        if (incrementalHighlight) return incrementalHighlight(code);
+        return preserveLines
+          ? highlightCodeToHast(highlighter, code, language, themeName)
+          : highlighter.codeToHtml(code, { lang: language, theme: themeName });
+      } catch (error) {
+        console.warn(
+          `Code highlighting failed for language "${language}", falling back to plain text.`,
+          error instanceof Error ? error.message : error,
+        );
+        return preserveLines
+          ? highlightCodeToHast(highlighter, code, "text", themeName)
+          : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+      }
+    })();
+    // A finished block is cached for the next mount; a streaming one is still changing.
     if (!isStreaming) {
-      const highlightedHtml = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
+      const highlightedHtml = typeof result === "string" ? result : toHtml(result);
       highlightedCodeCache.set(
         cacheKey,
         highlightedHtml,
         Math.max(highlightedHtml.length * 2, code.length * 3),
       );
     }
-  }, [cacheKey, code, highlighted, isStreaming]);
+    return result;
+  })();
 
   return typeof highlighted === "string" ? (
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />

@@ -5,12 +5,13 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { fakeTimers } from "../../test/render";
 import { randomUUID } from "../lib/utils";
+import { registerModelPickerContent } from "../modelPickerVisibility";
 import { registerShortcutClaim } from "../scient/keyboard/ownership";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
-import * as ThreadUndo from "./threadUndo";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { installThreadUndoShortcut } from "./threadUndoShortcut";
 
-function setup(noticeVisible = true) {
+function setup(noticeVisible = true, enabled?: () => boolean) {
   const stack = new DisposableStack();
   stack.use(fakeTimers());
   stack.use(vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel"));
@@ -24,6 +25,7 @@ function setup(noticeVisible = true) {
     installThreadUndoShortcut({
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       noticeVisible,
+      ...(enabled ? { enabled } : {}),
       heldUndoKey,
       getContext: () => ({ terminalFocus: false, previewFocus: false }),
     });
@@ -39,6 +41,9 @@ function setup(noticeVisible = true) {
       const undo = vi.fn(async () => AsyncResult.success(undefined));
       showThreadUndoNotice({ action, claim, undo, failureTitle: "Undo failed" });
       return undo;
+    },
+    openModelPicker() {
+      stack.defer(registerModelPickerContent());
     },
     remount() {
       uninstall();
@@ -115,17 +120,14 @@ it("does not suppress held repeats after a menu paste hands input back", () => {
   expect(next).not.toHaveBeenCalled();
 });
 
-it.each(["palette", "model picker", "keybinding capture", "document editor"] as const)(
+it.each(["palette", "model picker", "keybinding capture"] as const)(
   "leaves undo to an open %s",
   (owner) => {
     using app = setup();
     const undo = app.notice();
     if (owner === "palette") app.root.dataset.commandPalette = "";
-    else if (owner === "model picker") app.root.dataset.modelPickerContent = "";
-    else {
-      app.root.dataset.keybindingCapture = "";
-      if (owner === "document editor") app.root.dataset.documentShortcutHost = "";
-    }
+    else if (owner === "model picker") app.openModelPicker();
+    else app.root.dataset.keybindingCapture = "";
     const editorUndo = vi.fn();
     app.input.addEventListener("keydown", editorUndo);
     expect(press().defaultPrevented).toBe(false);
@@ -178,3 +180,21 @@ it.each(["hidden", "expired"] as const)(
     expect(undo).not.toHaveBeenCalled();
   },
 );
+
+it("releases a held undo when a modal takes ownership and reads the live enabled guard", () => {
+  let enabled = true;
+  using app = setup(true, () => enabled);
+  const first = app.notice();
+  expect(press().defaultPrevented).toBe(true);
+  expect(first).toHaveBeenCalledOnce();
+  const next = app.notice("Archived");
+  enabled = false;
+  expect(press({ repeat: true }).defaultPrevented).toBe(false);
+  expect(press().defaultPrevented).toBe(false);
+  expect(next).not.toHaveBeenCalled();
+  enabled = true;
+  expect(press({ repeat: true }).defaultPrevented).toBe(false);
+  app.input.blur();
+  expect(press().defaultPrevented).toBe(true);
+  expect(next).toHaveBeenCalledOnce();
+});

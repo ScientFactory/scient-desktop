@@ -42,6 +42,7 @@ import { runCachePersistence } from "./cachePersistence.ts";
 import {
   isRpcClientError,
   request,
+  requestGuarded,
   runStream,
   subscribe,
   subscribeDynamicWithSession,
@@ -51,6 +52,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
+  reuseUnchanged,
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
@@ -98,7 +100,7 @@ export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpd
   },
 ) {
   override get message(): string {
-    return `The server did not resume on Scient server ${this.targetVersion}.`;
+    return `Could not confirm that the server resumed on Scient server ${this.targetVersion}. Reconnect to check the update outcome.`;
   }
 }
 
@@ -252,8 +254,8 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   targetVersion: string,
   nextReady: Effect.Effect<ServerLifecycleStreamReadyEvent, EReady>,
   retryCommit: Effect.Effect<void, ECommit>,
-  maxCommitAttempts = 3,
 ): Effect.fn.Return<ServerLifecycleStreamReadyEvent, EReady | ECommit | ServerUpdateTerminalError> {
+  const maxCommitAttempts = 3;
   for (let attempt = 1; attempt <= maxCommitAttempts; attempt += 1) {
     const ready = yield* nextReady;
     if (ready.payload.environment.serverVersion === targetVersion) return ready;
@@ -333,6 +335,7 @@ export function resolveServerUpdateProgressResult<E>(
   targetVersion: string,
   terminal: Option.Option<ServerSelfUpdateResult>,
   streamExit: Exit.Exit<void, E>,
+  accepted?: ServerSelfUpdateResult,
 ): Effect.Effect<ServerSelfUpdateResult, E | ServerUpdateProgressIncompleteError> {
   if (
     Option.isSome(terminal) &&
@@ -341,6 +344,9 @@ export function resolveServerUpdateProgressResult<E>(
     return Effect.succeed(terminal.value);
   }
   if (Exit.isFailure(streamExit)) {
+    if (accepted !== undefined && isLegacyUpdateHandoffLoss(streamExit.cause)) {
+      return Effect.succeed(accepted);
+    }
     return Effect.failCause(streamExit.cause);
   }
   return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
@@ -356,6 +362,41 @@ export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+}
+
+// Configs are JSON-shaped. Missing and undefined object fields persist identically.
+function sameCacheValue(previous: unknown, next: unknown): boolean {
+  if (previous === next) return true;
+  if (
+    previous === null ||
+    next === null ||
+    typeof previous !== "object" ||
+    typeof next !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(previous) || Array.isArray(next)) {
+    if (!Array.isArray(previous) || !Array.isArray(next) || previous.length !== next.length) {
+      return false;
+    }
+    for (let index = 0; index < previous.length; index += 1) {
+      if (!sameCacheValue(previous[index], next[index])) return false;
+    }
+    return true;
+  }
+  if (
+    Object.getPrototypeOf(previous) !== Object.prototype ||
+    Object.getPrototypeOf(next) !== Object.prototype
+  ) {
+    return false;
+  }
+  const before = previous as Record<string, unknown>;
+  const after = next as Record<string, unknown>;
+  return (
+    Object.keys(before).every((key) =>
+      sameCacheValue(before[key], Object.hasOwn(after, key) ? after[key] : undefined),
+    ) && Object.keys(after).every((key) => Object.hasOwn(before, key) || after[key] === undefined)
+  );
 }
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
@@ -383,13 +424,22 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     );
     const persistence = yield* Queue.sliding<ServerConfig>(1);
     const pendingPersistence = yield* Ref.make<Option.Option<ServerConfig>>(Option.none());
+    let lastPersisted: ServerConfig | undefined;
 
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
       // A cached stall would read as a fresh freeze on the next launch.
-      const { lastEventLoopStall: _stall, ...cacheable } = withoutEnvironmentThemes(config);
-      return yield* cache.saveServerConfig(environmentId, cacheable).pipe(
+      const {
+        environmentThemes: _themes,
+        usageLimitSources: _sources,
+        lastEventLoopStall: _stall,
+        ...cacheable
+      } = config;
+      if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
+        return true;
+      }
+      const saved = yield* cache.saveServerConfig(environmentId, cacheable).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
@@ -401,6 +451,8 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
           ),
         ),
       );
+      if (saved) lastPersisted = cacheable;
+      return saved;
     });
 
     const persistPending = Effect.fn("EnvironmentServerConfigState.persistPending")(function* (
@@ -602,6 +654,19 @@ export function resolveServerConfigValue(
   return initialConfig ?? projection?.config ?? null;
 }
 
+// SCIENT-FORK:START — one cache owner serves on-demand chat and explicit Extensions discovery.
+import {
+  type FetchedWorkspaceSnapshot,
+  recordFetchedWorkspaceInventory,
+  recordFetchedWorkspaceSnapshot,
+  withFetchedWorkspaceSnapshots,
+} from "./providerWorkspaceSnapshots.ts";
+export {
+  recordFetchedWorkspaceSnapshot,
+  withFetchedWorkspaceSnapshots,
+} from "./providerWorkspaceSnapshots.ts";
+// SCIENT-FORK:END
+
 export function createServerEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
@@ -640,6 +705,12 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerConfig>;
   }) => configProjectionFamily(target.environmentId);
+  const fetchedWorkspaceSnapshotsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make<ReadonlyArray<FetchedWorkspaceSnapshot>>([]).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`environment-data:server:fetched-workspace-snapshots:${environmentId}`),
+    ),
+  );
   const emptyConfigAtom = Atom.make<ServerConfig | null>(null).pipe(
     Atom.withLabel("environment-data:server:config:empty"),
   );
@@ -647,14 +718,25 @@ export function createServerEnvironmentAtoms<R, E>(
     if (environmentId === null) {
       return emptyConfigAtom;
     }
+    let previousProviders: ServerConfig["providers"] | undefined;
     return Atom.make((get): ServerConfig | null => {
-      const projection = Option.getOrNull(
-        AsyncResult.value(get(configProjection({ environmentId, input: {} }))),
+      const projection = AsyncResult.getOrElse(
+        get(configProjection({ environmentId, input: {} })),
+        () => null,
       );
-      return resolveServerConfigValue(
+      const config = resolveServerConfigValue(
         projection,
         get(options.initialConfigValueAtom(environmentId)),
       );
+      if (config === null) return null;
+      const merged = withFetchedWorkspaceSnapshots(
+        config,
+        get(fetchedWorkspaceSnapshotsAtom(environmentId)),
+      );
+      if (merged === config) return config;
+      // Keep provider identities stable across config events; the projection already reuses the rest.
+      previousProviders = reuseUnchanged(previousProviders, merged.providers);
+      return { ...merged, providers: previousProviders };
     }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
   });
   const updateStateValueAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -677,7 +759,7 @@ export function createServerEnvironmentAtoms<R, E>(
     label: "environment-data:server:update-server",
     scheduler: updateScheduler,
     concurrency: configConcurrency,
-    execute: (target, atomRegistry) => {
+    execute: Effect.fn("ServerUpdate.updateServer")(function (target, atomRegistry) {
       const stateAtom = serverUpdateStateAtom(target.environmentId);
       let targetVersion = target.input.targetVersion;
       let fromVersion =
@@ -728,6 +810,7 @@ export function createServerEnvironmentAtoms<R, E>(
               currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
             const updateResult: ServerSelfUpdateResult = supportsProgress
               ? yield* Effect.gen(function* () {
+                  let receivedProgress = false;
                   const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
                     Option.none(),
                   );
@@ -739,6 +822,7 @@ export function createServerEnvironmentAtoms<R, E>(
                     .pipe(
                       Stream.runForEach((event) =>
                         Effect.sync(() => {
+                          receivedProgress ||= event.type === "progress";
                           const state = serverUpdateStateForProgressEvent(
                             fromVersion,
                             targetVersion,
@@ -756,10 +840,18 @@ export function createServerEnvironmentAtoms<R, E>(
                       ),
                       Effect.exit,
                     );
+                  const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
+                  // Desktop preparation needs its terminal commit token.
+                  const accepted =
+                    receivedProgress &&
+                    (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
+                      ? { targetVersion, method: selfUpdateMethod }
+                      : undefined;
                   return yield* resolveServerUpdateProgressResult(
                     targetVersion,
                     yield* Ref.get(terminal),
                     streamExit,
+                    accepted,
                   );
                 })
               : yield* Effect.gen(function* () {
@@ -814,6 +906,17 @@ export function createServerEnvironmentAtoms<R, E>(
             return updateResult;
           }),
         );
+
+        // A track switch's desktop host already on its track's newest build only saved the
+        // track; nothing restarts.
+        if (
+          result.method === "desktop-app" &&
+          result.desktopUpdateToken === undefined &&
+          result.targetVersion === fromVersion
+        ) {
+          atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
+          return result;
+        }
 
         yield* nudgeReconnectDuringUpdateRestart({
           stateChanges: environmentRegistry.stateChanges(target.environmentId),
@@ -892,7 +995,7 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         ),
       );
-    },
+    }),
   });
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
@@ -1001,6 +1104,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    prepareTriage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:prepare-triage",
+      tag: WS_METHODS.serverPrepareTriage,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     databaseStorage,
     databaseCompactionRecommendations,
     storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -1048,11 +1156,6 @@ export function createServerEnvironmentAtoms<R, E>(
         runStream(WS_METHODS.chatGptHandoffSubscribe, input),
       idleTtlMs: 0,
     }),
-    codexAuthCallbackState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:codex:auth-callback",
-      tag: WS_METHODS.codexAuthCallbackSubscribe,
-      idleTtlMs: 0,
-    }),
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-cancel",
       tag: WS_METHODS.providerAuthCancel,
@@ -1085,6 +1188,12 @@ export function createServerEnvironmentAtoms<R, E>(
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
+    }),
+    npmRelease: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:npm-release",
+      tag: WS_METHODS.serverGetNpmRelease,
+      staleTimeMs: 60_000,
+      refreshIntervalMs: 5 * 60_000,
     }),
     processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-diagnostics",
@@ -1122,20 +1231,20 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
       execute: (input, emit) =>
         request(WS_METHODS.serverGetUsageSummary, input).pipe(
-          Effect.flatMap((summary) =>
-            summary.sources.some((source) => source.refreshing === true)
-              ? emit(summary).pipe(
-                  Effect.andThen(
-                    request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+          Effect.filterOrElse(
+            (summary) => !summary.sources.some((source) => source.refreshing === true),
+            (summary) =>
+              emit(summary).pipe(
+                Effect.andThen(
+                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                    Effect.as(summary),
                   ),
-                  Effect.catch((error) =>
-                    Effect.logWarning("Could not refresh slow usage sources.").pipe(
-                      Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
-                      Effect.as(summary),
-                    ),
-                  ),
-                )
-              : Effect.succeed(summary),
+                ),
+              ),
           ),
         ),
     }),
@@ -1152,8 +1261,9 @@ export function createServerEnvironmentAtoms<R, E>(
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
       tag: WS_METHODS.serverSearchAcpRegistry,
-      staleTimeMs: 0,
-      idleTtlMs: 0,
+      // Reopening Add provider reuses recent results. Submitting the same search asks the
+      // server again, which reuses a Registry index fetched in the last five minutes.
+      staleTimeMs: 5 * 60_000,
     }),
     configProjection,
     welcome,
@@ -1181,6 +1291,37 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
+      execute: (input) =>
+        requestGuarded(WS_METHODS.serverRefreshProviders, {
+          ...input,
+          workspaceSnapshotsOnDemand: input.workspaceSnapshotsOnDemand ?? true,
+          ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+        }),
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          if (input.workspaceSnapshotsOnDemand === false) {
+            registry.update(fetchedWorkspaceSnapshotsAtom(environmentId), (current) =>
+              recordFetchedWorkspaceInventory(
+                current,
+                result.providers,
+                registry.get(configValueAtom(environmentId))?.providers ?? [],
+              ),
+            );
+            return;
+          }
+          const { instanceId, cwd } = input;
+          if (instanceId === undefined || cwd === undefined) return;
+          registry.update(fetchedWorkspaceSnapshotsAtom(environmentId), (current) =>
+            recordFetchedWorkspaceSnapshot(
+              current,
+              { instanceId, cwd, fresh: input.fresh === true },
+              result.providers,
+              registry
+                .get(configValueAtom(environmentId))
+                ?.providers.find((provider) => provider.instanceId === instanceId),
+            ),
+          );
+        }),
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
@@ -1191,6 +1332,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.fresh ?? false,
             input.refreshModels ?? false,
             input.refreshManagedRuntimeCatalog ?? false,
+            input.workspaceSnapshotsOnDemand ?? true,
           ]),
       },
     }),
@@ -1407,6 +1549,10 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    createGuestShare: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:guest-share:create",
+      tag: WS_METHODS.guestShareCreate,
     }),
     // Off the config lane: answering a card must not queue behind settings
     // edits. One answer per card at a time.

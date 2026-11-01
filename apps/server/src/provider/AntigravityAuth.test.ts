@@ -1,4 +1,3 @@
-import * as TestClock from "effect/testing/TestClock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSetupError, type ProviderAuthState } from "@t3tools/contracts";
@@ -11,6 +10,7 @@ import * as Logger from "effect/Logger";
 import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as AcpErrors from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 
@@ -77,7 +77,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
-  const enteringStartup = yield* Deferred.make<void>();
+  const authenticateCalled = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
@@ -109,7 +109,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
           start: () =>
             Effect.gen(function* () {
               events.push("authenticate");
-              yield* Deferred.succeed(enteringStartup, undefined);
+              yield* Deferred.succeed(authenticateCalled, undefined);
               yield* options.beforeAuthorizationUrl ?? Effect.void;
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
@@ -148,7 +148,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     authenticated,
     discovered,
     closed,
-    enteringStartup,
+    authenticateCalled,
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
@@ -202,7 +202,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         randomOwnerId: Effect.succeed("delayed-owner"),
       });
       const opening = yield* actions.start("antigravity_google").pipe(Effect.forkScoped);
-      yield* Deferred.await(harness.enteringStartup);
+      yield* Deferred.await(harness.authenticateCalled);
       yield* TestClock.adjust("31 seconds");
       const starting = yield* harness.auth.controller
         .subscribe("scient-provider-lifecycle-delayed-owner")
@@ -258,7 +258,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       const opening = yield* actions
         .start("antigravity_google")
         .pipe(Effect.exit, Effect.forkScoped);
-      yield* Deferred.await(harness.enteringStartup);
+      yield* Deferred.await(harness.authenticateCalled);
       yield* TestClock.adjust("299 seconds");
       assert.notInclude(harness.events, "process-close");
       yield* TestClock.adjust("1 second");
@@ -267,7 +267,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         "failed",
         "scient-provider-lifecycle-stalled-owner",
       );
-      assert.include(failed.message ?? "", "expired");
+      assert.include(failed.message ?? "", "could not reach Google");
       assert.isNull(failed.authorizationUrl);
       assert.isNull(failed.expiresAt);
       assert.isTrue(Exit.isFailure(yield* Fiber.join(opening)));
@@ -296,7 +296,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       const opening = yield* actions
         .start("antigravity_google")
         .pipe(Scope.provide(attemptScope), Effect.exit, Effect.forkScoped);
-      yield* Deferred.await(harness.enteringStartup);
+      yield* Deferred.await(harness.authenticateCalled);
       yield* TestClock.adjust("10 seconds");
       yield* Scope.close(attemptScope, Exit.void);
       yield* Deferred.await(harness.closed);
@@ -580,6 +580,38 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       assert.isNull(failed.authorizationUrl);
       assert.deepEqual(harness.catalog(), ["previous-account-model"]);
       yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("tells the user when the agent cannot reach Google", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(harness.authenticateCalled);
+
+      yield* TestClock.adjust("30 seconds");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message?.includes("Broken IPv6") === true),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+
+      yield* TestClock.adjust("270 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.include(failed.message ?? "", "could not reach Google");
+    }),
+  );
+
+  it.effect("keeps the expired message once the Google link was shown", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, "Google sign-in expired. Start sign-in again.");
     }),
   );
 

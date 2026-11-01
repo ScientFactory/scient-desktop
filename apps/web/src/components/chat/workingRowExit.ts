@@ -108,6 +108,7 @@ export function useWorkingRowExit(
   const onExitEnd = useStableCallback(() =>
     setState((previous) => (previous.exiting ? { ...previous, exiting: null } : previous)),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- safety timer that ends the exit if the row's Web Animations finish event never fires
   useEffect(() => {
     if (!exiting) return;
     const timeout = window.setTimeout(onExitEnd, UNPLAYED_EXIT_TIMEOUT_MS);
@@ -119,15 +120,13 @@ export function useWorkingRowExit(
 }
 
 /**
- * Plays the working header's exit on its root element: it fades while its
- * space closes, and the negative margin takes the row's bottom padding along,
- * so nothing is left to snap when it leaves. The animation is cancelled (its
- * fill removed) when the row becomes a running turn's header again, unmounts,
- * or reduced motion turns on.
+ * Close bottom padding with the row so exit cannot snap leftover space. Cancel animation fill on
+ * renewed running state, unmount, or reduced motion.
  */
 export function useWorkingRowExitAnimation({ exiting, onExitEnd }: WorkingRowExit) {
   const rootRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useMediaQuery(REDUCED_MOTION_QUERY);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the working-row exit with a WAAPI height/opacity animation on the row DOM node
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!exiting || !root) return;

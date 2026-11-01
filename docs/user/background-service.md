@@ -63,7 +63,7 @@ credentials or the secrets directory.
 Scient removes superseded internal history on its own while it runs; your
 conversations are kept. A database created before this shrank automatically
 still holds the freed space on disk until a one-time offline repair returns it
-and turns on automatic shrinking. **Settings → Storage** suggests the repair
+and turns on automatic shrinking. **Settings → Maintenance** suggests the repair
 when at least 1 GiB can be reclaimed and shows the exact command for that
 environment. Copy and run that command on the machine that hosts the
 environment; it names the installation and data directory that reported the

@@ -1,13 +1,7 @@
 /**
- * Connected services: the owner of connector records, credentials, sign-in,
- * live grants and the credential-swapping forward used by the proxy route.
- * See docs/internals/scient-extensions.md "Connected services".
- *
- * Lifecycle fencing: each connector has one lifecycle lock that serializes
- * refresh, sign-in commit and disconnect, and a lifetime signal that a
- * disconnect aborts. Disconnect tombstones the connector before anything
- * else, so work that was already in flight can never send, persist or keep a
- * grant afterwards; grants such work obtained anyway are revoked.
+ * Disconnect tombstones before other work and aborts the lifetime signal. Serialize
+ * refresh/sign-in/disconnect under one lifecycle lock so in-flight work cannot send, persist, or
+ * retain grants afterward; revoke grants obtained across the fence.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -34,10 +28,12 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { AccountsService } from "../../accounts/AccountsService.ts";
 import * as ServerConfig from "../../../config.ts";
 import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
@@ -48,6 +44,7 @@ import {
   type EligibleConnector,
 } from "../ExtensionsServices.ts";
 import { PluginConnectorEligibility } from "../plugins/PluginConnectorEligibility.ts";
+import { extractToolParameters } from "./toolParameters.ts";
 import { ConnectorCredentialStore } from "./ConnectorCredentialStore.ts";
 import {
   applySignIn,
@@ -143,7 +140,8 @@ type SendOutcome =
       readonly secrets: ReadonlyArray<string | undefined>;
     }
   | { readonly type: "lost"; readonly message: string }
-  | { readonly type: "failed"; readonly message: string };
+  | { readonly type: "failed"; readonly message: string }
+  | { readonly type: "rejected"; readonly response: Response; readonly message: string };
 
 type RefreshOutcome =
   | { readonly type: "ok"; readonly session: ConnectorOAuthSession }
@@ -382,6 +380,16 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   options: ConnectorRuntimeOptions,
 ) {
   const credentials = yield* ConnectorCredentialStore;
+  const accounts = yield* Effect.serviceOption(AccountsService);
+  const pluginHttp = new Map<
+    string,
+    {
+      readonly record: ConnectorRecord;
+      readonly authorize: Parameters<
+        NonNullable<ConnectorRuntimeShape["registerPluginKeyHttp"]>
+      >[0]["authorize"];
+    }
+  >();
   const eligibility = yield* PluginConnectorEligibility;
   const projects = yield* ProjectStoreV2;
   const store = yield* makeConnectorStateStore(options.stateDir);
@@ -517,12 +525,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   });
 
   /**
-   * Status changes discovered while using a credential never fail the request.
-   * They belong to the credential generation of `record` (the snapshot the
-   * failing operation used): once a newer generation owns the connector (a
-   * sign-in committed meanwhile), a late failure of the old one is dropped.
-   * Losing the credential (a move out of `connected` or between needs-*
-   * states) starts a new auth revision; repeating the current status does not.
+   * Apply credential failures only to the generation that observed them; late old-key errors cannot
+   * overwrite a new sign-in. Status publication must not fail the request; auth revision changes
+   * only on credential loss/state transition, not repeated status.
    */
   const markStatus = (
     record: ConnectorRecord,
@@ -655,11 +660,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     session.expiresAt !== undefined && session.expiresAt - TOKEN_REFRESH_LEEWAY_MS <= at;
 
   /**
-   * Single-flight per connector under the lifecycle lock: callers holding the
-   * same stale token queue; the first refreshes, the rest see the new token.
-   * The caller's record may predate a sign-in, so the current record is read
-   * under the lock: it is the one the cached grant belongs to (sign-in commits
-   * publish both under this lock), and any loss is published for it.
+   * Re-read the current record under the lifecycle lock: callers may hold pre-sign-in tokens.
+   * Refresh single-flight there so queued callers reuse the new grant and any loss is published for
+   * the actual current credential.
    */
   const refreshSession = (snapshot: ConnectorRecord, staleAccessToken: string | undefined) =>
     lifecycle(snapshot.connectorId).withPermits(1)(
@@ -733,9 +736,22 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   const credentialFor = Effect.fn("ConnectorRuntime.credentialFor")(function* (
     record: ConnectorRecord,
+    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
   ) {
     if (!isLive(record.connectorId)) {
       return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
+    }
+    const plugin = pluginHttp.get(record.connectorId);
+    if (plugin) {
+      const resolved = yield* plugin.authorize(scope).pipe(Effect.result);
+      if (
+        resolved._tag === "Failure" ||
+        !resolved.success.secrets.every(
+          (secret) => isProtectableCredential(secret) && !/[\r\n\0]/.test(secret),
+        )
+      )
+        return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
+      return { type: "ok", ...resolved.success, accessToken: undefined } satisfies Credential;
     }
     const auth = record.auth;
     switch (auth.type) {
@@ -747,14 +763,33 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           secrets: [],
         } satisfies Credential;
       case "credential": {
-        const stored = yield* credentials
-          .readOwned(auth.credentialRef, { type: "connector", connectorId: record.connectorId })
-          .pipe(Effect.orElseSucceed(() => Option.none()));
+        const stored = yield* auth.storage === "bound"
+          ? Option.isSome(accounts)
+            ? accounts.value
+                .resolveBound(auth.credentialRef, {
+                  kind: "connector",
+                  connectorId: record.connectorId,
+                  origin: new URL(record.url).origin,
+                })
+                .pipe(
+                  Effect.map((value) => Option.some(Redacted.value(value))),
+                  Effect.orElseSucceed(() => Option.none<string>()),
+                )
+            : Effect.succeed(Option.none<string>())
+          : credentials
+              .readOwned(auth.credentialRef, {
+                type: "connector",
+                connectorId: record.connectorId,
+              })
+              .pipe(
+                Effect.map(Option.map((value) => new TextDecoder().decode(value.material))),
+                Effect.orElseSucceed(() => Option.none<string>()),
+              );
         if (Option.isNone(stored)) {
           yield* markStatus(record, "needs-credential", "The stored credential is missing.");
           return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
         }
-        const value = new TextDecoder().decode(stored.value.material);
+        const value = stored.value;
         if (!enteredSecrets(auth.strategy, value).every(isProtectableCredential)) {
           yield* markStatus(
             record,
@@ -813,6 +848,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       readonly signal: AbortSignal | undefined;
     },
     fetch: (url: string, init: RequestInit) => Promise<Response>,
+    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
   ) {
     const lifetime = lifetimeOf(record.connectorId);
     const signal =
@@ -829,10 +865,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             signal,
           }),
         catch: (cause) => new ConnectorUpstreamError({ cause }),
-      }).pipe(Effect.exit);
+      }).pipe(
+        Effect.tap((response) =>
+          Effect.annotateCurrentSpan("http.response.status_code", response.status),
+        ),
+        Effect.withSpan("ConnectorRuntime.upstreamHeaders", {
+          attributes: { "http.request.method": request.method },
+        }),
+        Effect.exit,
+      );
     const gone = { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
 
-    const credential = yield* credentialFor(record);
+    const credential = yield* credentialFor(record, scope);
     if (credential.type === "lost") return credential satisfies SendOutcome;
     if (!isLive(record.connectorId)) return gone;
     const first = yield* send(credential.headers);
@@ -848,6 +892,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         type: "response",
         response: first.value,
         secrets: credential.secrets,
+      } satisfies SendOutcome;
+    }
+    if (pluginHttp.has(record.connectorId)) {
+      // This transient registration has no persisted connector status and no OAuth grant.
+      // Hand the rejected exchange back without awaiting an untrusted response body's cancel.
+      return {
+        type: "rejected",
+        response: first.value,
+        message: `${record.displayName} rejected the key bound in Scient Accounts. Ask the user to update that account, then retry.`,
       } satisfies SendOutcome;
     }
     yield* cancelBody(first.value);
@@ -935,10 +988,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       : Effect.succeed(checked.href);
   };
 
-  const probeFailure = (result: {
-    readonly type: "not-an-mcp-server" | "unreachable";
-    readonly message: string;
-  }) => extensionsError(result.type, result.message);
+  const probeFailure = (
+    result: {
+      readonly type: "not-an-mcp-server" | "unreachable" | "busy";
+      readonly message: string;
+    },
+    name = "This service",
+  ) =>
+    extensionsError(
+      result.type === "busy" ? "unreachable" : result.type,
+      result.type === "busy" ? `${name} is busy right now. Try again in a minute.` : result.message,
+    );
 
   const tooShort = (what: string) =>
     extensionsError(
@@ -949,12 +1009,6 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const add: ConnectorRuntimeShape["add"] = Effect.fn("ConnectorRuntime.add")(function* (input) {
     const policy = egressPolicyFor(input.target.url, { type: input.target.type });
     const url = yield* checkUrl(input.target.url, policy);
-    if (input.credential?.type === "bound") {
-      return yield* extensionsError(
-        "unsupported",
-        "Using a saved secret requires the Secrets vault, which is not available yet. Enter the credential for this service instead.",
-      );
-    }
     if (
       input.credential?.type === "entered" &&
       !enteredSecrets(input.credential.strategy, input.credential.value).every(
@@ -985,6 +1039,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       (input.target.type === "registry"
         ? (input.target.name.split("/").pop() ?? input.target.name)
         : new URL(url).hostname);
+    if (curated?.id === "github" && (!input.credential || input.credential.strategy !== "bearer"))
+      return yield* extensionsError("invalid-input", "Add GitHub with a personal access token.");
     const description = input.description ?? curated?.description;
     const connectorId = yield* newConnectorId;
     const owner = { type: "connector", connectorId } as const;
@@ -1011,26 +1067,52 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const credentialAuth = {
         type: "credential",
         strategy: entered.strategy,
-        storage: "owned",
+        storage: entered.type === "bound" ? "bound" : "owned",
         ...(entered.headerName === undefined ? {} : { headerName: entered.headerName }),
       } as const;
+      const value =
+        entered.type === "bound"
+          ? Option.isSome(accounts)
+            ? Redacted.value(
+                yield* accounts.value
+                  .resolveBound(entered.secretRef, {
+                    kind: "connector",
+                    connectorId,
+                    origin: new URL(url).origin,
+                  })
+                  .pipe(
+                    Effect.mapError(() =>
+                      extensionsError(
+                        "invalid-input",
+                        "This account key is unavailable for this service.",
+                      ),
+                    ),
+                  ),
+              )
+            : yield* extensionsError("unsupported", "Accounts is unavailable on this server.")
+          : entered.value;
+      if (
+        entered.type === "bound" &&
+        !enteredSecrets(entered.strategy, value).every(isProtectableCredential)
+      )
+        return yield* tooShort("credential");
       const probe = yield* Effect.promise(() =>
         probeConnector({
           url,
           fetch,
-          headers: credentialHeadersFor(credentialAuth, entered.value),
+          headers: credentialHeadersFor(credentialAuth, value),
         }),
       );
       if (probe.type === "auth-required") {
         return yield* extensionsError("sign-in-failed", "The service rejected this credential.");
       }
-      if (probe.type !== "open") return yield* probeFailure(probe);
-      const credentialRef = yield* credentials.put(
-        owner,
-        entered.strategy,
-        new TextEncoder().encode(entered.value),
-        { label: `${displayName} credential` },
-      );
+      if (probe.type !== "open") return yield* probeFailure(probe, displayName);
+      const credentialRef =
+        entered.type === "bound"
+          ? entered.secretRef
+          : yield* credentials.put(owner, entered.strategy, new TextEncoder().encode(value), {
+              label: `${displayName} credential`,
+            });
       auth = { ...credentialAuth, credentialRef };
       status = "connected";
     } else {
@@ -1064,7 +1146,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         };
         status = "needs-auth";
       } else {
-        return yield* probeFailure(probe);
+        return yield* probeFailure(probe, displayName);
       }
     }
     const record: ConnectorRecord = {
@@ -1089,7 +1171,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     // commit removes the credential so nothing is left unreferenced.
     const created = yield* commitNewRecord(record).pipe(
       Effect.tapError(() =>
-        "credentialRef" in auth && auth.credentialRef !== undefined
+        "credentialRef" in auth &&
+        auth.credentialRef !== undefined &&
+        !(auth.type === "credential" && auth.storage === "bound")
           ? credentials.remove(auth.credentialRef).pipe(Effect.ignore)
           : Effect.void,
       ),
@@ -1129,7 +1213,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           );
           publishOAuth(connectorId, undefined);
           yield* publishChange;
-          const ref = record.auth.type === "none" ? undefined : record.auth.credentialRef;
+          const ref =
+            record.auth.type === "none" ||
+            (record.auth.type === "credential" && record.auth.storage === "bound")
+              ? undefined
+              : record.auth.credentialRef;
           if (ref !== undefined) {
             yield* credentials
               .remove(ref)
@@ -1185,7 +1273,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         `${record.displayName} does not require sign-in; it is now connected.`,
       );
     }
-    if (probe.type !== "auth-required") return yield* probeFailure(probe);
+    if (probe.type !== "auth-required") return yield* probeFailure(probe, record.displayName);
     const entry = yield* loadOAuth(record);
     const started = yield* Effect.tryPromise({
       try: () =>
@@ -1200,7 +1288,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }),
       catch: (error) =>
         error instanceof ConnectorOAuthError
-          ? extensionsError(error.reason, error.message)
+          ? extensionsError(
+              error.reason,
+              curatedServerForUrl(record.url) && error.reason === "registration-unsupported"
+                ? "Sign-in is not available for this service right now."
+                : error.message,
+            )
           : extensionsError("sign-in-failed", "Sign-in could not be started."),
     });
     if (!isLive(record.connectorId)) {
@@ -1387,6 +1480,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         applied.push(...outcome.secrets);
         return outcome.response;
       }
+      if (outcome.type === "rejected") {
+        void outcome.response.body?.cancel().catch(() => undefined);
+        throw new ConnectorUnavailableError("failed", outcome.message);
+      }
       throw new ConnectorUnavailableError(outcome.type, outcome.message);
     };
     const listed = yield* Effect.tryPromise({
@@ -1446,9 +1543,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const name = clean(tool.name);
         if (name === undefined) return [];
         const title = clean(tool.title);
+        const parameters = extractToolParameters(tool.inputSchema, (text) =>
+          redactString(text, credentials),
+        );
         return [
           {
             name,
+            ...(parameters === undefined ? {} : { parameters }),
             ...(title === undefined ? {} : { title }),
             ...(tool.description === undefined
               ? {}
@@ -1468,7 +1569,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const forward: ConnectorRuntimeShape["forward"] = Effect.fn("ConnectorRuntime.forward")(
     function* (request) {
       const state = yield* store.read;
-      const record = state.connectors.find((entry) => entry.connectorId === request.connectorId);
+      const record =
+        state.connectors.find((entry) => entry.connectorId === request.connectorId) ??
+        pluginHttp.get(request.connectorId)?.record;
       const rpc = request.method === "POST" ? parseRpcRequest(request.body) : {};
       const correlationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const recordToolUse = (decision: "allowed" | "denied", outcome?: "ok" | "error") =>
@@ -1518,6 +1621,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           "connector_busy",
         );
       }
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The returned body owns this exchange beyond the request fiber; release aborts it on body completion or cancellation.
       const exchange = new AbortController();
       let released = false;
       const release = Effect.suspend(() => {
@@ -1539,9 +1643,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           signal: exchange.signal,
         },
         proxyFetch(policyOf(record)),
+        request.scope,
       ).pipe(Effect.onInterrupt(() => release));
       if (outcome.type !== "response") {
         yield* release;
+        if (outcome.type === "rejected") {
+          // release aborts the socket before best-effort disposal. A vendor may leave its
+          // 401 body open; the agent's auth error must not wait for EOF or cancellation.
+          yield* Effect.sync(() => {
+            void outcome.response.body?.cancel().catch(() => undefined);
+          });
+        }
         yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error");
         return connectorUnavailableResponse(request, outcome.message);
       }
@@ -1634,6 +1746,34 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   );
 
   return ConnectorRuntime.of({
+    registerPluginKeyHttp: Effect.fn("ConnectorRuntime.registerPluginKeyHttp")(function* (input) {
+      if (!pluginHttp.has(input.connectorId) && pluginHttp.size >= 1000)
+        return yield* new ExtensionsError({
+          reason: "limit-reached",
+          message:
+            "Plugin server registrations reached their session limit. Restart Scient to release unused registrations.",
+        });
+      const url = yield* checkUrl(input.url, STRICT_EGRESS_POLICY);
+      const createdAt = yield* isoNow;
+      const record: ConnectorRecord = {
+        connectorId: input.connectorId,
+        serverName: input.serverName,
+        displayName: input.displayName,
+        url,
+        source: { type: "url" },
+        auth: { type: "none" },
+        status: "connected",
+        enabled: true,
+        authRevision: 0,
+        availability: input.projectId
+          ? { type: "projects", projectIds: [input.projectId] }
+          : { type: "all-projects" },
+        createdAt,
+        updatedAt: createdAt,
+      };
+      pluginHttp.set(input.connectorId, { record, authorize: input.authorize });
+      return eligibleOf(record);
+    }),
     list: Effect.fn("ConnectorRuntime.list")(function* () {
       const state = yield* store.read;
       return {
@@ -1728,7 +1868,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
     isGranted: Effect.fn("ConnectorRuntime.isGranted")(function* (input) {
       const state = yield* store.read;
-      const record = state.connectors.find((entry) => entry.connectorId === input.connectorId);
+      const record =
+        state.connectors.find((entry) => entry.connectorId === input.connectorId) ??
+        pluginHttp.get(input.connectorId)?.record;
       return (
         record !== undefined &&
         isLive(record.connectorId) &&

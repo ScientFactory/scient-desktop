@@ -7,11 +7,8 @@ import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
 
 /**
- * Document PDF export is two commands: capture a saved document on the server,
- * then publish the page the desktop printed from that capture, or release the
- * capture when the desktop refused to print it. None caches
- * results; the published generated-document descriptor is the reader's input,
- * and the PDF bytes never enter React state or a persisted atom.
+ * PDF bytes must stay out of React state and persisted atoms; readers consume the published
+ * descriptor. Release a saved capture when desktop printing is refused.
  */
 export function createScientDocumentPdfEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,

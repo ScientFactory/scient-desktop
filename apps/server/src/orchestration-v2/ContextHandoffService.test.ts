@@ -1,11 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ContextTransferId,
   MessageId,
+  ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -15,7 +19,11 @@ import * as Layer from "effect/Layer";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
-import { contextHistoryCandidate } from "./scient-fork/ContextHistoryCandidates.ts";
+import {
+  contextHistoryCandidate,
+  type ContextHistoryCandidate,
+} from "./scient-fork/ContextHistoryCandidates.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
@@ -154,12 +162,6 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       assert.deepStrictEqual(handoff.fromProviderThreadIds, []);
       assert.include(handoff.summaryText, "What did we decide?");
       assert.include(handoff.summaryText, "keep the migration lightweight");
-      const providerMessage = ContextHandoffService.providerMessageWithContextHandoff({
-        handoff,
-        userText: "Continue from there.",
-      });
-      assert.include(providerMessage, handoff.summaryText);
-      assert.include(providerMessage, "User message:\nContinue from there.");
     }),
   );
 
@@ -308,3 +310,211 @@ it.layer(
       }),
   );
 });
+
+it("caps the side chat context block, keeping the newest parent items", () => {
+  const parentThreadId = ThreadId.make("thread:side-chat-parent");
+  const digest = Array.from({ length: 60 }, (_, index) =>
+    ContextHandoffService.summarizeDeltaItem(
+      importedItem({
+        role: index % 2 === 0 ? "user" : "assistant",
+        id: `parent-${index}`,
+        text: `item-${index} ${"x".repeat(300)}`,
+        ordinal: index,
+      }),
+    )!,
+  );
+  const context = ContextHandoffService.makeSideChatContext({ parentThreadId, digest });
+
+  assert.include(context, "- Earlier items truncated.");
+  assert.notInclude(context, "item-0 ");
+  assert.include(context, "- Assistant: item-59 ");
+  assert.isAtMost(context.length, 8_000);
+  assert.isTrue(
+    context.endsWith(
+      `Use scient_thread_inspect on thread ${parentThreadId} to see the main thread's live state.`,
+    ),
+  );
+
+  const framingOnly = ContextHandoffService.makeSideChatContext({ parentThreadId, digest: [] });
+  assert.isTrue(framingOnly.startsWith("You are in a side chat beside the main thread."));
+  assert.notInclude(framingOnly, "Main thread activity");
+});
+
+it("covers the run range of a very long delta", () => {
+  const runs = [
+    { id: RunId.make("run:long-delta-early"), ordinal: 2 },
+    { id: RunId.make("run:long-delta-late"), ordinal: 5 },
+  ];
+  const items = Array.from({ length: 150_000 }, (_, index) => ({
+    runId: runs[index % 2]!.id,
+  }));
+
+  assert.deepEqual(
+    ContextHandoffService.visibleDeltaRunOrdinals({ runs }, [...items, { runId: null }]),
+    { from: 2, to: 5 },
+  );
+});
+
+it.effect("inherited history stops at a missing fork ancestor", () =>
+  Effect.gen(function* () {
+    const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const threadId = ThreadId.make("thread:fork-of-missing");
+    const thread: OrchestrationV2AppThread = {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make("project:fork-of-missing"),
+      title: "Fork of a missing thread",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: {
+        type: "run",
+        threadId: ThreadId.make("thread:missing-ancestor"),
+        runId: RunId.make("run:missing-ancestor"),
+      },
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      deletedAt: null,
+    };
+    const items = yield* ContextHandoffService.readInheritedHandoffItems(
+      {
+        getForkHistoryItems: () => Effect.succeed([]),
+        getThreadRecords: (missing) =>
+          Effect.fail(new ProjectionStoreThreadNotFoundError({ threadId: missing })),
+      },
+      thread,
+    );
+    assert.deepEqual(items, []);
+  }),
+);
+
+// SCIENT-FORK:START — portable side chat history comes by reference, not from `forkedFrom`.
+it.effect("portable fork references keep frozen rows and drop removed conversation", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:frozen-parent");
+    const run = (id: string, ordinal: number, status: OrchestrationV2Run["status"]) =>
+      ({ id: RunId.make(id), ordinal, status }) as OrchestrationV2Run;
+    const candidate = (
+      id: string,
+      runId: string | null,
+      inputIntent: string,
+    ): ContextHistoryCandidate => ({
+      sourceOnly: true,
+      id: TurnItemId.make(id),
+      threadId,
+      runId: runId === null ? null : RunId.make(runId),
+      nodeId: null,
+      type: "user_message",
+      inputIntent,
+      partialSnapshot: false,
+    });
+    const source = {
+      thread: {
+        id: threadId,
+        historyOrigin: "scient_fork",
+        forkedFrom: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      } as unknown as OrchestrationV2AppThread,
+      runs: [
+        run("run:rolled-back", 1, "rolled_back"),
+        run("run:cancelled", 2, "cancelled"),
+        run("run:kept", 3, "completed"),
+        run("run:later", 4, "running"),
+      ],
+      attempts: [],
+    };
+    const requested: Array<ReadonlyArray<RunId | null> | undefined> = [];
+    const items = yield* ContextHandoffService.readPortableForkItems(
+      {
+        getForkHistoryItems: () => Effect.die("A bounded read keeps bodies out of memory."),
+        getThreadRecords: () => Effect.die("A Scient fork names no run-fork ancestor."),
+        getContextHistoryCandidates: (_threadId, runIds) =>
+          Effect.sync(() => {
+            requested.push(runIds);
+            return [
+              candidate("item:frozen", null, "turn_start"),
+              candidate("item:rolled-back", "run:rolled-back", "turn_start"),
+              candidate("item:cancelled-queued", "run:cancelled", "queued_turn"),
+              candidate("item:kept", "run:kept", "turn_start"),
+            ];
+          }),
+      },
+      source,
+      source.runs[2]!,
+      true,
+    );
+
+    assert.deepEqual(requested, [
+      [RunId.make("run:rolled-back"), RunId.make("run:cancelled"), RunId.make("run:kept"), null],
+    ]);
+    assert.deepEqual(
+      items.map((item) => item.id),
+      [TurnItemId.make("item:frozen"), TurnItemId.make("item:kept")],
+    );
+  }),
+);
+
+it.effect("a Scient fork's frozen rows are its inherited history, once each", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:frozen-digest-parent");
+    const frozen = importedItem({ role: "user", id: "frozen", text: "Frozen", ordinal: 0 });
+    const imported = importedItem({ role: "user", id: "imported", text: "Imported", ordinal: 1 });
+    const source = {
+      thread: {
+        id: threadId,
+        historyOrigin: "scient_fork",
+        forkedFrom: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      } as unknown as OrchestrationV2AppThread,
+      runs: [],
+      attempts: [],
+    };
+    const items = yield* ContextHandoffService.readForkHistoryItems(
+      {
+        getForkHistoryItems: () => Effect.succeed([frozen]),
+        // The thread's own runless rows include the copy its history already lists.
+        getThreadRecords: () => Effect.succeed({ turnItems: [frozen, imported] }) as never,
+      },
+      source,
+      null,
+    );
+    assert.deepEqual(
+      items.map((item) => item.id),
+      [frozen.id, imported.id],
+    );
+  }),
+);
+
+it.effect("a side chat's context keeps its text through the handoff projection", () =>
+  Effect.gen(function* () {
+    const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+    const handoff = yield* service.prepareSideChatContext({
+      threadId: ThreadId.make("thread:side-chat"),
+      parentThreadId: ThreadId.make("thread:side-chat-parent"),
+      targetRunId: RunId.make("run:side-chat"),
+      transferId: ContextTransferId.make("transfer:side-chat"),
+      toProviderThreadId: ProviderThreadId.make("provider-thread:side-chat"),
+      fromProviderInstanceId: ProviderInstanceId.make("codex"),
+      toProviderInstanceId: ProviderInstanceId.make("codex"),
+      coveredRunOrdinals: { from: 1, to: 1 },
+      parentItems: [],
+      createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+    });
+    // Handoff reads blank the summary of any handoff that has no history source.
+    assert.deepEqual(handoff.historySource?.entries, []);
+    assert.isTrue(ContextHandoffService.isSideChatContextHandoff(handoff));
+  }).pipe(Effect.provide(layerTest)),
+);
+// SCIENT-FORK:END

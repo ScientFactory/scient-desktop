@@ -128,7 +128,7 @@ describe("resolveAddressBarInput", () => {
 });
 
 describe("resolveSearchUrlTemplate", () => {
-  it("uses a valid custom template and falls back to DuckDuckGo for an unusable one", () => {
+  it("uses a valid custom template and falls back to Google for an unusable one", () => {
     expect(
       resolveSearchUrlTemplate({
         browserSearchEngine: "custom",
@@ -143,7 +143,7 @@ describe("resolveSearchUrlTemplate", () => {
     ]) {
       expect(
         resolveSearchUrlTemplate({ browserSearchEngine: "custom", browserCustomSearchUrl }),
-      ).toBe("https://duckduckgo.com/?q=%s");
+      ).toBe("https://www.google.com/search?q=%s");
     }
   });
 });

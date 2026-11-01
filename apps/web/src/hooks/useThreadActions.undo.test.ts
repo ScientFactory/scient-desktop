@@ -1,3 +1,4 @@
+// SCIENT-FORK:START
 import {
   EnvironmentId,
   ThreadId,
@@ -6,6 +7,7 @@ import {
   type ScientCompletedAnswer,
   type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -19,15 +21,18 @@ const commands = vi.hoisted(() => ({
   unpin: vi.fn(),
   archive: vi.fn(),
   unarchive: vi.fn(),
+  delete: vi.fn(),
   settle: vi.fn(),
   unsettle: vi.fn(),
   snooze: vi.fn(),
   unsnooze: vi.fn(),
+  // SCIENT-FORK:START
   markUnread: vi.fn(),
+  // SCIENT-FORK:END
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(async () => {}),
-  state: { matches: [{ params: {} as Record<string, string> }] },
+  state: { location: { href: "/" }, matches: [{ params: {} as Record<string, string> }] },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/session", async (original) => ({
@@ -42,11 +47,17 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useRouter: () => router }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
-vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
+vi.mock("./useHandleNewThread", () => ({
+  useNewThreadHandler: () => async () => {
+    router.state.location.href = "/draft/project";
+  },
+}));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
+vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
+// SCIENT-FORK:START
 const attention = vi.hoisted(() => ({
-  serverTracked: false,
+  serverConfigLoaded: true,
   markUnread: vi.fn(),
   markVisited: vi.fn(),
 }));
@@ -59,6 +70,7 @@ vi.mock("../uiStateStore", () => ({
   ) =>
     selector({ markThreadUnread: attention.markUnread, markThreadVisited: attention.markVisited }),
 }));
+// SCIENT-FORK:END
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({
   title: "Thread",
@@ -68,26 +80,30 @@ const threadShell = vi.hoisted(() => ({
   projectId: "project",
   environmentId: "undo-env",
   session: null,
+  // SCIENT-FORK:START
   latestCompletedAnswer: undefined as ScientCompletedAnswer | null | undefined,
   latestRun: {
     status: "completed" as OrchestrationV2RunStatus,
     completedAt: "2026-10-04T12:00:00.000Z",
   },
+  // SCIENT-FORK:END
 }));
+// Archived rows have no loaded shell, so deleting one takes the unresolved path.
+const shellLoaded = vi.hoisted(() => ({ current: true }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
-  readEnvironmentSupportsVisitedTracking: () => attention.serverTracked,
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsPinReorder: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
-  readThreadShell: () => threadShell,
+  // SCIENT-FORK:START — the mark-unread cases also cover an unloaded server config.
+  readEnvironmentServerConfigLoaded: () => attention.serverConfigLoaded,
+  // SCIENT-FORK:END
+  readThreadShell: () => (shellLoaded.current ? threadShell : null),
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
     switch (command) {
+      // SCIENT-FORK:START
       case threadEnvironment.markUnread:
         return commands.markUnread;
+      // SCIENT-FORK:END
       case threadEnvironment.pin:
         return commands.pin;
       case threadEnvironment.unpin:
@@ -96,6 +112,8 @@ vi.mock("../state/use-atom-command", () => ({
         return commands.archive;
       case threadEnvironment.unarchive:
         return commands.unarchive;
+      case threadEnvironment.delete:
+        return commands.delete;
       case threadEnvironment.settle:
         return commands.settle;
       case threadEnvironment.unsettle:
@@ -126,12 +144,16 @@ beforeEach(() => {
     command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   }
   router.navigate.mockClear();
+  router.state.location.href = "/";
   router.state.matches[0]!.params = {};
-  attention.serverTracked = false;
+  // SCIENT-FORK:START
+  attention.serverConfigLoaded = true;
   attention.markUnread.mockReset();
   threadShell.latestCompletedAnswer = undefined;
+  // SCIENT-FORK:END
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  shellLoaded.current = true;
 });
 afterEach(() => {
   vi.runAllTimers();
@@ -236,6 +258,32 @@ describe("archive Undo", () => {
   });
 });
 
+describe("archive navigation", () => {
+  it.each([
+    { destination: "/undo-env/thread", expected: "/draft/project" },
+    { destination: "/undo-env/other-thread", expected: "/undo-env/other-thread" },
+    { destination: "/settings", expected: "/settings" },
+  ])("ends at $expected after opening $destination while archiving", async (route) => {
+    router.state.location.href = "/undo-env/thread";
+    router.state.matches[0]!.params = {
+      environmentId: target.environmentId,
+      threadId: target.threadId,
+    };
+    let finishArchive!: () => void;
+    commands.archive.mockReturnValue(
+      new Promise((resolve) => {
+        finishArchive = () => resolve({ _tag: "Success", value: undefined });
+      }),
+    );
+    const archived = useThreadActions().archiveThread(target);
+    router.state.location.href = route.destination;
+    finishArchive();
+    expect((await archived)._tag).toBe("Success");
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Archived" });
+    expect(router.state.location.href).toBe(route.expected);
+  });
+});
+
 describe("settle and snooze Undo", () => {
   it("un-settles from the notice and expires the Undo after a manual un-settle", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
@@ -303,8 +351,10 @@ describe("settle and snooze Undo", () => {
   });
 });
 
+// SCIENT-FORK:START
 describe("local mark-unread canonical answer", () => {
   it("rewinds against the earlier completed answer, not a later answerless run", () => {
+    attention.serverConfigLoaded = false;
     threadShell.latestCompletedAnswer = {
       turnId: TurnId.make("old-run"),
       messageId: MessageId.make("old-answer"),
@@ -318,12 +368,12 @@ describe("local mark-unread canonical answer", () => {
     expect(commands.markUnread).not.toHaveBeenCalled();
   });
   it("does not invent an answer when canonical projection is explicit null", () => {
+    attention.serverConfigLoaded = false;
     threadShell.latestCompletedAnswer = null;
     useThreadActions().markThreadUnread(target);
     expect(attention.markUnread).toHaveBeenCalledExactlyOnceWith(expect.any(String), null);
   });
   it("retains the explicit server mark-unread command for tracking-capable environments", () => {
-    attention.serverTracked = true;
     useThreadActions().markThreadUnread(target);
     expect(commands.markUnread).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
@@ -331,4 +381,68 @@ describe("local mark-unread canonical answer", () => {
     });
     expect(attention.markUnread).not.toHaveBeenCalled();
   });
+});
+
+// SCIENT-FORK:END
+
+describe("archive and delete Undo expiry", () => {
+  const otherThread = { environmentId: target.environmentId, threadId: ThreadId.make("other") };
+  const otherEnvironment = {
+    environmentId: EnvironmentId.make("other-env"),
+    threadId: target.threadId,
+  };
+  const failure = { _tag: "Failure", cause: Cause.fail(new Error("Request failed")) };
+
+  describe.each(["archiveThread", "deleteThread"] as const)("%s", (lifecycle) => {
+    it.each([
+      ["settleThread", "unsettle"],
+      ["snoozeThread", "unsnooze"],
+      ["unpinThread", "pin"],
+    ] as const)(
+      "expires an earlier %s Undo for that thread only, across hook instances",
+      async (handler, inverse) => {
+        const sidebar = useThreadActions();
+        const header = useThreadActions();
+        for (const ref of [otherThread, otherEnvironment, target]) {
+          await (handler === "snoozeThread"
+            ? sidebar.snoozeThread(ref, "2099-01-01T09:00:00.000Z")
+            : sidebar[handler](ref));
+        }
+        const staleUndo = currentUndo();
+        await header[lifecycle](target);
+        await staleUndo();
+        expect(commands[inverse]).toHaveBeenCalledTimes(2);
+        expect(commands[inverse]).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            environmentId: target.environmentId,
+            input: expect.objectContaining({ threadId: target.threadId }),
+          }),
+        );
+      },
+    );
+
+    it("keeps the earlier Undo when the request fails", async () => {
+      const actions = useThreadActions();
+      await actions.settleThread(target);
+      commands[lifecycle === "archiveThread" ? "archive" : "delete"].mockResolvedValue(failure);
+      await actions[lifecycle](target);
+      expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Settled" });
+      await currentUndo()();
+      expect(commands.unsettle).toHaveBeenCalledOnce();
+    });
+  });
+
+  it.each([true, false])(
+    "expires the Archived Undo when deleting with shell loaded: %s",
+    async (loaded) => {
+      const actions = useThreadActions();
+      await actions.archiveThread(target);
+      const staleUndo = currentUndo();
+      shellLoaded.current = loaded;
+      await actions.deleteThread(target);
+      expect(useThreadUndoNotice.getState().notice).toBeNull();
+      await staleUndo();
+      expect(commands.unarchive).not.toHaveBeenCalled();
+    },
+  );
 });

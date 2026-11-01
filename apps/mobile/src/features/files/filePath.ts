@@ -1,15 +1,8 @@
-import { collapseAbsoluteFilePath } from "@t3tools/shared/path";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { joinPath, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
-
-export interface FileBreadcrumb {
-  readonly label: string;
-  readonly path: string;
-  readonly kind: "project" | "directory" | "file";
-}
 
 function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
@@ -26,14 +19,6 @@ export function fileRoutePathSegments(path: string): string[] {
 
 function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /^[A-Za-z]:\\/.test(value);
-}
-
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
 export function basename(path: string): string {
@@ -108,46 +93,6 @@ export function resolveWorkspaceRelativeFilePath(
   return normalizeRelativePath(relativePath);
 }
 
-/**
- * The absolute host path a file link names when it is not a workspace file:
- * an absolute path as written, or a relative path that climbs above the
- * workspace root. Such a file opens read-only in the file screen, like any
- * other host file. Returns null when the link cannot be placed on the host.
- */
-export function resolveHostFilePath(
-  workspaceRoot: string | null | undefined,
-  targetPath: string,
-): string | null {
-  if (isAbsolutePath(targetPath)) return collapseAbsoluteFilePath(targetPath);
-  if (!workspaceRoot || targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
-    return null;
-  }
-  return collapseAbsoluteFilePath(resolveWorkspaceFilePath(workspaceRoot, targetPath));
-}
-
-/**
- * Where a file link opens: the workspace file it names (editable), or the host
- * file it names when it lies outside the workspace (read-only). A path that
- * leaves and re-enters the workspace is a workspace file. Null when the link
- * cannot be placed on the remote host, such as a home link without a known root.
- */
-export function resolveFileLinkTarget(
-  workspaceRoot: string | null | undefined,
-  targetPath: string,
-): { readonly kind: "workspace" | "host"; readonly path: string } | null {
-  // SCIENT-FORK:START — expand inherited home links without losing host traversal.
-  targetPath = resolveFileLinkPath(workspaceRoot, targetPath) ?? targetPath;
-  // SCIENT-FORK:END
-  const workspacePath = resolveWorkspaceRelativeFilePath(workspaceRoot, targetPath);
-  if (workspacePath !== null) return { kind: "workspace", path: workspacePath };
-  const hostPath = resolveHostFilePath(workspaceRoot, targetPath);
-  if (hostPath === null) return null;
-  const reentered = resolveWorkspaceRelativeFilePath(workspaceRoot, hostPath);
-  return reentered !== null
-    ? { kind: "workspace", path: reentered }
-    : { kind: "host", path: hostPath };
-}
-
 export function isVideoPreviewFile(path: string): boolean {
   return isWorkspaceVideoPreviewPath(path);
 }
@@ -162,18 +107,6 @@ export function isSvgImagePreviewFile(path: string): boolean {
 
 export function isMarkdownPreviewFile(path: string): boolean {
   return /\.(?:md|mdx)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
-}
-
-export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
-  const parts = relativePath.split("/").filter(Boolean);
-  return [
-    { label: projectName, path: "", kind: "project" },
-    ...parts.map((part, index) => ({
-      label: part,
-      path: parts.slice(0, index + 1).join("/"),
-      kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
-    })),
-  ];
 }
 
 export function fileHeaderSubtitle(projectName: string, relativePath: string): string {

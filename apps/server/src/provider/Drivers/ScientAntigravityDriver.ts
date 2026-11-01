@@ -1,11 +1,3 @@
-/**
- * Scient's additions to the Antigravity driver: routing legacy `agy`
- * configurations to the legacy driver, the managed ACP runtime actions and
- * the connection state they stamp onto the snapshot, and the assisted
- * account actions built on the official auth controller.
- *
- * @module provider/Drivers/ScientAntigravityDriver
- */
 import {
   type AntigravityAuthMethod,
   type AntigravitySettings,
@@ -134,17 +126,17 @@ export function makeAntigravityInstanceConnectionActions<E>(input: {
     authMethod: input.authMethod,
     controller: authFlow.controller,
     stopSessions: authFlow.stopProcesses.pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.fail(
-              new ProviderSetupError({
-                instanceId,
-                operation: "stopSessions",
-                detail: "Scient could not stop active Antigravity sessions.",
-                cause,
-              }),
-            ),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.fail(
+            new ProviderSetupError({
+              instanceId,
+              operation: "stopSessions",
+              detail: "Scient could not stop active Antigravity sessions.",
+              cause,
+            }),
+          ),
       ),
     ),
     randomOwnerId: input.randomUUID.pipe(

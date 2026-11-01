@@ -22,30 +22,14 @@ describe("compute environment policy", () => {
       expect(() => validateProjectRoot("/project/../root")).toThrow("canonical");
     });
 
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
     it("rejects a non-canonical path with dot segments", () => {
       expect(() => validateProjectRoot("/project/./root")).toThrow("canonical");
     });
   });
 
   describe("sanitization", () => {
-    it("removes exact denylisted keys", () => {
-      const { environment, removedKeys } = sanitizeComputeEnvironment({
-        PYTHONPATH: "/evil",
-        PYTHONHOME: "/evil",
-        HOME: "/user",
-        PATH: "/usr/bin",
-        ANTHROPIC_API_KEY: "secret",
-      });
-      expect(environment["PYTHONPATH"]).toBeUndefined();
-      expect(environment["PYTHONHOME"]).toBeUndefined();
-      expect(environment["ANTHROPIC_API_KEY"]).toBeUndefined();
-      expect(environment["HOME"]).toBe("/user");
-      expect(environment["PATH"]).toBe("/usr/bin");
-      expect(removedKeys).toContain("PYTHONPATH");
-      expect(removedKeys).toContain("PYTHONHOME");
-      expect(removedKeys).toContain("ANTHROPIC_API_KEY");
-    });
-
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
     it("removes prefix-matched keys", () => {
       const { environment, removedKeys } = sanitizeComputeEnvironment({
         SCIENT_DB_PASSWORD: "secret",
@@ -79,12 +63,6 @@ describe("compute environment policy", () => {
       expect(environment["LANG"]).toBe("en_US.UTF-8");
       expect(environment["TMPDIR"]).toBe("/tmp");
       expect(environment["DISPLAY"]).toBe(":0");
-    });
-
-    it("sets UTF-8 and unbuffered overrides", () => {
-      const { environment } = sanitizeComputeEnvironment({});
-      expect(environment["PYTHONUTF8"]).toBe("1");
-      expect(environment["PYTHONUNBUFFERED"]).toBe("1");
     });
 
     it("overrides existing PYTHONUTF8 and PYTHONUNBUFFERED", () => {

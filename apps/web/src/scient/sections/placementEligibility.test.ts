@@ -21,6 +21,7 @@ const runtime = (status: ThreadRuntimeSummary["status"]): ThreadRuntimeSummary =
   lastError: status === "failed" ? "Provider failure" : null,
   updatedAt: now,
 });
+// regression: 8ce9e24657 feat(sidebar): keep active threads near the top of sections
 it.each([
   { runtime: runtime("running") },
   { runtime: runtime("starting") },

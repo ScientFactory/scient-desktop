@@ -39,7 +39,7 @@ export function InterfaceFontWeightSelect({
       <SelectPopup align="end" alignItemWithTrigger={false}>
         {InterfaceFontWeight.literals.map((value) => (
           <SelectItem hideIndicator key={value} value={String(value)}>
-            {INTERFACE_FONT_WEIGHT_LABELS[value]} — {value}
+            {INTERFACE_FONT_WEIGHT_LABELS[value]}: {value}
           </SelectItem>
         ))}
       </SelectPopup>

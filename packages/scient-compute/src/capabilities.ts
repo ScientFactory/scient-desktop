@@ -1,12 +1,8 @@
 import type { ComputeCapability } from "./contract.ts";
 
 /**
- * What every session needs before it is allowed to run user code.
- *
- * A runtime that cannot be interrupted or restarted is not a session a user can
- * work in: a mistaken loop would only be escapable by killing the process and
- * losing every variable. Refusing to start is a better answer than discovering
- * this from a stop button that does nothing.
+ * Require interrupt/restart capability before user code. Discovering an unstoppable loop through a
+ * nonworking Stop button would force namespace destruction and lose every variable.
  */
 export const REQUIRED_COMPUTE_CAPABILITIES: ReadonlySet<ComputeCapability> = new Set([
   "execute",

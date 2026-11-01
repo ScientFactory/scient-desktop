@@ -68,12 +68,8 @@ const decodeRepresentationBundle = Schema.decodeUnknownOption(ComputeRepresentat
 type RichDisplayPayload = Extract<DisplayPayload, { readonly kind: unknown }>;
 
 /**
- * The transport does not need to know where the bridge script lives.
- *
- * A language adapter's `prepareLaunch` already produces the executable and
- * arguments that start a runtime, and that is the only place a bridge path
- * belongs: a transport that also resolved one could disagree with the plan it
- * was handed.
+ * Only the language adapter resolves the bridge path in prepareLaunch. Resolving it again in
+ * transport could contradict the supplied executable/argument plan.
  */
 export interface ComputeBridgeTransportOptions {
   readonly startupTimeoutMs?: number;
@@ -90,13 +86,8 @@ export interface ComputeBridgeTransportOptions {
     ComputeTransportError
   >;
   /**
-   * How many bytes of undelivered events one session may hold.
-   *
-   * This is the memory a consumer that stops reading can cost. Past it, output
-   * is dropped and said to have been dropped; lifecycle events are always
-   * delivered, so the real ceiling is this plus whatever is in flight. An
-   * embedder running many sessions at once may want a smaller number than one
-   * running a single interactive session.
+   * Bound unread event bytes and report dropped output. Lifecycle events remain deliverable even
+   * above that target, so the budget plus in-flight lifecycle facts is not a strict ceiling.
    */
   readonly maxEventQueueBytes?: number;
 }
@@ -179,16 +170,9 @@ function estimateEventBytes(event: ComputeTransportEvent): number {
 }
 
 /**
- * The bytes behind a base64 PNG payload, or a sentence saying why there are none.
- *
- * All three rejections are the same kind of thing -- an image that cannot be
- * shown -- so they come back the same way, and none of them ends the session.
- * What arrives here is whatever the user's code put in an `image/png` bundle: a
- * `_repr_png_` that returns a string of prose, a backend that emits a JPEG
- * under a PNG key, a figure too large to keep. Losing the session over any of
- * those would cost the user every variable they had built up in it, which is
- * the one thing a session exists to hold. A frame that breaks the protocol is
- * still fatal; this is a well-formed frame carrying contents we will not trust.
+ * Untrusted but well-framed PNG contents can be invalid, mislabeled, or oversized. Report the lost
+ * image without ending the namespace and discarding variables; only protocol-invalid frames are
+ * fatal.
  */
 function decodePngPayload(data: string): Uint8Array | string {
   if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
@@ -456,13 +440,8 @@ export function makeComputeBridgeTransport(
       const activeRequestId = MutableRef.make<ComputeRequestId | null>(null);
       const inspectingVariables = MutableRef.make(false);
       /**
-       * A shutdown this transport asked for, as opposed to one it suffered.
-       *
-       * Between sending `shutdown` and receiving `shutdown-complete` the
-       * bridge legitimately stops: it cancels in-flight work, closes its
-       * stdout and exits. Without this flag every one of those looks like a
-       * runtime that vanished, and the session would report itself lost at the
-       * exact moment it was closing cleanly.
+       * During requested shutdown, stdout close/exit are expected rather than lost-session
+       * evidence. Keep that distinction armed until shutdown completion is observed.
        */
       const stopping = MutableRef.make(false);
       const eventBytes = MutableRef.make(0);
@@ -473,14 +452,9 @@ export function makeComputeBridgeTransport(
       const shutdownGate = yield* Semaphore.make(1);
       const writeGate = yield* Semaphore.make(1);
       /**
-       * Unbounded on purpose.
-       *
-       * A bounded queue makes `emit` suspend once a chatty cell fills it, and
-       * `emit` runs on the single fibre that also resolves command replies --
-       * so a full queue would mean `interrupt-result` could never be delivered
-       * and a runaway cell could never be stopped, which is precisely when
-       * interrupt matters. Memory is bounded by the byte budget below instead,
-       * which drops droppable output rather than blocking the reader.
+       * A bounded queue would suspend the same reader fiber that delivers interrupt-result, making
+       * runaway cells unstoppable. Keep the queue unbounded and shed droppable output by byte
+       * budget instead.
        */
       const events = yield* Queue.unbounded<WeightedEvent, ComputeTransportError | Cause.Done>();
 
@@ -502,16 +476,9 @@ export function makeComputeBridgeTransport(
       };
 
       /**
-       * Queue one event, dropping only what can be dropped.
-       *
-       * When a consumer falls far enough behind to threaten the byte budget,
-       * the honest thing to shed is output: a truncation marker in the stream
-       * tells the user exactly what happened. Runtime diagnostics are output
-       * too: an adversarial traceback must not bypass the same memory bound.
-       * Everything else -- `ready`, `accepted`, `completed`, `restarted`,
-       * `lost` -- is a lifecycle fact, and a consumer that misses one waits forever for
-       * something that already happened. So those are always queued, and the
-       * budget is a target rather than a hard ceiling for them.
+       * Drop output/diagnostics with a truncation marker under pressure, but always queue lifecycle
+       * facts. Losing ready/accepted/completed/restarted/lost can strand consumers forever, so
+       * their budget is a target rather than a hard ceiling.
        */
       const emit = (event: ComputeTransportEvent): Effect.Effect<void, ComputeTransportError> =>
         Effect.suspend(() => {
@@ -543,13 +510,8 @@ export function makeComputeBridgeTransport(
         });
 
       /**
-       * Builds the reason a session was lost, with the bridge's own words.
-       *
-       * The transport only ever sees the shape of a failure -- a closed pipe,
-       * an exit code -- while the explanation is on the bridge's stderr. This
-       * is the last moment either is still available, so they are reported
-       * together, and the tail is trimmed rather than the message so the
-       * newest diagnostics survive.
+       * Capture exit shape and bridge stderr together before either disappears. Trim the diagnostic
+       * tail rather than its newest end so the latest explanation survives.
        */
       const lostReason = (error: ComputeTransportError): string => {
         const tail = MutableRef.get(stderrTail).trim();
@@ -563,12 +525,8 @@ export function makeComputeBridgeTransport(
         Effect.suspend(() => {
           if (MutableRef.get(lost) || MutableRef.get(closed)) return Effect.void;
           if (MutableRef.get(stopping)) {
-            // A shutdown this transport asked for is in flight, so this is
-            // probably just the bridge leaving as instructed and no `lost`
-            // event is owed. A command still waiting for a reply is failed
-            // anyway: that is what lets the shutdown stop waiting and decide,
-            // instead of sitting out its whole timeout for a bridge that has
-            // already stopped answering.
+            // Suppress lost during requested shutdown, but fail pending replies immediately so
+            // shutdown can settle instead of waiting a full timeout on an already-closed bridge.
             return failPending(error).pipe(Effect.ignore);
           }
           MutableRef.set(lost, true);
@@ -1016,14 +974,9 @@ export function makeComputeBridgeTransport(
       );
 
       /**
-       * Sends one command frame, minting its sequence as it goes.
-       *
-       * The whole body holds `writeGate`, which is a separate permit from the
-       * round-trip `commandGate`: two callers must not interleave halves of
-       * two frames on one pipe, and the sequence the bridge validates must
-       * increase in the same order the bytes arrive. `execute` runs outside
-       * `commandGate` but still inside this gate, so it stays atomic without
-       * waiting on a restart.
+       * Hold writeGate across sequence allocation and the full frame write so bytes and sequence
+       * cannot interleave. It is separate from round-trip commandGate, allowing execute to remain
+       * atomic without waiting for restart.
        */
       const sendCommand = (
         operation: ComputeTransportError["operation"],
@@ -1101,15 +1054,9 @@ export function makeComputeBridgeTransport(
       });
 
       /**
-       * One deadline for the whole startup, spent across its steps.
-       *
-       * Startup is two round trips, and giving each of them the full budget
-       * would let a slow one push the total past the bound the caller was
-       * promised. Wrapping the pair in a second timer of the same length
-       * instead would leave two timers racing to describe one condition, so
-       * the message a user got for a bad environment would depend on which
-       * fired. The remaining budget keeps the total exact and lets the step
-       * that actually stalled name itself.
+       * Spend one startup deadline across both round trips. Separate full budgets exceed the
+       * promised bound; an outer racing timer makes diagnostics nondeterministic. Let the stalled
+       * step report the remaining-budget timeout.
        */
       const startupDeadline = (yield* Clock.currentTimeMillis) + startupTimeoutMs;
       const remainingStartupMs = Clock.currentTimeMillis.pipe(
@@ -1231,13 +1178,8 @@ export function makeComputeBridgeTransport(
         });
 
       /**
-       * Deliberately outside `commandGate`.
-       *
-       * A restart holds that gate for up to the startup timeout, and an
-       * execute queued behind it would sit there only to be rejected for a
-       * stale generation the moment it woke up. Failing immediately tells the
-       * caller the truth sooner. Ordering against other executes is still
-       * guaranteed by `writeGate` inside `sendCommand`.
+       * Keep execute outside commandGate: waiting behind restart only delays an inevitable
+       * stale-generation refusal. writeGate still orders it atomically against other executions.
        */
       const execute: ComputeChannel["execute"] = (executeRequest) =>
         Effect.suspend(() => {
@@ -1305,11 +1247,8 @@ export function makeComputeBridgeTransport(
                 DEFAULT_INTERRUPT_TIMEOUT_MS,
               ),
             ),
-            // Every outcome is an answer, not an error: `rejected` and
-            // `timeout` describe an execution that survived, and a caller
-            // needs to know that to decide whether to escalate to a restart.
-            // Failing here would collapse them into the same shape as a
-            // broken pipe.
+            // Rejected/timeout interrupts mean execution survived and may need restart escalation.
+            // Return typed outcomes rather than collapsing them into broken-pipe errors.
             Effect.map(
               (message) => (message.payload as { result: ComputeInterruptOutcome }).result,
             ),
@@ -1411,11 +1350,9 @@ export function makeComputeBridgeTransport(
         Effect.suspend(() => {
           if (MutableRef.get(closed)) return Effect.void;
           return ensureGeneration("shutdown", shutdownRequest.expectedGeneration).pipe(
-            // Set before the round trip, not after: the bridge closes its
-            // stdout and exits as part of answering, and both of those
-            // reach the watchers above before `shutdown-complete` reaches
-            // this fibre. If the round trip fails the session really is in
-            // trouble, so the flag is cleared and loss reporting resumes.
+            // Arm shutdown intent before sending: close/exit watchers can run before
+            // shutdown-complete arrives. Clear it on round-trip failure so genuine loss reporting
+            // resumes.
             Effect.andThen(
               Effect.sync(() => {
                 MutableRef.set(stopping, true);
@@ -1435,11 +1372,9 @@ export function makeComputeBridgeTransport(
                 },
                 DEFAULT_SHUTDOWN_TIMEOUT_MS,
               ).pipe(
-                // The bridge was asked to leave and did not answer. It is
-                // not shutting down cleanly, so the intent is withdrawn and
-                // the session is reported lost -- a consumer waiting on the
-                // event stream has to be told the session ended, and this
-                // is the only place that still knows why.
+                // A shutdown without a reply is not clean. Withdraw intent and emit lost while the
+                // failure reason is still known, or event consumers could wait forever for terminal
+                // evidence.
                 Effect.tapError((error) =>
                   Effect.sync(() => {
                     MutableRef.set(stopping, false);
@@ -1468,11 +1403,8 @@ export function makeComputeBridgeTransport(
 
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
-          // Goes through `shutdown` rather than repeating its steps: a second
-          // copy of the sequence would be the one that drifts, and it already
-          // returns immediately when the session is closed. The scope is
-          // closing either way, so a slow or failed goodbye is capped and
-          // then ignored before the process tree is taken down.
+          // Reuse shutdown so protocol-close ordering has one owner. Bound and ignore failed/slow
+          // goodbye during scope close, then tear down the process tree.
           if (!MutableRef.get(lost)) {
             yield* shutdown({ expectedGeneration: MutableRef.get(generation) }).pipe(
               Effect.timeoutOrElse({
@@ -1487,11 +1419,9 @@ export function makeComputeBridgeTransport(
             Effect.ignore,
           );
           yield* Queue.end(events).pipe(Effect.ignore);
-          // The ownership finalizer registered immediately after spawn runs
-          // after this protocol finalizer. It is the single scope-close
-          // backstop for process cleanup: success releases the endpoint and
-          // managed-runtime leases, while failure propagates through
-          // `Scope.close` so the session service retains host capacity.
+          // The spawn ownership finalizer runs after protocol shutdown. Release endpoint/runtime
+          // leases only on proven cleanup; propagate failure through Scope.close so the session
+          // retains host capacity.
         }),
       );
 

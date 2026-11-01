@@ -1238,7 +1238,8 @@ describe("Droid key broker and the endpoint's transport", () => {
         const [hostname, port] = request.url!.split(":");
         const target = NodeNet.connect(Number(port), hostname, () => {
           client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          target.pipe(client).pipe(target);
+          target.pipe(client);
+          client.pipe(target);
         });
         for (const socket of [client, target]) socket.on("error", () => undefined);
       });
@@ -1306,7 +1307,7 @@ describe("Droid key broker and the endpoint's transport", () => {
       yield* Effect.addFinalizer(() => Effect.promise(proxy.close));
       const direct = connection("openai-completions", "direct", slow.origin);
       const proxied = connection("openai-completions", "proxied", "http://models.example/v1");
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       yield* withBroker(
         {
@@ -1565,7 +1566,8 @@ describe("Droid key broker and the endpoint's transport", () => {
         const [hostname, port] = request.url!.split(":");
         const target = NodeNet.connect(Number(port), hostname, () => {
           client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          target.pipe(client).pipe(target);
+          target.pipe(client);
+          client.pipe(target);
         });
         for (const socket of [client, target]) socket.on("error", () => undefined);
       });

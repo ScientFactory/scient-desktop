@@ -1,4 +1,3 @@
-import { useSettingsIntentPreload } from "../../components/settings/useSettingsIntentPreload";
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
@@ -23,27 +22,43 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   Readonly<Record<SettingsPath, ReadonlyArray<{ label: string; targetId: string }>>>
 > = {
   "/settings/general": [
-    { label: "Organization", targetId: "organization" },
-    { label: "Behavior", targetId: "behavior" },
-    { label: "Projects & threads", targetId: "projects-and-threads" },
+    { label: "Notifications", targetId: "notifications" },
+    { label: "Sidebar", targetId: "sidebar" },
     { label: "Confirmations", targetId: "confirmations" },
-    { label: "Text generation", targetId: "text-generation" },
-    { label: "About", targetId: "about" },
-    { label: "Legacy features", targetId: "legacy-features" },
+    { label: "Display", targetId: "display" },
   ],
   "/settings/appearance": [
     { label: "Colors & themes", targetId: "appearance" },
     { label: "Interface", targetId: "appearance-interface" },
-    { label: "Motion", targetId: "motion" },
     { label: "Typography", targetId: "typography" },
   ],
-  "/settings/source-control": [
-    { label: "Version control", targetId: "source-control" },
-    { label: "Text generation", targetId: "source-control-text-generation" },
+  "/settings/threads": [
+    { label: "New projects", targetId: "new-projects" },
+    { label: "New threads", targetId: "project-defaults" },
+    { label: "Usage limits", targetId: "usage-limits" },
+    { label: "Auto-settle", targetId: "auto-settle" },
+    { label: "Text generation", targetId: "text-generation" },
+    { label: "Forks", targetId: "forks" },
   ],
-  "/settings/connections": [
-    { label: "This environment", targetId: "connections-environment" },
-    { label: "Remote environments", targetId: "remote-environments" },
+  "/settings/browser": [
+    { label: "Agent access", targetId: "browser-agent-access" },
+    { label: "Browsing", targetId: "browser" },
+    { label: "Recordings", targetId: "browser-recordings" },
+  ],
+  "/settings/source-control": [
+    { label: "Repositories", targetId: "source-control-defaults" },
+    { label: "Version control", targetId: "source-control" },
+    { label: "Writing & review", targetId: "source-control-text-generation" },
+  ],
+  "/settings/maintenance": [
+    { label: "Updates", targetId: "updates" },
+    { label: "Background activity", targetId: "background" },
+    { label: "Artifacts and logs", targetId: "storage-artifacts" },
+    { label: "Diagnostics", targetId: "diagnostics-section" },
+  ],
+  "/settings/about": [
+    { label: "App", targetId: "about" },
+    { label: "Legal", targetId: "legal" },
   ],
 };
 
@@ -70,7 +85,6 @@ export function useScientSettingsNavigation(
   items: ReadonlyArray<{ to: SettingsPath; label: string }>,
 ) {
   const navigate = useNavigate();
-  const preloadSettings = useSettingsIntentPreload();
   const { isMobile, setOpenMobile } = useSidebar();
   const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname });
   const [expandedSettingsPath, setExpandedSettingsPath] = useState<SettingsPath | null>(null);
@@ -80,33 +94,39 @@ export function useScientSettingsNavigation(
   const activeSettingsPath = items.find(
     (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
   )?.to;
-  const observedVisibilityScope = (() => {
-    const path = items.find(
-      (item) =>
-        resolvedPathname === item.to || resolvedPathname?.startsWith(`${item.to}/`) === true,
-    )?.to;
-    const pageSections = path ? SETTINGS_PAGE_SECTIONS[path] : undefined;
-    return path && pageSections ? { path, pageSections } : null;
-  })();
+  // The page whose content is on screen. The watcher's lifetime is keyed on this string, not
+  // on an object built during render: that object's identity follows the compiler's memo
+  // grouping, so a report could rebuild it and restart the watcher, which reports again.
+  const observedSettingsPath = items.find(
+    (item) => resolvedPathname === item.to || resolvedPathname?.startsWith(`${item.to}/`) === true,
+  )?.to;
+  // Results describe one visit. Dropping them once another page is observed keeps a return
+  // visit from showing what was in view last time.
+  if (sectionVisibility && sectionVisibility.path !== observedSettingsPath) {
+    setSectionVisibility(null);
+  }
   const visiblePageSectionIds = getVisibleSettingsSectionIds({
     activePath: activeSettingsPath,
-    scope: observedVisibilityScope,
+    observedPath: observedSettingsPath,
     visibility: sectionVisibility,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes settings section visibility in the page container DOM and mirrors it into state
   useEffect(() => {
-    if (!observedVisibilityScope) return;
+    if (!observedSettingsPath) return;
+    const pageSections = SETTINGS_PAGE_SECTIONS[observedSettingsPath];
+    if (!pageSections) return;
     const container = document.querySelector<HTMLElement>("[data-settings-page-layout]");
     if (!container) return;
 
     return observeSettingsSectionVisibility({
       container,
-      targetIds: observedVisibilityScope.pageSections.map((section) => section.targetId),
+      targetIds: pageSections.map((section) => section.targetId),
       onChange(targetIds) {
-        setSectionVisibility({ scope: observedVisibilityScope, targetIds: new Set(targetIds) });
+        setSectionVisibility({ path: observedSettingsPath, targetIds: new Set(targetIds) });
       },
     });
-  }, [observedVisibilityScope]);
+  }, [observedSettingsPath]);
 
   const handlePageSectionClick = (to: SettingsPath, targetId: string) => {
     if (isMobile) {
@@ -163,8 +183,6 @@ export function useScientSettingsNavigation(
                       visiblePageSectionIds.has(section.targetId) &&
                         "font-medium text-sidebar-foreground",
                     )}
-                    onMouseEnter={() => preloadSettings(item.to, section.targetId)}
-                    onFocus={() => preloadSettings(item.to, section.targetId)}
                     onClick={() => handlePageSectionClick(item.to, section.targetId)}
                   >
                     <span className="ms-0.5">{section.label}</span>

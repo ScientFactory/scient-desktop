@@ -84,14 +84,8 @@ function deliver(
 }
 
 /**
- * Observes element sizes on one shared ResizeObserver per box. Its callbacks run after
- * layout and before paint, but React commits state set there after the paint,
- * so layout derived from an observed size would land one frame late. Every
- * resize delivered in a frame runs inside one flushSync, so all size-derived
- * state commits in a single render before that paint. A callback gets one call
- * with the entries for all of its targets, starting with an initial one each.
- * The optional box defaults to content-box; different boxes have independent
- * target lifetimes, so disposing one never stops another box's subscription.
+ * Flushes callbacks together before paint; ordinary React updates would leave a stale frame.
+ * Different boxes have independent target lifetimes, so disposal cannot cancel another box.
  */
 export function observeResize(
   elements: Element | readonly Element[],

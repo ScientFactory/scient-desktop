@@ -4,6 +4,9 @@ import {
   ScientConversationImportError,
   ScientThreadQueueOperationError,
   ScientWordExportError,
+  // SCIENT-FORK:START — Overleaf sync's typed refusals reach the app as themselves
+  ScientOverleafOperationError,
+  // SCIENT-FORK:END
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
   type EnvironmentInternalError,
@@ -27,6 +30,9 @@ const isScientThreadQueueOperationError = Schema.is(ScientThreadQueueOperationEr
 const isScientConversationExportError = Schema.is(ScientConversationExportError);
 const isScientConversationImportError = Schema.is(ScientConversationImportError);
 const isScientWordExportError = Schema.is(ScientWordExportError);
+// SCIENT-FORK:START
+const isScientOverleafOperationError = Schema.is(ScientOverleafOperationError);
+// SCIENT-FORK:END
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   "RemoteEnvironmentAuthFetchError",
@@ -79,6 +85,9 @@ export type RemoteEnvironmentRequestError =
   | ScientConversationExportError
   | ScientConversationImportError
   | ScientWordExportError
+  // SCIENT-FORK:START
+  | ScientOverleafOperationError
+  // SCIENT-FORK:END
   | EnvironmentRequestInvalidError
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
@@ -142,6 +151,9 @@ const failRemoteRequest = (
     isScientThreadQueueOperationError(cause) ||
     isScientConversationExportError(cause) ||
     isScientConversationImportError(cause) ||
+    // SCIENT-FORK:START
+    isScientOverleafOperationError(cause) ||
+    // SCIENT-FORK:END
     isScientWordExportError(cause)
   ) {
     return Effect.fail(cause);

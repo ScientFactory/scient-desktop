@@ -1,14 +1,6 @@
 /**
- * AntigravityProvider — snapshot management and health probing for the
- * Antigravity (`agy`) provider.
- *
- * Verified against agy 1.1.17 (plan §11): `agy --version` prints a bare
- * version and exits 0, `agy models` prints tab-separated
- * `<slug>\t<Display Name>` records on stdout (progress chatter goes to
- * stderr). `agy models` is the provider-owned authentication and model
- * discovery check, so Scient never reads Antigravity credential material.
- *
- * @module AntigravityProvider
+ * agy models owns authentication/discovery; never inspect its credentials. Its stdout is
+ * tab-separated slug/display-name records while progress goes to stderr; --version is bare text.
  */
 
 import {
@@ -143,13 +135,8 @@ function antigravityModelsFromSettings(
 }
 
 /**
- * Group raw model slugs like `gemini-3.7-flash-{low,medium,high}` into a
- * single base model with reasoning-effort capabilities.
- *
- * Verified against agy 1.1.17: effort suffixes are `-low`, `-medium`,
- * `-high` and only appear on Gemini flash/pro models. Slugs without an
- * effort suffix (e.g. `claude-sonnet-4-6`, `claude-opus-4-6-thinking`)
- * are standalone models and must not be split.
+ * Split only recognized Gemini flash/pro low/medium/high effort suffixes. Claude thinking and other
+ * unsuffixed slugs are standalone models, not effort variants.
  */
 export function groupAntigravityModels(
   rawSlugs: ReadonlyArray<string>,
@@ -257,12 +244,8 @@ function antigravityModelDisplayName(baseSlug: string): string {
 }
 
 /**
- * Parse the output of `agy models` to extract model slugs.
- *
- * Verified against agy 1.1.17: stdout carries only tab-separated
- * `<slug>\t<Display Name>` records (the "Fetching available models..."
- * status line goes to stderr, which this parser never sees). JSON output
- * is accepted defensively for forward compatibility.
+ * agy models writes tab-separated records to stdout and status chatter to stderr. Retain defensive
+ * JSON support without treating stderr progress as model data.
  */
 export function parseAgyModelsOutput(output: string): ReadonlyArray<string> {
   const trimmed = output.trim();

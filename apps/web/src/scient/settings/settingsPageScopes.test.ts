@@ -8,6 +8,19 @@ import {
 } from "./settingsPageScopes";
 
 describe("settings page scopes", () => {
+  it("keeps synced-folder credentials and links scoped to one connected server", () => {
+    const pathname = "/settings/synced-folders";
+    expect(settingsPageChoosesOneEnvironment(pathname)).toBe(true);
+    expect(
+      settingsPageScopeSearch(pathname, {
+        project: "paper",
+        machine: "remote",
+        checkout: "remote:paper",
+      }),
+    ).toEqual({ machine: "remote" });
+    expect(settingsPageRendersOffline(pathname)).toBe(false);
+  });
+
   it("has Providers and Documents choose one environment", () => {
     expect(settingsPageChoosesOneEnvironment("/settings/providers")).toBe(true);
     expect(settingsPageChoosesOneEnvironment("/settings/documents")).toBe(true);

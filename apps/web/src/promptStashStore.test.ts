@@ -112,6 +112,7 @@ describe("promptStashStore", () => {
       collectAssistantCitations(restored?.prompt ?? "").map((entry) => entry.citation),
     ).toEqual([citation]);
     expect(usePromptStashStore.getState().takeEntry("citation-stash").entry).toBeNull();
+    // SCIENT-FORK:START
   });
 
   it("refreshes the same recovery entry without evicting an unrelated draft at capacity", () => {
@@ -125,6 +126,7 @@ describe("promptStashStore", () => {
     expect(entries.filter((entry) => entry.id === "entry-1").map((entry) => entry.prompt)).toEqual([
       "late typing",
     ]);
+    // SCIENT-FORK:END
   });
 
   it("evicts the oldest entry past the cap and returns it", () => {

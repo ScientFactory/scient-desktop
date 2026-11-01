@@ -1,15 +1,7 @@
 /**
- * Runs the managed Pandoc as a separate program under the isolation rules of
- * the Word export design: every run gets a fresh private scratch directory as
- * its working directory, an environment built from scratch (no inherited home,
- * configuration, data directory, or PATH; proxies pointed at a closed port),
- * a GHC heap limit, a wall-clock limit, a stdout byte limit, and is killed
- * with SIGKILL (the process group; `taskkill` on Windows) when it is
- * interrupted, times out, or overruns its output. Input goes in on stdin, so
- * Pandoc never needs to read a file of Scient's.
- *
- * A process boundary is not a sandbox; `--sandbox` and the tree pass in
- * `pandocResources.ts` are what keep Pandoc from reading or fetching anything.
+ * Use private scratch, fresh environment, blocked proxies, and bounded heap/time/output with
+ * owned-tree kill. Stdin avoids source-file reads, but process isolation is not sandboxing:
+ * --sandbox plus pandocResources must enforce resource safety.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- Native child streams need an error listener before stdin writes.
 import * as NodeChildProcess from "node:child_process";

@@ -23,6 +23,7 @@ import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
+  TRACKPAD_SCROLL_BEGIN_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
@@ -42,11 +43,19 @@ export {
   resolveOneTimeNearFullMainWindowBounds,
 } from "./scientMainWindowSizing.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import * as Semaphore from "effect/Semaphore";
+import {
+  type AppWindowOptions,
+  additionalWindowBounds,
+  appWindowUrl,
+  parseAppWindowRoute,
+} from "../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
-// Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
-// buttons are 14 points tall and do not scale with the renderer's zoom.
+// Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
 const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
 const MACOS_WINDOW_BUTTON_RADIUS = 7;
 
@@ -117,14 +126,22 @@ export class DesktopWindow extends Context.Service<
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
     ) => Effect.Effect<void, DesktopWindowError>;
-    // The Electron `zoomIn`/`zoomOut` menu roles act on whichever webContents
-    // has keyboard focus, so with an embedded preview WebContentsView (or
-    // DevTools) focused they zoom the guest page instead of the app UI.
+    // Electron zoom roles target focused guests; zoomMain must always target the app.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
     readonly runMainContentsCommand: (
       command: MainWindowContentsCommand,
     ) => Effect.Effect<void, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    /**
+     * Opens another app window beside the current one, or under the pointer with `atCursor`,
+     * at `route` when it is an app route.
+     */
+    readonly openNewWindow: (
+      route?: string,
+      options?: { readonly atCursor?: boolean | undefined },
+    ) => Effect.Effect<boolean, DesktopWindowError>;
+    // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
 
@@ -144,7 +161,7 @@ function getIconOption(
 }
 
 function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+  return shouldUseDarkColors ? "#000000" : "#ffffff";
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -206,12 +223,19 @@ function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
-function isSameOriginRendererNavigation(input: {
+export function isSameOriginRendererNavigation(input: {
   readonly applicationUrl: string;
   readonly navigationUrl: string;
 }): boolean {
   try {
-    return new URL(input.applicationUrl).origin === new URL(input.navigationUrl).origin;
+    const applicationUrl = new URL(input.applicationUrl);
+    const navigationUrl = new URL(input.navigationUrl);
+    // Node serializes custom-scheme origins as "null", even for different hosts and schemes.
+    return (
+      applicationUrl.host !== "" &&
+      navigationUrl.protocol === applicationUrl.protocol &&
+      navigationUrl.host === applicationUrl.host
+    );
   } catch {
     return false;
   }
@@ -243,8 +267,7 @@ function concealPendingQuitWindow(
   if (window.isFullScreen()) {
     window.setFullScreen(false);
   }
-  // Electron implements window opacity on macOS and Windows. Linux keeps the
-  // release-gated quit behavior but cannot make the pending window disappear.
+  // Linux lacks Electron window opacity; release-gated quits remain visible there.
   window.setOpacity(0);
 }
 
@@ -307,7 +330,7 @@ function bindFirstRevealTrigger(
   }
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
@@ -328,7 +351,12 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
-  let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+  const flushWindowBounds = new Map<Electron.BrowserWindow, Effect.Effect<void>>();
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — New Window waits for a main window being created and opens beside it.
+  const windowCreation = yield* Semaphore.make(1);
+  // SCIENT-FORK:END
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -337,11 +365,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // currentMainOrFirst / focusedMainOrFirst fall back to "any first window",
-  // which during WSL-only boot is the connecting splash. The splash is never
-  // registered via setMain, so it must be treated as "no real main window" --
-  // otherwise ensureMain/activate/dispatchMenuAction latch onto it and never
-  // open (or retry) the real main.
+  // Electron's first-window fallback can select the unregistered connecting splash; exclude it so main creation retries.
   const withoutSplash = (window: Option.Option<Electron.BrowserWindow>) =>
     Ref.get(splashWindowRef).pipe(
       Effect.map((splash) =>
@@ -363,16 +387,21 @@ export const make = Effect.gen(function* () {
       direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
     );
     if (environment.platform === "darwin") syncMacosWindowButtons(window);
-    // Chromium pushes the new level down to embedded guests, which would zoom
-    // the previewed page along with the app UI. The preview browser keeps its
-    // own zoom, so put each guest back where the preview left it.
+    // SCIENT-FORK:START — Chromium zoom is per origin, so every app window changed with this one.
+    if (environment.platform === "darwin") {
+      for (const appWindow of yield* electronWindow.appWindows) syncMacosWindowButtons(appWindow);
+    }
+    // SCIENT-FORK:END
+    // App zoom propagates to guests; restore each preview's own zoom.
     yield* previewManager.reapplyZoom();
   });
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Option.Option<Electron.BrowserWindow>,
-    DesktopWindowError
-  > {
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
+    options: AppWindowOptions = {},
+  ): Effect.fn.Return<Option.Option<Electron.BrowserWindow>, DesktopWindowError> {
+    const additionalWindow = options.cascadeFrom !== undefined;
+    // SCIENT-FORK:END
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
@@ -407,14 +436,32 @@ export const make = Effect.gen(function* () {
       );
     }
     // SCIENT-FORK:END
+    // SCIENT-FORK:START — an additional window neither restores nor maximizes to the saved state.
+    if (additionalWindow) {
+      persistedSettings = {
+        ...persistedSettings,
+        mainWindowBounds: null,
+        mainWindowMaximized: false,
+      };
+    }
+    // SCIENT-FORK:END
     const persistedBounds = persistedSettings.mainWindowBounds;
-    const initialBounds = resolveInitialMainWindowBounds(
-      persistedBounds,
-      displayBounds,
-      displayBoundsResult._tag === "Success"
-        ? displayBoundsResult.primaryDisplay.workArea
-        : undefined,
-    );
+    // SCIENT-FORK:START — an additional window opens beside its source or under the pointer.
+    const initialBounds =
+      additionalWindowBounds(
+        options,
+        displayBoundsResult._tag === "Success"
+          ? displayBoundsResult.displays.map((display) => display.workArea)
+          : [],
+      ) ??
+      resolveInitialMainWindowBounds(
+        persistedBounds,
+        displayBounds,
+        displayBoundsResult._tag === "Success"
+          ? displayBoundsResult.primaryDisplay.workArea
+          : undefined,
+      );
+    // SCIENT-FORK:END
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && !restoredPersistedBounds) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
@@ -433,18 +480,13 @@ export const make = Effect.gen(function* () {
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
-        // Chromium throttles hidden renderers: timers coalesce and rAF stops,
-        // which stalls first paint. Boot unthrottled; the first-reveal trigger
-        // re-enables throttling so a hidden or minimized window goes back to
-        // being cheap after it has been shown once.
+        // Hidden-renderer throttling stalls first paint; re-enable it after the first reveal.
         backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
         webviewTag: true,
-        // A preview guest's fullscreen request is mirrored onto this embedder,
-        // which would otherwise put the whole window into OS fullscreen. With
-        // both sides opted out the page fills its webview and the window stays.
+        // Guest fullscreen propagates to the embedder; both must opt out to keep it inside the webview.
         disableHtmlFullscreenWindowResize: true,
       },
     });
@@ -459,7 +501,10 @@ export const make = Effect.gen(function* () {
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
-    let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
+    // SCIENT-FORK:START — an additional window saves bounds only once the user moves it.
+    let boundsPersistenceEnabled =
+      !additionalWindow && (persistedBounds === null || restoredPersistedBounds);
+    // SCIENT-FORK:END
     const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
       if (window.isDestroyed()) {
         return null;
@@ -542,7 +587,9 @@ export const make = Effect.gen(function* () {
         fiber === undefined ? Effect.void : Fiber.join(fiber).pipe(Effect.asVoid),
       ),
     );
-    flushMainWindowBounds = flushBoundsPersist;
+    // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+    flushWindowBounds.set(window, flushBoundsPersist);
+    // SCIENT-FORK:END
 
     yield* previewManager.setMainWindow(window);
     if (yield* Ref.get(desktopState.quitting)) {
@@ -580,8 +627,7 @@ export const make = Effect.gen(function* () {
       contents.on("context-menu", (event, params) => {
         event.preventDefault();
         if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
-        // Native editing roles act on the focused contents, which may still be
-        // the host renderer when the user right-clicks inside a browser guest.
+        // Right-clicking a guest may leave native editing roles targeting the host renderer.
         contents.focus();
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
@@ -674,9 +720,6 @@ export const make = Effect.gen(function* () {
       }
     });
 
-    // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the
-    // close-terminal shortcut can outlive the terminal that handled its first
-    // press, so reject repeats before they reach the native window accelerator.
     const quitShortcutHandler = makeQuitShortcutHandler({
       platform: environment.platform,
       getMode: () =>
@@ -694,8 +737,7 @@ export const make = Effect.gen(function* () {
           window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
         }
       },
-      // Keep the transparent window focused until the physical shortcut is
-      // released so its remaining repeats cannot reach the next app.
+      // Hold focus until shortcut release so remaining repeats cannot reach the next app.
       concealWindow: () => concealPendingQuitWindow(window),
       quit: () => {
         void runPromise(electronApp.quit);
@@ -703,6 +745,7 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
+      // A held Cmd/Ctrl+W closes one tab or terminal, not each one behind it.
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
@@ -710,11 +753,13 @@ export const make = Effect.gen(function* () {
       }
     });
     window.webContents.on("input-event", (_event, input) => {
-      if (input.type === "gestureScrollEnd") window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
+      if (input.type === "gestureScrollBegin") {
+        window.webContents.send(TRACKPAD_SCROLL_BEGIN_CHANNEL);
+      } else if (input.type === "gestureScrollEnd") {
+        window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
+      }
     });
-    // Ctrl+wheel never reaches the menu accelerators: Chromium reports it here
-    // and leaves applying the zoom to the app. A preview guest under the
-    // pointer emits this on its own webContents and keeps its own zoom.
+    // Ctrl+wheel bypasses menus; guest contents emit their own zoom-changed event.
     window.webContents.on("zoom-changed", (_event, direction) => {
       if (window.isDestroyed()) return;
       runFork(zoomWindow(window, direction));
@@ -731,8 +776,19 @@ export const make = Effect.gen(function* () {
     window.on("close", () => {
       runFork(flushBoundsPersist);
     });
+    // SCIENT-FORK:START — the most recently focused app window is main.
+    window.on("focus", () => {
+      void runPromise(electronWindow.setMain(window));
+    });
+    // SCIENT-FORK:END
 
     if (environment.platform === "darwin") {
+      // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
+      window.on("swipe", (_event, direction) => {
+        const history = window.webContents.navigationHistory;
+        if (direction === "left" && history.canGoBack()) history.goBack();
+        else if (direction === "right" && history.canGoForward()) history.goForward();
+      });
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
@@ -753,11 +809,16 @@ export const make = Effect.gen(function* () {
       developmentLoadRetryFiber = undefined;
       runFork(Fiber.interrupt(retryFiber));
     };
+    // SCIENT-FORK:START — an additional window can open at an app route.
+    const windowUrl = appWindowUrl(applicationUrl, options.route ?? Option.none());
+    // SCIENT-FORK:END
     const loadApplication = () => {
       if (window.isDestroyed()) {
         return;
       }
-      void window.loadURL(applicationUrl).catch(() => undefined);
+      // SCIENT-FORK:START — an additional window can open at an app route.
+      void window.loadURL(windowUrl).catch(() => undefined);
+      // SCIENT-FORK:END
     };
     const scheduleDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
@@ -846,8 +907,6 @@ export const make = Effect.gen(function* () {
         );
       }
       // SCIENT-FORK:END
-      // Recovery attempts are bounded so a renderer that dies immediately on
-      // boot cannot reload-loop forever.
 
       runFork(
         Effect.gen(function* () {
@@ -891,13 +950,18 @@ export const make = Effect.gen(function* () {
     });
 
     loadApplication();
-    if (environment.isDevelopment) {
+    // SCIENT-FORK:START — one detached DevTools window per development launch.
+    if (environment.isDevelopment && !additionalWindow) {
       window.webContents.openDevTools({ mode: "detach" });
     }
+    // SCIENT-FORK:END
 
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+      flushWindowBounds.delete(window);
+      // SCIENT-FORK:END
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
@@ -911,7 +975,9 @@ export const make = Effect.gen(function* () {
       yield* logWindowInfo("main window created");
     }
     return window;
-  }).pipe(Effect.withSpan("desktop.window.createMain"));
+    // SCIENT-FORK:START — New Window waits for a main window being created and opens beside it.
+  }).pipe(windowCreation.withPermits(1), Effect.withSpan("desktop.window.createMain"));
+  // SCIENT-FORK:END
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
@@ -1012,8 +1078,7 @@ export const make = Effect.gen(function* () {
     const send = Effect.sync(() => {
       if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
     });
-    // The renderer must learn about the event even when another process refuses to
-    // yield the foreground, so send first and treat the reveal as best effort.
+    // Send before best-effort reveal; another process may refuse to yield foreground focus.
     const dispatch = reveal
       ? send.pipe(Effect.andThen(electronWindow.reveal(targetWindow).pipe(Effect.ignoreCause)))
       : send;
@@ -1061,9 +1126,14 @@ export const make = Effect.gen(function* () {
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
     ),
-    flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
+    // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+    flushMainWindowBounds: electronWindow.main.pipe(
+      Effect.flatMap((main) =>
+        Option.isSome(main) ? (flushWindowBounds.get(main.value) ?? Effect.void) : Effect.void,
+      ),
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    // SCIENT-FORK:END
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action, options) {
       yield* Effect.annotateCurrentSpan({ action });
       yield* dispatchRendererEvent(MENU_ACTION_CHANNEL, action, options);
@@ -1097,8 +1167,7 @@ export const make = Effect.gen(function* () {
         return;
       }
       // SCIENT-FORK:END
-      // The registered main window, never the focused one: with an OAuth popup
-      // focused, Reload would otherwise reload the popup mid sign-in.
+      // A focused OAuth popup must not receive the app's Reload command.
       const window = yield* electronWindow.main;
       if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
@@ -1110,6 +1179,31 @@ export const make = Effect.gen(function* () {
         syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    openNewWindow: Effect.fn("desktop.window.openNewWindow")(function* (route, options) {
+      if (yield* Ref.get(desktopState.quitting)) return false;
+      // Opening a window before backend confirmation can strand it on failed auth bootstrap.
+      if (yield* waitingForBackend) {
+        const splash = yield* Ref.get(splashWindowRef);
+        if (Option.isSome(splash)) yield* electronWindow.reveal(splash.value);
+        return false;
+      }
+      return yield* windowCreation.withPermits(1)(
+        Effect.gen(function* () {
+          const source = yield* electronWindow.main;
+          const window = yield* createWindow({
+            route: parseAppWindowRoute(route),
+            cascadeFrom: Option.getOrUndefined(source),
+            atCursor: options?.atCursor === true,
+          });
+          if (Option.isNone(window)) return false;
+          yield* electronWindow.setMain(window.value);
+          yield* logWindowInfo("app window created", { additional: Option.isSome(source) });
+          return true;
+        }),
+      );
+    }),
+    // SCIENT-FORK:END
   });
 });
 

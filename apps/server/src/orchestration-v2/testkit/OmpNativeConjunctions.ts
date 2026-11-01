@@ -364,85 +364,84 @@ const nativeFixture = Effect.fnUntraced(function* (
         }).pipe(Effect.andThen(observe(`${name}.native`, event))),
       close: () => Effect.void,
     },
-    makeProcess: (options) =>
-      Effect.gen(function* () {
-        const ordinal = peers.length;
-        const peer = scriptedOmpRpc({
-          models: [
-            {
-              provider: "controlled",
-              id: "model",
-              reasoning: true,
-              contextWindow: 200_000,
-              input: ["text", "image"],
-              thinking: { mode: "effort", efforts: ["low", "high"], defaultLevel: "low" },
-            },
-          ],
-          initial: { provider: "controlled", id: "model" },
-          environment: { HOME: home },
-          readyDelay:
-            ordinal === 0 && gates.ready
-              ? Deferred.succeed(readyEntered, undefined).pipe(
-                  Effect.andThen(Deferred.await(readyRelease)),
+    makeProcess: Effect.fn("OmpNativeConjunctions.makeProcess")(function* (options) {
+      const ordinal = peers.length;
+      const peer = scriptedOmpRpc({
+        models: [
+          {
+            provider: "controlled",
+            id: "model",
+            reasoning: true,
+            contextWindow: 200_000,
+            input: ["text", "image"],
+            thinking: { mode: "effort", efforts: ["low", "high"], defaultLevel: "low" },
+          },
+        ],
+        initial: { provider: "controlled", id: "model" },
+        environment: { HOME: home },
+        readyDelay:
+          ordinal === 0 && gates.ready
+            ? Deferred.succeed(readyEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(readyRelease)),
+                Effect.timeout("10 seconds"),
+                Effect.orDie,
+              )
+            : Effect.void,
+      });
+      peers.push(peer);
+      roots.push(options.sessionDir ?? "");
+      yield* observe(`${name}.open`, { ordinal, options });
+      const client = yield* peer.makeProcess(options);
+      return {
+        ...client,
+        limits: Effect.suspend(() => {
+          if (!holdPrep) return client.limits;
+          holdPrep = false;
+          return Deferred.succeed(prepEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(prepRelease)),
+            Effect.timeout("10 seconds"),
+            Effect.orDie,
+            Effect.andThen(client.limits),
+          );
+        }),
+        shutdown: Effect.sync(() => {
+          shutdownCalls++;
+        }).pipe(
+          Effect.andThen(
+            observe(`${name}.shutdown-entry`, {
+              ordinal,
+              sessionDir: options.sessionDir,
+              get shutdownCalls() {
+                return shutdownCalls;
+              },
+            }),
+          ),
+          Effect.andThen(
+            ordinal === 0 && gates.close
+              ? Deferred.succeed(closeEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(closeRelease)),
                   Effect.timeout("10 seconds"),
                   Effect.orDie,
                 )
               : Effect.void,
-        });
-        peers.push(peer);
-        roots.push(options.sessionDir ?? "");
-        yield* observe(`${name}.open`, { ordinal, options });
-        const client = yield* peer.makeProcess(options);
-        return {
-          ...client,
-          limits: Effect.suspend(() => {
-            if (!holdPrep) return client.limits;
-            holdPrep = false;
-            return Deferred.succeed(prepEntered, undefined).pipe(
-              Effect.andThen(Deferred.await(prepRelease)),
-              Effect.timeout("10 seconds"),
-              Effect.orDie,
-              Effect.andThen(client.limits),
-            );
-          }),
-          shutdown: Effect.sync(() => {
-            shutdownCalls++;
-          }).pipe(
-            Effect.andThen(
-              observe(`${name}.shutdown-entry`, {
-                ordinal,
-                sessionDir: options.sessionDir,
-                get shutdownCalls() {
-                  return shutdownCalls;
-                },
-              }),
-            ),
-            Effect.andThen(
-              ordinal === 0 && gates.close
-                ? Deferred.succeed(closeEntered, undefined).pipe(
-                    Effect.andThen(Deferred.await(closeRelease)),
-                    Effect.timeout("10 seconds"),
-                    Effect.orDie,
-                  )
-                : Effect.void,
-            ),
-            Effect.andThen(
-              observe(`${name}.shutdown-gate-released`, {
-                ordinal,
-                sessionDir: options.sessionDir,
-              }),
-            ),
-            Effect.andThen(client.shutdown),
-            Effect.tap((exit) =>
-              observe(`${name}.shutdown-completed`, {
-                ordinal,
-                sessionDir: options.sessionDir,
-                exit,
-              }),
-            ),
           ),
-        };
-      }),
+          Effect.andThen(
+            observe(`${name}.shutdown-gate-released`, {
+              ordinal,
+              sessionDir: options.sessionDir,
+            }),
+          ),
+          Effect.andThen(client.shutdown),
+          Effect.tap((exit) =>
+            observe(`${name}.shutdown-completed`, {
+              ordinal,
+              sessionDir: options.sessionDir,
+              exit,
+            }),
+          ),
+        ),
+      };
+    }),
   });
   const database = makeSqlitePersistenceLive(config.dbPath).pipe(Layer.provide(NodeServices.layer));
   const runtime = ProviderReplayHarness.layerWithRegistry(

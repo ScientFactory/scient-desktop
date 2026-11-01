@@ -7,11 +7,13 @@ import {
   type DiscoverPage as DiscoverPageResult,
   ExtensionsError,
   type ExtensionsInventory,
+  type ExtensionPluginContents,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProvider,
+  type ProviderStoreEntry,
 } from "@t3tools/contracts";
 import type * as AtomReact from "@effect/atom-react";
 import type * as TanStackRouter from "@tanstack/react-router";
@@ -29,12 +31,22 @@ import {
 } from "../../../test/render";
 import { page, userEvent } from "vite-plus/test/browser";
 
+// The Add-account dialog opens sites in Scient's browser; these tests never do.
+vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
+vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("../../components/ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div>{text}</div>,
+}));
+
 const state = vi.hoisted(() => ({
   primaryEnvironmentId: "local" as string | null,
   /** The environment the settings scope picker selected; undefined means no scope. */
   scopeEnvironmentId: undefined as string | null | undefined,
   httpBaseUrls: {} as Record<string, string>,
   canWrite: true,
+  canRead: true,
+  refreshInventory: vi.fn(),
+  publishRevision: (_environmentId: string, _revision: number) => {},
   providersByEnvironment: {} as Record<string, ServerProvider[]>,
   inventory: null as ExtensionsInventory | null,
   catalog: null as DiscoverCatalog | null,
@@ -43,8 +55,20 @@ const state = vi.hoisted(() => ({
   discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
   /** `extensions.discover.entry` answers by name; catalog entries answer too. */
   entries: {} as Record<string, DiscoverEntry>,
+  storePages: {} as Record<
+    string,
+    { entries: ProviderStoreEntry[]; total: number; nextCursor?: string }
+  >,
+  storeEntry: null as ProviderStoreEntry | null,
+  contentApps: undefined as ExtensionPluginContents["apps"] | undefined,
   queryTargets: [] as unknown[],
-  projects: [] as Array<{ environmentId: string; id: string; title: string; isScratch?: true }>,
+  projects: [] as Array<{
+    environmentId: string;
+    id: string;
+    title: string;
+    workspaceRoot?: string;
+    isScratch?: true;
+  }>,
   projectsKnown: true,
   registry: null as AtomRegistry.AtomRegistry | null,
   hash: "",
@@ -100,9 +124,19 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
 vi.mock("../../state/shell", () => ({
   environmentShell: { stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }) },
 }));
-vi.mock("../../state/server", () => ({
-  providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
-}));
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const permission = Atom.make(true);
+  return {
+    providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
+    serverEnvironment: {
+      refreshProviders: {
+        permissionAtom: () => permission,
+        run: (...args: unknown[]) => state.refreshInventory(...args),
+      },
+    },
+  };
+});
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => state.primaryEnvironmentId,
   usePrimaryEnvironment: () => null,
@@ -126,6 +160,7 @@ vi.mock("../../components/settings/SettingsScopeSentence", () => ({
 vi.mock("../../hooks/useSettings", () => ({
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "",
   usePrimarySettingsAvailable: () => true,
+  useClientSettings: () => [],
 }));
 vi.mock("../../components/settings/scopedSettings", () => ({
   isProjectScopedSettingKey: () => false,
@@ -141,22 +176,65 @@ vi.mock("../../components/settings/SettingInheritance", () => ({
   SettingInheritance: () => null,
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
+vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScope: () => {
+  useEnvironmentScope: (_environmentId: string, scope: string) => {
     useStateVersion();
-    return state.canWrite;
+    return scope === "settings:write" ? state.canWrite : state.canRead;
   },
   useEnvironmentsWithScope: () => new Set(),
 }));
 vi.mock("../../state/query", async () => {
   const { ExtensionsError: NotFound } = await import("@t3tools/contracts");
+  const CauseModule = await import("effect/Cause");
   return {
+    formatEnvironmentQueryError: (cause: Cause.Cause<unknown>) => {
+      const error = CauseModule.squash(cause);
+      return error instanceof Error ? error.message : "The environment request failed.";
+    },
     useEnvironmentQuery: (
       atom: { kind: string; environmentId: string; input?: Record<string, unknown> } | null,
     ) => {
       useStateVersion();
       if (atom === null) return { data: null, error: null, failure: null, isPending: false };
       state.queryTargets.push(atom);
+      if (atom.kind === "plugin-keys")
+        return {
+          data: {
+            status: "ready",
+            keys: [],
+            accounts: [],
+            writable: true,
+            requirementsKnown: true,
+          },
+          error: null,
+        };
+      if (atom.kind === "contents") {
+        const plugin = state.inventory?.plugins.find(
+          (item) => item.pluginId === atom.input?.pluginId,
+        );
+        return {
+          data: {
+            apps: state.contentApps ?? state.storeEntry?.apps ?? [],
+            mcpServers: [],
+            skills: (plugin?.components.filter((item) => item.type === "skill") ?? []).map(
+              (skill) => ({
+                id: skill.name,
+                name: skill.name,
+                description: skill.detail ?? "",
+                enabled: true,
+                documentAvailable: true,
+              }),
+            ),
+            commands: [],
+            agents: [],
+          },
+          error: null,
+        };
+      }
+      if (atom.kind === "skill-document")
+        return { data: { instructions: "Skill instructions" }, error: null };
+      if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
       if (atom.kind === "entry") {
@@ -189,9 +267,52 @@ vi.mock("../../state/query", async () => {
 });
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: unknown) => value }));
 vi.mock("./extensionsState", async () => {
-  const { Atom } = await import("effect/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const changes = Atom.family((_environmentId: string) =>
+    Atom.make<import("effect/reactivity").AsyncResult.AsyncResult<{ revision: number }>>(
+      AsyncResult.initial(),
+    ),
+  );
+  state.publishRevision = (environmentId, revision) => {
+    state.registry?.set(changes(environmentId), AsyncResult.success({ revision }));
+  };
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
+  const storeAtom = Atom.family((key: string) =>
+    Object.assign(
+      Atom.make(() => {
+        const target = JSON.parse(key);
+        return target.kind === "store"
+          ? AsyncResult.success(
+              state.storePages[String(target.input.instanceId)] ?? { entries: [], total: 0 },
+            )
+          : null;
+      }),
+      JSON.parse(key),
+    ),
+  );
   return {
+    extensionsBrandIcon: () => null,
+    extensionsPluginKeys: (input: { environmentId: string; input: Record<string, unknown> }) => ({
+      kind: "plugin-keys",
+      ...input,
+    }),
+    bindPluginKey: { permissionAtom: () => Atom.make(true) },
+    unbindPluginKey: {},
+    extensionsPluginContents: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "contents", environmentId, input })),
+    extensionsSkillDocument: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "skill-document", environmentId, input })),
+    extensionsChanges: ({ environmentId }: { environmentId: string }) => changes(environmentId),
     extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
       kind: "inventory",
       environmentId,
@@ -214,6 +335,20 @@ vi.mock("./extensionsState", async () => {
       environmentId: string;
       input: Record<string, unknown>;
     }) => ({ kind: "discover", environmentId, input }),
+    extensionsProviderStorePage: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "store", environmentId, input })),
+    extensionsProviderStoreEntry: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "store-entry", environmentId, input })),
     // Real atoms: each test renders into its own registry, so nothing leaks between tests.
     extensionItemOperation: Atom.family((_key: string) => Atom.make(idle).pipe(Atom.keepAlive)),
     extensionItemOperationKey: (environmentId: string, item: string) =>
@@ -226,13 +361,18 @@ vi.mock("./extensionsState", async () => {
     installScientPlugin: "install",
     removeScientPlugin: "pluginRemove",
     setScientPluginEnabled: "pluginEnabled",
-    actOnProviderPlugin: "providerAct",
+    actOnProviderPlugin: { name: "providerAct", permissionAtom: () => Atom.make(true) },
   };
 });
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: keyof typeof state.commands) => state.commands[command],
+  useAtomCommand: (command: keyof typeof state.commands | { name: keyof typeof state.commands }) =>
+    state.commands[typeof command === "string" ? command : command.name],
 }));
 vi.mock("../../localApi", () => ({
+  readLocalApi: () => ({
+    dialogs: { confirm: state.confirm },
+    shell: { openExternal: state.openExternal },
+  }),
   ensureLocalApi: () => ({
     dialogs: { confirm: state.confirm },
     shell: { openExternal: state.openExternal },
@@ -374,6 +514,7 @@ import {
   ProviderPluginDetailPage,
   ServerDetailPage,
 } from "./ExtensionDetailPages";
+import { ProviderStoreDetailPage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
 
 const codex = ProviderInstanceId.make("codex");
@@ -525,6 +666,15 @@ function setup() {
   state.scopeEnvironmentId = undefined;
   state.httpBaseUrls = { local: "http://127.0.0.1:3773/" };
   state.canWrite = true;
+  state.canRead = true;
+  state.refreshInventory
+    .mockReset()
+    .mockImplementation((_registry, target: { environmentId: string }) =>
+      Promise.resolve({
+        _tag: "Success",
+        value: { providers: state.providersByEnvironment[target.environmentId] ?? [] },
+      }),
+    );
   state.projects = [];
   state.providersByEnvironment = {
     local: [
@@ -551,6 +701,9 @@ function setup() {
   state.projectsKnown = true;
   state.registry = AtomRegistry.make();
   state.queryTargets = [];
+  state.storeEntry = null;
+  state.storePages = {};
+  state.contentApps = undefined;
   state.hash = "";
   state.navigate.mockReset();
   for (const command of Object.values(state.commands)) command.mockReset();
@@ -754,7 +907,7 @@ describe("Discover", () => {
     );
   });
 
-  it("draws a letter tile for an icon that is not an allowed inline image", async () => {
+  it("draws a neutral tile for an icon that is not an allowed inline image", async () => {
     await using fixture = setup();
     const [popular] = catalog.sections;
     state.catalog = {
@@ -777,7 +930,7 @@ describe("Discover", () => {
     };
     await fixture.render(<DiscoverPage />);
     expect(fixture.row("Odd").querySelector("img")).toBeNull();
-    expect(fixture.row("Odd").querySelector("[data-extension-icon]")).toBeNull();
+    expect(fixture.row("Odd").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
     expect(fixture.row("Fine").querySelector('[data-extension-icon="image"] img')).not.toBeNull();
   });
 
@@ -823,7 +976,7 @@ describe("Discover", () => {
     state.discoverOutcomes = { [curatedKey]: "pending" };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "note",
     );
     expect(fixture.section("Popular")).toBeNull();
@@ -864,7 +1017,7 @@ describe("Discover", () => {
     state.discoverOutcomes = { [registryKey]: "pending" };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "granola",
     );
     const results = () => fixture.section("Search results");
@@ -896,6 +1049,51 @@ describe("Discover", () => {
     expect(results().querySelector("[data-discover-error]")).toBeNull();
   });
 
+  it("keeps picks visible while registry is pending and groups store alternatives", async () => {
+    await using fixture = setup();
+    const pick = entry("scient.curated/scite", {
+      title: "Scite",
+      categories: ["papers"],
+      agentStores: { codex: "scite" },
+    });
+    state.discoverPages[JSON.stringify({ scope: "curated", category: "papers" })] = {
+      entries: [pick],
+      fetchedAt: "2026-10-21T00:00:00.000Z",
+    };
+    state.discoverOutcomes[JSON.stringify({ scope: "registry", category: "papers" })] = "pending";
+    const plugin = (name: string): ProviderStoreEntry => ({
+      id: name,
+      name,
+      displayName: name === "scite" ? "Scite" : "Zotero",
+      marketplace: "test",
+      description: "Reference library",
+      kind: "codex",
+      installed: false,
+      includes: [],
+      apps: [],
+    });
+    state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<CategoryPage category="papers" />);
+    expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
+    expect(fixture.container.textContent).toContain("Also add from Codex");
+    expect(fixture.container.textContent).toContain("Not checked by Scient");
+    expect(fixture.container.textContent).toContain("Codex only");
+    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
+    expect(state.commands.providerAct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: "local",
+        input: { instanceId: codex, action: { type: "install", entryId: "zotero" } },
+      }),
+    );
+    const search = fixture.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search this category"]',
+    )!;
+    await userEvent.fill(search, "Zotero");
+    expect(fixture.rowNames()).toEqual(["Zotero"]);
+    expect(fixture.container.textContent).toContain("No picks match this search.");
+  });
+
   it("queries the registry for All MCP servers and the catalog for categories", async () => {
     await using fixture = setup();
     await fixture.render(<AllServersPage />);
@@ -904,11 +1102,11 @@ describe("Discover", () => {
       environmentId: "local",
       input: { scope: "registry" },
     });
-    await fixture.render(<CategoryPage category="research" />);
+    await fixture.render(<CategoryPage category="papers" />);
     expect(state.queryTargets).toContainEqual({
       kind: "discover",
       environmentId: "local",
-      input: { scope: "curated", category: "research" },
+      input: { scope: "curated", category: "papers" },
     });
   });
 
@@ -964,8 +1162,9 @@ describe("Discover", () => {
     expect(linkIn(fixture.container, "Discover")?.getAttribute("href")).toBe(
       "/settings/extensions",
     );
-    expect(fixture.rowNames(fixture.section("Popular"))).toEqual(["Notion"]);
-    expect(buttonIn(fixture.container, "Load more")).not.toBeNull();
+    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual(["Notion"]);
+    expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
+    expect(fixture.container.textContent).not.toContain("From your agents’ stores");
 
     await fixture.render(<CategoryPage category="nonsense" />);
     expect(fixture.container.textContent).toContain("This category does not exist.");
@@ -973,6 +1172,304 @@ describe("Discover", () => {
 });
 
 describe("Installed", () => {
+  it("lists all unopened project roots beyond both retention bounds only in the selected environment", async () => {
+    await using fixture = setup();
+    state.scopeEnvironmentId = "remote";
+    state.projects = [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        environmentId: "remote",
+        id: `p-${index}`,
+        title: `Project ${index}`,
+        workspaceRoot: `/p-${index}`,
+      })),
+      { environmentId: "local", id: "local", title: "Local", workspaceRoot: "/local" },
+      {
+        environmentId: "remote",
+        id: "scratch",
+        title: "Scratch",
+        workspaceRoot: "/scratch",
+        isScratch: true,
+      },
+    ];
+    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
+    state.providersByEnvironment = { remote: [raw] };
+    let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
+    state.refreshInventory.mockImplementation(
+      async (_registry, target: { environmentId: string; input: { cwd?: string } }) => {
+        expect(target.environmentId).toBe("remote");
+        const cwd = target.input.cwd;
+        if (cwd)
+          snapshots = [
+            ...snapshots,
+            {
+              cwd,
+              checkedAt: "2026-10-26T00:00:00.000Z",
+              skills: [],
+              slashCommands: [],
+              plugins: [
+                { id: cwd, name: `Plugin ${cwd}`, source: "local" as const, enabled: true },
+              ],
+            },
+          ].slice(-16);
+        return {
+          _tag: "Success",
+          value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
+        };
+      },
+    );
+    await fixture.render(<InstalledPage />);
+    await vi.waitFor(() =>
+      expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
+    );
+    await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
+    expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+    expect(fixture.rowNames()).toContain("Plugin /p-0");
+    expect(fixture.rowNames()).toContain("Plugin /p-39");
+    expect(
+      state.refreshInventory.mock.calls.flatMap(([, target]) => target.input.cwd ?? []),
+    ).toHaveLength(40);
+    expect(snapshots).toHaveLength(16);
+  });
+
+  it.each([false, true])(
+    "sweeps 40 roots once after same-ID replacement (coalesced reset: %s)",
+    async (coalesced) => {
+      await using fixture = setup();
+      state.projects = Array.from({ length: 40 }, (_, index) => ({
+        environmentId: "local",
+        id: `p-${index}`,
+        title: `Project ${index}`,
+        workspaceRoot: `/p-${index}`,
+      }));
+      let raw = provider(codex, "codex", {
+        nativeInventoryGeneration: "old",
+        plugins: [],
+        mcpServers: [],
+      });
+      state.providersByEnvironment = { local: [raw] };
+      let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
+      const scanned: string[] = [];
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<unknown>();
+      let held = false;
+      state.refreshInventory.mockImplementation(
+        async (_registry, { input }: { input: { cwd?: string } }) => {
+          if (held) {
+            held = false;
+            entered.resolve();
+            return release.promise;
+          }
+          if (input.cwd) {
+            scanned.push(`${raw.nativeInventoryGeneration}:${input.cwd}`);
+            snapshots = [
+              ...snapshots.filter((entry) => entry.cwd !== input.cwd),
+              {
+                cwd: input.cwd,
+                checkedAt: raw.checkedAt,
+                skills: [],
+                slashCommands: [],
+                plugins: [
+                  {
+                    id: input.cwd,
+                    name: `${raw.nativeInventoryGeneration} ${input.cwd}`,
+                    source: "local" as const,
+                    enabled: true,
+                  },
+                ],
+              },
+            ].slice(-16);
+          }
+          return {
+            _tag: "Success",
+            value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
+          };
+        },
+      );
+      await fixture.render(<InstalledPage />);
+      await vi.waitFor(() =>
+        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
+      );
+      const retired = { ...raw, workspaceSnapshots: snapshots };
+      held = true;
+      await act(async () => state.publishRevision("local", 2));
+      await entered.promise;
+      raw = { ...raw, nativeInventoryGeneration: "new" };
+      snapshots = coalesced
+        ? [
+            {
+              cwd: "/p-39",
+              checkedAt: raw.checkedAt,
+              skills: [],
+              slashCommands: [],
+              plugins: [{ id: "/p-39", name: "new /p-39", source: "local", enabled: true }],
+            },
+          ]
+        : [];
+      state.providersByEnvironment.local = [raw];
+      await fixture.render(<InstalledPage />);
+      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
+      await act(async () => release.resolve({ _tag: "Success", value: { providers: [retired] } }));
+      await vi.waitFor(() =>
+        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
+      );
+      await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
+      expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
+      expect(scanned.filter((entry) => entry.startsWith("old:"))).toHaveLength(40);
+      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
+      const reads = state.refreshInventory.mock.calls.length;
+      state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
+      await fixture.render(<InstalledPage />);
+      expect(state.refreshInventory).toHaveBeenCalledTimes(reads);
+      await act(async () => state.publishRevision("local", 3));
+      await vi.waitFor(() => expect(state.refreshInventory).toHaveBeenCalledTimes(reads + 1));
+      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
+    },
+  );
+
+  it("rejects late results after an environment switch", async () => {
+    await using fixture = setup();
+    const local = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const remote = provider(codex, "codex", {
+      plugins: [{ id: "remote", name: "Remote plugin", source: "local", enabled: true }],
+      mcpServers: [],
+    });
+    state.providersByEnvironment.remote = [remote];
+    state.refreshInventory.mockImplementation((_registry, target: { environmentId: string }) => {
+      if (target.environmentId === "local") {
+        started.resolve();
+        return local.promise;
+      }
+      return Promise.resolve({ _tag: "Success", value: { providers: [remote] } });
+    });
+    await fixture.render(<InstalledPage />);
+    await started.promise;
+    state.scopeEnvironmentId = "remote";
+    await fixture.render(<InstalledPage />);
+    await vi.waitFor(() => expect(fixture.rowNames()).toContain("Remote plugin"));
+    await act(async () =>
+      local.resolve({ _tag: "Success", value: { providers: state.providersByEnvironment.local } }),
+    );
+    expect(fixture.rowNames()).not.toContain("Codex plugin 1");
+    expect(fixture.rowNames()).toContain("Remote plugin");
+  });
+
+  it("serializes changed roots and discards the previous root's pending reply", async () => {
+    await using fixture = setup();
+    const old = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
+    state.providersByEnvironment = { local: [raw] };
+    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/old" }];
+    state.refreshInventory.mockImplementation(
+      (_registry, { input }: { input: { cwd?: string } }) => {
+        if (input.cwd === "/old") {
+          started.resolve();
+          return old.promise;
+        }
+        return Promise.resolve({
+          _tag: "Success",
+          value: {
+            providers: [
+              {
+                ...raw,
+                workspaceSnapshots: input.cwd
+                  ? [
+                      {
+                        cwd: input.cwd,
+                        checkedAt: raw.checkedAt,
+                        skills: [],
+                        slashCommands: [],
+                        plugins: [
+                          { id: "new", name: "New root plugin", source: "local", enabled: true },
+                        ],
+                      },
+                    ]
+                  : [],
+              },
+            ],
+          },
+        });
+      },
+    );
+    await fixture.render(<InstalledPage />);
+    await started.promise;
+    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/new" }];
+    await fixture.render(<InstalledPage />);
+    expect(
+      state.refreshInventory.mock.calls.some(([, target]) => target.input.cwd === "/new"),
+    ).toBe(false);
+    await act(async () =>
+      old.resolve({ _tag: "Success", value: { providers: state.providersByEnvironment.local } }),
+    );
+    await vi.waitFor(() => expect(fixture.rowNames()).toContain("New root plugin"));
+    expect(
+      state.refreshInventory.mock.calls.filter(([, target]) => target.input.cwd === "/old"),
+    ).toHaveLength(1);
+  });
+
+  it("observes native plugin revisions without timestamp or inventory re-render scans", async () => {
+    await using fixture = setup();
+    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
+    state.providersByEnvironment = { local: [raw] };
+    await fixture.render(<InstalledPage />);
+    // Codex keeps its own section, even empty, so its store stays one click away.
+    await vi.waitFor(() => expect(fixture.section("From Codex")).not.toBeNull());
+    const before = state.refreshInventory.mock.calls.length;
+    state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
+    state.inventory = inventory({ revision: 99 });
+    await fixture.render(<InstalledPage />);
+    expect(state.refreshInventory).toHaveBeenCalledTimes(before);
+    state.refreshInventory.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        providers: [
+          {
+            ...raw,
+            plugins: [{ id: "late", name: "Late plugin", source: "local", enabled: true }],
+          },
+        ],
+      },
+    });
+    await act(async () => state.publishRevision("local", 100));
+    await vi.waitFor(() => expect(fixture.rowNames()).toContain("Late plugin"));
+    expect(state.refreshInventory).toHaveBeenCalledTimes(before + 1);
+  });
+
+  it("keeps unknown, checking, refusal and installed-empty distinct and never scans Discover", async () => {
+    await using fixture = setup();
+    state.projectsKnown = false;
+    await fixture.render(<InstalledPage />);
+    expect(fixture.section("From your agents").textContent).toContain("not been checked");
+    expect(state.refreshInventory).not.toHaveBeenCalled();
+    state.projectsKnown = true;
+    const pending = Promise.withResolvers<unknown>();
+    state.refreshInventory.mockReturnValue(pending.promise);
+    await fixture.render(<InstalledPage />);
+    await vi.waitFor(() =>
+      expect(fixture.section("From your agents").textContent).toContain("Checking"),
+    );
+    await act(async () =>
+      pending.resolve({ _tag: "Failure", cause: Cause.fail(new Error("Inventory denied")) }),
+    );
+    await vi.waitFor(() =>
+      expect(fixture.section("From your agents").textContent).toContain("Inventory denied"),
+    );
+    expect(fixture.section("From your agents").textContent).not.toContain("No agent plugins");
+    await fixture.reset();
+    state.refreshInventory.mockClear();
+    await fixture.render(<DiscoverPage />);
+    expect(state.refreshInventory).not.toHaveBeenCalled();
+    await fixture.reset();
+    state.canRead = false;
+    await fixture.render(<InstalledPage />);
+    expect(state.refreshInventory).not.toHaveBeenCalled();
+    expect(fixture.section("From your agents").textContent).toContain(
+      "cannot read agent extensions",
+    );
+  });
+
   it("groups connectors, Scient plugins and each agent's own items, six rows until Show all", async () => {
     await using fixture = setup();
     state.inventory = inventory({
@@ -1011,7 +1508,7 @@ describe("Installed", () => {
     const fromCodex = fixture.section("From Codex");
     expect(fixture.rowNames(fromCodex)).toHaveLength(6);
     const toggle = buttonIn(fromCodex, "Show all 8")!;
-    expect(toggle.parentElement?.querySelector("h2")?.textContent).toBe("From Codex");
+    expect(toggle.closest("section")?.querySelector("h2")?.textContent).toBe("From Codex");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await userEvent.click(toggle);
     expect(fixture.rowNames(fromCodex)).toHaveLength(8);
@@ -1147,53 +1644,17 @@ describe("Detail pages", () => {
     await fixture.render(<PluginDetailPage pluginId="scient.sources" />);
     expect(fixture.headerButtons()).toEqual([]);
     await fixture.render(<PluginDetailPage pluginId="lab-kit" />);
-    expect(fixture.headerButtons()).toEqual(["Turn off Lab kit", "Uninstall"]);
+    expect(fixture.headerButtons()).toEqual(["Turn off Lab kit", "Remove"]);
 
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(fixture.headerButtons()).toEqual(["Uninstall"]);
+    expect(fixture.headerButtons()).toEqual(["Remove"]);
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
     expect(fixture.headerButtons()).toEqual([]);
-    expect(fixture.header().textContent).toContain("Managed by Codex");
-  });
-
-  it("draws Add, Sign in and Reconnect like the provider Install button", async () => {
-    await using fixture = setup();
-    const primary = (scope: ParentNode, label: string) => {
-      const button = buttonIn(scope, label)!;
-      return {
-        variant: button.dataset.variant,
-        icon: button
-          .querySelector("svg")
-          ?.getAttribute("class")
-          ?.match(/lucide-[a-z-]+/)?.[0],
-      };
-    };
-    await fixture.render(<ServerDetailPage name="io.notion/notion" />);
-    expect(primary(fixture.header(), "Add")).toEqual({
-      variant: "ghost-primary",
-      icon: "lucide-download",
-    });
-
-    state.inventory = inventory({
-      connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
-    });
-    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(primary(fixture.section("Connection"), "Sign in")).toEqual({
-      variant: "ghost-primary",
-      icon: "lucide-log-in",
-    });
-
-    state.inventory = inventory();
-    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(primary(fixture.section("Connection"), "Reconnect")).toEqual({
-      variant: "ghost-primary",
-      icon: "lucide-refresh-cw",
-    });
-    expect(buttonIn(fixture.header(), "Remove")?.dataset.variant).toBe("destructive-outline");
+    expect(fixture.header().textContent).toContain("Remove this plugin in Codex");
   });
 
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {
@@ -1218,7 +1679,7 @@ describe("Detail pages", () => {
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     expect(fixture.section("Connection").textContent).toContain("Signed in");
     expect(buttonIn(fixture.section("Connection"), "Sign in")).toBeNull();
-    expect(buttonIn(fixture.section("Connection"), "Reconnect")).not.toBeNull();
+    expect(buttonIn(fixture.section("Connection"), "Reconnect")).toBeNull();
     const toggle = buttonIn(fixture.section("Connection"), "Turn on Linear")!;
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     await userEvent.click(toggle);
@@ -1396,7 +1857,7 @@ describe("Detail pages", () => {
     const synapse = entry("scient.curated/synapse", {
       title: "Synapse",
       tagline: "Biomedical research data",
-      categories: ["research"],
+      categories: ["papers"],
     });
     state.entries = { [synapse.name]: synapse };
     await fixture.render(<ServerDetailPage name="scient.curated/synapse" />);
@@ -1422,7 +1883,7 @@ describe("Detail pages", () => {
     };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "synapse",
     );
     expect(fixture.rowNames(fixture.section("Search results"))).toEqual(["Synapse"]);
@@ -1439,7 +1900,7 @@ describe("Detail pages", () => {
         version: "3.1.0",
         websiteUrl: "https://www.full.example/docs",
         repositoryUrl: "https://github.com/acme/full",
-        categories: ["featured", "research"],
+        categories: ["featured", "papers"],
       }),
       "scient.curated/bare": entry("scient.curated/bare", {
         title: "Bare",
@@ -1458,7 +1919,7 @@ describe("Detail pages", () => {
       "Version",
       "Source",
     ]);
-    expect(fixture.aboutValue("Category")).toBe("Research");
+    expect(fixture.aboutValue("Category")).toBe("Papers");
     expect(fixture.aboutValue("Website")).toBe("full.example");
     expect(fixture.aboutValue("Source")).toBe("Scient catalog");
 
@@ -1480,8 +1941,12 @@ describe("Detail pages", () => {
   });
 
   const OPENCODE_REASON = "Only when Scient starts the OpenCode server";
-  const withLimitedOpenCode = () =>
-    inventory({
+  const withLimitedOpenCode = () => {
+    state.providersByEnvironment.local = [
+      ...(state.providersByEnvironment.local ?? []),
+      provider(ProviderInstanceId.make("opencode"), "opencode", {}),
+    ];
+    return inventory({
       providerSupport: [
         ...inventory().providerSupport,
         {
@@ -1493,8 +1958,9 @@ describe("Detail pages", () => {
         },
       ],
     });
+  };
   const agentsCard = () =>
-    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"]');
+    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"][data-open]');
   // A closed tooltip stays mounted until its exit transition ends, which fake
   // timers never finish; only an open popup counts as showing the reason.
   const reasonTooltip = () =>
@@ -1503,49 +1969,31 @@ describe("Detail pages", () => {
     ) ?? null;
   const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
-  it("counts the agents that can use a connector and opens their tiles above after the hover delay", async () => {
+  it("counts the agents that can use a connector and opens their tiles on hover", async () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     // Agents with limits count; Pi can't use connectors at all.
-    expect(fixture.aboutValue("Works with")).toBe("3 agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
-    expect(trigger.textContent).toBe("3 agents");
+    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    expect(trigger.textContent).toBe("Works with all your agents");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(fixture.section("About").querySelector("[data-support]")).toBeNull();
 
     using _timers = fakeTimers();
     await userEvent.hover(trigger);
-    await advance(199);
-    expect(agentsCard()).toBeNull();
-    await advance(1);
+    await advance(200);
     const card = agentsCard()!;
     expect(card).not.toBeNull();
-    expect(card.getAttribute("data-side")).toBe("top");
-    // Directly above the count, left edges aligned, never off to one side.
-    await vi.waitFor(() => {
-      const cardBox = card.getBoundingClientRect();
-      const triggerBox = trigger.getBoundingClientRect();
-      expect(Math.abs(cardBox.left - triggerBox.left)).toBeLessThanOrEqual(2);
-      expect(cardBox.bottom).toBeLessThanOrEqual(triggerBox.top);
-    });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(trigger.getAttribute("aria-controls")).toBe(card.id);
     const tiles = [...card.querySelectorAll<HTMLElement>("[data-support]")];
     expect(tiles.map((tile) => tile.textContent)).toEqual(["Codex", "Claude", "OpenCode"]);
-    expect(
-      tiles.map((tile) =>
-        tile.querySelector("[data-provider-icon]")?.getAttribute("data-provider-icon"),
-      ),
-    ).toEqual(["Codex", "Claude", "OpenCode"]);
     expect(tiles.map((tile) => tile.querySelector("[data-status-dot]") !== null)).toEqual([
       false,
       false,
       true,
     ]);
-    // Tiles only: no limitation or "not available" text in the card.
-    expect(card.querySelector("p")).toBeNull();
-    expect(card.textContent).toBe("CodexClaudeOpenCode");
 
     // The limited agent's tile explains itself, and the card stays open.
     const limited = buttonIn(card, `OpenCode: ${OPENCODE_REASON}`)!;
@@ -1565,7 +2013,7 @@ describe("Detail pages", () => {
     // A touch screen has no pointer resting anywhere: park the test's mouse
     // where no card or tooltip will open under it.
     await userEvent.hover(fixture.container.querySelector("h1")!);
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
     // A real tap: touch pointer events and a click with `detail: 1` (a click
     // with `detail: 0` reads as a keyboard press).
     const tap = async (target: HTMLElement) => {
@@ -1613,7 +2061,7 @@ describe("Detail pages", () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
     for (let step = 0; step < 60 && document.activeElement !== trigger; step += 1) {
       await userEvent.tab();
     }
@@ -1631,7 +2079,7 @@ describe("Detail pages", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("shows a plain count when none of the agents can use the connector", async () => {
+  it("explains unsupported agents in the works-with popover", async () => {
     await using fixture = setup();
     state.inventory = inventory({
       providerSupport: inventory().providerSupport.map((entry) => ({
@@ -1640,11 +2088,18 @@ describe("Detail pages", () => {
       })),
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.aboutValue("Works with")).toBe("None of your agents");
-    expect(buttonIn(fixture.section("About"), "Works with: None of your agents")).toBeNull();
+    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    await userEvent.click(trigger);
+    await expect.element(page.getByRole("dialog", { name: "Agents" })).toBeVisible();
+    expect(
+      [...agentsCard()!.querySelectorAll("[data-support]")].every(
+        (tile) => tile.getAttribute("data-support") === "unsupported",
+      ),
+    ).toBe(true);
   });
 
-  it("lists tools only after See tools, grouped by kind", async () => {
+  it("lists tools only after See tools and retains the result", async () => {
     await using fixture = setup();
     state.commands.test.mockResolvedValueOnce(
       toolResult(LINEAR, [
@@ -1662,19 +2117,11 @@ describe("Detail pages", () => {
       input: { connectorId: LINEAR },
     });
     const tools = fixture.section("Tools");
-    expect(
-      ["Write", "Read", "Other"].map((label) => groupTrigger(tools, label)?.textContent),
-    ).toEqual(["Write2", "Read1", "Other1"]);
-    await userEvent.click(groupTrigger(tools, "Read")!);
-    expect(tools.querySelector('[aria-label="Read"]')?.textContent).toBe("list_issuesList issues");
-    await userEvent.click(groupTrigger(tools, "Write")!);
-    expect(
-      [...tools.querySelectorAll('[aria-label="Write"] li')].map((item) => item.textContent),
-    ).toEqual(["delete_issue", "update_issue"]);
+    expect(groupTrigger(tools, "List issues")).not.toBeNull();
 
     // The result stays for this connector without testing again.
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
     expect(state.commands.test).toHaveBeenCalledOnce();
   });
 
@@ -1707,10 +2154,10 @@ describe("Detail pages", () => {
     );
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
 
     await fixture.render(<ConnectorDetailPage connectorId="con_notes00001" />);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(buttonIn(fixture.section("Tools"), "See tools")).not.toBeNull();
 
     // An answer for Linear that lands after moving to Notes is ignored.
@@ -1722,7 +2169,7 @@ describe("Detail pages", () => {
     await act(async () =>
       late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
     );
-    expect(fixture.section("Tools").textContent).not.toContain("Read");
+    expect(fixture.section("Tools").textContent).not.toContain("Late tool");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
@@ -1739,20 +2186,20 @@ describe("Detail pages", () => {
     );
     await linearAt(0);
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
 
     // Another client signed in again, to the same issuer and scopes: only the
     // revision says so.
     await linearAt(1);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(buttonIn(fixture.section("Tools"), "See tools")).not.toBeNull();
 
     // connected → needs sign-in → connected never brings the old tools back.
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
     await linearAt(2, { status: "needs-auth" });
     await linearAt(3);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(state.commands.test).toHaveBeenCalledTimes(2);
 
     // An answer that lands after the sign-in changed is dropped.
@@ -1763,26 +2210,11 @@ describe("Detail pages", () => {
     await act(async () =>
       late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
     );
-    expect(fixture.section("Tools").textContent).not.toContain("Read");
+    expect(fixture.section("Tools").textContent).not.toContain("Late tool");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
-  it("draws built-in plugins with a glyph and bundles with a letter tile", async () => {
-    await using fixture = setup();
-    state.inventory = inventory({
-      plugins: [
-        plugin("scient.sources", { displayName: "Sources" }),
-        plugin("scient.unknown", { displayName: "Unknown" }),
-        plugin("lab-kit", { displayName: "Lab kit", origin: "bundle" }),
-      ],
-    });
-    await fixture.render(<InstalledPage />);
-    expect(fixture.row("Sources").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
-    expect(fixture.row("Unknown").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
-    expect(fixture.row("Lab kit").querySelector("[data-extension-icon]")).toBeNull();
-  });
-
-  it("lists a plugin's parts under Includes and links its skills to the Skills page", async () => {
+  it("opens a plugin skill with its scoped document while retaining other contributed parts", async () => {
     await using fixture = setup();
     state.inventory = inventory({
       plugins: [
@@ -1797,9 +2229,16 @@ describe("Detail pages", () => {
     });
     await fixture.render(<PluginDetailPage pluginId="sources" />);
     const includes = fixture.section("Includes");
-    expect(groupTrigger(includes, "Skills")?.textContent).toBe("Skills1");
-    await userEvent.click(groupTrigger(includes, "Skills")!);
-    expect(linkIn(includes, "find-papers")?.getAttribute("href")).toBe("/settings/skills");
+    await userEvent.click(buttonIn(fixture.section("Skills 1"), "Find Papers")!);
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(state.queryTargets).toContainEqual(
+      expect.objectContaining({
+        kind: "skill-document",
+        environmentId: "local",
+        input: { pluginId: "sources", skillId: "find-papers" },
+      }),
+    );
+    await userEvent.keyboard("{Escape}");
     await userEvent.click(groupTrigger(includes, "Tools")!);
     expect(includes.querySelector('[aria-label="Tools"]')?.textContent).toBe(
       "sources:readsources_search",
@@ -1823,6 +2262,10 @@ describe("Detail pages", () => {
       skills: [],
       plugins: [pluginOne],
     });
+    state.projects = [
+      { environmentId: "local", id: "a", title: "A", workspaceRoot: "/work/a" },
+      { environmentId: "local", id: "b", title: "B", workspaceRoot: "/work/b" },
+    ];
     state.providersByEnvironment = {
       local: [
         provider(codex, "codex", {
@@ -1838,7 +2281,7 @@ describe("Detail pages", () => {
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
     );
     await fixture.render(page("/work/a"));
-    await userEvent.click(buttonIn(fixture.header(), "Uninstall")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -1847,11 +2290,11 @@ describe("Detail pages", () => {
         cwd: "/work/a",
       },
     });
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(true);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(true);
     await fixture.render(page("/work/b"));
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
     await fixture.render(page(undefined));
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
 
     await act(async () => pending.resolve(extensionsError("Codex refused.")));
     await fixture.render(page("/work/a"));
@@ -1869,7 +2312,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    await userEvent.click(buttonIn(fixture.header(), "Uninstall")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
@@ -1877,4 +2320,107 @@ describe("Detail pages", () => {
     expect(fixture.container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
     expect(fixture.aboutValue("Managed by")).toBe("Codex");
   });
+});
+
+describe("Codex store connection", () => {
+  it("shows connection actions from the owner's verified installation and refreshed app state", async () => {
+    await using fixture = setup();
+    state.storeEntry = {
+      id: "sample",
+      name: "sample",
+      displayName: "Sample",
+      description: "Search documents",
+      marketplace: "remote",
+      kind: "codex",
+      installed: false,
+      includes: [],
+      apps: [],
+      authPolicy: "ON_INSTALL",
+    };
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    state.storeEntry = {
+      ...state.storeEntry,
+      installed: true,
+      apps: [
+        {
+          name: "Sample",
+          connected: false,
+          enabled: true,
+          installUrl: "https://chatgpt.com/apps/sample/app",
+        },
+      ],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    await expect.element(page.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
+    await expect
+      .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
+      .toBeVisible();
+    state.storeEntry = {
+      ...state.storeEntry,
+      apps: [{ name: "Sample", connected: true, enabled: true }],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(fixture.section("Apps 1").textContent).toContain("Connected");
+    state.storeEntry = {
+      ...state.storeEntry,
+      apps: [{ name: "Sample", connected: true, enabled: false }],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(fixture.section("Apps 1").textContent).toContain("Disabled");
+  });
+});
+
+it("groups app tools by read/write and opens their descriptions without installing", async () => {
+  await using fixture = setup();
+  state.storeEntry = {
+    id: "sample",
+    name: "sample",
+    displayName: "Sample",
+    description: "Search documents",
+    marketplace: "remote",
+    kind: "codex",
+    installed: false,
+    includes: [],
+    apps: [],
+  };
+  state.contentApps = [
+    {
+      name: "Sample",
+      connected: false,
+      enabled: true,
+      toolSummaries: [
+        {
+          name: "find",
+          title: "Find pages",
+          description: "Find a page",
+          isReadOnly: true,
+          isEnabled: true,
+        },
+        {
+          name: "create",
+          title: "Create page",
+          description: "Create a new page",
+          isReadOnly: false,
+          isEnabled: true,
+        },
+      ],
+    },
+  ];
+  await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+  await userEvent.click(buttonIn(fixture.section("Apps 1"), "View Sample app")!);
+  await expect
+    .element(page.getByText("The Sample app contains 2 tools (1 write, 1 read)"))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Write 1", exact: true }));
+  await expect.element(page.getByRole("button", { name: /Create page/ })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Find pages/ })).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: /Create page/ }));
+  await expect.element(page.getByRole("heading", { name: "Create page Tool" })).toBeVisible();
+  expect(state.commands.providerAct).not.toHaveBeenCalled();
 });

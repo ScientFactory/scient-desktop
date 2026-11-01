@@ -51,11 +51,9 @@ const make = Effect.gen(function* () {
           processError("output", "Unable to read execution process output.", cause),
         ),
       );
-      // Effect's Node handle targets the detached process group on Unix and uses
-      // taskkill /T /F on Windows. A tree that is already gone reports failure
-      // differently on each platform, so the direct child's liveness decides
-      // whether the failure matters. This is also run after ordinary success:
-      // the direct parent may exit zero while a subprocess it created remains.
+      // Run tree cleanup even after zero exit because descendants may survive. Missing-tree errors
+      // vary by platform; decide whether cancellation failed from the direct child's liveness, not
+      // signal failure alone.
       const closeOwnedProcess = yield* makeLocalOwnedProcessCleanup(child, platform);
       const cancel = closeOwnedProcess.pipe(
         Effect.mapError((cause) =>

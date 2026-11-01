@@ -50,7 +50,9 @@ describe("mapManagedRelayError", () => {
     expect(mapConnectRefusal("managed_endpoint_allocation_not_ready")).toMatchObject({
       _tag: "ConnectionTransientError",
       reason: "endpoint-unavailable",
+      // SCIENT-FORK:START
       detail: "The environment's relay tunnel is still being set up.",
+      // SCIENT-FORK:END
       traceId: "trace-connect-refused",
     });
     expect(mapConnectRefusal("endpoint_provider_not_managed")).toMatchObject({

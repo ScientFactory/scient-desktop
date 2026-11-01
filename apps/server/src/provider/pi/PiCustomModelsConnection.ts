@@ -18,7 +18,11 @@ import {
 } from "@t3tools/provider-pi/server";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
-import { PiRpcProtocolError, type PiRpcClient, type PiRpcError } from "./PiRpcClient.ts";
+import {
+  PiRpcProtocolError,
+  type PiRpcClient,
+  type PiRpcError,
+} from "@t3tools/provider-pi/server/rpcClient";
 import {
   PiRpcAvailableModels,
   PiRpcCommands,
@@ -26,7 +30,7 @@ import {
   PiRpcSessionStats,
   PiRpcState,
   PiRpcThinkingLevels,
-} from "./PiRpcSchema.ts";
+} from "@t3tools/provider-pi/server/rpcSchema";
 
 const decodeModels = Schema.decodeUnknownEffect(PiRpcAvailableModels);
 const decodeCommands = Schema.decodeUnknownEffect(PiRpcCommands);

@@ -99,6 +99,57 @@ export function createExtensionsAtoms<R, E>(
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
     }),
+    brandIcon: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:brand-icon",
+      tag: WS_METHODS.extensionsBrandIcon,
+      staleTimeMs: 3_600_000,
+      idleTtlMs: 3_600_000,
+    }),
+    providerStorePage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:provider-store",
+      tag: WS_METHODS.extensionsProviderStoreSearch,
+      refreshTrigger: changesOf,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    pluginKeys: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:plugin-keys",
+      tag: WS_METHODS.extensionsPluginKeys,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      refreshTrigger: changesOf,
+    }),
+    bindPluginKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:bind-plugin-key",
+      tag: WS_METHODS.extensionsPluginKeyBind,
+      ...mutationLane,
+    }),
+    unbindPluginKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:unbind-plugin-key",
+      tag: WS_METHODS.extensionsPluginKeyUnbind,
+      ...mutationLane,
+    }),
+    pluginContents: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:plugin-contents",
+      tag: WS_METHODS.extensionsPluginContents,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      refreshTrigger: changesOf,
+    }),
+    skillDocument: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:skill-document",
+      tag: WS_METHODS.extensionsSkillDocument,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      refreshTrigger: changesOf,
+    }),
+    providerStoreEntry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:provider-store-entry",
+      tag: WS_METHODS.extensionsProviderStoreEntry,
+      refreshTrigger: changesOf,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
     addConnector: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:add-connector",
       tag: WS_METHODS.extensionsConnectorAdd,
@@ -188,6 +239,7 @@ export function extensionItemOperationKey(environmentId: EnvironmentId, item: st
 
 const extensionsAtoms = createExtensionsAtoms(connectionAtomRuntime);
 
+export const extensionsChanges = extensionsAtoms.changes;
 export const extensionsInventory = extensionsAtoms.inventory;
 export const extensionsDeliveryReceipt = extensionsAtoms.deliveryReceipt;
 export const extensionsDiscoverCatalog = extensionsAtoms.discoverCatalog;
@@ -202,3 +254,14 @@ export const setScientPluginEnabled = extensionsAtoms.setScientPluginEnabled;
 export const startConnectorSignIn = extensionsAtoms.startConnectorSignIn;
 export const testConnector = extensionsAtoms.testConnector;
 export const actOnProviderPlugin = extensionsAtoms.actOnProviderPlugin;
+
+export const extensionsProviderStorePage = extensionsAtoms.providerStorePage;
+export const extensionsProviderStoreEntry = extensionsAtoms.providerStoreEntry;
+
+export const extensionsBrandIcon = extensionsAtoms.brandIcon;
+export const extensionsPluginContents = extensionsAtoms.pluginContents;
+export const extensionsSkillDocument = extensionsAtoms.skillDocument;
+
+export const extensionsPluginKeys = extensionsAtoms.pluginKeys;
+export const bindPluginKey = extensionsAtoms.bindPluginKey;
+export const unbindPluginKey = extensionsAtoms.unbindPluginKey;

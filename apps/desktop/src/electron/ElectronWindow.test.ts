@@ -163,66 +163,19 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("preserves schema-safe creation context and the Electron cause", () =>
+  it.effect("never falls back to an auxiliary window as the main window", () =>
     Effect.gen(function* () {
-      const cause = new Error("native BrowserWindow construction failed");
-      browserWindowMock.mockImplementationOnce(function BrowserWindowFailure() {
-        throw cause;
-      });
-      const options = {
-        title: "Scient",
-        width: 1100,
-        height: 780,
-        minWidth: 840,
-        minHeight: 620,
-        show: false,
-        modal: false,
-        frame: true,
-        transparent: false,
-        backgroundColor: "#101010",
-        icon: {} as Electron.NativeImage,
-        webPreferences: {
-          preload: "/tmp/preload.js",
-          partition: "persist:scient-next-preview-test",
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-          webviewTag: true,
-          spellcheck: true,
-        },
-      } satisfies Electron.BrowserWindowConstructorOptions;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const auxiliary = yield* electronWindow.create({}, { auxiliary: true });
+      const ordinary = { isDestroyed: () => false } as unknown as Electron.BrowserWindow;
+      Object.assign(auxiliary, { isDestroyed: () => false });
 
-      const error = yield* electronWindow.create(options).pipe(Effect.flip);
+      getAllWindowsMock.mockReturnValue([auxiliary]);
+      assert.isTrue((yield* electronWindow.currentMainOrFirst)._tag === "None");
 
-      assert.instanceOf(error, ElectronWindow.ElectronWindowCreateError);
-      assert.deepEqual(error.options, {
-        title: "Scient",
-        width: 1100,
-        height: 780,
-        minWidth: 840,
-        minHeight: 620,
-        show: false,
-        modal: false,
-        frame: true,
-        transparent: false,
-        backgroundColor: "#101010",
-        webPreferences: {
-          preload: "/tmp/preload.js",
-          partition: "persist:scient-next-preview-test",
-          backgroundThrottling: null,
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-          webviewTag: true,
-        },
-      });
-      assert.isFalse("icon" in error.options);
-      assert.isFalse("spellcheck" in error.options.webPreferences);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(error.message, 'Failed to create Electron BrowserWindow "Scient" (1100x780).');
-      assert.notInclude(error.message, cause.message);
-      assert.deepEqual(browserWindowMock.mock.calls, [[options]]);
+      getAllWindowsMock.mockReturnValue([auxiliary, ordinary]);
+      const current = yield* electronWindow.currentMainOrFirst;
+      assert.isTrue(current._tag === "Some" && current.value === ordinary);
     }).pipe(Effect.provide(layerTest)),
   );
 });

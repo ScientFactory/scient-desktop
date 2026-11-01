@@ -37,6 +37,7 @@ const guardSessionLifetime = (
   const {
     injectHistory,
     compactThread,
+    stopSubagent,
     unloadThread,
     uploadFeedback,
     hasPendingBackgroundWork,
@@ -58,6 +59,9 @@ const guardSessionLifetime = (
     forkThread: (input) => guard(() => runtime.forkThread(input)),
     ...(injectHistory ? { injectHistory: (input) => guard(() => injectHistory(input)) } : {}),
     ...(compactThread ? { compactThread: (input) => guard(() => compactThread(input)) } : {}),
+    ...(stopSubagent
+      ? { stopSubagent: (input) => guard(() => stopSubagent.call(runtime, input)) }
+      : {}),
     ...(unloadThread ? { unloadThread: (input) => guard(() => unloadThread(input)) } : {}),
     ...(uploadFeedback ? { uploadFeedback: (input) => guard(() => uploadFeedback(input)) } : {}),
     ...(hasPendingBackgroundWork

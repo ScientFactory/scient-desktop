@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -174,7 +175,7 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
         );
         return result;
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 
 function message(

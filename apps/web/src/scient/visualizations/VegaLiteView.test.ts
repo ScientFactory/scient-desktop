@@ -51,6 +51,7 @@ describe("VegaLiteView remount state policy", () => {
     ).toBe(false);
   });
 
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("isolates each async embed generation in its own disposable DOM host", () => {
     expect(viewSource).toContain('const mountHost = document.createElement("div")');
     expect(viewSource).toContain("container.replaceChildren(mountHost)");

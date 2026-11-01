@@ -7,6 +7,8 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import {
+  AccountsError,
+  AccountId,
   type ConnectorId,
   EnvironmentId,
   ProjectId,
@@ -14,11 +16,14 @@ import {
   ThreadId,
   VaultSecretRef,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { HttpRouter } from "effect/http";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -27,6 +32,8 @@ import type { McpThreadInvocationScope } from "../../../mcp/McpInvocationContext
 import * as McpSessionRegistry from "../../../mcp/McpSessionRegistry.ts";
 import { type ProjectRow, ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import { AccountsService } from "../../accounts/AccountsService.ts";
+import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import { ConnectorRuntime } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
@@ -225,7 +232,13 @@ const handleMcp = async (
             {
               name: "search",
               description: `Search things (debug: ${authorization})`,
-              inputSchema: { type: "object" },
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: `Query (debug: ${authorization})` },
+                },
+                required: ["query"],
+              },
               annotations: { readOnlyHint: true },
             },
           ],
@@ -463,6 +476,8 @@ const existingProject = (projectId: ProjectId): ProjectRow => ({
   workspaceRoot: `/work/${projectId}`,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
+  pinnedAt: null,
+  archivedAt: null,
   autoPull: false,
   faviconPath: null,
   projectIcon: null,
@@ -516,6 +531,7 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly wrapEligibility?: (
       eligibility: PluginConnectorEligibility.PluginConnectorEligibilityShape,
     ) => PluginConnectorEligibility.PluginConnectorEligibilityShape;
+    readonly onStreamClosed?: Effect.Effect<void>;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -559,7 +575,24 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     Effect.sync(() =>
       HttpRouter.toWebHandler(
         Layer.mergeAll(ConnectorProxyRoute.layer, ConnectorCallbackRoute.layer).pipe(
-          Layer.provideMerge(Layer.succeed(ConnectorRuntime, runtime)),
+          Layer.provideMerge(
+            Layer.succeed(ConnectorRuntime, {
+              ...runtime,
+              forward: (request) =>
+                runtime.forward(request).pipe(
+                  Effect.map((response) =>
+                    request.method === "GET" &&
+                    response.status === 200 &&
+                    options.onStreamClosed !== undefined
+                      ? {
+                          ...response,
+                          body: response.body.pipe(Stream.ensuring(options.onStreamClosed)),
+                        }
+                      : response,
+                  ),
+                ),
+            }),
+          ),
           Layer.provideMerge(
             Layer.succeed(McpSessionRegistry.McpSessionRegistry, {
               resolve: (token: string) =>
@@ -788,7 +821,7 @@ describe("connector OAuth sign-in", () => {
         expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
         expect(response.headers.get("referrer-policy")).toBe("no-referrer");
         expect(response.headers.get("cache-control")).toBe("no-store");
-        expect(yield* readText(response)).toContain("Vendor connected");
+        expect(yield* readText(response)).toContain("Vendor is connected");
 
         const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]).toMatchObject({
@@ -957,6 +990,14 @@ describe("connector credential isolation", () => {
 
       // Connector test results reach the settings UI and are redacted too.
       const tested = yield* harness.runtime.test({ connectorId });
+      expect(tested.tools[0]?.parameters).toEqual([
+        {
+          name: "query",
+          type: "string",
+          required: true,
+          description: "[redacted by Scient]",
+        },
+      ]);
       expect(JSON.stringify(tested)).not.toContain("vendor-access-token-");
     }).pipe(Effect.provide(testLayer)),
   );
@@ -1326,7 +1367,10 @@ describe("connector proxy", () => {
 
   it.live("holds a permit for each open stream until it ends and answers busy when full", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const streamClosed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        onStreamClosed: Deferred.succeed(streamClosed, undefined).pipe(Effect.asVoid),
+      });
       const connectorId = yield* harness.connectSecure();
       const streams: Response[] = [];
       for (let index = 0; index < MAX_IN_FLIGHT_PER_CONNECTOR; index += 1) {
@@ -1346,11 +1390,8 @@ describe("connector proxy", () => {
       vendor.streamClosed = closed.resolve;
       yield* Effect.promise(() => streams.pop()!.body!.cancel());
       yield* Effect.promise(() => closed.promise);
-      let reopened = yield* harness.request(connectorId, { method: "GET" });
-      for (let attempt = 0; reopened.status === 503 && attempt < 1_000; attempt += 1) {
-        yield* Effect.yieldNow;
-        reopened = yield* harness.request(connectorId, { method: "GET" });
-      }
+      yield* Deferred.await(streamClosed);
+      const reopened = yield* harness.request(connectorId, { method: "GET" });
       expect(reopened.status).toBe(200);
       streams.push(reopened);
       yield* Effect.promise(() => Promise.all(streams.map((stream) => stream.body!.cancel())));
@@ -2068,5 +2109,74 @@ describe("connector credential store", () => {
       yield* store.remove(ref);
       expect(Option.isNone(yield* store.readOwned(ref, owner))).toBe(true);
     }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("bound connector credentials", () => {
+  it.live(
+    "uses live account rotation after reload and loses access on removal without fallback",
+    () =>
+      Effect.gen(function* () {
+        let token: string | undefined = NodeCrypto.randomUUID();
+        const ref = accountTokenRef(AccountId.make("acc_synthetic01"));
+        const bindings = Layer.mock(AccountsService)({
+          resolveBound: (candidate, consumer) =>
+            Effect.suspend(() => {
+              if (candidate !== ref || consumer.origin !== vendor.base || token === undefined)
+                return Effect.fail(
+                  new AccountsError({
+                    reason: "not-found",
+                    message: "Synthetic account unavailable.",
+                  }),
+                );
+              return Effect.succeed(Redacted.make(token));
+            }),
+        });
+        const harness = yield* makeHarness().pipe(Effect.provide(bindings));
+        vendor.validTokens.add(token);
+        const added = yield* harness.runtime.add({
+          target: { type: "url", url: `${vendor.base}/secure/mcp` },
+          credential: { type: "bound", strategy: "bearer", secretRef: ref },
+        });
+        const connectorId = added.connector.connectorId;
+        harness.delivered.add(connectorId);
+        const firstCall = yield* harness.proxy(connectorId, toolCall(101, "echo-auth"));
+        const firstText = yield* readText(firstCall);
+        expect(firstText.includes(token)).toBe(false);
+        expect(firstText).toContain("[redacted by Scient]");
+        expect(vendor.upstream.at(-1)?.authorization === `Bearer ${token}`).toBe(true);
+        expect(added.connector.auth).toMatchObject({ storage: "bound" });
+        expect(yield* connectorSecrets(harness.config)).toEqual([]);
+        const state = yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8"));
+        expect(state.includes(token)).toBe(false);
+        const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir }).pipe(
+          Effect.provide(bindings),
+        );
+        expect((yield* reloaded.list()).connectors[0]?.auth).toMatchObject({ storage: "bound" });
+        expect((yield* reloaded.test({ connectorId })).outcome).toBe("ok");
+        vendor.validTokens.delete(token);
+        token = NodeCrypto.randomUUID();
+        vendor.validTokens.add(token);
+        const before = vendor.upstream.length;
+        const rotatedCall = yield* harness.proxy(connectorId, toolCall(102, "echo-auth"));
+        const rotatedText = yield* readText(rotatedCall);
+        expect(rotatedText.includes(token)).toBe(false);
+        expect(rotatedText).toContain("[redacted by Scient]");
+        expect((yield* reloaded.test({ connectorId })).outcome).toBe("ok");
+        expect(
+          vendor.upstream
+            .slice(before)
+            .every((request) => request.authorization === `Bearer ${token}`),
+        ).toBe(true);
+        token = undefined;
+        const sent = vendor.upstream.length;
+        yield* reloaded.test({ connectorId });
+        const removedCall = yield* harness.proxy(connectorId, toolCall(103));
+        expect(yield* readJson(removedCall)).toMatchObject({ id: 103, error: { code: -32001 } });
+        expect(vendor.upstream.length).toBe(sent);
+        expect((yield* reloaded.list()).connectors[0]?.status).toBe("needs-credential");
+        yield* reloaded.remove({ connectorId });
+        expect(yield* connectorSecrets(harness.config)).toEqual([]);
+      }).pipe(Effect.provide(testLayer)),
   );
 });

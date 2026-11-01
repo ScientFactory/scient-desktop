@@ -22,11 +22,13 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   __resetClientSettingsPersistenceForTests();
 }
 
-it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (width) => {
+// regression: 3c7c218d94 fix(models): anchor new-chat footer to picker bottom
+// The picker has no width-dependent layout, so one viewport covers the anchoring.
+it("keeps the new-chat footer at the bottom of the picker", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  await page.viewport(width, 720);
+  await page.viewport(1280, 720);
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, favorites: [] });
   const models = Array.from({ length: 30 }, (_, i) => ({
     slug: `model-${i}`,
@@ -68,6 +70,7 @@ it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (w
   );
   await _fixture.root0.rerender(
     <ModelPickerContent
+      searchInputRef={{ current: null }}
       environmentId={null}
       activeInstanceId={providers[0]!.instanceId}
       model="model-0"
@@ -102,10 +105,10 @@ it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (w
   await expect.poll(() => picker.querySelectorAll("[data-slot=combobox-item]").length).toBe(2);
   await expectAnchored();
 
-  await page.getByText("Legacy models", { exact: true }).click();
+  await page.getByText("Show more", { exact: true }).click();
   await expect.poll(() => picker.querySelectorAll("[data-slot=combobox-item]").length).toBe(5);
   await expectAnchored();
-  await page.getByText("Legacy models", { exact: true }).click();
+  await page.getByText("Show less", { exact: true }).click();
   await expect.poll(() => picker.querySelectorAll("[data-slot=combobox-item]").length).toBe(2);
   await expectAnchored();
 

@@ -56,11 +56,9 @@ export const ScientLatexCompilerAvailability = Schema.Struct({
 export type ScientLatexCompilerAvailability = typeof ScientLatexCompilerAvailability.Type;
 
 /**
- * One managed install, from the client's point of view. `downloading` is the
- * only phase that carries progress, and only once the server has been told how
- * many bytes to expect. `installing-packages` is the eager fetch of the
- * collections an ordinary document needs, which runs after the distribution is
- * in place and can only ever end in `ready`.
+ * Downloading has progress only with a known byte total. Package seeding happens after the engine
+ * exists and is best-effort, so it can end only in ready rather than invalidate the usable
+ * distribution.
  */
 export const ScientLatexManagedInstallPhase = Schema.Literals([
   "idle",
@@ -158,11 +156,9 @@ export const ScientLatexBuildState = Schema.Literals([
 export type ScientLatexBuildState = typeof ScientLatexBuildState.Type;
 
 /**
- * One poll of a document's build. Clients poll until the state is terminal and
- * `pendingRerun` is false, because a coalesced rebuild re-arms the document
- * right after the terminal state is written; `descriptor` is the published PDF
- * the viewer renders and survives a later failure, so a stale binding still has
- * something to show.
+ * Poll until terminal and pendingRerun false because coalesced work re-arms immediately after
+ * terminal write. Preserve the published descriptor through later failure so stale bindings still
+ * display the last PDF.
  */
 export const ScientLatexBuildSnapshot = Schema.Struct({
   logicalDocumentKey: Schema.String,

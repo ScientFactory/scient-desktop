@@ -31,7 +31,7 @@ export async function reviewOpenedConversation(
     resizable: readOnly,
     minWidth: COMPACT_SIZE.width,
     minHeight: COMPACT_SIZE.height,
-    title: "Open conversation — Scient",
+    title: "Open conversation (Scient)",
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

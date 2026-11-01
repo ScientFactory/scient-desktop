@@ -1,9 +1,6 @@
 /**
- * Scient's one-shot Pi text generation run: a typed `pi --mode rpc` client
- * with no workspace instructions, skills, tools, extensions or persisted
- * session, the requested model and thinking level applied through the native
- * selection path, assistant output collected from the ordered event stream,
- * and a bounded total duration.
+ * One-shot text generation must carry no workspace instructions, skills, tools, extensions, or
+ * persisted session. Apply model/effort natively, consume ordered events, and bound total duration.
  */
 import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
 import {
@@ -42,6 +39,16 @@ export interface PiTextGenerationOptions {
 }
 
 const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+
+// Pi's `errorMessage` is the provider's raw response text and can echo
+// credentials, so only a leading HTTP status reaches the error detail.
+const piTurnErrorDetail = (errorMessage: unknown) => {
+  const status =
+    typeof errorMessage === "string" ? /^([45]\d\d)\b/.exec(errorMessage)?.[1] : undefined;
+  return status === undefined
+    ? "Pi could not generate text: the model provider reported an error."
+    : `Pi could not generate text: the model provider returned HTTP ${status}.`;
+};
 
 const assistantText = (message: Record<string, unknown>): string | undefined => {
   if (message.role !== "assistant") return undefined;
@@ -133,6 +140,8 @@ export const makePiRunJson = (run: {
         const output = yield* Ref.make("");
         const currentDeltas = yield* Ref.make("");
         const outputExhausted = yield* Ref.make(false);
+        // Pi can retry after a provider failure and still answer, so only the latest turn counts.
+        const turnError = yield* Ref.make<string | undefined>(undefined);
         const settled = yield* Deferred.make<void, TextGenerationError>();
         yield* client.events.pipe(
           Stream.runForEach((native) => {
@@ -166,7 +175,7 @@ export const makePiRunJson = (run: {
               const message = isRecord(event.message) ? event.message : undefined;
               if (!message || message.role !== "assistant") return Effect.void;
               const stopReason = message.stopReason;
-              if (stopReason === "error" || stopReason === "aborted")
+              if (stopReason === "aborted")
                 return Deferred.fail(
                   settled,
                   new TextGenerationError({
@@ -174,7 +183,15 @@ export const makePiRunJson = (run: {
                     detail: `Pi assistant stopped with reason '${stopReason}'.`,
                   }),
                 ).pipe(Effect.asVoid);
+              if (stopReason === "error")
+                return Effect.gen(function* () {
+                  yield* Ref.set(turnError, piTurnErrorDetail(message.errorMessage));
+                  yield* Ref.set(outputExhausted, false);
+                  yield* Ref.set(output, "");
+                  yield* Ref.set(currentDeltas, "");
+                });
               return Effect.gen(function* () {
+                yield* Ref.set(turnError, undefined);
                 yield* Ref.set(outputExhausted, stopReason === "length");
                 const completed = assistantText(message) ?? (yield* Ref.get(currentDeltas));
                 yield* Ref.set(output, completed);
@@ -259,7 +276,7 @@ export const makePiRunJson = (run: {
         if (!raw)
           return yield* new TextGenerationError({
             operation: input.operation,
-            detail: "Pi returned empty output.",
+            detail: (yield* Ref.get(turnError)) ?? "Pi returned empty output.",
           });
         // oxlint-disable-next-line t3code/no-inline-schema-compile -- The caller supplies a distinct output schema per generation request.
         return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchema))(

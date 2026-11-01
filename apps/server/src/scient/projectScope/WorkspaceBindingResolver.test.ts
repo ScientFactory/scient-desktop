@@ -125,22 +125,20 @@ const makeResolverLayer = (state: ResolverState) => {
         }),
       getThreadContext: (threadId) => {
         const currentThread = state.threads.get(threadId);
-        if (currentThread === undefined) return Effect.succeed(Option.none());
+        if (currentThread === undefined) return Effect.succeedNone;
         const currentProject =
           currentThread.projectId === null
             ? undefined
             : state.projects.get(currentThread.projectId);
-        return Effect.succeed(
-          Option.some({
-            threadId,
-            projectId: currentThread.projectId,
-            worktreePath: currentThread.worktreePath,
-            projectWorkspaceRoot: currentProject?.workspaceRoot ?? null,
-            scopeRevision: WorkspaceAuthorityScopeRevision.make(
-              state.scopeRevisions.get(threadId) ?? 1,
-            ),
-          }),
-        );
+        return Effect.succeedSome({
+          threadId,
+          projectId: currentThread.projectId,
+          worktreePath: currentThread.worktreePath,
+          projectWorkspaceRoot: currentProject?.workspaceRoot ?? null,
+          scopeRevision: WorkspaceAuthorityScopeRevision.make(
+            state.scopeRevisions.get(threadId) ?? 1,
+          ),
+        });
       },
     }),
   );

@@ -27,37 +27,103 @@ import {
   type RetainedMutationHooks,
 } from "./RetainedFileMutation.ts";
 import {
+  closeNativeHelperServers,
   ensureNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
 } from "./NativeFilePublication.ts";
 
-let compiled: Promise<string | undefined> | undefined;
+const compiled = new Map<boolean, Promise<string | undefined>>();
 /** Compile the shipped boundary, never silently reuse a developer's binary or a pathname fallback. */
 export function filePublicationTestHelper() {
-  return (compiled ??= (async () => {
+  return compileFilePublicationTestHelper(false);
+}
+
+/** Probe-only lock receipts keep real subprocess contention tests independent of a clock. */
+export function filePublicationProbeHelper() {
+  return compileFilePublicationTestHelper(true);
+}
+
+function compileFilePublicationTestHelper(probe: boolean) {
+  const cached = compiled.get(probe);
+  if (cached) return cached;
+  const building = (async () => {
     const platform = HostProcess.Platform.defaultValue();
-    if (platform !== "darwin" && platform !== "linux") return undefined;
-    const directory = await NodeFSP.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-"),
+    if (platform !== "darwin" && platform !== "linux" && platform !== "win32") return undefined;
+    const directory = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-")),
     );
-    afterAll(() => NodeFSP.rm(directory, { recursive: true, force: true }));
-    const helper = NodePath.join(directory, "scient-file-publication");
-    NodeChildProcess.execFileSync("cc", [
-      "-O2",
-      "-Wall",
-      "-Wextra",
-      "-Werror",
-      "-fstack-protector-strong",
-      NodePath.resolve(import.meta.dirname, "../../../../../native/file-exchange/publication.c"),
-      NodePath.resolve(
+    // A running helper locks its binary on Windows.
+    afterAll(async () => {
+      await closeNativeHelperServers();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    });
+    const helper = NodePath.join(
+      directory,
+      platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication",
+    );
+    if (platform === "win32") {
+      const installer = NodePath.join(
+        process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+        "Microsoft Visual Studio/Installer/vswhere.exe",
+      );
+      const installation = NodeChildProcess.execFileSync(
+        installer,
+        [
+          "-latest",
+          "-products",
+          "*",
+          "-requires",
+          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+          "-property",
+          "installationPath",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+      const vcvars = NodePath.join(installation, "VC/Auxiliary/Build/vcvars64.bat");
+      // Stage through the shipped build so test helpers carry the production receipt and flags.
+      const stage = NodePath.resolve(
         import.meta.dirname,
-        "../../../../../native/file-exchange/publication-posix.c",
-      ),
-      "-o",
-      helper,
-    ]);
+        "../../../../../scripts/stage-file-exchange.ts",
+      );
+      const build = NodePath.join(directory, "build.cmd");
+      await NodeFSP.writeFile(
+        build,
+        `@echo off\r\ncall "${vcvars}" >nul\r\n"${process.execPath}" "${stage}" --destination="${directory}"${probe ? " --probe=true" : ""}\r\n`,
+      );
+      NodeChildProcess.execFileSync("cmd.exe", ["/d", "/c", build], {
+        cwd: directory,
+        stdio: "inherit",
+      });
+      if (!probe) {
+        process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
+        // Windows Server defaults elevated creations to Administrators; fixtures exercise user-owned files.
+        const bootstrap = await compileFilePublicationTestHelper(true);
+        const owner = JSON.parse(
+          NodeChildProcess.execFileSync(
+            bootstrap!,
+            ["--windows=1", "default-owner", String(process.pid)],
+            { encoding: "utf8" },
+          ),
+        );
+        if (owner.code !== 0)
+          throw new Error(`Fixture default-owner setup refused (${owner.code}).`);
+      }
+      return helper;
+    }
+    NodeChildProcess.execFileSync(
+      process.execPath,
+      [
+        NodePath.resolve(import.meta.dirname, "../../../../../scripts/stage-file-exchange.ts"),
+        `--destination=${directory}`,
+        ...(probe ? ["--probe=true"] : []),
+      ],
+      { stdio: "inherit" },
+    );
     return helper;
-  })());
+  })();
+  compiled.set(probe, building);
+  return building;
 }
 
 /** Whether the compiled helper gives this host native publication authority. */
@@ -65,13 +131,17 @@ export async function nativePublicationHost() {
   const helper = await filePublicationTestHelper();
   if (helper === undefined) return false;
   const capabilities = await nativeFilePublicationCapabilities(helper);
-  return (
-    capabilities.strictCurrentRoot &&
+  const admitted =
+    hasNativeFileAuthority(capabilities) &&
     capabilities.publicationLease &&
     capabilities.sharedPublicationLease &&
     capabilities.exclusiveMove &&
-    capabilities.exclusiveLink
-  );
+    capabilities.exclusiveLink;
+  if (HostProcess.Platform.defaultValue() === "linux" && !admitted)
+    throw new Error(
+      "Linux publication suites must run: Landlock ABI 3 and the native helper are required.",
+    );
+  return admitted;
 }
 
 /** Wraps the helper so it reports capabilities as unavailable, as the Windows helper does. */
@@ -248,27 +318,3 @@ export const fileMutationFixture = Effect.fnUntraced(
   Effect.scoped,
   Effect.provide(NodeServices.layer),
 );
-
-/** Native cases compile the shipped C source rather than silently depending on a developer binary. */
-export async function fileExchangeTestHelper() {
-  if (
-    HostProcess.Platform.defaultValue() !== "darwin" &&
-    HostProcess.Platform.defaultValue() !== "linux"
-  )
-    return undefined;
-  const directory = await NodeFSP.mkdtemp(
-    NodePath.join(NodeOS.tmpdir(), "scient-exchange-helper-"),
-  );
-  afterAll(() => NodeFSP.rm(directory, { recursive: true, force: true }));
-  const helper = NodePath.join(directory, "scient-file-exchange");
-  NodeChildProcess.execFileSync("cc", [
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    NodePath.resolve(import.meta.dirname, "../../../../../native/file-exchange/exchange.c"),
-    "-o",
-    helper,
-  ]);
-  return helper;
-}

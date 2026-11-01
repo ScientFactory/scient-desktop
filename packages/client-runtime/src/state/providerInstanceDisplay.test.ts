@@ -12,6 +12,15 @@ const codex = ProviderDriverKind.make("codex");
 const acpRegistry = ProviderDriverKind.make("acpRegistry");
 
 describe("providerInstanceInitials", () => {
+  it("treats punctuation as a word break but keeps apostrophes between letters", () => {
+    expect(providerInstanceInitials("Codex (hub)")).toBe("CH");
+    expect(providerInstanceInitials("work_codex")).toBe("WC");
+    expect(providerInstanceInitials("Theo's Codex")).toBe("TC");
+    expect(providerInstanceInitials("Codex 'hub'")).toBe("CH");
+    expect(providerInstanceInitials("‘hub’")).toBe("HU");
+    expect(providerInstanceInitials("(hub)")).toBe("HU");
+  });
+
   it("keeps an emoji whole instead of splitting its surrogate pair", () => {
     expect(providerInstanceInitials("😀 Work")).toBe("😀W");
     expect(providerInstanceInitials("😀")).toBe("😀");
@@ -36,12 +45,14 @@ describe("providerAccentForegroundColor", () => {
 });
 
 describe("shouldShowInstanceBadge", () => {
+  // SCIENT-FORK:START
   it("does not count a disabled account as another selectable instance", () => {
     const entry = { driverKind: codex, enabled: true };
     const disabled = { driverKind: codex, enabled: false };
     expect(shouldShowInstanceBadge(entry, [entry, disabled])).toBe(false);
     expect(shouldShowInstanceBadge(entry, [entry, { ...disabled, enabled: true }])).toBe(true);
   });
+  // SCIENT-FORK:END
   it("hides badges for distinct ACP agents sharing the registry driver", () => {
     const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe", enabled: true };
     const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin", enabled: true };

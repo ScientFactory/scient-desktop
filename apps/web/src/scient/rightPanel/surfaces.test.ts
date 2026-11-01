@@ -6,6 +6,7 @@ import {
   scientComputeSurface,
   scientEnvironmentFileSurface,
   scientGeneratedPdfSurface,
+  scientOverleafReviewSurface,
   scientRightPanelSurfaceTitle,
   scientSkillSurface,
   scientSourcePdfSurface,
@@ -288,5 +289,22 @@ describe("Scient right-panel surfaces", () => {
       line: 42,
     });
     expect(JSON.stringify(surface)).not.toContain("api/assets");
+  });
+
+  it("keeps an Overleaf review tab across a restart, one per link", () => {
+    const surface = scientOverleafReviewSurface({
+      cwd: "/work/project",
+      connectionId: "c1-link",
+      folder: "papers/thesis",
+    });
+    expect(surface.id).toBe("scient:overleaf-review:%2Fwork%2Fproject:c1-link");
+    expect(normalizeScientRightPanelSurface(JSON.parse(JSON.stringify(surface)))).toEqual(surface);
+    expect(scientRightPanelSurfaceTitle(surface)).toBe("Overleaf · thesis");
+    expect(
+      scientRightPanelSurfaceTitle(
+        scientOverleafReviewSurface({ cwd: "/p", connectionId: "c2", folder: "" }),
+      ),
+    ).toBe("Overleaf");
+    expect(normalizeScientRightPanelSurface({ ...surface, connectionId: "../escape" })).toBeNull();
   });
 });

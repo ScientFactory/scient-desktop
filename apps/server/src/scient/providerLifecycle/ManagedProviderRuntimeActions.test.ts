@@ -35,7 +35,6 @@ import {
   makeManagedProviderRuntimeDiagnostics,
   makeManagedProviderRuntimeResolution,
   managedRuntimeInstallationFailureMessage,
-  nativeProviderRuntimeBackendLabel,
   parseConfiguredRuntimeVersion,
   resolveManagedRuntimePolicy,
   resolveManagedRuntimeSource,
@@ -699,12 +698,6 @@ describe("managed provider runtime diagnostics", () => {
         backend: "macOS native",
       }).version,
     ).toBeNull();
-  });
-
-  it("uses truthful platform-specific backend labels", () => {
-    expect(nativeProviderRuntimeBackendLabel("darwin")).toBe("macOS native");
-    expect(nativeProviderRuntimeBackendLabel("win32")).toBe("Windows native");
-    expect(nativeProviderRuntimeBackendLabel("linux")).toBe("Linux native");
   });
 });
 

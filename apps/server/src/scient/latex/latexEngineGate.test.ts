@@ -217,6 +217,7 @@ describe("evaluateLatexEngineGate", () => {
       expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
     });
 
+    // regression: 78c4bb1678 fix(latex): let engine-conditional documents past the engine gate
     it.each([
       "\\ifPDFTeX",
       "\\ifpdftex",
@@ -431,6 +432,7 @@ describe("compiler resolution", () => {
     ).toEqual({ engine: "pdflatex", error: null });
   });
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it.each(["context", "latex", "xelatex-custom", "xelatex2", "lualatex-dev", "pdftexish"])(
     "does not interpret the unsupported full declaration %s as a supported compiler",
     (declaration) => {
@@ -499,6 +501,7 @@ describe("compiler resolution", () => {
     },
   );
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it.each([
     { declaration: "pdflatex", engine: "pdflatex" },
     { declaration: "pdftex", engine: "pdflatex" },

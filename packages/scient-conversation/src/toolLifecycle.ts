@@ -1,13 +1,6 @@
 /**
- * One tool call's lifecycle as a single record.
- *
- * V1 recorded a tool call as many work-log rows: `tool.started`, a
- * `tool.updated` for every progress report, and `tool.completed`. Native V2
- * keeps one item per call and updates it in place. This folds the V1 rows of
- * one call into one record without losing content: the last row wins, and any
- * field it lacks, at the top level or inside `data`, comes from the newest
- * earlier row that has it. Pure, so the V2 importer and any other reader of V1
- * rows fold the same way; presentation limits belong to the caller.
+ * V1 progress rows must fold without losing fields: use the newest value at each top-level/data
+ * field. Keep this policy pure and shared by import/readers; presentation limits belong to callers.
  */
 
 export interface ToolLifecycleRow {

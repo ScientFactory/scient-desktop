@@ -217,6 +217,14 @@ Returns:
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
 
+The model list is short on purpose: catalogs such as OpenCode can hold hundreds
+of models, and every call lands in the agent's context. Each provider lists
+custom, favorite, and the caller's own models, plus all current (non-legacy)
+models for Codex, Claude, Muse, and Grok, or the first 8 current models in the
+user's model order for other providers. `omittedModels` counts the rest, and the
+`search` input finds them, legacy models included. `delegate_task` still accepts
+any catalog model.
+
 ### `delegate_task`
 
 Creates a Scient-owned child thread and immediately dispatches the supplied task
@@ -254,13 +262,14 @@ omits it for a provider that offers all of them. When the target lists
 `runtimeModes`, an explicit `runtimeMode` outside that list is refused, and an
 inherited mode steps down to the broadest mode the target offers.
 
-Each delegated review round uses a new `delegate_task` call with the original brief,
-prior findings, responses, and unresolved objections. Track each round by its own `taskId` and use
-a distinct `clientRequestId` per round, stable across retries of that round.
-`childThreadId` is backing storage, not a target for another review round through
-`scient_thread_send`. Ordinary thread messaging remains available for user-requested
-conversations; it does not reopen a completed task. There is no task-level follow-up
-API for preserving the same reviewer session.
+Each independent delegated review round uses a new `delegate_task` call with the
+original brief, prior findings, responses, and unresolved objections. Track each
+round by its own `taskId` and use a distinct `clientRequestId` per round, stable
+across retries of that round.
+A follow-up that needs the same child's conversation goes through `scient_thread_send`
+on its `childThreadId`. After the original task completes, that follow-up runs as a
+fresh task in the child thread; it does not reopen the completed task or change its
+published result.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
@@ -271,9 +280,9 @@ provider session. The request becomes the V2 command
 the timeout expires. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`. A pending blocking
 question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
-If `hasPendingQuestion`, pass `threadId=childThreadId` to `scient_pending_request_list`,
-`scient_pending_request_read` (with `requestId`) and `scient_pending_request_respond`, or ask
-the user; the task's completion still wakes this thread. A pending live approval for the
+If `hasPendingQuestion`, pass `threadId=childThreadId` to `scient_pending_request` with
+action `list`, `read` (with `requestId`), or `respond`, or ask the user; the task's
+completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
 responding, since the durable record can outlive its provider callback. Async questions
@@ -366,7 +375,9 @@ Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
-interaction modes than the caller. Launch has no retry key, so inspect existing threads after a failed or lost response before
+interaction modes than the caller. As for `delegate_task`, a runtime mode the
+provider does not offer is refused, and an inherited or default one steps down
+to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
 ### `scient_thread_list`
@@ -376,22 +387,16 @@ given, else the calling thread's project. Callers can filter by title, run
 status, and whether app-owned sub-agent threads are included. Results are
 bounded and offset-paginated. Deleted threads are never listed.
 
-### `scient_thread_read`
+### `scient_handoff_summary_read`
 
-Reads a thread's durable summary and visible timeline within the calling
-thread's project. A missing or deleted target returns `thread_not_found`;
-a target in another project returns `thread_outside_project`.
-
-The default `messages` view returns user and assistant messages and proposed
-plans. The `activity` view includes tool, reasoning, checkpoint, handoff and
-runtime-request items. The result contains `thread`, `items`, `nextPosition`
-and `hasMore`. `afterPosition` pages through history; `itemId`, `textOffset`
-and `maxCharsPerItem` allow reading an individual item's remaining text.
-Truncated text reports `textTruncated` and `nextTextOffset`.
-
-This preserved Scient history reader is distinct from upstream's native
-thread-management read operation. Do not assume native `recentRuns`, thread
-links, provenance or snooze fields are part of this history-reader response.
+Reads a saved context-handoff summary that was too large to include in
+delivered history. Input is `threadId`, `contextHandoffId` and an optional
+`textOffset`; the result is a 20,000-character `text` page and
+`nextTextOffset`, null at the end. It requires `threads:read` and reads the
+calling thread or a non-deleted thread in its project. A missing thread or a
+handoff the thread does not retain returns `thread_not_found`; a thread in
+another project returns `thread_outside_project`. Timeline history is read with
+`scient_thread_inspect`.
 
 ### `scient_thread_inspect`
 
@@ -400,13 +405,19 @@ orchestration service. Provider-thread callers may inspect their project or a
 thread explicitly attached by the user as context. External clients use their
 approved environment authority. Reading a complete terminal result from a
 direct app-owned child also acknowledges that child's completion delivery.
-This is separate from the narrow `scient_thread_read` history reader.
 
-Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. The
-link carries only the id. Clients first resolve it in the message's environment,
-then use a unique match in another enabled environment. Ambiguous matches stay
-unresolved. Web and desktop show the resolved thread’s current title. Mobile
-relabels local matches; cross-environment links can retain the written label.
+Agents mention another thread by the `link` its result carries,
+`<t3-thread://v2/<environmentId>/<threadId>>`, so they never format an id or
+write a title, which goes stale when the user renames the thread. The
+environment that owns the thread builds the link, so forwarded results and tasks
+delegated to a linked environment name that environment. Clients open only that
+environment's thread and show its current title; a link to a thread they do not
+know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
+links name no environment: clients resolve them in the message's environment,
+then by a unique match in another enabled environment. An outside OAuth client,
+one that is not a linked environment, cannot render `t3-thread://` links, so it
+gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
+for threads in this environment.
 
 An explicitly environment-qualified historical link stays bound to that
 environment; it must not silently resolve to the same thread ID elsewhere.

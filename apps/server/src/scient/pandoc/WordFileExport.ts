@@ -1,16 +1,7 @@
 /**
- * Project Markdown file → Word.
- *
- * Reads the saved file through the workspace file system and refuses when it
- * is not the editor's revision. Source, local images, bibliographies, and
- * LaTeX dependencies are captured under settled reads and one fixed workspace
- * mutation epoch; conversion holds no workspace lease. The same epoch fences
- * acceptance of the converted output. The converter cannot reopen project
- * images; unmatched Pandoc image URLs become visible placeholders. YAML CSL
- * references and allowlisted local bibliographies travel with the bundle.
- *
- * The Word file goes to the same temporary export location as conversation
- * exports and is read through a signed asset.
+ * Capture saved revision/dependencies under settled reads and one mutation epoch; convert without a
+ * workspace lease and fence output acceptance with that same epoch. Converters must not reopen
+ * images; unmatched URLs become placeholders.
  */
 import {
   ScientWordExportError,

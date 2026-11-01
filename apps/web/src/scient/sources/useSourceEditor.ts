@@ -38,6 +38,7 @@ export function useSourceEditor(input: {
     setResult(null);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- rotates the generation token so stale editor completions from a previous context are ignored
   useEffect(() => {
     const context = `${previousContext.environmentId}\0${previousContext.root}\0${previousContext.sourceId}`;
     generation.current = Symbol(context);

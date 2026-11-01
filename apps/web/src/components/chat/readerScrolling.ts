@@ -17,10 +17,10 @@ import { returnToLiveFollow } from "./liveFollowOffset";
 import {
   readerAtReadingEnd,
   readingEndGapOnScreen,
+  restingEndGrowth,
   readingIdentity,
   resolveReadingRow,
 } from "./readerScrollPolicy";
-import type { CitationHistoryPage } from "./useAssistantCitationTarget";
 import { flushTimelinePositions } from "./readingPositionStore";
 import {
   rememberTimelinePosition,
@@ -29,12 +29,16 @@ import {
 
 type ReadingDisclosures = NonNullable<RememberedTimelinePosition["disclosures"]>;
 
+/** One older page of the thread, requested while the restore looks for its saved message. */
+export interface ReadingHistoryPage {
+  readonly loading: boolean;
+  readonly cursor?: string | null;
+  readonly onLoadEarlier: () => void;
+}
+
 /**
- * Tracks the reader's own input on the timeline: clicks and keys that may
- * toggle content, and scrolling the reader does themselves, recorded in the
- * caller's refs. Idle end keeping and the per-frame bookkeeping read this
- * state; neither acts on the reader's own movement. Returns whether a click
- * or key just happened (interaction settling).
+ * Idle end-keeping and frame bookkeeping must respect recorded reader input rather than acting on
+ * the reader's own movement. Track click/key settling separately from autonomous follow.
  */
 export function useReaderScrollInput({
   listRef,
@@ -56,6 +60,7 @@ export function useReaderScrollInput({
   // so the toggled content keeps its place instead of being pinned to its end.
   const [interactionSettling, setInteractionSettling] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches wheel/touch/pointer/key scroll-input listeners to the timeline viewport and document while mounted
   useEffect(() => {
     if (!viewport) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -128,7 +133,6 @@ export function useReaderScrollInput({
  */
 export function useSaveReadingPosition({
   listRef,
-  paintOnly = false,
   restoringThreadPosition,
   readingListLoaded,
   positionHistoryLoading,
@@ -147,8 +151,6 @@ export function useSaveReadingPosition({
   workGroupViewState,
 }: {
   listRef: RefObject<LegendListRef | null>;
-  /** A held timeline paints its previous thread without changing its reading receipt. */
-  paintOnly?: boolean;
   restoringThreadPosition: boolean;
   readingListLoaded: boolean;
   positionHistoryLoading: boolean;
@@ -174,7 +176,6 @@ export function useSaveReadingPosition({
     const state = listRef.current?.getState?.();
     if (
       threadKey !== listIdentityKey ||
-      paintOnly ||
       restoringThreadPosition ||
       !readingListLoaded ||
       positionHistoryLoading ||
@@ -214,9 +215,11 @@ export function useSaveReadingPosition({
     });
   });
   const saveReadingPositionRef = useRef(saveReadingPosition);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps saveReadingPositionRef current with the latest closure for the pagehide listener
   useLayoutEffect(() => {
     saveReadingPositionRef.current = saveReadingPosition;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the reading position to the positions store on pagehide and unmount; owns the pagehide listener
   useLayoutEffect(() => {
     const save = () => {
       saveReadingPositionRef.current(listIdentityKey);
@@ -253,7 +256,6 @@ export interface RestingAtReadingEnd {
 export function useReadingBookkeepingFrame({
   handleScroll,
   listRef,
-  paintOnly = false,
   contentInsetEndAdjustment,
   restingAtReadingEndRef,
   readerInputRef,
@@ -269,8 +271,6 @@ export function useReadingBookkeepingFrame({
 }: {
   handleScroll: () => void;
   listRef: RefObject<LegendListRef | null>;
-  /** A held timeline has no active reader-position owner. */
-  paintOnly?: boolean;
   contentInsetEndAdjustment: number;
   restingAtReadingEndRef: RefObject<RestingAtReadingEnd | null>;
   readerInputRef: RefObject<boolean>;
@@ -289,6 +289,7 @@ export function useReadingBookkeepingFrame({
   // new rows or state arrive on top of them. The position, unread and end
   // bookkeeping runs at most once per frame, with the latest state.
   const handleScrollRef = useRef(handleScroll);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps handleScrollRef current with the latest handleScroll for the per-frame scheduler
   useLayoutEffect(() => {
     handleScrollRef.current = handleScroll;
   });
@@ -297,7 +298,6 @@ export function useReadingBookkeepingFrame({
   // the last message's text where it was. New rows, streaming, reveals, and
   // content the reader just toggled never move the reader.
   const idleEndKeeping =
-    !paintOnly &&
     !isWorking &&
     !revealActive &&
     !interactionSettling &&
@@ -307,6 +307,7 @@ export function useReadingBookkeepingFrame({
     !anchoredEndSpace &&
     !disclosureToggleSettling;
   const idleEndKeepingRef = useRef(idleEndKeeping);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps idleEndKeepingRef current with the latest idle end-keeping derivation for the frame scheduler
   useLayoutEffect(() => {
     idleEndKeepingRef.current = idleEndKeeping;
   });
@@ -328,14 +329,25 @@ export function useReadingBookkeepingFrame({
     // the list already compensated for leaves the on-screen gap unchanged.
     const contentEnd = gap + viewport.scrollTop;
     if (Math.abs(contentEnd - resting.contentEnd) <= 1) return;
-    const grown = gap - resting.gap;
+    const grown = restingEndGrowth(resting, gap, viewport.scrollTop);
     if (grown > 1) viewport.scrollTop += grown;
     // The refs are the caller's stable useRef objects; listing them changes nothing.
   });
   const keepReadingEndInViewRef = useRef(keepReadingEndInView);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps keepReadingEndInViewRef current with the latest closure for the frame scheduler
   useLayoutEffect(() => {
     keepReadingEndInViewRef.current = keepReadingEndInView;
   });
+  // A finished restore leaves the reader where it placed them: record that at
+  // once, so late layout in the very next frame is kept in view too (idle end
+  // keeping needs where the reader rests, which the bookkeeping records).
+  const restoringRef = useRef(restoringThreadPosition);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the reader's rest position via handleScroll the moment a restore finishes, so the next frame's idle end keeping sees it
+  useLayoutEffect(() => {
+    const restored = restoringRef.current && !restoringThreadPosition;
+    restoringRef.current = restoringThreadPosition;
+    if (restored) handleScrollRef.current();
+  }, [restoringThreadPosition]);
   const bookkeepingFrameRef = useRef<number | null>(null);
   const handleScrollOnNextFrame: () => void = useStableCallback(() => {
     if (bookkeepingFrameRef.current !== null) return;
@@ -345,9 +357,11 @@ export function useReadingBookkeepingFrame({
       handleScrollRef.current();
     });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the per-frame bookkeeping scheduler into the caller's shared ref
   useLayoutEffect(() => {
     scheduleBookkeepingRef.current = handleScrollOnNextFrame;
   }, [handleScrollOnNextFrame, scheduleBookkeepingRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending requestAnimationFrame bookkeeping frame held until unmount
   useEffect(
     () => () => {
       if (bookkeepingFrameRef.current !== null) {
@@ -380,11 +394,8 @@ export interface ReadingHistoryPages {
 }
 
 /**
- * Where a saved reading position lands in the loaded rows: its message, else
- * the same run, else a neighbor message (readerScrollPolicy.resolveReadingRow).
- * A saved message that is not loaded yet pages in up to
- * MAX_READING_HISTORY_PAGES older pages first; after that a neighbor or the
- * end is used, so a revert or a deleted turn never loads the whole history.
+ * Page history only to the bounded limit before falling back to same-run/neighbor/end.
+ * Deleted/reverted targets must not force loading the entire conversation.
  */
 export function useReadingRestoreTarget({
   rows,
@@ -401,7 +412,7 @@ export function useReadingRestoreTarget({
   rememberedPosition: RememberedTimelinePosition | undefined;
   restoringThreadPosition: boolean;
   positionHistoryLoading: boolean;
-  loadEarlier: CitationHistoryPage | null;
+  loadEarlier: ReadingHistoryPage | null;
   listIdentityKey: string;
   readingHistoryPages: ReadingHistoryPages;
   setReadingHistoryPages: Dispatch<SetStateAction<ReadingHistoryPages>>;
@@ -423,6 +434,7 @@ export function useReadingRestoreTarget({
     !!rememberedPosition &&
     restoreTarget === null &&
     !readingHistoryExhausted;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests older reading-history pages from the list's loader while a restore waits for the saved message
   useEffect(() => {
     if (
       !waitingForReadingHistory ||
@@ -453,12 +465,8 @@ export function useReadingRestoreTarget({
 }
 
 /**
- * Restores a thread's saved reading position when its list opens: the saved
- * row and offset (also when it was saved at the end), back to a follow the
- * reader left, or the end when nothing was saved. Settles for up to 60
- * frames and gives up visibly (setAbandonedPositionKey). The reader's own
- * wheel, touch, press or scroll key cancels it, and ChatView cancels it
- * through cancelPositionRestoreRef.
+ * Bound restore settling and report abandonment visibly. Reader wheel/touch/press/scroll keys
+ * cancel restoration; use the caller's cancellation ref for thread/view ownership changes.
  */
 export function useReadingPositionRestore({
   listRef,
@@ -499,6 +507,7 @@ export function useReadingPositionRestore({
   setPositionedThreadKey: (threadKey: string) => void;
   setAbandonedPositionKey: (threadKey: string) => void;
 }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the saved scroll position in the list viewport and owns the cancel-on-input listeners while restoring
   useLayoutEffect(() => {
     if (!restoringThreadPosition || rows.length === 0 || !readingListLoaded) return;
     const list = listRef.current;
@@ -540,6 +549,18 @@ export function useReadingPositionRestore({
     const index = restoreRowIndex;
     const targetRowId = rows[index]?.id;
     if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
+    // Placing at the end only ever scrolls down (or clamps at the end). Moving up without
+    // wheel, touch, press or key input (a screen reader moving to a heading) is the reader's.
+    let lastScrollTop = viewport?.scrollTop ?? 0;
+    const onScrollAwayFromEnd = () => {
+      if (!viewport) return;
+      const top = viewport.scrollTop;
+      const movedUp = top < lastScrollTop - 1;
+      lastScrollTop = top;
+      if (movedUp && viewport.scrollHeight - viewport.clientHeight - top > 1) {
+        cancelForNavigation();
+      }
+    };
     const cleanup = () => {
       cancelled = true;
       if (cancelPositionRestoreRef?.current === cancelRestoration) {
@@ -550,6 +571,7 @@ export function useReadingPositionRestore({
       viewport?.removeEventListener("touchmove", cancelForNavigation);
       viewport?.removeEventListener("pointerdown", cancelForNavigation);
       viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+      viewport?.removeEventListener("scroll", onScrollAwayFromEnd);
     };
     if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
     // Left while following: back to where the follow is now (chat/liveFollowOffset.ts).
@@ -571,6 +593,9 @@ export function useReadingPositionRestore({
         },
       });
       return cleanup;
+    }
+    if (!position || index < 0) {
+      viewport?.addEventListener("scroll", onScrollAwayFromEnd, { passive: true });
     }
     const scrolling =
       position && index >= 0

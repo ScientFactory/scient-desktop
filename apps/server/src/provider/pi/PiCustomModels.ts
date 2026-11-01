@@ -29,8 +29,8 @@ import {
   PiRpcConfigurationError,
   type PiRpcClient,
   type PiRpcSpawnOptions,
-} from "./PiRpcClient.ts";
-import type { PiRpcModel } from "./PiRpcSchema.ts";
+} from "@t3tools/provider-pi/server/rpcClient";
+import type { PiRpcModel } from "@t3tools/provider-pi/server/rpcSchema";
 
 /** Explicit maps prevent Pi from inventing its standard Off–High ladder. */
 export function piCustomModelReasoning(

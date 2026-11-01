@@ -52,11 +52,8 @@ const hookPolicy = (allowManagedHooksOnly: unknown): DroidOrgHookPolicy =>
 const nonEmpty = (value: string | undefined) => (value?.trim() ? value.trim() : undefined);
 
 /**
- * The value Droid sees for `name`, or `ambiguous`. Windows looks environment
- * names up case-insensitively, so every spelling of `name` reaches Droid; when
- * spellings disagree, which one the process gets is not defined by the
- * environment object, so Scient cannot rule out the other. Elsewhere names are
- * case-sensitive. Empty values count as absent, as Droid treats them.
+ * Windows names are case-insensitive; conflicting spellings make the value ambiguous because the
+ * environment object cannot determine which reaches Droid. Empty values count as absent.
  */
 const environmentValue = (
   environment: NodeJS.ProcessEnv,
@@ -74,15 +71,9 @@ const environmentValue = (
 };
 
 /**
- * Reads the organization policy sources Droid itself reads, in its order
- * (from Droid 0.213.0 and 0.230.0): a system managed-settings file that
- * exists (even unreadable) is the only source; otherwise
- * `FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH`; otherwise
- * `FACTORY_ORG_MANAGED_SETTINGS_URL`; otherwise Factory's API, whose last
- * answer Droid caches in its settings folder (`org-managed-settings.cache.json`
- * on 0.230, `cache/org-managed-settings.json` on 0.213; each with a
- * `.backup`). Without a cache, or with a stale one, the API's current answer
- * is not visible here; the session-start check covers what Droid resolved.
+ * Follow Droid precedence: existing system settings (even unreadable), local-path override, URL
+ * override, then API/cache. Missing/stale caches cannot prove current API policy; the session-start
+ * check must cover what Droid actually resolved.
  */
 export const readDroidOrgHookPolicy = Effect.fn("readDroidOrgHookPolicy")(function* (input: {
   readonly environment: NodeJS.ProcessEnv;

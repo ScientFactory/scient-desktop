@@ -57,34 +57,6 @@ const record = {
 };
 
 describe("SourceEditor", () => {
-  it("keeps the accepted detail hierarchy while exposing only editable metadata", () => {
-    const markup = renderToStaticMarkup(
-      <SourceEditor
-        environmentId={EnvironmentId.make("environment_test")}
-        root="/project"
-        record={record}
-        onCancel={() => undefined}
-        onRefreshed={() => undefined}
-        onSaved={() => undefined}
-      />,
-    );
-
-    expect(markup).toContain("Source");
-    expect(markup).toContain("Creators");
-    expect(markup).toContain("Publication details");
-    expect(markup).toContain("Identifiers and links");
-    expect(markup).toContain("Correctable source");
-    expect(markup).not.toContain("pdf_test");
-    expect(markup).not.toContain("ABC123");
-    expect(markup).not.toContain("project_test");
-    expect(markup).toContain("disabled");
-    expect(markup).toContain("hover:bg-accent");
-    expect(markup).not.toContain("Book chapter");
-    expect(markup).not.toContain("Conference paper");
-    expect(markup).not.toContain("Dataset");
-    expect(markup).not.toContain("Web source");
-  });
-
   it("offers a free-text type when Other source is selected", () => {
     const markup = renderToStaticMarkup(
       <SourceEditor

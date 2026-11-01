@@ -136,7 +136,6 @@ export const HelloPayload = Schema.Struct({
   requiredCapabilities: Schema.Array(ComputeCapability),
   ownerToken: Schema.NonEmptyString.check(Schema.isMaxLength(MaxOwnerTokenLength)),
 });
-export type HelloPayload = typeof HelloPayload.Type;
 
 export const HelloAckPayload = Schema.Struct({
   ownerToken: Schema.NonEmptyString.check(Schema.isMaxLength(MaxOwnerTokenLength)),
@@ -162,13 +161,9 @@ export type KernelPortsPayload = typeof KernelPortsPayload.Type;
 export const StartKernelPayload = Schema.Struct({
   workingDirectory: Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength)),
   /**
-   * Which kernel to start.
-   *
-   * `null` starts an `ipykernel` inside the bridge's own interpreter, which is
-   * the Python case: the server already chose that interpreter when it spawned
-   * the bridge, so no kernelspec lookup can redirect it.  A name selects an
-   * installed Jupyter kernelspec instead, which is how a future non-Python
-   * language reuses this transport without the bridge knowing the language.
+   * A null kernelspec starts ipykernel in the already-selected bridge interpreter, preventing
+   * kernelspec lookup from redirecting Python. Named kernelspecs are reserved for other installed
+   * runtimes.
    */
   kernelName: Schema.NullOr(Label),
   /**
@@ -209,7 +204,6 @@ export const KernelReadyPayload = Schema.Struct({
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   capabilities: Schema.Array(ComputeCapability),
 });
-export type KernelReadyPayload = typeof KernelReadyPayload.Type;
 
 export const ExecutePayload = Schema.Struct({
   code: Schema.String.check(Schema.isMaxLength(MaxCodeLength), utf8Bound(MaxCodeLength)),
@@ -343,7 +337,6 @@ export type InterruptPayload = typeof InterruptPayload.Type;
 export const InterruptResultPayload = Schema.Struct({
   result: Schema.Literals(["interrupted", "terminal", "rejected", "timeout"]),
 });
-export type InterruptResultPayload = typeof InterruptResultPayload.Type;
 
 export const InspectVariablesPayload = Schema.Struct({});
 export type InspectVariablesPayload = typeof InspectVariablesPayload.Type;
@@ -361,17 +354,12 @@ export const RestartPayload = Schema.Struct({
 export type RestartPayload = typeof RestartPayload.Type;
 
 /**
- * The new generation is not in here on purpose.
- *
- * Every message already carries a `generation` in its envelope, and that is the
- * one the sequence and identity checks validate. A second copy in the payload
- * could disagree with it, and there would be no principled way to say which one
- * the session is actually at.
+ * The envelope generation is the sole identity/sequence authority. Duplicating it in the payload
+ * could disagree with no principled winner.
  */
 export const RestartedPayload = Schema.Struct({
   kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
-export type RestartedPayload = typeof RestartedPayload.Type;
 
 export const ShutdownPayload = Schema.Struct({});
 export type ShutdownPayload = typeof ShutdownPayload.Type;
@@ -385,12 +373,8 @@ export const FatalPayload = Schema.Struct({
 export type FatalPayload = typeof FatalPayload.Type;
 
 /**
- * Compiled once at module load, keyed by message type.
- *
- * Every stream chunk, display and diagnostic the kernel produces passes through
- * this table, so compiling a decoder per message would put schema compilation
- * on the output hot path.  The `Record<BridgeMessageType, ...>` type makes a
- * new message type a compile error until it has a payload schema.
+ * Compile decoders once: every kernel output passes here, so per-message schema compilation would
+ * burden the hot path. Keep exhaustive message-type coverage in the Record type.
  */
 const PAYLOAD_DECODERS: Readonly<Record<BridgeMessageType, (input: unknown) => unknown>> = {
   hello: Schema.decodeUnknownSync(HelloPayload),

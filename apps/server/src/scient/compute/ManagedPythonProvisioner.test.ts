@@ -106,6 +106,7 @@ describe("ManagedPythonProvisioner", () => {
     };
   };
 
+  // regression: 908a782aac fix(compute): use physical paths for packaged runtimes
   it.each(["app.asar", "server.asar"])(
     "can start the installer when bundled recipes live inside %s",
     async (archiveName) => {
@@ -145,6 +146,7 @@ describe("ManagedPythonProvisioner", () => {
     },
   );
 
+  // regression: 908a782aac fix(compute): use physical paths for packaged runtimes
   it.each(["app.asar", "server.asar"])(
     "can finish scientific verification when recipes live inside %s",
     async (archiveName) => {

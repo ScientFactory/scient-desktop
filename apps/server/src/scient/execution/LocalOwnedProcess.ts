@@ -9,11 +9,8 @@ export interface LocalOwnedProcessRequest {
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
   /**
-   * Whether to merge the host environment into `environment`. Defaults to
-   * `true` for backward compatibility. Compute launches pass a complete
-   * sanitized environment with `extendEnv: false`; passing a sanitized record
-   * while the process layer silently re-adds the host environment is not
-   * sanitization.
+   * Compute supplies a complete sanitized environment with extendEnv false; merging host variables
+   * back would undo sanitization. The default remains true for compatibility.
    */
   readonly extendEnv?: boolean;
 }
@@ -55,18 +52,9 @@ export const makeLocalOwnedProcessCleanup = Effect.fnUntraced(function* (
 });
 
 /**
- * Ensure the detached Unix process group owned by a Scient launch is gone.
- *
- * Effect's process layer waits for the direct child after signalling the owned
- * tree. That is not enough on Unix: once the direct child exits, a descendant
- * can ignore SIGTERM indefinitely and the process layer no longer reaches its
- * force-kill deadline. Give cooperative descendants a short grace period,
- * then escalate the still-owned process group to SIGKILL and prove it is gone.
- *
- * Windows uses the process layer's synchronous `taskkill /T /F` contract. It
- * does not expose an equivalent stable process-group identity that can be
- * probed safely here, so Windows remains qualified by that process-layer
- * boundary rather than by the Unix proof below.
+ * A direct child can exit while descendants ignore SIGTERM, bypassing Effect's force-kill deadline.
+ * After a grace period, SIGKILL the owned Unix group and prove it is gone. Windows relies on
+ * synchronous taskkill /T /F because no equivalent stable group identity is exposed.
  */
 function ensureLocalOwnedProcessTreeExit(
   pid: number,

@@ -1,7 +1,5 @@
-import { buildCodexDeveloperInstructions } from "./CodexDeveloperInstructions.ts";
 import * as NodeAssert from "node:assert/strict";
 
-import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { describe, it } from "vite-plus/test";
 
@@ -9,10 +7,12 @@ import {
   buildCodexAdditionalContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
+// SCIENT-FORK:START — Scient awareness carries the device block.
+import { SCIENT_DEVICE_TOOL_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
+// SCIENT-FORK:END
 
 describe("buildCodexAdditionalContext", () => {
   describe.each([
-    { model: "gpt-5.3-codex", reasoningEffort: "high" },
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
   ])("with runtime $model", (runtime) => {
     it.each([
@@ -42,36 +42,22 @@ describe("buildCodexAdditionalContext", () => {
       }
     });
   });
-
-  it("delivers all orchestration sections in authored order when keys are sorted", () => {
-    const context = buildCodexAdditionalContext({
-      model: "gpt-5.3-codex",
-      reasoningEffort: "high",
-    });
-    const sections = Object.keys(context)
-      .filter((key) => key.startsWith("t3_code_orchestration_"))
-      .sort()
-      .map((key) => context[key]!);
-
-    NodeAssert.ok(sections.every((entry) => entry.kind === "application"));
-    NodeAssert.equal(
-      sections.map((entry) => entry.value).join("\n\n"),
-      SCIENT_ORCHESTRATION_INSTRUCTIONS.trim(),
-    );
-  });
 });
 
-describe("buildCodexDeveloperInstructions", () => {
-  it("appends runtime info after the mode instructions", () => {
+describe("Codex runtime context", () => {
+  it("describes Markdown media and file links in the runtime context", () => {
+    NodeAssert.match(
+      runtimeInstructions({ model: "gpt-5.3-codex", reasoningEffort: "high" }),
+      /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link any other file.*absolute path.*Scient's files viewer.*<\/runtime_info>/,
+    );
+  });
+
+  it("names Scient, the Codex harness, the model and the effort", () => {
     const instructions = runtimeInstructions({
       model: "gpt-5.3-codex",
       reasoningEffort: "high",
     });
 
-    NodeAssert.match(
-      buildCodexDeveloperInstructions("default"),
-      /^<collaboration_mode># Collaboration Mode: Default/,
-    );
     NodeAssert.match(instructions, /Scient/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
@@ -88,37 +74,63 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
-describe("T3 browser developer instructions", () => {
+describe("Scient browser awareness", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
 
-  it("prefers the product-native preview tools in both collaboration modes", () => {
-    {
-      const instructions = toolInstructions(runtime, true);
-      NodeAssert.match(instructions, /Scient browser/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(
-        instructions,
-        /Use another browser system only when these tools are unavailable/,
-      );
-    }
+  it("prefers the product-native preview tools when preview is granted", () => {
+    const instructions = toolInstructions(runtime, true);
+    NodeAssert.match(instructions, /Scient browser/);
+    NodeAssert.match(instructions, /preview_status/);
+    NodeAssert.match(instructions, /preview_open/);
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = toolInstructions(runtime, false);
-      NodeAssert.doesNotMatch(instructions, /preview_status/);
-      NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /Scient collaborative browser/);
-      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      NodeAssert.match(buildCodexDeveloperInstructions(mode), /<collaboration_mode>/);
-      NodeAssert.match(buildCodexDeveloperInstructions(mode), /<\/collaboration_mode>/);
-    }
+    const instructions = toolInstructions(runtime, false);
+    NodeAssert.doesNotMatch(instructions, /preview_status/);
+    NodeAssert.doesNotMatch(instructions, /preview_open/);
+    NodeAssert.doesNotMatch(instructions, /Scient browser/);
   });
+});
 
-  it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(toolInstructions(runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(toolInstructions(runtime, false), /preview_open/);
+describe("Codex orchestration context", () => {
+  it("routes subagents native first, delegate_task for the rest", () => {
+    const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
+      .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+      .map(([, entry]) => entry.value)
+      .join("\n");
+
+    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
+    NodeAssert.ok(orchestration.includes("A native type running another provider's model"));
+    NodeAssert.ok(
+      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
+    );
+    NodeAssert.ok(orchestration.includes("never a `scient_thread_send`"));
+    NodeAssert.ok(!orchestration.includes("inheritedOptions"));
+    NodeAssert.ok(!orchestration.includes("Prefer native"));
+    // The ACP terminal fallback is ACP-only; Codex agents never need it.
+    NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
+  });
+});
+
+describe("Codex device context", () => {
+  it("adds the shared device block only when the session holds device access", () => {
+    // SCIENT-FORK:START — Scient awareness carries the device block for granted capabilities.
+    const tools = (device: boolean) =>
+      Object.entries(
+        buildCodexAdditionalContext(
+          { model: "gpt-6.1-sol" },
+          new Set<McpCapability>(device ? ["preview", "device"] : ["preview"]),
+        ),
+      )
+        .filter(([key]) => key.startsWith("scient_awareness"))
+        .map(([, entry]) => entry.value)
+        .join("\n\n");
+
+    NodeAssert.ok(tools(true).includes(SCIENT_DEVICE_TOOL_INSTRUCTIONS));
+    NodeAssert.ok(!tools(true).includes("ToolSearch"));
+    NodeAssert.ok(!tools(false).includes("## Scient devices"));
+    // SCIENT-FORK:END
   });
 });
 

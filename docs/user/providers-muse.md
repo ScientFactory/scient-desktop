@@ -1,6 +1,6 @@
 # Muse Code
 
-Muse Code is a beta integration and is disabled by default. Enable it in
+Muse Code is disabled by default. Enable it in
 **Settings → Providers** on the environment that runs your threads.
 Use an existing [Muse Code](https://dev.meta.ai/docs/muse-code) installation,
 or install Scient's private copy from **Settings → Providers** or the composer.

@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- synthetic plugin folders only.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +19,7 @@ import type * as CodexSchema from "effect-codex-app-server/schema";
 import {
   CODEX_WORKSPACE_LISTING_CONCURRENCY,
   CodexInventoryIncomplete,
+  codexInstalledPluginRoots,
   makeCodexNativeInventory,
   optionalCodexInventory,
   parseCodexInstalledPlugins,
@@ -136,6 +142,7 @@ describe("parseCodexInstalledPlugins", () => {
       {
         id: "gitplug@openai-curated",
         name: "gitplug",
+        displayName: "Gitplug",
         marketplace: "OpenAI Curated",
         source: "remote",
         enabled: false,
@@ -144,6 +151,7 @@ describe("parseCodexInstalledPlugins", () => {
       {
         id: "mine@local",
         name: "mine",
+        displayName: "Mine",
         marketplace: "local",
         source: "local",
         enabled: true,
@@ -315,12 +323,35 @@ describe("makeCodexNativeInventory workspace listing", () => {
             return client;
           }),
         );
-        const report = yield* inventory.reports.pipe(Stream.runHead, Effect.forkChild);
+        const report = yield* Deferred.make<ProviderNativeInventory>();
+        const publishing = yield* Deferred.make<void>();
+        const publishedGate = yield* Deferred.make<void>();
         // Starting the listing returns at once; the scan is not held up.
-        yield* inventory.workspace.refresh("/repo");
-        yield* Effect.yieldNow;
+        yield* inventory.workspace.refresh("/repo", (value) =>
+          Deferred.succeed(publishing, undefined).pipe(
+            Effect.andThen(Deferred.await(publishedGate)),
+            Effect.andThen(Deferred.succeed(report, value)),
+            Effect.asVoid,
+          ),
+        );
         yield* Deferred.succeed(listingGate, undefined);
-        const { sequence, ...published } = Option.getOrThrow(yield* Fiber.join(report));
+        yield* Deferred.await(publishing);
+        const completed = yield* Deferred.make<void>();
+        const waiting = yield* inventory.workspace
+          .awaitCurrent("/repo")
+          .pipe(
+            Effect.andThen(Deferred.succeed(completed, undefined)),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        assert.isFalse(yield* Deferred.isDone(completed));
+        yield* Fiber.interrupt(waiting);
+        const nextWaiter = yield* inventory.workspace
+          .awaitCurrent("/repo")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        assert.isUndefined(nextWaiter.pollUnsafe());
+        yield* Deferred.succeed(publishedGate, undefined);
+        yield* Fiber.join(nextWaiter);
+        const { sequence, ...published } = yield* Deferred.await(report);
         assert.isNumber(sequence);
         assert.deepStrictEqual(published, {
           cwd: "/repo",
@@ -328,6 +359,7 @@ describe("makeCodexNativeInventory workspace listing", () => {
             {
               id: "a@home",
               name: "a",
+              displayName: "A",
               marketplace: "home",
               source: "local",
               enabled: true,
@@ -350,15 +382,15 @@ describe("makeCodexNativeInventory workspace listing", () => {
             Effect.never.pipe(Effect.onInterrupt(() => Ref.update(interrupted, (n) => n + 1))),
         });
         const inventory = yield* makeCodexNativeInventory(() => Effect.succeed(client));
-        yield* inventory.workspace.refresh("/repo");
+        yield* inventory.workspace.refresh("/repo", () => Effect.void);
         yield* Effect.yieldNow;
         yield* inventory.workspace.cancel("/repo");
         assert.strictEqual(yield* Ref.get(interrupted), 1);
         // A newer listing replaces a running one; other workspaces are untouched.
-        yield* inventory.workspace.refresh("/repo");
-        yield* inventory.workspace.refresh("/other");
+        yield* inventory.workspace.refresh("/repo", () => Effect.void);
+        yield* inventory.workspace.refresh("/other", () => Effect.void);
         yield* Effect.yieldNow;
-        yield* inventory.workspace.refresh("/repo");
+        yield* inventory.workspace.refresh("/repo", () => Effect.void);
         assert.strictEqual(yield* Ref.get(interrupted), 2);
       }),
     ),
@@ -374,14 +406,14 @@ describe("makeCodexNativeInventory workspace listing", () => {
           }),
         });
         const inventory = yield* makeCodexNativeInventory(() => Effect.succeed(client));
-        yield* inventory.workspace.refresh("/repo");
-        const report = yield* inventory.reports.pipe(
-          Stream.runHead,
-          Effect.timeoutOption("1 second"),
-          Effect.forkChild,
+        const reports: ProviderNativeInventory[] = [];
+        yield* inventory.workspace.refresh("/repo", (report) =>
+          Effect.sync(() => {
+            reports.push(report);
+          }),
         );
-        yield* TestClock.adjust("1 second");
-        assert.isTrue(Option.isNone(yield* Fiber.join(report)));
+        yield* inventory.workspace.awaitCurrent("/repo");
+        assert.deepStrictEqual(reports, []);
       }),
     ),
   );
@@ -408,7 +440,7 @@ describe("makeCodexNativeInventory listing bounds and order", () => {
           ).pipe(Effect.as(client)),
         );
         const workspaces = Array.from({ length: 20 }, (_, index) => `/repo-${index}`);
-        for (const cwd of workspaces) yield* inventory.workspace.refresh(cwd);
+        for (const cwd of workspaces) yield* inventory.workspace.refresh(cwd, () => Effect.void);
         for (let attempt = 0; attempt < 200; attempt++) yield* Effect.yieldNow;
         assert.strictEqual((yield* Ref.get(live)).peak, CODEX_WORKSPACE_LISTING_CONCURRENCY);
 
@@ -475,9 +507,9 @@ describe("makeCodexNativeInventory listing bounds and order", () => {
             }).client,
           ),
         );
-        yield* inventory.workspace.refresh("/a");
-        yield* inventory.workspace.refresh("/b");
-        yield* inventory.workspace.refresh("/c");
+        yield* inventory.workspace.refresh("/a", () => Effect.void);
+        yield* inventory.workspace.refresh("/b", () => Effect.void);
+        yield* inventory.workspace.refresh("/c", () => Effect.void);
         for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
         // "/c" is still waiting for a permit; it stops without ever asking Codex.
         yield* inventory.workspace.retain(Effect.succeed(new Set(["/a", "/b"])));
@@ -563,7 +595,8 @@ describe("makeCodexNativeInventory listing bounds and order", () => {
             ).pipe(Effect.as(client)),
           );
           // "/a" and "/b" run; "/c" and "/d" wait for a permit.
-          for (const cwd of ["/a", "/b", "/c", "/d"]) yield* inventory.workspace.refresh(cwd);
+          for (const cwd of ["/a", "/b", "/c", "/d"])
+            yield* inventory.workspace.refresh(cwd, () => Effect.void);
           for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
           assert.sameMembers(opened, ["/a", "/b"]);
 
@@ -609,17 +642,19 @@ describe("makeCodexNativeInventory listing bounds and order", () => {
               },
             ).pipe(Effect.as(client)),
           );
-          yield* inventory.workspace.refresh("/a");
+          yield* inventory.workspace.refresh("/a", () => Effect.void);
           for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
           assert.deepStrictEqual(opened, ["/a"]);
 
           // A newer scan of "/a" replaces its listing; the old one exits slowly.
-          const replacing = yield* inventory.workspace.refresh("/a").pipe(Effect.forkChild);
+          const replacing = yield* inventory.workspace
+            .refresh("/a", () => Effect.void)
+            .pipe(Effect.forkChild);
           yield* Deferred.await(teardownStarted);
           // Cancelling the replacement completes while teardown is still held.
           yield* Fiber.interrupt(replacing);
           // Other workspaces are not held up behind that teardown.
-          yield* inventory.workspace.refresh("/other");
+          yield* inventory.workspace.refresh("/other", () => Effect.void);
           for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
           assert.deepStrictEqual(opened, ["/a", "/other"]);
 
@@ -799,3 +834,57 @@ describe("makeCodexNativeInventory", () => {
     }),
   );
 });
+
+it.effect("finds plugin folders in Codex's cache by its own names, never outside the cache", () =>
+  Effect.gen(function* () {
+    const home = yield* Effect.acquireRelease(
+      Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-codex-roots-"))),
+      (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
+    );
+    const cache = NodePath.join(home, "cache");
+    const cached = NodePath.join(cache, "remote-store", "keyed", "1.0.0");
+    yield* Effect.promise(async () => {
+      await NodeFSP.mkdir(cached, { recursive: true });
+      await NodeFSP.mkdir(NodePath.join(home, "outside"), { recursive: true });
+    });
+    const roots = yield* codexInstalledPluginRoots(
+      {
+        marketplaces: [
+          {
+            name: "remote-store",
+            plugins: [
+              summary({
+                id: "keyed@remote",
+                name: "keyed",
+                version: "1.0.0",
+                source: { type: "remote" },
+              }),
+              summary({
+                id: "absent@remote",
+                name: "absent",
+                version: "1.0.0",
+                source: { type: "remote" },
+              }),
+              summary({
+                id: "escape@remote",
+                name: "..",
+                version: "outside",
+                source: { type: "remote" },
+              }),
+            ],
+          },
+        ],
+      },
+      cache,
+    );
+    const real = yield* Effect.promise(() => NodeFSP.realpath(cached));
+    assert.deepStrictEqual(
+      roots.map((plugin) => [plugin.id, plugin.root]),
+      [
+        ["keyed@remote", real],
+        ["absent@remote", undefined],
+        ["escape@remote", undefined],
+      ],
+    );
+  }).pipe(Effect.scoped),
+);

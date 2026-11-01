@@ -174,6 +174,8 @@ describe("document preparation without a mounted Visual editor", () => {
         pending = false;
         return true;
       },
+      inspect: () => (pending ? "unconverted" : "clean"),
+      commit: () => (pending ? "unconverted" : "clean"),
     });
     const result = await prepareLatexDocument(target, h.options);
     expect(result.ok).toBe(true);
@@ -190,6 +192,8 @@ describe("document preparation without a mounted Visual editor", () => {
       root: "chapter.tex",
       pending: () => true,
       finish: () => false,
+      inspect: () => "unconverted",
+      commit: () => "unconverted",
     });
     const result = await prepareLatexDocument(target, h.options);
     expect(result.ok).toBe(false);
@@ -242,6 +246,8 @@ describe("document preparation without a mounted Visual editor", () => {
       root: "chapter.tex",
       pending: () => true,
       finish: () => false,
+      inspect: () => "unconverted",
+      commit: () => "unconverted",
     });
     expect((await prepareLatexDocument(target, h.options)).ok).toBe(false);
   });
@@ -291,6 +297,8 @@ describe("compiler changes through the document owner", () => {
         pendingField = false;
         return true;
       },
+      inspect: () => (pendingField ? "unconverted" : "clean"),
+      commit: () => (pendingField ? "unconverted" : "clean"),
     });
     const result = await changeLatexDocumentCompiler({
       target,

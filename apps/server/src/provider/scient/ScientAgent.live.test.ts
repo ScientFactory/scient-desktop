@@ -1,12 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Opt-in suite against a real Scient Agent executable. Each part runs only
- * when its variables are set, so CI reports it as skipped rather than passed:
- *
- * - `SCIENT_AGENT_QUALIFY_BINARY`: the `scient-agent` executable to qualify.
- * - `OMP_QUALIFY_BINARY`: an `omp` executable, for the coexistence cases.
- * - `SCIENT_AGENT_QUALIFY_FULL_TURN=1`: also run a turn against a real model
- *   (`OMP_QUALIFY_MODEL`, default a local Ollama model).
+ * Opt in with SCIENT_AGENT_QUALIFY_BINARY; coexistence also needs OMP_QUALIFY_BINARY. Full model
+ * turns require SCIENT_AGENT_QUALIFY_FULL_TURN=1. Unconfigured cases must report skipped rather
+ * than passed.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

@@ -1,20 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Connector egress controls DNS resolution and sockets.
 /**
- * The one egress policy for every connector request (probe, OAuth discovery,
- * token, registration, revocation, test and proxy). See
- * docs/internals/scient-extensions.md "Outbound safety".
- *
- * - `https` only. The single exception is the exact loopback origin the user
- *   typed as a connector address; it never extends to any other origin,
- *   including metadata, authorization-server or redirect URLs that origin names.
- * - Every other host must resolve to public addresses. The check runs inside
- *   the socket's own DNS lookup, so the address that is checked is the
- *   address that is connected to (no DNS rebinding window).
- * - Only unauthenticated GET/HEAD requests (OAuth metadata discovery) follow
- *   redirects, each hop re-checked. Credentialed and body-carrying requests
- *   (probe, token, registration, revocation, proxied MCP) never do, so no
- *   credential or token-request body can be replayed to another origin.
- * - Responses are bounded in size and time.
+ * Permit HTTP only for the exact user-entered loopback origin, never origins it names. Check public
+ * DNS inside socket lookup to prevent rebinding. Only unauthenticated GET/HEAD may follow rechecked
+ * redirects; credentialed/body requests never replay. Bound response size/time.
  */
 import * as NodeDns from "node:dns";
 import * as NodeModule from "node:module";
@@ -119,11 +107,8 @@ const ipv4FromGroups = (high: number, low: number) =>
   `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 
 /**
- * Allow-list classification: only global unicast (`2000::/3`) outside the
- * special-purpose blocks is public. IPv4-mapped addresses are judged by their
- * IPv4 address, 6to4 by its embedded IPv4 address; NAT64, IPv4-compatible,
- * ULA, link- and site-local, Teredo, documentation and benchmarking ranges are
- * not public.
+ * Only global IPv6 unicast outside special ranges is public. Judge mapped/6to4 by embedded IPv4;
+ * reject NAT64, compatible/local, Teredo, documentation, and benchmark ranges.
  */
 const isPublicIpv6 = (address: string): boolean => {
   const g = ipv6Groups(address);

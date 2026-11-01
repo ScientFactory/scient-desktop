@@ -67,6 +67,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import { scientContextHandoffPolicy } from "../ScientContextHandoffPolicy.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
@@ -225,7 +226,6 @@ const cases: ReadonlyArray<{
     path: "fork",
     included: true,
   },
-  { name: "maximum", size: "maximum", historyBytes: 500_000, window: 1_000_000, included: true },
   {
     name: "override",
     size: "compact",
@@ -334,6 +334,7 @@ it.live.each(
     Effect.gen(function* () {
       const name = `scient-budget-${test.name}`;
       const currentInput = test.currentInput ?? defaultCurrentInput;
+      const fs = yield* FileSystem.FileSystem;
       const cwd = yield* checkpointWorkspace(name);
       const skillRegistry = test.skills
         ? Context.get(yield* Layer.build(skillRegistryLayer), McpSessionRegistry.McpSessionRegistry)
@@ -357,7 +358,6 @@ it.live.each(
         publishedThreads.filter((id) => id === threadId).length;
       if (test.skills) {
         yield* Effect.promise(() => initializeScientProject({ root: cwd }));
-        const fs = yield* FileSystem.FileSystem;
         const skillPath = `${cwd}/.scient/skills/project-method`;
         yield* fs.makeDirectory(skillPath, { recursive: true });
         yield* fs.writeFileString(
@@ -449,10 +449,10 @@ it.live.each(
                         offeredScopes.push(issued);
                       }
                       offers.push(
-                        formatScientCurrentInput({
+                        yield* formatScientCurrentInput({
                           ...input.message,
                           attachmentsDir: cwd,
-                        }),
+                        }).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
                       );
                       yield* publish({
                         type: "text",
@@ -864,7 +864,7 @@ it.live.each(
             (item) => item.type === "error" && item.runId === settled.runs.at(-1)?.id,
           );
           assert.ok(failure?.type === "error");
-          assert.include(failure.failure.message, "Insufficient context allowance");
+          assert.include(failure.failure.message, new ContextHandoffBudgetError().message);
           assert.isFalse(
             handoff.delivery?.status === "inline" || handoff.delivery?.status === "injected",
           );
@@ -1190,7 +1190,7 @@ it.live.each(
                   (item) => item.type === "error" && item.runId === refused.runs.at(-1)?.id,
                 );
                 assert.ok(failure?.type === "error");
-                assert.include(failure.failure.message, "Insufficient context allowance");
+                assert.include(failure.failure.message, new ContextHandoffBudgetError().message);
                 const retainedDelta = yield* sourceReader.resolveContextHistory({
                   handoffs: refused.contextHandoffs.filter(
                     (candidate) => candidate.strategy === "fork_delta_summary",

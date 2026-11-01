@@ -40,6 +40,10 @@ const input = {
 };
 const decodeInput = Schema.decodeUnknownSync(BrowserPdfExportInput);
 const decodeResult = Schema.decodeUnknownSync(BrowserPdfExportResult);
+const decodeServerBrowserPdfExportInput = Schema.decodeUnknownSync(ServerBrowserPdfExportInput);
+const decodeServerBrowserDocumentNavigateInput = Schema.decodeUnknownSync(
+  ServerBrowserDocumentNavigateInput,
+);
 
 describe("browser PDF export contracts", () => {
   it("carries PDF bytes as bounded URL-safe Base64 for JSON-RPC", () => {
@@ -65,7 +69,7 @@ describe("remote live browser PDF contracts", () => {
     expectedSourceUrl: "https://example.test/current",
   };
   it("requires a live tab epoch and page URL and exposes no caller-selected workspace", () => {
-    const decoded = Schema.decodeUnknownSync(ServerBrowserPdfExportInput)({
+    const decoded = decodeServerBrowserPdfExportInput({
       ...target,
       logicalDocumentKey: input.logicalDocumentKey,
       operationId: input.operationId,
@@ -74,13 +78,13 @@ describe("remote live browser PDF contracts", () => {
     });
     expect(decoded).not.toHaveProperty("workspaceRoot");
     expect(() =>
-      Schema.decodeUnknownSync(ServerBrowserPdfExportInput)({
+      decodeServerBrowserPdfExportInput({
         ...decoded,
         expectedServerEpoch: "",
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(ServerBrowserPdfExportInput)({ ...decoded, expectedSourceUrl: "" }),
+      decodeServerBrowserPdfExportInput({ ...decoded, expectedSourceUrl: "" }),
     ).toThrow();
   });
   it("carries the controlling viewer generation for navigation and rejects malformed generations", () => {
@@ -90,11 +94,9 @@ describe("remote live browser PDF contracts", () => {
       controllingViewerId: "private-viewer",
       expectedControlGeneration: 3,
     };
-    expect(Schema.decodeUnknownSync(ServerBrowserDocumentNavigateInput)(navigate)).toEqual(
-      navigate,
-    );
+    expect(decodeServerBrowserDocumentNavigateInput(navigate)).toEqual(navigate);
     expect(() =>
-      Schema.decodeUnknownSync(ServerBrowserDocumentNavigateInput)({
+      decodeServerBrowserDocumentNavigateInput({
         ...navigate,
         expectedControlGeneration: -1,
       }),

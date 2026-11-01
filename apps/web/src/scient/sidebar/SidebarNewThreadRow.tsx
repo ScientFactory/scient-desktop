@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { MessageSquareDashedIcon, SquarePenIcon } from "lucide-react";
 import { useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { openCommandPalette } from "../../commandPaletteBus";
 import { SidebarMenuButton } from "../../components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -11,16 +12,8 @@ import { startNewThreadFromContext } from "../../lib/chatThreadActions";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 
 /**
- * Scient's New thread control: a labelled row of its own below the sidebar
- * search, in place of T3's icon in the header group. It takes the header's
- * own new-thread inputs (shortcut labels and the current-project hint), and its
- * caller also supports Shift+click to start in the current project. It
- * opens the "New thread in…" picker, even when there are no projects yet. When
- * scratch is available, a separate left button starts without a project.
- *
- * Its spacing and sizing are local to this row, not shared sidebar tokens: a
- * small gap separates it from the search row, and its icon and label sit one
- * step below the thread titles so it reads as a control rather than a thread.
+ * Keep New thread available even without projects; scratch is a separate action when permitted.
+ * Scope spacing locally so this control does not alter shared sidebar/thread tokens.
  */
 export function SidebarNewThreadRow(props: {
   readonly onNewThread: (event: ReactMouseEvent) => void;
@@ -147,6 +140,8 @@ export function useSidebarNewThreadRowActions(input: {
       activeThread: newThreadContext.activeThread ?? undefined,
       defaultProjectRef: newThreadContext.defaultProjectRef,
       handleNewThread: newThreadContext.handleNewThread,
+    }).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
     });
   });
 

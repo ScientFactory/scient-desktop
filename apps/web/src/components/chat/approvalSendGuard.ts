@@ -5,6 +5,13 @@ import {
   type ThreadPendingApproval,
 } from "@t3tools/client-runtime/state/thread-requests";
 
+export type ApprovalSendGuardResult =
+  | "ready"
+  | "changed"
+  | "responding"
+  | "new-approval"
+  | "decline-failed";
+
 // SCIENT-FORK: ordinary and plan sends share upstream's decline operation, without
 // treating an unseen request or an edited draft as permission to redirect.
 export async function declineShownApprovalsBeforeSend(input: {
@@ -15,7 +22,7 @@ export async function declineShownApprovalsBeforeSend(input: {
   readonly isCurrentSend: () => boolean;
   readonly readDraft: () => unknown;
   readonly respond: ApprovalResponder;
-}): Promise<"ready" | "changed" | "responding" | "new-approval" | "decline-failed"> {
+}): Promise<ApprovalSendGuardResult> {
   if (input.shownApprovalIds.length === 0) return "ready";
   if (!input.isCurrentSend()) return "changed";
   const draft = input.readDraft();

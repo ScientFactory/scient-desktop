@@ -70,8 +70,7 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
       event: Schema.Struct({
         kind: Schema.Literal("notification"),
         threadId: Schema.String,
-        payload: Schema.Struct({
-          _tag: Schema.Literal("Event"),
+        payload: Schema.TaggedStruct("Event", {
           event: Schema.Struct({ type: Schema.Literal("model_changed") }),
         }),
       }),
@@ -626,8 +625,7 @@ describe("native OMP event ingress budgets", () => {
             Schema.Struct({
               event: Schema.Struct({
                 kind: Schema.Literal("notification"),
-                payload: Schema.Struct({
-                  _tag: Schema.Literal("Event"),
+                payload: Schema.TaggedStruct("Event", {
                   event: Schema.Struct({
                     type: Schema.Literal("tool_execution_update"),
                     toolCallId: Schema.Literal("idle-4999"),

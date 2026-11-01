@@ -9,7 +9,9 @@ vi.mock("~/hooks/useSettings", () => ({
   ensureClientSettingsHydrated: vi.fn(async () => undefined),
 }));
 
+// SCIENT-FORK:START
 const { browserProfileReportInput, getBrowserDefaults } = await import("./browserDefaults");
+// SCIENT-FORK:END
 
 const withDefaultProfile = (browserDefaultProfileId: string) => {
   settings.current = {
@@ -29,6 +31,7 @@ describe("getBrowserDefaults profile resolution", () => {
       DEFAULT_BROWSER_PROFILE_ID,
     );
   });
+  // SCIENT-FORK:START
 
   it("reports the same persistent default used by local browser opens", () => {
     const defaults = withDefaultProfile(INCOGNITO_BROWSER_PROFILE_ID);
@@ -38,4 +41,5 @@ describe("getBrowserDefaults profile resolution", () => {
       defaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
     });
   });
+  // SCIENT-FORK:END
 });

@@ -86,6 +86,20 @@ import Migration0068 from "./Migrations/068_CanonicalizeThreadPullRequestLinks.t
 import Migration0069 from "./Migrations/069_CodexUsageNativeTurnIndex.ts";
 import Migration0070 from "./Migrations/070_RepairClientSettlementTimestamps.ts";
 import Migration0071 from "./Migrations/071_WebhookDedupe.ts";
+import Migration0072 from "./Migrations/072_ShellStopRequestIndex.ts";
+// T3's migration 69 lands at the next free ID; Scient already recorded 069-072.
+import Migration0073 from "./Migrations/073_ThreadMessageSearch.ts";
+// T3's migrations 70-72 land at the next free IDs; Scient already recorded 070-073.
+import Migration0074 from "./Migrations/074_PeerLinks.ts";
+import Migration0075 from "./Migrations/075_PeerLinkFence.ts";
+import Migration0076 from "./Migrations/076_WaitingLinkRequestIndex.ts";
+// T3's migration 73 lands at the next free ID; Scient already recorded 073-076.
+import Migration0077 from "./Migrations/077_ActiveTurnItemIndexes.ts";
+// T3's migrations 74-75 land at the next free IDs; Scient already recorded 074-077.
+import Migration0078 from "./Migrations/078_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import Migration0079 from "./Migrations/079_SubagentDeliveryState.ts";
+// T3's migration 76 lands at the next free ID; Scient already recorded 076-079.
+import Migration0080 from "./Migrations/080_ProjectionProjectsPinArchive.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -176,6 +190,18 @@ export const migrationEntries = [
   [69, "CodexUsageNativeTurnIndex", Migration0069],
   [70, "RepairClientSettlementTimestamps", Migration0070],
   [71, "WebhookDedupe", Migration0071],
+  [72, "ShellStopRequestIndex", Migration0072],
+  // T3's migration 69 follows Scient's immutable migration sequence.
+  [73, "ThreadMessageSearch", Migration0073],
+  // T3's migrations 70-72 follow Scient's immutable migration sequence.
+  [74, "PeerLinks", Migration0074],
+  [75, "PeerLinkFence", Migration0075],
+  [76, "WaitingLinkRequestIndex", Migration0076],
+  // T3's migration 73 follows Scient's immutable migration sequence.
+  [77, "ActiveTurnItemIndexes", Migration0077],
+  [78, "ExcludeAttachmentPlaceholdersFromSearch", Migration0078],
+  [79, "SubagentDeliveryState", Migration0079],
+  [80, "ProjectionProjectsPinArchive", Migration0080],
   // SCIENT-FORK:END
 ] as const;
 

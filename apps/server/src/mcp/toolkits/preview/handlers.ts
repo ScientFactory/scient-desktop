@@ -1,5 +1,17 @@
+// SCIENT-FORK:START — Scient Accounts: enforce profile grants at preview discovery and open.
+import {
+  authorizePreviewProfile,
+  authorizePreviewTab,
+  filterPreviewProfiles,
+  withPreviewAccounts,
+  recordProfileUse,
+} from "../../../scient/accounts/agent/previewProfileAccess.ts";
+import type { AccountsError } from "@t3tools/contracts";
+import { previewProfileFallback } from "../../../scient/accounts/agent/previewProfileFallback.ts";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -7,13 +19,14 @@ import {
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingArtifact,
+  PreviewAutomationActInputs,
+  OrchestratorMcpFailure,
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
-  type PreviewAutomationSelectResult,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
@@ -57,7 +70,10 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
 ): Effect.fn.Return<
   { result: A; toolIcon?: ToolActivityIcon },
   | import("@t3tools/contracts").PreviewAutomationError
-  | import("@t3tools/contracts").OrchestratorMcpFailure,
+  | import("@t3tools/contracts").OrchestratorMcpFailure
+  // SCIENT-FORK:START — Scient Accounts: existing-tab operations can deny revoked profiles.
+  | AccountsError,
+  // SCIENT-FORK:END
   McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
 > {
   const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview").pipe(
@@ -65,16 +81,35 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   );
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
-  const result = yield* broker.invoke<A>({
-    onTargetTab: (resolvedTabId) => {
-      targetTabId = resolvedTabId;
-    },
-    scope,
-    operation,
-    input,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    ...(tabId === undefined ? {} : { tabId }),
-  });
+  // SCIENT-FORK:START — Scient Accounts: recheck existing-tab profile access before every action.
+  const request = () =>
+    broker.invoke<A>({
+      onTargetTab: (resolvedTabId) => {
+        targetTabId = resolvedTabId;
+      },
+      scope,
+      operation,
+      input,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(tabId === undefined ? {} : { tabId }),
+    });
+  const result = yield* operation === "status" || operation === "open"
+    ? request()
+    : withPreviewAccounts(request(), (accountScope) =>
+        Effect.gen(function* () {
+          const status = yield* broker.invoke<PreviewAutomationStatus>({
+            scope,
+            operation: "status",
+            input: {},
+            updateCurrentTab: false,
+            ...(tabId === undefined ? {} : { tabId }),
+          });
+          yield* authorizePreviewTab(accountScope, status, tabId);
+          // An omitted tab stays omitted, so the browser still resolves it the usual way.
+          return yield* request();
+        }),
+      );
+  // SCIENT-FORK:END
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null
@@ -114,6 +149,10 @@ const invokeTargeted = <A extends object>(
     })),
   );
 };
+
+const decodeActInput = Record.map(PreviewAutomationActInputs, (schema) =>
+  Schema.decodeUnknownEffect(schema),
+);
 
 const UploadedRecordingArtifact = Schema.Struct({
   ...PreviewAutomationRecordingArtifact.fields,
@@ -191,15 +230,65 @@ const handlers = {
   preview_dialog: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("dialog", input),
   ),
+  // SCIENT-FORK:START — Scient Accounts: enforce profile grants before opening the resolved profile.
   preview_status: McpToolAccess.readsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
+    Effect.gen(function* () {
+      const status = yield* invokeTargeted<PreviewAutomationStatus>("status", input ?? {});
+      return yield* withPreviewAccounts(Effect.succeed(status), (scope) =>
+        filterPreviewProfiles(scope, status),
+      );
+    }),
   ),
   preview_open: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+    withPreviewAccounts(
+      invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+      (scope) =>
+        Effect.gen(function* () {
+          const status = yield* invokeTargeted<PreviewAutomationStatus>(
+            "status",
+            input.tabId === undefined ? {} : { tabId: input.tabId },
+          );
+          const profile = yield* authorizePreviewProfile(scope, status, input);
+          const opened = yield* recordProfileUse(
+            scope,
+            profile.profileId,
+            invokeTargeted<PreviewAutomationStatus>(
+              "open",
+              normalizePreviewOpenInput({ ...input, profileId: profile.profileId }),
+            ),
+          );
+          const checked = yield* previewProfileFallback(scope, opened, {
+            operation: "open",
+            requestedUrl: input.url,
+            input: normalizePreviewOpenInput(input),
+            profileId: profile.profileId,
+            targetsExistingTab:
+              input.tabId !== undefined ||
+              (input.reuseExistingTab !== false && status.tabId !== null),
+          });
+          return yield* filterPreviewProfiles(scope, checked);
+        }),
+    ),
   ),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: flag access failures after navigating an existing tab.
   preview_navigate: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
+    Effect.gen(function* () {
+      const status = yield* invokeTargeted<PreviewAutomationStatus>(
+        "navigate",
+        input,
+        input.timeoutMs,
+      );
+      return yield* withPreviewAccounts(Effect.succeed(status), (scope) =>
+        previewProfileFallback(scope, status, {
+          operation: "navigate",
+          requestedUrl: input.url ?? (input.target?.kind === "url" ? input.target.url : undefined),
+          targetsExistingTab: true,
+        }),
+      ).pipe(Effect.orElseSucceed(() => status));
+    }),
   ),
+  // SCIENT-FORK:END
   preview_resize: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   ),
@@ -210,26 +299,20 @@ const handlers = {
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
   }),
-  preview_click: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<object>("click", input, input.timeoutMs),
+  preview_act: McpToolAccess.actsAsCaller(({ action, ...input }) =>
+    decodeActInput[action](input).pipe(
+      Effect.mapError(
+        (cause) => new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message }),
+      ),
+      Effect.flatMap((decoded) =>
+        invokeTargeted<object>(
+          action,
+          decoded,
+          "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+        ),
+      ),
+    ),
   ),
-  preview_type: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<object>("type", input, input.timeoutMs),
-  ),
-  preview_hover: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<object>("hover", input, input.timeoutMs),
-  ),
-  preview_select: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationSelectResult>("select", input, input.timeoutMs),
-  ),
-  preview_drag: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<object>("drag", input, input.timeoutMs),
-  ),
-  preview_upload: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<object>("upload", input, input.timeoutMs),
-  ),
-  preview_press: McpToolAccess.actsAsCaller((input) => invokeTargeted<object>("press", input)),
-  preview_scroll: McpToolAccess.actsAsCaller((input) => invokeTargeted<object>("scroll", input)),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({

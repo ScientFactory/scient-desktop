@@ -53,6 +53,7 @@ import {
   computeRuntimeDisplayLabel,
   defaultComputeRuntime,
   isComputeCapacityReachedError,
+  isExactTerminalComputeSession,
   resolveComputePreRunRuntimeChoice,
   resolveComputeRuntimeToolbarState,
   SCIENTIFIC_PYTHON_TOOLKIT_ID,
@@ -251,9 +252,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         if (
           observed._tag !== "Success" ||
           observed.value === null ||
-          observed.value.sessionId !== sessionId ||
-          observed.value.generation !== generation ||
-          !TERMINAL_COMPUTE_SESSION_STATUSES.has(observed.value.status)
+          !isExactTerminalComputeSession(observed.value, { sessionId, generation })
         ) {
           return;
         }
@@ -275,6 +274,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const ownedSession = allSessions.find(
       (session) => session.sessionId === contextBinding?.sessionId,
     );
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the owned session in the compute-context store registry when the session binding changes
     useEffect(() => {
       if (props.contextId !== undefined && ownedSession !== undefined) {
         useComputeContextStore.getState().observeSession(props.contextId, ownedSession);
@@ -429,6 +429,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     };
 
     const previousManagedOperation = useRef(false);
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes runtime status over the environment connection when a managed runtime operation ends
     useEffect(() => {
       const operating = managedRuntime.status?.operation != null;
       if (previousManagedOperation.current && !operating) {
@@ -911,11 +912,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             reportFailure("Unable to stop this session", result);
           return;
         }
-        if (
-          result.value.sessionId !== target.session.sessionId ||
-          result.value.generation !== target.session.generation ||
-          !TERMINAL_COMPUTE_SESSION_STATUSES.has(result.value.status)
-        )
+        if (!isExactTerminalComputeSession(result.value, target.session))
           throw new Error("The session has not confirmed shutdown. Run fresh was not started.");
         const current = getComputeContext(target.contextId);
         if (
@@ -978,12 +975,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const runtimeNote =
       [
         liveSession?.runtime
-          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)} — ${liveSession.runtime.executable}`
+          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)}: ${liveSession.runtime.executable}`
           : null,
         runtimeToolbar.kind === "status" ? runtimeToolbar.note : null,
       ]
         .filter(Boolean)
-        .join(" — ") || undefined;
+        .join(" · ") || undefined;
     const primaryRunTooltip = primaryRunBlocked
       ? (matlabFileCapability?.reason ?? "This definition is called from a script.")
       : primary.slice === null
@@ -1085,7 +1082,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 size="xs"
                 variant="ghost-muted"
                 className="min-w-0 max-w-full"
-                title={`${runtimeNote ?? ""} — Switch to the selected ${props.language.displayName} environment`}
+                title={`${runtimeNote ? `${runtimeNote}. ` : ""}Switch to the selected ${props.language.displayName} environment`}
                 aria-label={`Switch ${props.language.displayName} environment`}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}

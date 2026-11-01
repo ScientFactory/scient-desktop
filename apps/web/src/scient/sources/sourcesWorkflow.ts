@@ -16,20 +16,9 @@ import {
 } from "./importOutcome";
 
 /**
- * Transient Sources workflow state.
- *
- * The durable server operation stays the only authority for import phase,
- * per-item states, retries, and resumability; this reducer only tracks what
- * the panel presents between server snapshots. Request tokens are issued
- * synchronously by the hook (never derived from render timing) and carried on
- * import, overview, and Zotero browse response actions; stale tokens are
- * dropped, so a late workflow response cannot overwrite newer state.
- *
- * Tokens are partitioned into three lanes because those concerns progress
- * independently: imports (and the review/preparation flow around them), the
- * overview load (which live-refresh repeats during long imports), and Zotero
- * browsing. One shared counter would let a routine overview refresh or scope
- * change silently drop every remaining update of a running import.
+ * The server owns durable import state. Validate hook-issued synchronous tokens in independent
+ * import, overview, and Zotero lanes; a shared counter would let routine refreshes silently discard
+ * running-import updates.
  */
 
 export type ImportPreparation =

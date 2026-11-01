@@ -22,6 +22,7 @@ export type ScientFilePanelProps = Pick<
   | "onOpenFileSource"
   | "onHtmlPresentationRequestHandled"
   | "onLatexPresentationRequestHandled"
+  | "scientSurfaceId"
 >;
 
 /**
@@ -44,6 +45,7 @@ export function scientFilePanelProps(
 ): ScientFilePanelProps {
   const file = surface.kind === "file" ? surface : null;
   return {
+    scientSurfaceId: surface.id,
     projectName: input.projectName ?? "Project",
     relativePath:
       file === null

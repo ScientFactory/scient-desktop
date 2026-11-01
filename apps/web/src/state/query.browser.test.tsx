@@ -52,6 +52,7 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("environment query pending state", () => {
+  // regression: e0e4158af1 Merge official T3 through d8e9fd267e with Scient policy composition
   it.each([
     ["before the first value", AsyncResult.initial<string, Error>(true), true, true],
     [
@@ -98,6 +99,7 @@ describe("environment query pending state", () => {
     });
   });
 
+  // regression: 5cb4bf7ba2 fix(client): stop open subscriptions from reporting pending forever
   it("keeps the value and error alongside the subscription pending state", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

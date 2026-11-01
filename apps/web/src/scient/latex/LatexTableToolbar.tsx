@@ -61,6 +61,7 @@ interface Props {
 export function LatexTableToolbar(props: Props) {
   const { active, bar, id } = useLatexObjectContext(props.editor, props.tableRoot, props.selected);
   const onActiveChange = props.onActiveChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports toolbar active state to the parent through its imperative callback until unmount
   useEffect(() => {
     onActiveChange(active);
     return () => onActiveChange(false);

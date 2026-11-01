@@ -54,13 +54,9 @@ function singleMatchingSourceId(preflight: ScientSourcesPreflightResult): string
 }
 
 /**
- * Transient Sources workflow orchestration.
- *
- * The durable server operation remains the only authority for import phase,
- * item states, retries, and resumability. This hook owns presentation
- * transitions only. Import, overview, and Zotero browse responses land through
- * independent request-token lanes so a late or superseded workflow response
- * cannot overwrite newer state.
+ * The durable server operation owns import state, retries, and resumability. Keep independent
+ * request-token lanes for import, overview, and Zotero so late presentation responses cannot
+ * overwrite newer state.
  */
 export function useScientSources(input: {
   readonly environmentId: EnvironmentId;
@@ -71,15 +67,13 @@ export function useScientSources(input: {
   const stagedLocalKeys = useRef<ReadonlyArray<string>>([]);
   const contextKey = `${input.environmentId}\0${input.root}`;
   const contextKeyRef = useRef(contextKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps contextKeyRef holding the current context key
   useLayoutEffect(() => {
     contextKeyRef.current = contextKey;
   }, [contextKey]);
-  // Request tokens are issued synchronously here rather than derived from
-  // reducer state: dispatch commits on the next render, so a token captured
-  // from render timing would read stale and every guarded response would be
-  // dropped. The reducer validates tokens; these refs are their only issuers.
-  // Three lanes because overview refreshes (live-refresh repeats them during
-  // long imports) and Zotero browsing must never invalidate import progress.
+  // Issue tokens synchronously in refs: reducer dispatch commits next render and would yield stale
+  // tokens. Keep import, overview, and Zotero lanes independent so routine refreshes cannot
+  // invalidate import progress.
   const requestRef = useRef(0);
   const overviewRequestRef = useRef(0);
   const zoteroRequestRef = useRef(0);
@@ -99,6 +93,7 @@ export function useScientSources(input: {
   const isCurrentRequest = (request: number) =>
     isCurrentContext() && requestRef.current === request;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state for async callbacks
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -106,6 +101,7 @@ export function useScientSources(input: {
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards staged local source PDFs on unmount or environment change
   useEffect(() => {
     const environmentId = input.environmentId;
     const root = input.root;
@@ -257,6 +253,7 @@ export function useScientSources(input: {
       if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
     });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the module-level source context when the context key changes
   useEffect(() => {
     resetSourceContext(contextKey);
   }, [contextKey, resetSourceContext]);
@@ -755,6 +752,7 @@ export function useScientSources(input: {
       });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resumes a running import operation when pending items remain
   useEffect(() => {
     const operation = state.operation;
     if (

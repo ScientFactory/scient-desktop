@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "./provider/DocumentText.ts";
 import * as CommandReceiptStore from "./orchestration-v2/CommandReceiptStore.ts";
 import * as EventStore from "./orchestration-v2/EventStore.ts";
 import * as EventSink from "./orchestration-v2/EventSink.ts";
@@ -153,13 +154,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         }),
         Layer.mock(ProjectService.ProjectService)({ snapshot: Effect.succeed(snapshot) }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads: [],
-            }),
+          countThreads: () => Effect.succeed(0),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
@@ -207,7 +202,7 @@ it.effect("parks automatic pull until activation without delaying command readin
           ServerRuntimeStartup.layerWithOptions({
             activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
             awaitAuxiliaryParked: Effect.void,
-          }).pipe(Layer.provide(dependencies)),
+          }).pipe(Layer.provide(DocumentText.layer), Layer.provide(dependencies)),
         ),
         Effect.provideService(ServerActivation, Deferred.await(activation)),
       );

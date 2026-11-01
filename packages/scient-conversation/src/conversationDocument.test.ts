@@ -420,7 +420,7 @@ describe("conversation document", () => {
     const full = exportMarkdown(
       snapshotOf(source, { workLog: true, reasoning: true, throughMessageId: null }),
     ).markdown;
-    expect(full).toContain("<summary>Work log · 1 step · Worked for 3.0s</summary>");
+    expect(full).toContain("<summary>Work log · 1 step · Worked for 3s</summary>");
     expect(full).toContain("- **Ran command** · completed");
     expect(full).toContain("ls -la");
     expect(full).toContain("file-a\n  file-b");

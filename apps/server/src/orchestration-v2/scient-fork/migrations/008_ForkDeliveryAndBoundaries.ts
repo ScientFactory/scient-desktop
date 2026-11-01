@@ -1,10 +1,7 @@
 /**
- * Durable exact-boundary fork context delivery and recursive fork identity.
- *
- * Provider sends are external side effects, so their first bootstrap attempt
- * records the message identity and start time. Copied logical boundaries are
- * stored as a compact immutable JSON manifest so a fork can itself be forked
- * without pretending imported transcript rows are native provider turns.
+ * Provider sends are external side effects: persist the first attempt's identity and time. Keep
+ * copied boundaries immutable so recursive forks never treat imported rows as native provider
+ * turns.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

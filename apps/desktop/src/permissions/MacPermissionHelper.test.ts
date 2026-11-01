@@ -123,9 +123,3 @@ it("does not reopen a superseded helper when its initial probe completes", async
   expect(windows).toHaveLength(1);
   expect(windows[0]!.destroyed).toBe(false);
 });
-
-it("does not show a helper with a missing packaged icon", async () => {
-  mocks.createFromPath.mockReturnValueOnce({ isEmpty: () => true });
-  await expect(open()).rejects.toThrow("packaged Scient icon is missing");
-  expect(windows).toHaveLength(0);
-});

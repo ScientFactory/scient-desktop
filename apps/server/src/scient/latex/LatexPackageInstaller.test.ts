@@ -738,12 +738,12 @@ describe("LatexPackageInstaller", () => {
         const installer = yield* LatexPackageInstaller;
         const binDirectory = yield* FixtureBinDirectory;
         const installs = yield* Effect.forkChild(
-          Effect.all(
-            ["first", "second"].map((packageName) =>
+          Effect.forEach(
+            ["first", "second"],
+            (packageName) =>
               Queue.offer(requested, packageName).pipe(
                 Effect.andThen(installer.install({ packages: [packageName], binDirectory })),
               ),
-            ),
             { concurrency: "unbounded" },
           ),
         );

@@ -4,6 +4,8 @@ import * as Rpc from "effect/rpc/Rpc";
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
   ProviderSkillManagementError,
+  ProviderSkillReadDocumentInput,
+  ProviderSkillDocument,
   ProviderSkillSetEnabledInput,
   ProviderSkillSetEnabledResult,
   ScientSkillDocument,
@@ -22,6 +24,7 @@ export const SCIENT_SKILL_WS_METHODS = {
   skillsReadDocument: "skills.readDocument",
   skillsSetProjectPreference: "skills.setProjectPreference",
   skillsSetUserActivation: "skills.setUserActivation",
+  providerSkillsReadDocument: "providerSkills.readDocument",
   providerSkillsSetEnabled: "providerSkills.setEnabled",
 } as const;
 
@@ -60,6 +63,15 @@ export const WsProviderSkillsSetEnabledRpc = Rpc.make(
   {
     payload: ProviderSkillSetEnabledInput,
     success: ProviderSkillSetEnabledResult,
+    error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsProviderSkillsReadDocumentRpc = Rpc.make(
+  SCIENT_SKILL_WS_METHODS.providerSkillsReadDocument,
+  {
+    payload: ProviderSkillReadDocumentInput,
+    success: ProviderSkillDocument,
     error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
   },
 );

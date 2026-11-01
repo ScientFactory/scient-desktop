@@ -2,12 +2,8 @@
 import * as NodePath from "node:path";
 
 /**
- * Environment variables removed by exact key from every compute launch.
- *
- * These are Python/Jupyter overrides that could change bridge code resolution
- * or kernel behavior, plus known credential keys.  This is credential-hygiene
- * defense in depth, not a sandbox: user code retains the filesystem, network,
- * and process authority of the server account.
+ * Removing credential and Python/Jupyter overrides is hygiene, not sandboxing: user code retains
+ * the server account's filesystem, network, and process authority.
  */
 export const ENVIRONMENT_DENYLIST: ReadonlyArray<string> = [
   // Python overrides that could change bridge code resolution.
@@ -16,20 +12,14 @@ export const ENVIRONMENT_DENYLIST: ReadonlyArray<string> = [
   "PYTHONSTARTUP",
   "PYTHONINSPECT",
   "PYTHONEXECUTABLE",
-  // Jupyter/IPython overrides. Each of these can redirect which code the
-  // kernel loads: a kernelspec, a config file, an IPython startup script.
-  // `JUPYTER_RUNTIME_DIR` is deliberately not here -- it only chooses where the
-  // connection file is written, cannot introduce code, and a container that
-  // points it at the one writable directory it has needs it to survive.
+  // Filter code-loading Jupyter/IPython overrides, but preserve JUPYTER_RUNTIME_DIR: it cannot
+  // introduce code and may name a container's only writable connection-file directory.
   "JUPYTER_CONFIG_DIR",
   "JUPYTER_PATH",
   "JUPYTER_DATA_DIR",
   "IPYTHONDIR",
-  // Credentials this application itself puts in the environment. They belong
-  // here for the same reason as the keys below, but they are the ones most
-  // likely to actually be present: the server was started with them.
-  // `ANTHROPIC_AUTH_TOKEN` and friends are already covered by the `ANTHROPIC_`
-  // prefix; these two are the sign-in tokens that carry no such prefix.
+  // Include the application's unprefixed sign-in tokens; prefix rules already catch
+  // ANTHROPIC_AUTH_TOKEN and similar credentials.
   "CLAUDE_CODE_OAUTH_TOKEN",
   "GH_TOKEN",
   // Known cloud/provider credential keys (exact match).
@@ -70,21 +60,9 @@ const ENVIRONMENT_OVERRIDES: Readonly<Record<string, string>> = {
 } as const;
 
 /**
- * Rejects a working directory that is not absolute or not lexically canonical.
- *
- * Authorization happens before the adapter; this layer rejects malformed or
- * noncanonical launch inputs so a relative or traversal-bearing path cannot
- * reach the process layer.
- *
- * Symlinks are deliberately not resolved. Whoever authorized this root
- * authorized the path as written, and answering with a different path would
- * silently move the session outside what was approved -- on macOS it would
- * rewrite every `/tmp` root to `/private/tmp`. What is being rejected here is
- * a malformed string, not an unexpected inode.
- *
- * Throws rather than returning a failure: an absolute canonical path is a
- * precondition every caller has already established, so reaching this with a
- * relative path is a defect in the caller, not a condition to recover from.
+ * Reject malformed/noncanonical absolute cwd as a caller defect. Do not realpath it: authorization
+ * approved the written path, and resolving symlinks would silently change that root (including
+ * macOS /tmp).
  */
 export function validateProjectRoot(root: string): string {
   if (!NodePath.isAbsolute(root)) {
@@ -98,17 +76,9 @@ export function validateProjectRoot(root: string): string {
 }
 
 /**
- * The one spelling of a key that matching happens on.
- *
- * Windows environment variables are case-insensitive, and so is Python's own
- * reading of them there, so a host that exported `PythonPath` would hand user
- * code exactly the override this list exists to remove. Unix keys are
- * case-sensitive, but every name here is a conventional all-caps one, so
- * folding case can only remove more than intended in cases that do not occur --
- * and removing too much from a compute launch is the harmless direction.
- *
- * `toUpperCase` rather than `toLocaleUpperCase`: this must fold the same way on
- * every machine, including a Turkish one where `i` does not uppercase to `I`.
+ * Fold environment keys case-insensitively for Windows; conservative over-removal is safer than
+ * missing an override on Unix. Use locale-independent uppercasing so Turkish casing cannot change
+ * policy.
  */
 const canonicalKey = (key: string): string => key.toUpperCase();
 
@@ -122,15 +92,8 @@ function isDenied(key: string): boolean {
 }
 
 /**
- * Builds a complete sanitized environment for a compute launch.
- *
- * Starts from the host environment, removes every denied key, and applies the
- * UTF-8 and unbuffered overrides.  The process layer must use
- * `extendEnv: false` with this record; otherwise the host environment is
- * silently re-added.
- *
- * Never logs values.  `removedKeys` returns only the key names that were
- * removed, for test observability.
+ * Use extendEnv false with this complete sanitized record or host variables return. Never log
+ * values; expose only removed key names for observability.
  */
 export function sanitizeComputeEnvironment(hostEnv: Readonly<Record<string, string>>): {
   readonly environment: Record<string, string>;

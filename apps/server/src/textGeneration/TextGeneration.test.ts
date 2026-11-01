@@ -4,7 +4,6 @@ import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
-
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -13,12 +12,12 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as Layer from "effect/Layer";
+import * as ServerSettings from "../serverSettings.ts";
 import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
 
 const makeStubTextGeneration = (
@@ -54,9 +53,10 @@ const makeStubInstance = (
     },
     displayName: undefined,
     enabled: options?.enabled ?? true,
-    snapshot: options
-      ? ({ getSnapshot: options.snapshot } as ProviderInstance["snapshot"])
-      : ({} as ProviderInstance["snapshot"]),
+    snapshot: {
+      // Generation reads every snapshot for usage limits before choosing an instance.
+      getSnapshot: options?.snapshot ?? Effect.succeed({ instanceId } as ServerProvider),
+    } as ProviderInstance["snapshot"],
 
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration,
@@ -80,6 +80,7 @@ const makeStubRegistry = (
 
 const makeGeneration = (instances: ReadonlyArray<ProviderInstance>) =>
   TextGeneration.make.pipe(
+    Effect.provide(ServerSettings.layerTest()),
     Effect.provideService(
       ProviderInstanceRegistry.ProviderInstanceRegistry,
       makeStubRegistry(instances),
@@ -149,7 +150,20 @@ describe("TextGeneration.make", () => {
               const generation = yield* makeGeneration([
                 makeStubInstance(otherId, makeStubTextGeneration({}), {
                   driver,
-                  snapshot: Effect.die("Another instance's catalog must not determine the model"),
+                  // Usage checks read every snapshot; another catalog still must not pick the model.
+                  snapshot: Effect.succeed(
+                    nativeSnapshot(otherId, driver, {
+                      models: [
+                        {
+                          slug: "openai/other-default",
+                          name: "Other default",
+                          isCustom: false,
+                          isDefault: true,
+                          capabilities: null,
+                        },
+                      ],
+                    }),
+                  ),
                 }),
                 instance,
               ]);
@@ -206,7 +220,8 @@ describe("TextGeneration.make", () => {
                     return Effect.fail(nativeError);
                   },
                 }),
-                { driver, snapshot: Effect.die("Explicit choices must retain native validation") },
+                // Usage checks read the snapshot; its catalog must not replace the explicit model.
+                { driver, snapshot: Effect.succeed(nativeSnapshot(instanceId, driver)) },
               );
               const result = yield* (yield* makeGeneration([instance]))
                 .generateBranchName({
@@ -336,6 +351,7 @@ describe("TextGeneration.make", () => {
       ];
     }),
   )("$caseTitle", ({ run }) => run());
+  // regression: 7cafe52bb8 fix(server): keep thread titles tied to user intent (#10720)
   it.effect("retains supplied subject context in the provider prompt", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
@@ -350,6 +366,7 @@ describe("TextGeneration.make", () => {
         }),
       );
       const generation = yield* TextGeneration.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([instance]),
@@ -370,6 +387,8 @@ describe("TextGeneration.make", () => {
       expect(prompt).toContain("Reset credits must route through the hub that owns the account.");
     }),
   );
+
+  // regression: 6d7fe2eeb7 Introduce pluggable VCS driver foundation (#2435)
 
   it.effect("delegates to the matching instance's textGeneration closure", () =>
     Effect.gen(function* () {
@@ -394,6 +413,7 @@ describe("TextGeneration.make", () => {
       );
 
       const tg = yield* TextGeneration.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([personal, work]),
@@ -416,9 +436,12 @@ describe("TextGeneration.make", () => {
     }),
   );
 
+  // regression: 6d7fe2eeb7 Introduce pluggable VCS driver foundation (#2435)
+
   it.effect("fails with TextGenerationError when the instance is unknown", () =>
     Effect.gen(function* () {
       const tg = yield* TextGeneration.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([]),

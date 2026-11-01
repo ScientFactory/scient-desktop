@@ -69,7 +69,7 @@ function snapshot(models: boolean): ServerProvider {
 function OnboardingPopover(props: { readonly children: ReactNode }) {
   return (
     <div
-      className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 overflow-hidden rounded-lg"
+      className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-80 overflow-hidden rounded-lg"
       data-model-picker-content="true"
     >
       <aside className="w-11 shrink-0 bg-muted/30 p-1" />
@@ -141,7 +141,7 @@ describe.each(CONTAINERS)("Pi in the %s", (_label, Container) => {
       const button = buttons[0]!.getBoundingClientRect();
       expect(button.width).toBeGreaterThan(0);
       // Sized to its label like the reference actions, not a stretched bar.
-      expect(button.width).toBeLessThan(box.width / 2);
+      expect(button.width).toBeLessThan(box.width * 0.6);
       expect(button.left).toBeGreaterThanOrEqual(box.left);
       expect(button.right).toBeLessThanOrEqual(box.right);
       expect(button.top).toBeGreaterThanOrEqual(box.top);

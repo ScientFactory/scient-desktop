@@ -45,6 +45,8 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
+// regression: 2cf76f08a4 fix(settings): fade a clipped provider version instead of an ellipsis
+// (every case in this file).
 it("fades a clipped version's tail instead of drawing an ellipsis", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

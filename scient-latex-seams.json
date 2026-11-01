@@ -10,6 +10,7 @@
     "packages/scient-pdf-validation"
   ],
   "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
     "apps/server/src/mcp/toolkits/documents/handlers.ts",
     "apps/server/src/mcp/toolkits/documents/latexHandler.ts",
     "apps/server/src/mcp/toolkits/documents/tools.ts",
@@ -45,6 +46,7 @@
   ],
   "latexDiffSignals": [
     "ScientLatex",
+    "ScientPreviewExportActions",
     "scientLatex",
     "(/|~)scient/latex",
     "scient_latex_",
@@ -55,14 +57,14 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
+    {
       "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
       "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
-    },
-    {
-      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
-      "anchor": "latexDir: path.join(stateDir, \"latex\")",
-      "purpose": "Give native Codex replay qualification an isolated server-owned LaTeX state directory."
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",
@@ -115,6 +117,16 @@
       "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
     },
     {
+      "path": "apps/web/src/components/preview/PreviewView.tsx",
+      "anchor": "<ScientPreviewExportActions",
+      "purpose": "Supply Scient-owned Open PDF and Save PDF actions to the preview more menu's extraItems slot, preserving live-tab export availability."
+    },
+    {
+      "path": "apps/web/src/components/preview/PreviewMoreMenu.tsx",
+      "anchor": "{extraItems}",
+      "purpose": "Mount optional Scient-owned menu items and keep their async action owners mounted while the preview menu closes."
+    },
+    {
       "path": "apps/web/src/components/files/filePreviewMode.ts",
       "anchor": "isLatexPreviewFile",
       "purpose": "Recognize LaTeX sources in the inherited file preview mode selection."
@@ -123,11 +135,6 @@
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
       "anchor": "export function EditableFileEditor",
       "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor; let its PDF reader quote into the panel's conversation (citeThread, Ask in chat)."
-    },
-    {
-      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
-      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
-      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
@@ -208,6 +215,13 @@
       "path": "packages/shared/package.json",
       "anchor": "./pdfCitations",
       "purpose": "Export Scient's PDF quote link format and agent projection to web, mobile and export consumers."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
+      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
     }
   ]
 }

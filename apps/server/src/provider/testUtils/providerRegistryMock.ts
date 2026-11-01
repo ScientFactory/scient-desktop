@@ -16,14 +16,19 @@ export const makeProviderRegistryMock = (
   refreshInstanceAfterAccountChange: () => Effect.succeed(providers),
   reloadInstance: () => Effect.succeed(providers),
   reloadInstanceStrict: () => Effect.succeed(providers),
+  reloadSecretsAndRefresh: () => Effect.succeed(providers),
   refreshAfterUpdate: () => Effect.succeed(providers),
   refreshWorkspaceSnapshot: () => Effect.succeed(providers),
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
   // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
   recordProviderNativeInventory: () => Effect.succeed(providers),
   // SCIENT-FORK:END

@@ -105,9 +105,10 @@ const MetadataRenameCheckpoint = Schema.Struct({
   }),
 });
 
+const isMetadataRenameCheckpoint = Schema.is(MetadataRenameCheckpoint);
 function decodeMetadataRename(value: unknown): MetadataFileRenameCheckpoint | undefined {
   if (value === undefined) return undefined;
-  if (!Schema.is(MetadataRenameCheckpoint)(value))
+  if (!isMetadataRenameCheckpoint(value))
     throw new Error(
       "The file rename checkpoint could not be read; its owner and copy are preserved.",
     );
@@ -147,6 +148,16 @@ const GenericSaveState = Schema.Struct({
     }),
   ),
 });
+
+const isProjectFilePublicationAttention = Schema.is(ProjectFilePublicationAttention);
+const isAuthorizedCurrentReview = Schema.is(
+  Schema.Struct({
+    recoveryId: Schema.String,
+    currentRevision: Schema.NullOr(Schema.String),
+  }),
+);
+const isRenameIntent = Schema.is(RenameIntent);
+const isGenericSaveState = Schema.is(GenericSaveState);
 
 function genericStateHoldsRecovery(state: GenericFileSaveCheckpointState | undefined): boolean {
   return (
@@ -267,10 +278,7 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
     throw new Error("The pending file mutation identity could not be read; its copy is preserved.");
   const publicationAttention =
     "publicationAttention" in value ? (value.publicationAttention ?? null) : null;
-  if (
-    publicationAttention != null &&
-    !Schema.is(ProjectFilePublicationAttention)(publicationAttention)
-  )
+  if (publicationAttention != null && !isProjectFilePublicationAttention(publicationAttention))
     throw new Error(
       "The retained file recovery reference could not be read; its copy is preserved.",
     );
@@ -280,23 +288,18 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
     "authorizedCurrentReview" in value ? (value.authorizedCurrentReview ?? null) : null;
   if (
     authorizedCurrentReview != null &&
-    (!Schema.is(
-      Schema.Struct({
-        recoveryId: Schema.String,
-        currentRevision: Schema.NullOr(Schema.String),
-      }),
-    )(authorizedCurrentReview) ||
+    (!isAuthorizedCurrentReview(authorizedCurrentReview) ||
       publicationAttention == null ||
       authorizedCurrentReview.recoveryId !== publicationAttention.recoveryId)
   )
     throw new Error("The reviewed current authorization could not be read; its copy is preserved.");
   const renameIntent = "renameIntent" in value ? value.renameIntent : null;
-  if (renameIntent != null && !Schema.is(RenameIntent)(renameIntent))
+  if (renameIntent != null && !isRenameIntent(renameIntent))
     throw new Error("The pending rename identity could not be read; its copy is preserved.");
   const genericSaveState = "genericSaveState" in value ? value.genericSaveState : undefined;
   if (
     genericSaveState !== undefined &&
-    (!Schema.is(GenericSaveState)(genericSaveState) ||
+    (!isGenericSaveState(genericSaveState) ||
       !Number.isSafeInteger(genericSaveState.editRevision) ||
       !Number.isSafeInteger(genericSaveState.confirmedEditRevision) ||
       genericSaveState.editRevision < 0 ||

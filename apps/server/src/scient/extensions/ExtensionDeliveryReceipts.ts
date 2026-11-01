@@ -1,14 +1,7 @@
 /**
- * Latest extensions delivery receipt per thread: what the thread's current
- * provider session received and what it did not, with reasons. Written by
- * `ProviderSessionManagerV2.prepareMcpSession` under its per-thread lock, so
- * the stored receipt always describes the most recently prepared credential.
- * An adapter that withholds a delivered connector at registration (a live
- * provider-native server owns its name, or the agent cannot say which servers
- * it has) amends that credential's receipt through the callback the manager
- * put on the session's MCP config; the amendment holds for every later
- * receipt of the same credential.
- * In memory only: a server restart re-prepares every session it resumes.
+ * Write receipts under the manager's per-thread preparation lock so they describe its latest
+ * credential. Registration amendments remain attached to that credential across later receipts;
+ * restart re-prepares sessions rather than persisting these observations.
  */
 import {
   ExtensionDeliveryReceipt,
@@ -37,11 +30,8 @@ interface ThreadReceipt {
   /** As recorded at credential preparation, before any adapter report. */
   readonly recorded: ExtensionDeliveryReceipt;
   /**
-   * Server names the latest accepted registration report for
-   * `recorded.providerSessionId` left out. Each report replaces it: a later
-   * query that registers a connector returns it to delivered. Which report is
-   * latest is decided by the credential's tracker (`ConnectorSessionDelivery`),
-   * which lives as long as the credential, not by this retained entry.
+   * Registration reports replace omissions so a later successful registration restores delivery.
+   * Order them in the credential-lifetime tracker, never this evictable retained receipt.
    */
   readonly withheld: ReadonlyMap<string, ExtensionDeliverySkipReason>;
   /** `recorded` with `withheld` moved from delivered to skipped. */

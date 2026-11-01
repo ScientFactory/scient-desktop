@@ -1,4 +1,6 @@
+// SCIENT-FORK:START
 import { workspaceRelativeFilePath, collapseAbsoluteFilePath } from "./path.ts";
+// SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
 import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
@@ -23,6 +25,7 @@ describe("inlineCodeFilePathCandidate", () => {
   // regression: #13909 model ids in inline code do not become file chips
   it.each([
     ["src\\main.ts", "src/main.ts"],
+    // SCIENT-FORK:START
     ["C:\\Users\\demo\\image.png", "C:\\Users\\demo\\image.png"],
     ["\\\\server\\share\\image.png", "\\\\server\\share\\image.png"],
     ["conf.d/nginx.conf", "conf.d/nginx.conf"],
@@ -32,9 +35,12 @@ describe("inlineCodeFilePathCandidate", () => {
     ["docs/Report(draft).md", null],
     ["docs/סיכום.md", null],
     ["Recorded evidence here: /tmp/image.png", null],
+    // SCIENT-FORK:END
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
+    ["src/main.ts/", null],
+    ["./patches/", "./patches/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -42,6 +48,7 @@ describe("inlineCodeFilePathCandidate", () => {
 
 describe("parseMarkdownFileLink", () => {
   it.each([
+    // SCIENT-FORK:START
     ["/Users/julius/project/AGENTS.md", "/Users/julius/project/AGENTS.md"],
     ["/home/me/notes.md", "/home/me/notes.md"],
     ["/usr/local/bin/tool", "/usr/local/bin/tool"],
@@ -52,9 +59,11 @@ describe("parseMarkdownFileLink", () => {
       "C:/Users/Sacha/OneDrive/Bureau/REPOs/רפואה שנה א/dashboard.html",
       "C:/Users/Sacha/OneDrive/Bureau/REPOs/רפואה שנה א/dashboard.html",
     ],
+    // SCIENT-FORK:END
     ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
     ["</D:/Programme/t3code/ChatMarkdown.tsx:1>", "D:/Programme/t3code/ChatMarkdown.tsx"],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md"],
+    // SCIENT-FORK:START
     ["apps/mobile/src/index.ts:10", "apps/mobile/src/index.ts"],
     ["docs/My%20Folder/checklist.xml", "docs/My Folder/checklist.xml"],
     ["Updated%20cutover%20checklist.md", "Updated cutover checklist.md"],
@@ -71,10 +80,12 @@ describe("parseMarkdownFileLink", () => {
     ["AGENTS.md", "AGENTS.md"],
     ["script.ts:10", "script.ts"],
     ["/tmp/clip%23one.mp4#t=2", "/tmp/clip#one.mp4"],
+    // SCIENT-FORK:END
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
 
+  // SCIENT-FORK:START
   it.each([
     "",
     "#anchor",
@@ -92,8 +103,24 @@ describe("parseMarkdownFileLink", () => {
     "/app#L1",
     "readme",
     "TODO:12",
+    "patches",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
+  });
+  // SCIENT-FORK:END
+
+  it("recognizes a relative folder that ends in a slash", () => {
+    expect(parseMarkdownFileLink("patches/")).toEqual({ path: "patches/" });
+    expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
+  });
+
+  // regression: #16096 relative links with non-ASCII names open as files
+  it("recognizes relative paths with non-ASCII names", () => {
+    expect(parseMarkdownFileLink("pastexam/線性代數/exam_易志偉.pdf")?.path).toBe(
+      "pastexam/線性代數/exam_易志偉.pdf",
+    );
+    expect(parseMarkdownFileLink("Résumé%20final.pdf")?.path).toBe("Résumé final.pdf");
+    expect(parseMarkdownFileLink("資料.備份")?.path).toBe("資料.備份");
   });
 
   it("accepts conventional extensionless names with or without a position", () => {
@@ -122,6 +149,7 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project", "/repo/project", "."],
     ["C:/", "c:/", "."],
     ["/repo/project/a.ts", undefined, null],
+    // SCIENT-FORK:START
     // Dot segments are resolved before deciding containment.
     ["/repo/project/../notes.md", "/repo/project", null],
     ["/repo/project/../project-two/a.ts", "/repo/project", null],
@@ -132,11 +160,13 @@ describe("workspaceRelativeFilePath", () => {
     ["/tmp/repo/a\\b.md", "/tmp/repo", "a\\b.md"],
     // A path that resolves to the root itself is the workspace, written `.`.
     ["/repo/project/docs/..", "/repo/project", "."],
+    // SCIENT-FORK:END
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
   });
 });
 
+// SCIENT-FORK:START
 describe("collapseAbsoluteFilePath", () => {
   it.each([
     ["/Users/me/project/../reviews/notes.md", "/Users/me/reviews/notes.md"],
@@ -163,6 +193,7 @@ describe("collapseAbsoluteFilePath", () => {
   });
 });
 
+// SCIENT-FORK:END
 describe("extractMarkdownLinkHrefs", () => {
   it.each([
     ["[".repeat(32_000), []],
@@ -174,6 +205,13 @@ describe("extractMarkdownLinkHrefs", () => {
 });
 
 describe("resolveMarkdownFileLinkTarget", () => {
+  it("resolves a relative folder with a trailing slash against cwd", () => {
+    expect(resolveMarkdownFileLinkTarget("patches/", "/repo/project")).toBe(
+      "/repo/project/patches/",
+    );
+    expect(resolveMarkdownFileLinkTarget("patches", "/repo/project")).toBeNull();
+  });
+
   it("does not treat filename line references as external schemes", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:10",
@@ -197,10 +235,15 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+  it("links a network path only inside the project's share", () => {
+    const cwd = "\\\\server\\share";
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg", cwd)).toBe(
       "\\\\server\\share\\workspace-image.svg",
     );
+    // Opening these sent the Windows user's NTLM credentials to attacker.test.
+    for (const href of ["file://attacker.test/s/x.ts", "\\\\attacker.test\\s\\x.ts"]) {
+      expect(resolveMarkdownFileLinkTarget(href, cwd)).toBeNull();
+    }
   });
 
   it("keeps an encoded final space in the absolute target", () => {

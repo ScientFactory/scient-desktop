@@ -399,20 +399,35 @@ describe("Oh My Pi launch arguments", () => {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
-  /** Answers `--version` with 18.3.0 and keeps every RPC child alive. */
+  /**
+   * Answers `--version` with 18.3.0; every RPC child stays alive until Scient
+   * closes its stdin, so closing a scope never waits out the shutdown grace.
+   */
   const fakeOmp = (spawned: Array<string>) =>
-    ChildProcessSpawner.make((command) => {
-      const child = command as unknown as {
-        readonly command: string;
-        readonly args: ReadonlyArray<string>;
-      };
-      const isVersionProbe = child.args.includes("--version");
-      spawned.push([child.command, ...child.args].join(" "));
-      return Effect.succeed(
-        ChildProcessSpawner.makeHandle({
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const child = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+          readonly options: { readonly stdin?: { readonly stream?: Stream.Stream<Uint8Array> } };
+        };
+        const isVersionProbe = child.args.includes("--version");
+        spawned.push([child.command, ...child.args].join(" "));
+        const exited = yield* Deferred.make<void>();
+        if (!isVersionProbe && child.options.stdin?.stream) {
+          yield* Stream.runDrain(child.options.stdin.stream).pipe(
+            Effect.andThen(Deferred.succeed(exited, undefined)),
+            Effect.forkScoped,
+          );
+        }
+        return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: isVersionProbe ? Effect.succeed(ChildProcessSpawner.ExitCode(0)) : Effect.never,
-          isRunning: Effect.succeed(!isVersionProbe),
+          exitCode: isVersionProbe
+            ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+            : Deferred.await(exited).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+          isRunning: isVersionProbe
+            ? Effect.succeed(false)
+            : Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
@@ -423,9 +438,9 @@ describe("Oh My Pi launch arguments", () => {
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
-        }),
-      );
-    });
+        });
+      }),
+    );
 
   it.live(
     "leases the real executable for a PATH lookup, a symlink, and a managed path before spawning",
@@ -703,11 +718,12 @@ kill -TERM "$$"
         ),
         Effect.provideService(Scope.Scope, scope),
       );
-      const leader = yield* process.shutdown.pipe(Effect.forkScoped);
-      for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+      // Each fork runs until it suspends: the leader is waiting for the child to exit.
+      const leader = yield* process.shutdown.pipe(Effect.forkScoped({ startImmediately: true }));
       // The caller that started shutdown goes away while the child is exiting.
-      const interrupted = yield* Fiber.interrupt(leader).pipe(Effect.forkScoped);
-      for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+      const interrupted = yield* Fiber.interrupt(leader).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
       yield* Deferred.succeed(exited, 0);
       yield* Fiber.join(interrupted);
       const second = yield* process.shutdown.pipe(Effect.timeout("1 second"), TestClock.withLive);
@@ -759,9 +775,11 @@ kill -TERM "$$"
           ),
           Effect.provideService(Scope.Scope, scope),
         );
-        const drained = yield* Stream.runDrain(process.events).pipe(Effect.forkScoped);
-        for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+        const drained = yield* Stream.runDrain(process.events).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
         yield* Deferred.succeed(exited, 1);
+        // Let the exit watcher start its stdout grace sleep before the clock moves.
         for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
         yield* TestClock.adjust("5 seconds");
         const ended = yield* Fiber.await(drained).pipe(

@@ -5,10 +5,7 @@ import {
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
-import {
-  parseEnvironmentQualifiedThreadLinkHref,
-  parseThreadLinkHref,
-} from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
@@ -36,14 +33,6 @@ export type MarkdownLinkPresentation =
     };
 
 export type MarkdownFileIcon = keyof typeof MARKDOWN_FILE_ICON_SOURCES;
-
-export type MarkdownLinkIcon = "github";
-
-export function resolveMarkdownLinkIcon(host: string): MarkdownLinkIcon | null {
-  const hostname = host.toLowerCase();
-  if (hostname === "github.com" || hostname.endsWith(".github.com")) return "github";
-  return null;
-}
 
 const FILE_ICON_BY_NAME: Readonly<Record<string, MarkdownFileIcon>> = {
   ".babelrc": "babel",
@@ -276,11 +265,7 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
     }
   } catch {}
 
-  const target =
-    parseMarkdownFileLink(normalized) ??
-    (/^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+$/.test(normalized)
-      ? { path: normalized }
-      : null);
+  const target = parseMarkdownFileLink(normalized);
   if (target) {
     return {
       kind: "file",
@@ -296,13 +281,9 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
   return {
     kind: "link",
     href:
-      // SCIENT-FORK:START — retain saved qualified URLs until the feed routes them.
-      /^(?:mailto|tel):/i.test(normalized) ||
-      parseEnvironmentQualifiedThreadLinkHref(normalized) !== null ||
-      parseThreadLinkHref(normalized) !== null
+      /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
         ? normalized
         : null,
-    // SCIENT-FORK:END
   };
 }
 

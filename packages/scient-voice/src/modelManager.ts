@@ -50,12 +50,8 @@ export interface VoiceModelManagerOptions {
   readonly manifest: VoiceModelDefinition;
   readonly fetchImpl?: typeof fetch;
   /**
-   * A folder of models that several installations on one machine may copy
-   * from and add to, so each need not download its own. A model found there
-   * is copied into `modelsDirectory` and verified exactly like a download; a
-   * model installed here is copied there. Nothing is ever read from it in
-   * place, so removing or repairing a model in one installation cannot affect
-   * another.
+   * Copy and verify shared models locally; never read them in place, so one installation's removal
+   * or repair cannot affect another.
    */
   readonly sharedModelsDirectory?: string;
 }

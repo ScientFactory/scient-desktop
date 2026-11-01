@@ -7,8 +7,6 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { sortActiveThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import {
   EnvironmentId,
   ProjectId,
@@ -19,7 +17,6 @@ import {
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useState } from "react";
 
-import { filterSidebarV2VisibleThreads } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -28,8 +25,10 @@ import { readLocalApi } from "../../localApi";
 import { useEnvironmentMachines, useEnvironments } from "../../state/environments";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
-import { readThreadShell } from "../../state/entities";
+import { readThreadShell, useDelegatedUnderParent } from "../../state/entities";
+import { sortByPlacement } from "./automaticPlacement";
 import { placementEligible } from "./placementEligibility";
+import { automaticPlacementThreads } from "./placementThreads";
 import { migrateLegacyPlacement } from "./placementMigration";
 import { useAutomaticPlacement } from "./useAutomaticPlacement";
 import { useThreadSectionActions } from "./actions";
@@ -119,13 +118,6 @@ export type SidebarSectionsOwnViewProps = Pick<
   | "onInteractionChange"
 >;
 
-/**
- * Everything the T3 sidebar needs for user-defined sections, kept out of
- * `Sidebar.tsx`: the Status/Sections mode, grouping, section management,
- * the Section submenu, and the background helpers (filing threads started
- * from a section, optional empty-section cleanup). The sidebar only renders
- * rows and shelves with its own components and forwards menu clicks here.
- */
 export function useSidebarSections(input: {
   /** Every thread shell, for membership. */
   readonly threads: readonly Shell[];
@@ -134,7 +126,7 @@ export function useSidebarSections(input: {
   readonly pinnedThreads: readonly Shell[];
   readonly activeThreads: readonly Shell[];
   readonly routeThreadKey: string | null;
-  readonly now?: string;
+  readonly now: string;
   readonly newThreadContext: ReturnType<typeof useHandleNewThread>;
   /** Closes the mobile sidebar before navigating to a new draft. */
   readonly onBeforeNewThread: () => void;
@@ -151,6 +143,7 @@ export function useSidebarSections(input: {
   const layouts = catalogs.catalogs;
   const { setThreadSection } = useThreadSectionActions();
   // Section creation outside the sidebar records the same selected project.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the sidebar section scope in the module-level store until unmount
   useEffect(() => {
     setSidebarSectionScope(scopeProjectRefs);
     return () => setSidebarSectionScope(null);
@@ -158,6 +151,7 @@ export function useSidebarSections(input: {
   const { environments } = useEnvironments();
   const machineById = useEnvironmentMachines();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const delegatedUnderParent = useDelegatedUnderParent();
   // One machine catching up or offline holds only its own threads' placement.
   const frozenKey = useAtomValue(frozenPlacementEnvironmentsKeyAtom);
   const frozenEnvironmentIds = frozenKey ? frozenKey.split("\n") : [];
@@ -241,20 +235,11 @@ export function useSidebarSections(input: {
     ) as ReadonlyMap<string, SectionMachine>;
   })();
   const completeGroups = (() => {
-    const now = input.now ?? new Date().toISOString();
-    // The rows the sidebar can show, regardless of project scope; hidden subagents never place.
-    const active = filterSidebarV2VisibleThreads(input.threads, null).filter((thread) => {
-      if (thread.pinnedAt != null) return false;
-      const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
-      return (
-        !(capabilities?.threadSettlement && thread.settledOverride === "settled") &&
-        !(capabilities?.threadSnooze && effectiveSnoozed(thread, { now }))
-      );
-    });
+    const now = input.now;
     return groupThreadsBySection({
       layouts,
       pinned: [],
-      active: sortActiveThreadsByOrderKey(active),
+      active: automaticPlacementThreads(input.threads, serverConfigs, now, delegatedUnderParent),
     });
   })();
   const placementInputs = completeGroups.map((group) => ({
@@ -264,7 +249,7 @@ export function useSidebarSections(input: {
       return {
         key,
         orderKey: thread.activeOrderKey ?? null,
-        eligible: placementEligible(thread, visits[key], input.now ?? new Date().toISOString()),
+        eligible: placementEligible(thread, visits[key], input.now),
       };
     }),
   }));
@@ -277,24 +262,21 @@ export function useSidebarSections(input: {
     scope: PLACEMENT_SCOPE,
     groups: placementInputs,
     openKey: routeThreadKey,
-    ready: supported && frozenKey !== null,
+    ready: sectionsView && frozenKey !== null,
     frozenEnvironmentIds,
     knownKeys: knownPlacementKeys,
   });
   const groups = (() => {
     if (!placement.enabled) return canonicalGroups;
     return canonicalGroups.map((group) => {
-      const order = placement.state.groups.find((entry) => entry.id === group.id)?.order;
+      const order = placement.orders.get(group.id);
       if (order === undefined) return group;
-      const rank = new Map(order.map((key, index) => [key, index]));
       const pinned = group.threads.filter((thread) => thread.pinnedAt != null);
-      const active = group.threads
-        .filter((thread) => thread.pinnedAt == null)
-        .toSorted(
-          (left, right) =>
-            (rank.get(scopedThreadKey(scopeThreadRef(left.environmentId, left.id))) ?? Infinity) -
-            (rank.get(scopedThreadKey(scopeThreadRef(right.environmentId, right.id))) ?? Infinity),
-        );
+      const active = sortByPlacement(
+        group.threads.filter((thread) => thread.pinnedAt == null),
+        (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        order,
+      );
       return { ...group, threads: [...pinned, ...active] };
     });
   })();

@@ -2,7 +2,10 @@
   "schemaVersion": 2,
   "owner": "ScientFactory",
   "ownedRoots": ["apps/web/src/scient/onboarding"],
-  "ownedFiles": ["apps/web/src/routes/_chat.getting-started.tsx"],
+  "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
+    "apps/web/src/routes/_chat.getting-started.tsx"
+  ],
   "onboardingDiffSignals": [
     "scient/onboarding",
     "ScientGettingStarted",

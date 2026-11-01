@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceEnvironment, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -17,7 +17,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import { AcpRegistryDriver } from "./AppProviderDriverComposition.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
-const decodeEnvironment = Schema.decodeSync(ProviderInstanceEnvironment);
 
 it.effect(
   "publishes Scient guidance from the production ACP Registry composition without probing disabled agents",
@@ -29,7 +28,7 @@ it.effect(
         accentColor: undefined,
         enabled: false,
         config: decodeSettings({ enabled: false }),
-        environment: decodeEnvironment([]),
+        environment: [],
       });
       const snapshot = yield* instance.snapshot.getSnapshot;
       expect(snapshot).toMatchObject({

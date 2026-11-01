@@ -1,10 +1,6 @@
 /**
- * A small, typed client for Antigravity CLI's native persistent NDJSON mode.
- *
- * One process is kept warm for multiple turns. Scient writes one `user` event
- * per turn and receives `init`, `step_update`, and `result` events. The module
- * deliberately exposes Antigravity concepts rather than pretending the CLI is
- * an ACP server.
+ * Keep one native NDJSON process warm across turns; expose Antigravity concepts rather than
+ * assuming ACP semantics.
  */
 
 import type { RuntimeMode } from "@t3tools/contracts";
@@ -432,9 +428,7 @@ export const makeAgySession = Effect.fn("makeAgySession")(function* (
           ).pipe(Effect.andThen(handleKnownEvent(decoded.event, decoded.raw)));
         case "Unknown":
           return (
-            input.onRawEvent
-              ? input.onRawEvent(decoded.raw).pipe(Effect.catchCause(() => Effect.void))
-              : Effect.void
+            input.onRawEvent ? input.onRawEvent(decoded.raw).pipe(Effect.ignoreCause) : Effect.void
           ).pipe(
             Effect.andThen(
               Effect.logDebug("Ignoring unknown Antigravity event.", {

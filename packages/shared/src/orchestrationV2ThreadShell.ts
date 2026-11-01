@@ -3,11 +3,19 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2PendingRuntimeRequestSummary,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   ScientCompletedAnswer,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { RuntimeRequestId, TurnId, orchestrationV2RunWorkStartedAt } from "@t3tools/contracts";
+import {
+  RuntimeRequestId,
+  TurnId,
+  idleCompactionOf,
+  orchestrationV2RunWorkStartedAt,
+  pendingGuestMessageCount,
+} from "@t3tools/contracts";
 
 import {
   deriveBlockedOnThreadWait,
@@ -20,10 +28,17 @@ import {
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "./orchestrationV2ThreadError.ts";
-import { threadPullRequestsOf } from "./threadPullRequests.ts";
 
+/**
+ * `pullRequestsOf` is the caller's forge-aware reader (server or client
+ * `threadPullRequestsOf`): older payloads stored one linked pull request,
+ * keyed by its forge, and this package cannot depend on the forge definitions.
+ */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  pullRequestsOf: (
+    thread: OrchestrationV2ThreadProjection["thread"],
+  ) => ReadonlyArray<ThreadPullRequestLink>,
 ): OrchestrationV2ThreadShell {
   const providerSession =
     projection.providerSessions
@@ -32,21 +47,21 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
       )[0] ?? null;
+  const runs = projection.runs.filter((run) => !isSilentRunForShell(run, projection));
   const latestRun =
     usageLimitRunPresentedAsLatest(
-      projection.runs,
+      runs,
       projection.turnItems,
       providerSession?.lastError ?? null,
-    ) ?? latestUnheldRun(projection.runs);
+    ) ?? latestUnheldRun(runs);
   const activeRun =
-    projection.runs
+    runs
       .filter(isInterruptibleRunForShell)
       .sort((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const activityRun =
-    projection.runs
-      .filter(isActivityRunForShell)
-      .sort((left, right) => right.ordinal - left.ordinal)[0] ?? null;
-  const liveRunIds = new Set(projection.runs.filter(isActivityRunForShell).map((run) => run.id));
+    runs.filter(isActivityRunForShell).sort((left, right) => right.ordinal - left.ordinal)[0] ??
+    null;
+  const liveRunIds = new Set(runs.filter(isActivityRunForShell).map((run) => run.id));
   const pendingRuntimeRequest =
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
@@ -58,13 +73,7 @@ export function threadShellFromProjection(
     pendingRuntimeRequest === null || pendingRuntimeRequest.responseCapability.type === "message"
       ? secretRequestAsPendingInput(
           projection.turnItems
-            .filter(
-              (item) =>
-                item.type === "secret_request" &&
-                item.status === "waiting" &&
-                item.runId !== null &&
-                liveRunIds.has(item.runId),
-            )
+            .filter((item) => item.status === "waiting" && waitsOnUser(item, liveRunIds))
             .sort(
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -72,7 +81,7 @@ export function threadShellFromProjection(
         )
       : null;
   const userMessages = projection.messages
-    .filter((message) => message.role === "user")
+    .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
     .sort(
       (left, right) =>
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -83,7 +92,7 @@ export function threadShellFromProjection(
     providerThreads: projection.providerThreads,
     turnItems: projection.turnItems,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
-    runs: projection.runs,
+    runs: runs,
     pullRequests: projection.thread.pullRequests,
   });
   return {
@@ -98,7 +107,7 @@ export function threadShellFromProjection(
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
-    pullRequests: threadPullRequestsOf(projection.thread),
+    pullRequests: pullRequestsOf(projection.thread),
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: projection.thread.linkedPullRequest }),
@@ -114,6 +123,12 @@ export function threadShellFromProjection(
     ...(projection.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: projection.thread.historyOrigin }),
+    ...(projection.thread.linkOrigin === undefined
+      ? {}
+      : { linkOrigin: projection.thread.linkOrigin }),
+    ...(projection.thread.delegatedFrom === undefined
+      ? {}
+      : { delegatedFrom: projection.thread.delegatedFrom }),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -146,6 +161,7 @@ export function threadShellFromProjection(
             createdAt: pendingRuntimeRequest.createdAt,
             blocking: pendingRuntimeRequest.responseCapability.type !== "message",
           }),
+    pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
@@ -198,7 +214,7 @@ export function threadShellFromProjection(
     sectionId: projection.thread.sectionId ?? null,
     conversationImport: projection.thread.conversationImport ?? null,
     forkLineage: projection.thread.forkLineage ?? null,
-    latestCompletedAnswer: latestCompletedAnswerFromProjection(projection),
+    latestCompletedAnswer: latestCompletedAnswerFromProjection({ ...projection, runs }),
   };
 }
 
@@ -315,13 +331,28 @@ export function providerInstanceHistoryForShell(input: {
   return history;
 }
 
+function isSilentRunForShell(
+  run: OrchestrationV2ThreadProjection["runs"][number],
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+): boolean {
+  return (
+    run.status !== "failed" &&
+    projection.messages.some(
+      (message) => message.id === run.userMessageId && idleCompactionOf(message) !== undefined,
+    ) &&
+    !projection.turnItems.some(
+      (item) => item.runId === run.id && item.type === "compaction" && item.status === "failed",
+    )
+  );
+}
+
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
 
 type ShellActivityRunStatus = "preparing" | "running" | "starting" | "waiting";
 
-export function isActivityRunForShell(
+function isActivityRunForShell(
   run: OrchestrationV2ThreadProjection["runs"][number],
 ): run is OrchestrationV2ThreadProjection["runs"][number] & {
   readonly status: ShellActivityRunStatus;
@@ -329,11 +360,12 @@ export function isActivityRunForShell(
   return isInterruptibleRunForShell(run) || run.status === "waiting";
 }
 
-/** A waiting secret card uses the shell's pending-input summary without runtime authority. */
+/** A waiting secret or link card uses the shell's pending-input summary without runtime authority. */
 export function secretRequestAsPendingInput(
   item: OrchestrationV2ThreadProjection["turnItems"][number] | null,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
-  if (item?.type !== "secret_request" || item.nodeId === null) return null;
+  if ((item?.type !== "secret_request" && item?.type !== "link_request") || item.nodeId === null)
+    return null;
   return {
     id: RuntimeRequestId.make(item.id),
     kind: "user_input",
@@ -341,6 +373,17 @@ export function secretRequestAsPendingInput(
     blocking: true,
   };
 }
+
+/**
+ * A secret card is answered while its agent waits in the run. A link card's
+ * agent asked without waiting, so the card waits on the user after its run.
+ */
+const waitsOnUser = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  liveRunIds: ReadonlySet<RunId>,
+) =>
+  item.type === "link_request" ||
+  (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
 /** The goal belongs to the provider thread that currently owns the conversation. */
 export function activeProviderGoalForShell(

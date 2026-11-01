@@ -40,7 +40,7 @@ git(
   "apps/server/package.json",
   ".github/workflows/scient-compute*",
 );
-const candidate = Schema.decodeUnknownSync(Schema.fromJsonString(ComputeRecipeCatalog))(
+const candidate = Schema.decodeSync(Schema.fromJsonString(ComputeRecipeCatalog))(
   NodeChildProcess.execFileSync(
     process.execPath,
     ["apps/server/scripts/compute-recipes.ts", "catalog", purpose],
@@ -84,7 +84,7 @@ const existing = raw === null ? null : Schema.decodeUnknownSync(File)(raw);
 const current =
   existing === null
     ? { schemaVersion: 1 as const, sequence: 1, recipes: [], withdrawn: [] }
-    : Schema.decodeUnknownSync(Schema.fromJsonString(ComputeRecipeCatalog))(
+    : Schema.decodeSync(Schema.fromJsonString(ComputeRecipeCatalog))(
         Buffer.from(existing.content, "base64").toString("utf8"),
       );
 if (

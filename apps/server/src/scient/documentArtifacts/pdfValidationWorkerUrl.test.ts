@@ -1,6 +1,9 @@
 import { createPdfValidationRuntime } from "@scientfactory/pdf-validation";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { pdfValidationWorkerUrl } from "./pdfValidationWorkerUrl.ts";
+
+const executable = vi.hoisted(() => ({ active: false }));
+vi.mock("node:sea", () => ({ isSea: () => executable.active }));
 
 function completePdf(): Uint8Array {
   const objects = [
@@ -24,21 +27,23 @@ function completePdf(): Uint8Array {
 
 describe("PDF validation worker location", () => {
   it.each([
+    ["file:///opt/scient/bin/scient", "file:///opt/scient/bin/pdf-validation-worker.mjs"],
+    [
+      "file:///C:/Program%20Files/Scient/scient.exe",
+      "file:///C:/Program%20Files/Scient/pdf-validation-worker.mjs",
+    ],
+  ])("resolves a sibling worker for executable %s", (moduleUrl, expected) => {
+    executable.active = true;
+    try {
+      expect(pdfValidationWorkerUrl(moduleUrl).href).toBe(expected);
+    } finally {
+      executable.active = false;
+    }
+  });
+  it.each([
     [
       "file:///opt/scient/backend/dist/bin.mjs",
       "file:///opt/scient/backend/dist/pdf-validation-worker.mjs",
-    ],
-    [
-      "file:///opt/scient/backend/dist/binCli-ByLO77_f.mjs",
-      "file:///opt/scient/backend/dist/pdf-validation-worker.mjs",
-    ],
-    [
-      "file:///opt/scient/backend/dist/shared-GeneratedDocumentStore.mjs",
-      "file:///opt/scient/backend/dist/pdf-validation-worker.mjs",
-    ],
-    [
-      "file:///opt/scient/relocated/binCli-hashed.mjs",
-      "file:///opt/scient/relocated/pdf-validation-worker.mjs",
     ],
     [
       "file:///C:/Program%20Files/Scient/resources/backend/dist/binCli-hashed.mjs",

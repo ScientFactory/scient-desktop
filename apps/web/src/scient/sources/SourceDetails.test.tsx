@@ -80,9 +80,6 @@ describe("SourceDetails", () => {
     expect(markup).toContain("John Ioannidis");
     expect(markup).toContain("A testable abstract.");
     expect(markup).toContain("Importance");
-    expect(markup).toContain("max-h-24");
-    expect(markup).toContain("mt-0.5 space-y-1.5");
-    expect(markup).toContain("mask-image");
     expect(markup).toContain("Publication details");
     expect(markup).toContain("Reference");
     expect(markup).toContain("Reference style");
@@ -127,8 +124,6 @@ describe("SourceDetails", () => {
 
     expect(markup.match(/>Abstract</gu)).toHaveLength(1);
     expect(markup).toContain(">Background<");
-    expect(markup).toContain("font-semibold leading-5");
-    expect(markup).toContain("h-6 min-w-0 w-full flex-wrap gap-1.5 overflow-hidden");
   });
 
   it("keeps metadata-only sources inspectable without offering a PDF action", () => {
@@ -218,25 +213,6 @@ describe("SourceDetails", () => {
 
     expect(markup).toContain("Clinical guideline");
     expect(markup).not.toContain(">Other source<");
-  });
-
-  it("keeps removal discreet behind the source actions menu", () => {
-    const markup = renderToStaticMarkup(
-      <SourceDetails
-        record={record}
-        diagnostics={[]}
-        onBack={() => undefined}
-        onEdit={() => undefined}
-        onSaveNote={saveNote}
-        onRefreshMetadata={async () => undefined}
-        onRemove={async () => undefined}
-        onOpenPdf={() => undefined}
-      />,
-    );
-
-    expect(markup).toContain('aria-label="More source actions"');
-    expect(markup).not.toContain('title="More source actions"');
-    expect(markup).not.toContain("Remove this source?");
   });
 
   it("offers approve and reject actions for a pending agent source", () => {

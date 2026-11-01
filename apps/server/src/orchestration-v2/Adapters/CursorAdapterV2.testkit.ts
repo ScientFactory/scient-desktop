@@ -20,16 +20,15 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { makeCursorAdapterV2Driver } from "@t3tools/provider-cursor/server";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
-import { buildScientOrchestrationPromptForFirstRun } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientOrchestrationPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
-  CURSOR_DRIVER_KIND,
   cursorSdkModelSelection,
   makeCursorAgentOptions,
+  makeCursorAdapterV2,
 } from "@t3tools/provider-cursor/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
@@ -519,14 +518,7 @@ export function layer(
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
-  const replayDriver = makeCursorAdapterV2Driver({
-    orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
-    runtimeInstructions: buildScientRuntimeInstructions,
-    turnStartError: (turnIdentity, cause) =>
-      turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
-  });
-  // Skill discovery also scans user roots under HOME; an empty HOME keeps
-  // replays from picking up the host's own skills.
+  // Empty HOME prevents skill discovery from using the host's skills.
   const layerHostEnvironment = Layer.effect(
     HostProcess.Environment,
     Effect.gen(function* () {
@@ -535,14 +527,21 @@ export function layer(
       return { HOME: home };
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [replayDriver],
-    configMap: {
-      [CURSOR_DEFAULT_INSTANCE_ID]: {
-        driver: CURSOR_DRIVER_KIND,
-      },
-    },
-  }).pipe(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    Effect.gen(function* () {
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId: CURSOR_DEFAULT_INSTANCE_ID,
+        environment: yield* HostProcess.Environment,
+        // SCIENT-FORK:START — replay through Scient's provider instructions and turn receipts.
+        orchestrationPromptForFirstRun: buildScientOrchestrationPrompt,
+        runtimeInstructions: buildScientRuntimeInstructions,
+        turnStartError: (turnIdentity, cause) =>
+          turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
+        // SCIENT-FORK:END
+      });
+      return [adapter];
+    }),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerCursorAgentSdkReplay(transcript, options),
@@ -726,8 +725,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     model: cursorSdkModelSelection(input.modelSelection),
     mode: interactionMode === "plan" ? "plan" : "agent",
   } as const;
-  // Agents sometimes search the workspace's parent too; map it to /tmp so the
-  // recording host's temp layout stays out of the fixture.
+  // Agents search parent directories too; normalize the recording host's temp layout.
   const replacements: ReadonlyArray<readonly [string, string]> = [
     [input.cwd, input.transcriptCwd ?? `/tmp/cursor-replay-${input.scenario}`],
     [input.cwd.slice(0, input.cwd.lastIndexOf("/")), "/tmp"],
@@ -769,10 +767,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     }
   };
 
-  // In a mid-tool interrupt recording, frames after the first tool-call-started
-  // are held until run.cancel is recorded, so the cancel directly follows its
-  // trigger. Holding appends rather than waits: updates can arrive while send
-  // is still flushing them, and blocking there would never return.
+  // Hold frames after tool-call-started until run.cancel. Append without waiting because updates can arrive during send.
   let awaitingToolStart = input.interruptAfterToolStart === true;
   let heldUntilCancel: Array<ProviderReplayEntry> | undefined;
 
@@ -851,10 +846,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     }
     if (input.interruptAfterToolStart === true) {
       yield* awaitSignal(toolStarted, "Cursor SDK tool-call-started before interrupt");
-      // Cancelling synchronously from the SDK's tool-call-started callback
-      // leaves an unhandled AbortError inside @cursor/sdk that kills the
-      // process (reproduced on 1.0.22, 1.0.31, and 1.0.32). Cancelling from a
-      // later timer was clean in the same probes; 10 ms is that deferral.
+      // Synchronous tool-call-started cancellation crashes @cursor/sdk with AbortError (1.0.22, 1.0.31, 1.0.32); defer 10 ms.
       yield* Effect.sleep("10 millis");
       const cancelling = yield* run.cancel.pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.succeed(cancelSent, undefined);

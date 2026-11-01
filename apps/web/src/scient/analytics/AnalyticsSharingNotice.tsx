@@ -43,12 +43,14 @@ function EnvironmentSharingNotice({
   const dismissVisibleNotice = useRef<(() => void) | null>(null);
   const previousPathname = useRef(pathname);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dismisses the visible notice toast when the router pathname changes
   useEffect(() => {
     // Only a notice already shown is consumed by navigation; loading is not disclosure.
     if (previousPathname.current !== pathname) dismissVisibleNotice.current?.();
     previousPathname.current = pathname;
   }, [pathname]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the sharing-notice toast and its window blur/visibilitychange listeners until the notice is dismissed or the component unmounts
   useEffect(() => {
     if (prepared === null || dismissed || dismissedThisSession || inPrivacySettings) return;
     let active = true;

@@ -57,7 +57,7 @@ const controls = [
 
 it.live.each(controls.map(({ phase, name }) => ({ caseTitle: name, phase, name })))(
   "$caseTitle",
-  ({ phase, name }) =>
+  ({ phase, name: _name }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const eventStore = yield* EventStore.EventStoreV2;

@@ -1,29 +1,15 @@
 /**
- * Builds the exact engine invocation for one compile. Every invocation is
- * non-interactive, reports errors in file:line form, keeps shell escape off,
- * emits a SyncTeX index next to the PDF, and writes every aux and output file
- * into a Scient-owned work directory outside the project tree, so builds never
- * dirty the workspace or the agent's checkpoints.
- *
- * Nothing here stops at the first error, and that is about diagnostics rather
- * than about output: `-interaction=nonstopmode` with no `-halt-on-error` runs
- * the engine to the end of the document, so one compile reports every error it
- * can reach instead of only the first. What that run is worth is not decided
- * here — `LatexBuildService` refuses to publish a PDF from a run that exited
- * non-zero, however many pages it managed to typeset, and keeps the last clean
- * PDF visible as stale instead.
+ * Run to the end for complete diagnostics with shell escape off and all aux/output outside the
+ * workspace. Only LatexBuildService decides publication; a nonzero run's pages cannot replace the
+ * last clean PDF.
  */
 
 export type LatexToolchainKind = "latexmk" | "tectonic";
 export type LatexEngine = "pdflatex" | "xelatex" | "lualatex";
 
 /**
- * `latexmk` drives `pdflatex`, `biber`, and friends by name, so a distribution
- * that is not on this machine's PATH — the one Scient installs into its own
- * state directory — only works if its `bin` folder leads the child's PATH.
- * This changes one subprocess, never the machine: nothing is written to the
- * user's environment, and a system installation keeps its own resolution
- * order because the managed folder is only prepended for the managed engine.
+ * Prepend managed bin only for that subprocess so latexmk finds its own engines/biber. Never modify
+ * the user's environment or change system-distribution resolution order.
  */
 export function latexEngineEnvironment(input: {
   readonly base: Readonly<Record<string, string>>;
@@ -90,15 +76,9 @@ export function buildLatexInvocation(input: {
   /** Same directory relative to the root's cwd, avoiding Unicode profile paths. */
   readonly relativeWorkDirectory?: string;
   /**
-   * Run the engine even where the driver believes nothing has changed. Set for
-   * the compile that follows a package install: `latexmk` remembers, in the
-   * `.fdb_latexmk` it keeps in the work directory, both that the last run
-   * failed and which files were missing — recorded at the paths it looked in,
-   * one of which is the output directory. Placing `microtype.sty` in the
-   * distribution's own tree therefore changes nothing `latexmk` is watching, so
-   * on the retry it reports "Nothing to do", refuses to rerun the engine, and
-   * exits non-zero with only its own prose. That looks exactly like a document
-   * that still cannot find the package it was just given.
+   * Force the post-install compile: latexmk's persisted failed/missing-path record does not observe
+   * newly installed distribution files. Without -g it can refuse rerun as Nothing to do despite the
+   * package now existing.
    */
   readonly forceReprocess?: boolean | undefined;
 }): LatexInvocation {

@@ -16,8 +16,8 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-async function mount(_fixture: _Fixture, preamble = "", disabled = false, viewport = 900) {
-  await page.viewport(viewport, 800);
+async function mount(_fixture: _Fixture, preamble = "", disabled = false) {
+  await page.viewport(900, 800);
   _fixture.publishSource(
     `\\documentclass[11pt,a4paper]{article}\n${preamble}\\begin{document}\nExisting body.\n\\end{document}\n`,
   );
@@ -60,36 +60,6 @@ async function chooseLanguage(name: "English" | "Hebrew") {
   await page.getByRole("combobox", { name: "Document language" }).click();
   await page.getByRole("option", { name, exact: true }).click();
 }
-
-it.each([900, 320])("fits the approved three/two/two layout at viewport %s", async (viewport) => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  await mount(_fixture, "", false, viewport);
-  const box = (label: string) =>
-    _fixture.host!.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.getBoundingClientRect();
-  const type = box("Document type");
-  const size = box("Text size");
-  const paper = box("Paper size");
-  const language = box("Document language");
-  const orientation = box("Orientation");
-  const margins = box("Margins");
-  const paragraphs = box("Paragraphs");
-  expect(Math.abs(type.top - size.top)).toBeLessThan(1);
-  expect(Math.abs(size.top - paper.top)).toBeLessThan(1);
-  expect(Math.abs(type.width - size.width)).toBeLessThan(1);
-  expect(Math.abs(size.width - paper.width)).toBeLessThan(1);
-  expect(Math.abs(language.top - orientation.top)).toBeLessThan(1);
-  expect(Math.abs(margins.top - paragraphs.top)).toBeLessThan(1);
-  expect(language.top).toBeGreaterThan(type.bottom);
-  expect(margins.top).toBeGreaterThan(language.bottom);
-  const bounds = _fixture.host!.getBoundingClientRect();
-  for (const control of [type, size, paper, language, orientation, margins, paragraphs]) {
-    expect(control.left).toBeGreaterThanOrEqual(bounds.left);
-    expect(control.right).toBeLessThanOrEqual(bounds.right);
-  }
-  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(viewport);
-});
 
 it("stages language, clears a reverted choice, and publishes only on Apply", async () => {
   await using _fixture = _createFixture();

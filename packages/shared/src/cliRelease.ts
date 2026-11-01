@@ -1,20 +1,14 @@
-// SCIENT-FORK: Scient keeps its own release identity for environment updates.
-//
-// Stable discovery rejects every prerelease, including unknown suffixes. Beta
-// discovery uses an isolated artifact index so previously released clients
-// cannot mistake a Beta tag for Stable. Legacy channel parsing remains available
-// at the compatibility boundary.
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+// SCIENT-FORK: Stable rejects all prereleases; Beta uses an isolated artifact index so old clients stay safe.
+// Legacy channel parsing remains at the compatibility boundary.
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
   SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY,
 } from "./scientRelease.ts";
 
-/**
- * The tar to extract a release archive with. Windows ships bsdtar in
- * System32, which reads both formats; a Git-for-Windows GNU tar earlier on
- * PATH cannot open the zip, so the system copy is named by absolute path.
- * Upstream installers (Codex, ACP registry) import this from here.
- */
+/** Use System32 bsdtar on Windows; Git-for-Windows GNU tar cannot open zip archives. */
 export function cliArchiveTarCommand(
   platform: NodeJS.Platform,
   env: Readonly<Record<string, string | undefined>>,
@@ -33,10 +27,25 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
   return channel === "nightly" || channel === "preview" ? channel : "stable";
 }
 
-/**
- * Callers walk pages until a channel match turns up; a busy nightly train can push the newest
- * preview or stable release past any single page.
- */
+/** Whether updating between these versions crosses Stable and Nightly. Preview builds cross nothing.
+ * Hosts refuse a crossing outside a track switch, which checks the database first. */
+export function crossesReleaseTrack(fromVersion: string, toVersion: string): boolean {
+  const from = cliReleaseChannelOf(fromVersion);
+  const to = cliReleaseChannelOf(toVersion);
+  // SCIENT-FORK: Beta crosses nothing either. Stable promotes a Beta commit, and a staged server
+  // runtime's preflight refuses a database with migrations it does not know.
+  if (from === "beta" || to === "beta") return false;
+  return from !== to && from !== "preview" && to !== "preview";
+}
+
+/** The desktop update track a build belongs to. Preview builds have no feed and read as Stable. */
+// SCIENT-FORK: Beta builds belong to the Beta track.
+export function desktopUpdateChannelOf(version: string): "latest" | "beta" | "nightly" {
+  const channel = cliReleaseChannelOf(version);
+  return channel === "nightly" || channel === "beta" ? channel : "latest";
+}
+
+/** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
 export function cliReleaseIndexPageUrl(
   page: number,
   channel: CliReleaseChannel = "stable",
@@ -46,9 +55,7 @@ export function cliReleaseIndexPageUrl(
   return `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`;
 }
 
-/**
- * Drafts are skipped because their assets are not downloadable.
- */
+/** Draft assets are not downloadable. */
 export function newestCliReleaseVersion(
   releases: ReadonlyArray<{
     readonly tag_name: string;
@@ -65,4 +72,15 @@ export function newestCliReleaseVersion(
     if (cliReleaseChannelOf(version) === channel) return version;
   }
   return undefined;
+}
+
+const NpmReleaseMigrationManifest = Schema.Struct({
+  t3code: Schema.Struct({ databaseMigration: Schema.Int }),
+});
+const decodeNpmReleaseMigrationManifest = Schema.decodeUnknownOption(NpmReleaseMigrationManifest);
+
+/** Highest database migration a release's server knows, from its npm `t3` manifest. */
+export function npmReleaseDatabaseMigration(manifest: unknown): number | undefined {
+  return Option.getOrUndefined(decodeNpmReleaseMigrationManifest(manifest))?.t3code
+    .databaseMigration;
 }

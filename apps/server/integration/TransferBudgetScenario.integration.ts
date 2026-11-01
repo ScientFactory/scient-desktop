@@ -1,5 +1,7 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderInstanceId,
+  RunId,
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadStreamItem,
   type ProviderDriverKind,
@@ -44,6 +46,23 @@ export function expectedMeasuredAssistantText(provider: ProviderDriverKind): str
   );
 }
 
+/** A projected shell may already contain the final state at an earlier event cursor. */
+export function isMeasuredTransferShellUpdate(
+  item: OrchestrationV2ShellStreamItem,
+  provider: ProviderDriverKind,
+  afterSequence: number,
+): item is Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }> {
+  return (
+    item.kind === "thread.updated" &&
+    item.sequence > afterSequence &&
+    item.thread.id === TRANSFER_THREAD_ID &&
+    item.thread.providerInstanceId === ProviderInstanceId.make(provider) &&
+    item.thread.latestRunId === RunId.make(`run-${TRANSFER_MEASURED_TURN_INDEX}`) &&
+    item.thread.activeRunId === null &&
+    item.thread.latestRunCompletedAt != null
+  );
+}
+
 /** Takes from the queue until one value matches, and returns everything taken. */
 export const collectQueueUntil = Effect.fn("TransferBudget.collectQueueUntil")(function* <A>(
   queue: Queue.Queue<A>,
@@ -79,7 +98,11 @@ export const subscribeThreadItems = Effect.fn("TransferBudget.subscribeThreadIte
     threadId: TRANSFER_THREAD_ID,
     afterSequence,
     requestCompletionMarker: true,
+    // The opt-ins current clients send (client-runtime state/threads.ts).
     acceptBoundedSnapshot: true,
+    acceptCompactTurnItems: true,
+    acceptCompactIds: true,
+    acceptDedupedBodies: true,
   }).pipe(
     Stream.runForEach((item) => Queue.offer(items, item).pipe(Effect.asVoid)),
     Scope.provide(measured.scope),

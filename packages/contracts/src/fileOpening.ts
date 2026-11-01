@@ -106,19 +106,9 @@ export const EnvironmentFileLinkResolveInput = Schema.Struct({
 export type EnvironmentFileLinkResolveInput = typeof EnvironmentFileLinkResolveInput.Type;
 
 /**
- * What a link names.
- *
- * - `literal`: the link's own location exists, or fails for a reason other
- *   than absence (a denied read, a folder); open it as written.
- * - `recovered`: nothing exists at the link's location, and exactly one
- *   workspace file best matches how the link's path ends.
- * - `tie`: several workspace files match equally well; the user chooses.
- * - `none`: no workspace file has the link's file name.
- * - `incomplete`: the workspace could not be searched completely, so no match
- *   can be called unique; `paths` holds what was found, as choices only.
- *
- * `missingPath` is the absolute location the link named. Other paths are
- * workspace-relative with `/` separators.
+ * Existing or non-absence-failing locations open as written. Recover only a unique complete best
+ * match; incomplete search paths are choices, never uniqueness proof. missingPath is host-absolute;
+ * candidate paths remain workspace-relative.
  */
 export const EnvironmentFileLinkResolution = Schema.Union([
   Schema.TaggedStruct("literal", { path: EnvironmentFilePath }),

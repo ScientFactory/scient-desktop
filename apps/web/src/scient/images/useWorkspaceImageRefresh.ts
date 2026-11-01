@@ -14,6 +14,7 @@ export function useWorkspaceImageRefresh(input: {
   const connectionReady = usePreparedConnection(environmentId)._tag === "Some";
   const refreshToken = JSON.stringify([environmentId, resource, workspaceMutationId]);
   const handledRefreshToken = useRef<string | null | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests an image reload over the environment connection when the workspace mutation stream advances
   useEffect(() => {
     if (!connectionReady) {
       handledRefreshToken.current = null;

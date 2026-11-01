@@ -3,12 +3,8 @@ import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * Keeps forks frozen when the history they show is rewritten. Before an event
- * overwrites an item or message that a fork shows by reference, the stored
- * version is kept for that fork (`scient_fork_frozen_items`), in the same
- * transaction; readers prefer it. Identities do not change, so loaded clients
- * and recorded references stay valid. The first rewrite wins: later ones find
- * the fork's version already kept.
+ * Freeze the stored version in the same transaction before rewriting referenced history. First
+ * rewrite wins; preserve identities so loaded clients and recorded references remain valid.
  */
 export const freezeShownHistory = Effect.fn("ForkHistory.freezeShown")(function* (
   sql: SqlClient.SqlClient,

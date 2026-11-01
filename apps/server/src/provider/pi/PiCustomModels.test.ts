@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as Redacted from "effect/Redacted";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
-import type { PiRpcClient, PiRpcSpawnOptions } from "./PiRpcClient.ts";
+import type { PiRpcClient, PiRpcSpawnOptions } from "@t3tools/provider-pi/server/rpcClient";
 
 const client: PiRpcClient = {
   events: Stream.empty,

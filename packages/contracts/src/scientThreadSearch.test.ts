@@ -3,17 +3,16 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import * as PublicContracts from "./index.ts";
-import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2SearchThreadsResult as ModernSearchThreadsResult,
+} from "./orchestrationV2.ts";
 import { WsRpcGroup } from "./rpc.ts";
 import {
   OrchestrationSearchThreadsResult,
   OrchestrationThreadSearchMatch,
 } from "./scientThreadSearch.ts";
-import {
-  OrchestrationSearchThreadsResult as ModernSearchThreadsResult,
-  OrchestrationThreadSearchMatch as ModernThreadSearchMatch,
-  OrchestrationThreadSearchSource,
-} from "./threadSearch.ts";
+import { OrchestrationThreadSearchMatch as ModernThreadSearchMatch } from "./threadSearch.ts";
 
 const decodeResult = Schema.decodeUnknownSync(OrchestrationSearchThreadsResult);
 const encodeResult = Schema.encodeSync(OrchestrationSearchThreadsResult);
@@ -29,12 +28,6 @@ const legacyMatch = {
 };
 
 describe("Scient nullable thread search contracts", () => {
-  it("selects the same nullable schema objects through public exports", () => {
-    expect(PublicContracts.OrchestrationThreadSearchMatch).toBe(OrchestrationThreadSearchMatch);
-    expect(PublicContracts.OrchestrationSearchThreadsResult).toBe(OrchestrationSearchThreadsResult);
-    expect(OrchestrationThreadSearchMatch.fields.source).toBe(OrchestrationThreadSearchSource);
-  });
-
   it("round-trips nullable history and project-scoped matches without changing their wire fields", () => {
     const wire = {
       matches: [

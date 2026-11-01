@@ -3,13 +3,18 @@ import type {
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
-  DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
+// SCIENT-FORK:START — Scient Accounts: expose the desktop accounts bridge.
+import { makeDesktopAccountsBridge } from "./scient/accounts/preloadBridge.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { makeMultiWindowBridge } from "./scient/multiWindow/preloadBridge.ts";
+// SCIENT-FORK:END
 import * as IpcChannels from "./ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
 import { installSpellingSampler, type SampleOutcome } from "./scient/spelling/preloadSampler.ts";
@@ -49,8 +54,7 @@ if (clientPlatform !== "darwin") {
 // SCIENT-FORK:END
 
 if (clientPlatform === "darwin") {
-  // Native window buttons do not scale with Chromium zoom. Keep their reserved
-  // space in native points, including when a zoomed page is reloaded.
+  // Native buttons ignore Chromium zoom; reserve native points even after reload.
   const syncWindowControlInset = () => {
     document.documentElement.style.setProperty(
       "--desktop-window-controls-inset",
@@ -78,10 +82,6 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
-  // SCIENT-FORK:START keep-awake mount
-  keepAwake: (request) => ipcRenderer.invoke(IpcChannels.KEEP_AWAKE_CHANNEL, request),
-
-  // SCIENT-FORK:END
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getClientPlatform: () => clientPlatform,
+  // SCIENT-FORK:START — keep the computer awake while threads work.
+  keepAwake: (choice) => ipcRenderer.invoke(IpcChannels.KEEP_AWAKE_CHANNEL, choice),
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — the unread-answer app badge.
   setUnreadAnswerBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_BADGE_CHANNEL, badge),
@@ -119,6 +122,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
+  },
+  onTrackpadScrollBegin: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
   },
   onTrackpadScrollEnd: (listener) => {
     const handler = () => listener();
@@ -167,7 +175,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),
-  clearConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL),
   discoverSshHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL),
   resolveSshHost: (alias) => ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_HOST_CHANNEL, alias),
   ensureSshEnvironment: async (target, options) =>
@@ -188,8 +195,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }),
   fetchSshSessionState: (httpBaseUrl, bearerToken) =>
     ipcRenderer.invoke(IpcChannels.FETCH_SSH_SESSION_STATE_CHANNEL, { httpBaseUrl, bearerToken }),
-  issueSshWebSocketTicket: (httpBaseUrl, bearerToken) =>
-    ipcRenderer.invoke(IpcChannels.ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL, { httpBaseUrl, bearerToken }),
   onSshPasswordPrompt: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
       if (typeof request !== "object" || request === null) return;
@@ -218,6 +223,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   saveAssetCopy: (request) => ipcRenderer.invoke(IpcChannels.SAVE_ASSET_COPY_CHANNEL, request),
+  savePdfBytesCopy: (request) =>
+    ipcRenderer.invoke(IpcChannels.SAVE_PDF_BYTES_COPY_CHANNEL, request),
   revealSavedAsset: (path) => ipcRenderer.invoke(IpcChannels.REVEAL_SAVED_ASSET_CHANNEL, path),
   renderDocumentPagePdf: (input) =>
     ipcRenderer.invoke(IpcChannels.RENDER_DOCUMENT_PAGE_PDF_CHANNEL, input),
@@ -313,11 +320,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
-  setUpdateChannel: (channel) =>
-    ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),
+  setUpdateChannel: (channel, minimumVersion) =>
+    ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, { channel, minimumVersion }),
   checkForUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_DOWNLOAD_CHANNEL),
-  installUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL),
+  installUpdate: (expectedVersion) =>
+    ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, expectedVersion),
   cliCommand: {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),
@@ -449,15 +457,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           mimeType,
           data,
         }),
-      onFrame: (listener) => {
-        const wrappedListener = (_event: Electron.IpcRendererEvent, frame: unknown) => {
-          if (typeof frame !== "object" || frame === null) return;
-          listener(frame as DesktopPreviewRecordingFrame);
-        };
-        ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
-        return () =>
-          ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
-      },
     },
     onStateChange: (listener) => {
       const wrappedListener = (
@@ -492,4 +491,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   voice: makeDesktopVoiceBridge(ipcRenderer),
+  // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.
+  accounts: makeDesktopAccountsBridge(ipcRenderer),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  ...makeMultiWindowBridge(ipcRenderer),
+  // SCIENT-FORK:END
 } satisfies DesktopBridge);

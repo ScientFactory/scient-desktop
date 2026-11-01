@@ -1,44 +1,50 @@
-import { useAtomValue } from "@effect/atom-react";
-import { DEFAULT_KEEP_AWAKE_SETTINGS } from "@t3tools/contracts";
-import { Switch } from "../../components/ui/switch";
+import type { KeepAwakeState } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
+
 import { SettingsRow } from "../../components/settings/settingsLayout";
-import { keepAwakeErrorAtom, keepAwakeStateAtom, requestKeepAwake } from "./state";
 import { searchableSetting } from "../../components/settings/settingsSearch";
+import {
+  useScopedSettings,
+  useUpdateScopedSettings,
+} from "../../components/settings/useScopedSettings";
+import { Switch } from "../../components/ui/switch";
+
+const STATUS_REFRESH_MS = 15_000;
 
 export function KeepAwakeSettings() {
-  const state = useAtomValue(keepAwakeStateAtom);
-  const error = useAtomValue(keepAwakeErrorAtom);
-  if (!window.desktopBridge?.keepAwake) return null;
-  const settings = state?.settings ?? DEFAULT_KEEP_AWAKE_SETTINGS;
+  const enabled = useScopedSettings((settings) => settings.keepComputerAwake);
+  const updateSettings = useUpdateScopedSettings();
+  const [state, setState] = useState<KeepAwakeState | null>(null);
+  const keepAwake = window.desktopBridge?.keepAwake;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer keeps the row's status in step with the desktop process while it's on screen.
+  useEffect(() => {
+    if (keepAwake === undefined) return;
+    const refresh = () => {
+      void keepAwake().then(setState, () => setState(null));
+    };
+    refresh();
+    const timer = setInterval(refresh, STATUS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [keepAwake]);
+
+  if (keepAwake === undefined) return null;
   return (
     <SettingsRow
       {...searchableSetting("keep-computer-awake")}
       description={
         <>
-          Prevent automatic sleep while local threads are running. The screen can still turn off.
-          {state?.platformNotice ? <> {state.platformNotice}</> : null}
+          Stop this computer sleeping while its threads work. The screen can still turn off, and
+          closing the lid can still put it to sleep.
+          {state?.notice ? ` ${state.notice}` : null}
         </>
       }
-      status={
-        error ??
-        state?.error ??
-        (state?.blocking
-          ? "Keep-awake requested"
-          : state?.threads.some((thread) => thread.status === "paused")
-            ? "Paused: waiting for work that can continue"
-            : "No keep-awake request")
-      }
+      status={state?.active ? "Keeping this computer awake" : undefined}
       control={
         <Switch
           aria-label="Keep computer awake"
-          checked={settings.mode === "running"}
-          disabled={!state}
-          onCheckedChange={(checked) => {
-            void requestKeepAwake({
-              type: "configure",
-              settings: { mode: checked ? "running" : "system" },
-            });
-          }}
+          checked={enabled}
+          onCheckedChange={(checked) => updateSettings({ keepComputerAwake: Boolean(checked) })}
         />
       }
     />

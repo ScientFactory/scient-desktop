@@ -203,12 +203,9 @@ export function openPdfCitation(
   });
   const panelOf = (state: ReturnType<typeof useRightPanelStore.getState>) =>
     state.byThreadKey[threadKey];
-  // One watcher across the quote's life. Waiting (behind a pending save or a
-  // generated PDF's lookup): any change to this thread's panel (another view,
-  // closing it) means the user moved on, even if the panel later returns.
-  // Opening: the quote's own panel change. Opened: the reveal lives while its
-  // PDF stays the active view and until its reader claims it; switching away
-  // or closing first abandons it.
+  // Any panel change while waiting means the user moved on, even if it later returns. After
+  // opening, retain the reveal only while its PDF remains active and until a reader claims it;
+  // closing/switching first abandons it.
   let phase:
     | { readonly _tag: "Waiting" }
     | { readonly _tag: "Opening" }
@@ -251,7 +248,12 @@ export function openPdfCitation(
     };
   };
   try {
-    openPdfCitationNow(citation, currentCwd, runAfterPendingSave, stillWanted, act);
+    void Promise.resolve(
+      openPdfCitationNow(citation, currentCwd, runAfterPendingSave, stillWanted, act),
+    ).catch(() => {
+      stopWatching();
+      if (stillWanted()) unavailable();
+    });
   } catch {
     // A link that parsed but names something the panel can't open.
     stopWatching();
@@ -271,7 +273,7 @@ function openPdfCitationNow(
   runAfterPendingSave: (surfaceId: string, run: () => void) => void,
   isCurrent: () => boolean,
   act: (revealed: Revealed, open: () => void) => void,
-): void {
+): void | Promise<void> {
   const { target } = citation;
   const { document } = target;
   const ref: ScopedThreadRef = {
@@ -313,7 +315,7 @@ function openPdfCitationNow(
       return;
     }
     case "generated":
-      void generatedDescriptor(citation, locator).then(
+      return generatedDescriptor(citation, locator).then(
         (source) => {
           if (!isCurrent()) return;
           const surface = scientGeneratedPdfSurface(source);
@@ -327,7 +329,6 @@ function openPdfCitationNow(
           if (isCurrent()) unavailable();
         },
       );
-      return;
     case "attachment": {
       const attachment = {
         type: "file" as const,

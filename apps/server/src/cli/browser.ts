@@ -1,15 +1,5 @@
-/**
- * `scient browser setup` - prepares a Linux host for Scient's headless browser, which
- * server browser tabs and HTML render previews share. It is the fix every
- * browser host error names, so it does the whole job in one run:
- *
- * - installs the AppArmor profile that lets Chrome's sandbox run where the host
- *   restricts unprivileged user namespaces (Ubuntu 23.10+), and
- * - installs the Debian packages for any libraries the browser cannot load.
- *
- * Both need root. Without it, the command prints what it would change and the
- * `sudo` line to run. It is safe to run again; it skips what is already done.
- */
+/** Browser setup installs Linux sandbox policy and missing browser libraries together.
+ * Rootless calls print the changes and sudo command; repeated setup skips completed work. */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Console from "effect/Console";

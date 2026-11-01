@@ -3,10 +3,8 @@ import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * Storage cleanup reads the thread shell, whose status skips held queued runs:
- * a held queue after a failed run reads "failed", and a thread holding only
- * queued runs reads "idle". Resume must still find the checkout, so any
- * queued run, held or not, keeps the thread busy for cleanup (#306).
+ * Shell status omits held queues, but resume still needs their checkout. Any queued run must keep
+ * storage cleanup busy even when the shell reads failed or idle.
  */
 export const presentQueuedRunsAsBusy = Effect.fn("StorageCleanup.presentQueuedRunsAsBusy")(
   function* <Thread extends Pick<OrchestrationV2ThreadShell, "id" | "status">>(

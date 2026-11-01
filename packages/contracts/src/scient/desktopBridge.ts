@@ -1,6 +1,8 @@
 import {
   AssetCopyRequest,
   AssetCopyResult,
+  PdfBytesCopyRequest,
+  type PdfBytesCopyRequest as PdfBytesCopyRequestType,
   type AssetCopyRequest as AssetCopyRequestType,
   type AssetCopyResult as AssetCopyResultType,
 } from "@scientfactory/document-artifacts";
@@ -16,17 +18,22 @@ import type {
   DesktopDocumentPageRenderInput,
   DesktopDocumentPageRenderOutcome,
 } from "../scientDocumentExport.ts";
+import type { ClientSettings } from "../settings.ts";
+import type { DesktopAccountsBridge } from "./desktopAccountsBridge.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
-import type { KeepAwakeRequest, KeepAwakeState } from "../scientKeepAwake.ts";
+import type { KeepAwakeChoice, KeepAwakeState } from "../scientKeepAwake.ts";
 
 export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
 export type DesktopAssetCopyRequest = AssetCopyRequestType;
 export const DesktopAssetCopyResultSchema = AssetCopyResult;
 export type DesktopAssetCopyResult = AssetCopyResultType;
+export const DesktopPdfBytesCopyRequestSchema = PdfBytesCopyRequest;
+export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
-  keepAwake?: (request: KeepAwakeRequest) => Promise<KeepAwakeState>;
+  /** Scient: reads the keep-awake state, after applying a thread's choice when one is given. */
+  keepAwake?: (choice?: KeepAwakeChoice) => Promise<KeepAwakeState>;
   /**
    * Scient: shows the threads with an unread answer on the app icon; zero clears it. `image` is
    * the Windows taskbar overlay. Resolves whether the platform accepted it.
@@ -51,6 +58,8 @@ export interface ScientDesktopBridge {
   /** Scient: gives up an opened `.scic`; its token then fails `file-unavailable`. */
   releaseOpenedConversationFile?: (request: DesktopConversationFileReleaseRequest) => Promise<void>;
   saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
+  /** Optional while an older desktop shell hosts a newer reader. Uses the native Save dialog. */
+  savePdfBytesCopy?: (request: PdfBytesCopyRequestType) => Promise<DesktopAssetCopyResult>;
   /** Optional while older desktop shells can host a newer web client. */
   revealSavedAsset?: (path: string) => Promise<void>;
   /**
@@ -71,4 +80,16 @@ export interface ScientDesktopBridge {
    * hosted by the Electron desktop build; web builds have `voice === undefined`.
    */
   voice?: DesktopVoiceBridge;
+  /** Scient Accounts: browser profile details, sign-in capture and fill. Desktop only. */
+  accounts?: DesktopAccountsBridge;
+  /**
+   * Scient: opens another full app window. `route` is an app path such as
+   * `/<environmentId>/<threadId>`; `atCursor` opens the window under the pointer
+   * instead of beside the current one. Resolves whether a window opened.
+   */
+  openNewWindow?: (route?: string, options?: { readonly atCursor?: boolean }) => Promise<boolean>;
+  /** Scient: another app window saved client settings. */
+  onClientSettingsChanged?: (listener: (settings: ClientSettings) => void) => () => void;
+  /** Scient: another app window saved the connection catalog; read it again before writing. */
+  onConnectionCatalogChanged?: (listener: () => void) => () => void;
 }

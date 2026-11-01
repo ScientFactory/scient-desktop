@@ -22,11 +22,9 @@ export function isOutsideProjectFailure(failure: ProjectFileFailure | null): boo
 }
 
 /**
- * Whether a failed read already explains why nothing can be shown, so media
- * and document viewers should not try (and fail again with less to say).
- * Binary media never reads as text, so a plain `binary_file` failure does not
- * count; a missing file, a denied read, or a host path that is not a regular
- * file does. A workspace directory opens the explorer instead.
+ * A binary_file text-read failure does not prove media is unreadable. Missing/denied/nonregular
+ * host paths do; avoid retrying those through a less informative viewer. Workspace directories
+ * belong in the explorer.
  */
 export function readFailureBlocksPreview(input: {
   readonly hasData: boolean;
@@ -39,12 +37,9 @@ export function readFailureBlocksPreview(input: {
 }
 
 /**
- * What the computer that holds a file said when it refused a read. The copy
- * states only that: `EACCES` is a permission on the file or one of its
- * folders; `EPERM` is the system itself declining, which on a Mac is usually,
- * but not provably, its privacy protection. An older server reports neither
- * code, so nothing more specific is claimed. The settings are on the host,
- * which for a paired or remote viewer is not the device in hand.
+ * Report only host-proven causes: EACCES is file/ancestor permission; EPERM is system refusal, not
+ * proof of macOS privacy denial. Settings belong to the file's host, which may differ from the
+ * viewing device.
  */
 function readDeniedDescription(input: {
   readonly osErrorCode: string | null;

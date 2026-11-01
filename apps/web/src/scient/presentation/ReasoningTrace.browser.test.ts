@@ -8,7 +8,10 @@ async function _cleanupFixture0(_fixture: _Fixture) {
 }
 
 describe("expanded thought typography", () => {
-  it.each(["400", "500"])("keeps emphasis at the surrounding weight %s", async (weight) => {
+  // regression: cac738b234 fix(timeline): refine trace symbols and thought typography
+  // The rule inherits whatever weight surrounds it, so one weight covers the path.
+  it("keeps emphasis at the surrounding weight", async () => {
+    const weight = "500";
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -27,6 +30,7 @@ describe("expanded thought typography", () => {
     }
   });
 
+  // regression: 010d58e874 fix(chat): thoughts read quietly when expanded (headings: f9ded2686c)
   it("draws an expanded thought in its collapsed row's colour, not an answer's", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -52,6 +56,7 @@ describe("expanded thought typography", () => {
     answer.remove();
   });
 
+  // regression: cac738b234 fix(timeline): refine trace symbols and thought typography
   it("retains heading and bold styling in ordinary assistant replies", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

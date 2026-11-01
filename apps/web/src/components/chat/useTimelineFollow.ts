@@ -1,6 +1,6 @@
 import { canApplySendAnchor, savedPositionIsAtEnd, readerAtReadingEnd } from "./readerScrollPolicy";
 import { followModeAfterEndTransition, useTimelineEndControl } from "./useTimelineEndControl";
-import { useQueuedDeliveryFollow, useResponseFollow } from "./responseFollow";
+import { useArrivedPromptFollow, useResponseFollow } from "./responseFollow";
 import { type ChatMessage } from "../../types";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -9,11 +9,7 @@ import {
   TYPE_TO_FOCUS_EDITABLE_SELECTOR,
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
-import {
-  type MessageId,
-  type ThreadId,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+import { type MessageId } from "@t3tools/contracts";
 
 import {
   type SetStateAction,
@@ -30,12 +26,12 @@ import {
   readTimelinePosition,
   type TimelineScrollMode,
 } from "./timelineScrollAnchoring";
-import { type ChatComposerHandle } from "./ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./pageScrollController";
 import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
 
 import { releaseChatTimelineAnchor } from "../ChatView.logic";
 import type { Dispatch, RefObject } from "react";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 
@@ -46,14 +42,12 @@ interface TimelineAnchor {
 
 interface TimelineFollowInput {
   readonly legendListRef: RefObject<LegendListRef | null>;
-  readonly composerRef: RefObject<ChatComposerHandle | null>;
   readonly composerOverlayElement: HTMLDivElement | null;
   readonly composerTimelineInset: number;
   readonly routeThreadKey: string;
   readonly activeThreadKey: string | null;
-  readonly activeThreadId: ThreadId | undefined;
   readonly isServerThread: boolean;
-  readonly serverProjection: OrchestrationV2ThreadProjection | null;
+  readonly serverProjection: ThreadStructure | null;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
   readonly isDraftHeroState: boolean;
   readonly hasLatestRun: boolean;
@@ -62,11 +56,10 @@ interface TimelineFollowInput {
   readonly setTimelineAnchor: Dispatch<SetStateAction<TimelineAnchor>>;
 }
 
-// SCIENT-FORK: bounded send-follow and reader policy have one owner in this extracted host.
+// Bounded send-follow and reader policy have one owner in this extracted host.
 export function useTimelineFollow(input: TimelineFollowInput) {
   const {
     legendListRef,
-    composerRef,
     composerOverlayElement,
     composerTimelineInset,
     routeThreadKey,
@@ -90,16 +83,13 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     );
   const isTimelineAtLogicalEnd = () => readerAtEndNow() ?? isAtEndRef.current;
   const isTimelineAtLogicalEndStable = useStableCallback(isTimelineAtLogicalEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the turn state into a ref read by scroll measurements outside render
   useLayoutEffect(() => {
     turnUnfinishedRef.current = turnUnfinished;
   });
-  // SCIENT-FORK:START — reader navigation (A): the end control owns Scroll to end and its
-  // unread count (chat/useTimelineEndControl.ts) and changes the follow modes once per
-  // transition. The timeline never pins to its end, so a report of leaving it is never
-  // swallowed (that hid Scroll to end while an answer grew below). One owner for the send
-  // follow (chat/responseFollow.ts). The reader's navigation cancels placement and the
-  // follow without removing reserved room. This extracted host composes Scient's policy.
-  const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
+  // SCIENT-FORK:START — useTimelineEndControl owns end controls, unread counts and follow transitions.
+  // Never swallow leaving-end reports as an answer grows; responseFollow owns send following.
+  // Reader navigation cancels placement/follow without removing reserved room.
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const anchorUserScrollGenerationRef = useRef(0);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
@@ -111,11 +101,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     onIsAtEndChange: onEndControlIsAtEndChange,
   } = useTimelineEndControl({
     isAtEndRef,
-    // Arriving at the end by scrolling toward it brings back a collapsed composer.
     onReachedEnd: () => {
-      if (timelineScrollIntentRef.current === "toward-end") {
-        composerRef.current?.restoreAfterTimelineReachedEnd();
-      }
       // The follow modes change once per transition, as in upstream's handler;
       // a first send being placed keeps its own.
       if (followModeAfterEndTransition(timelineScrollModeRef.current, "reached") === null) return;
@@ -139,8 +125,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     messages: timelineMessages,
     loaded: !isServerThread || serverProjection !== null,
   });
-  const { start: startResponseFollow, clear: clearResponseFollow } = responseFollow;
-  const followSentPrompt = responseFollow.followSent;
+  const {
+    start: startResponseFollow,
+    join: joinResponseFollow,
+    clear: clearResponseFollow,
+  } = responseFollow;
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
@@ -177,13 +166,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       anchorScrollRestoreFrameRef.current = null;
     }
     if (wasProgrammaticScrollMode) {
-      // While following or anchoring, our scrollToEnd/scrollToOffset calls can
-      // sit in LegendList's pending-imperative-scroll queue (it defers them
-      // while layout settles) and fire seconds later with stale targets,
-      // yanking the view away after the user scrolled. Starting a new
-      // imperative scroll cancels everything queued; targeting an item that
-      // is not in the data makes the new request itself resolve without ever
-      // scrolling, so this is a pure cancel.
+      // LegendList may run queued scrolls after user navigation. A new imperative
+      // scroll cancels that queue; a missing item cancels without moving the view.
       void legendListRef.current?.scrollToItem({
         item: TIMELINE_SCROLL_CANCEL_SENTINEL,
         animated: false,
@@ -202,6 +186,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     }
   };
   const cancelTimelinePositioningRef = useRef(cancelTimelinePositioning);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the latest cancel callback into a ref read by DOM scroll listeners
   useEffect(() => {
     cancelTimelinePositioningRef.current = cancelTimelinePositioning;
   }, [cancelTimelinePositioning]);
@@ -218,12 +203,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     null,
   );
   const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
-    timelineScrollIntentRef.current = key === "PageUp" ? "away-from-end" : "toward-end";
-    composerRef.current?.collapseForTimelineScrollKey(key);
     // SCIENT-FORK:START — Page Up always cancels placement and the follow; Page Down never does.
     if (key === "PageUp") cancelTimelinePositioning();
     // SCIENT-FORK:END
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the page scroll controller attached to the timeline's scroll container
   useEffect(() => {
     const controller = createPageScrollController({
       getContainer: () => legendListRef.current?.getScrollableNode() ?? null,
@@ -251,11 +235,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     pageScrollControllerRef.current?.releaseActiveKey();
   };
   const onComposerPageScrollReleaseStable = useStableCallback(onComposerPageScrollRelease);
-  // SCIENT-FORK:START — reader navigation (C): Scroll to end is one-shot (it releases reserved
-  // room, ends the follow and never re-arms following); a send captures whether the reader
-  // was at the end and frames the prompt; a queued prompt delivered while at the end gets
-  // the same follow (chat/responseFollow.ts).
-  // Explicit navigation is a one-shot operation; it never enables live following.
+  // SCIENT-FORK:START — Scroll to end releases room and rejoins the follow while the thread works.
+  // Sends capture end position and frame the prompt; prompts arriving at the end share responseFollow.
   const scrollToEnd = (animated = false) => {
     cancelTimelinePositioning();
     const generation = anchorUserScrollGenerationRef.current;
@@ -273,6 +254,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         programmaticScrollPendingRef.current = false;
         setTimelinePositioningPending(false);
         legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
+        // At the end of a working thread, the reader follows it again.
+        joinResponseFollow();
       });
     });
   };
@@ -300,34 +283,35 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       // to the end. Retain existing tail space until it can disappear without
       // clamping the viewport.
       cancelTimelinePositioning();
-      followSentPrompt(messageId, snapshot.firstMessage);
+      startResponseFollow(messageId);
       return;
     }
     cancelPositionRestoreRef.current?.();
-    // The first prompt keeps its placement; its answer is revealed.
-    followSentPrompt(messageId, snapshot.firstMessage);
+    // The first prompt keeps its placement; the follow starts from there.
+    startResponseFollow(messageId);
     timelineScrollModeRef.current = "anchoring-new-turn";
     setTimelinePositioningPending(true);
     positionedTimelineAnchorRef.current = null;
     setTimelineAnchor({ threadKey: activeThreadKey, messageId });
   };
-  // A queued prompt the server delivers while the reader is at the end gets the same follow
-  // as a send.
+  // A prompt arriving while the reader is at the end, from anywhere, gets the same follow as a send.
   const latestPrompt = timelineMessages.findLast((message) => message.role === "user") ?? null;
   const readerWasAtEnd = () => isAtEndRef.current;
-  const followDeliveredPrompt = (promptId: MessageId) => {
+  const followArrivedPrompt = (promptId: MessageId) => {
+    if (!responseFollow.followable(promptId)) return;
     cancelTimelinePositioning();
-    startResponseFollow(promptId, true);
+    startResponseFollow(promptId);
   };
-  useQueuedDeliveryFollow({
+  useArrivedPromptFollow({
     threadKey: routeThreadKey,
     latestPrompt,
     readerAtEnd: readerWasAtEnd,
-    follow: followDeliveredPrompt,
+    followingPromptId: responseFollow.promptId,
+    follow: followArrivedPrompt,
   });
   // SCIENT-FORK:END
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches reader scroll opt-out listeners to the timeline's scroll node for this thread
   useEffect(() => {
-    const composer = composerRef;
     const attachedThreadKey = routeThreadKey;
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -352,24 +336,14 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         const handleManualNavigation = () => {
           cancelTimelinePositioningRef.current();
         };
-        // The gestures below must only break follow when they can actually
-        // move the viewport away from the live edge (#5566): a spurious break
-        // while pinned at the end produces no scroll event, never re-arms,
-        // and streaming silently stops following. Underflowing content can't
-        // scroll at all, so nothing there should break follow.
+        // Only break follow for gestures that can move away from the live edge.
+        // A spurious break emits no scroll event to re-arm follow, so streaming stops
+        // following. Underflowing content cannot scroll and must keep following.
         const contentScrollsUp = () => timelineRealContentOverflowsViewportStable();
         // Any outer-list navigation cancels pending placement. Nested scrolls keep their owner.
         const handleWheel = (event: WheelEvent) => {
           if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
             return;
-          if (event.deltaY > 0) {
-            timelineScrollIntentRef.current = "toward-end";
-            if (isAtEndRef.current) {
-              composer.current?.restoreAfterTimelineReachedEnd();
-            }
-          } else if (event.deltaY < 0) {
-            timelineScrollIntentRef.current = "away-from-end";
-          }
           // Scrolling down, momentum toward the end and pinch never cancel a
           // reveal; scrolling back up through content does.
           if (event.deltaY < 0 && contentScrollsUp()) {
@@ -406,7 +380,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
           if (!scrollbarDrag) return;
           if (scrollNode.scrollTop < scrollbarDrag.top - 2) {
             scrollbarDrag = null;
-            timelineScrollIntentRef.current = "away-from-end";
             handleManualNavigation();
           } else {
             scrollbarDrag.top = Math.max(scrollbarDrag.top, scrollNode.scrollTop);
@@ -442,32 +415,13 @@ export function useTimelineFollow(input: TimelineFollowInput) {
             !isTimelineScrollTarget(event.target, scrollNode, scrollDirection)
           )
             return;
-          switch (event.key) {
-            case "PageUp":
-            case "Home":
-            case "ArrowUp":
-              timelineScrollIntentRef.current = "away-from-end";
-              if (contentScrollsUp()) {
-                handleManualNavigation();
-                composer.current?.collapseForTimelineScrollKey(event.key);
-              }
-              break;
-            case "PageDown":
-            case "End":
-            case "ArrowDown":
-              // Moving toward the end never cancels a reveal, like scrolling down.
-              timelineScrollIntentRef.current = "toward-end";
-              composer.current?.collapseForTimelineScrollKey(event.key);
-              if (isTimelineAtLogicalEndStable()) {
-                composer.current?.restoreAfterTimelineReachedEnd();
-              }
-              break;
-            default:
-              break;
+          // Moving toward the end never cancels a reveal, like scrolling down.
+          if (scrollDirection < 0 && contentScrollsUp()) {
+            handleManualNavigation();
           }
         };
         // Input inside an embedded frame reaches none of the listeners above,
-        // but its scroll still chains out to the timeline (#17056).
+        // but its scroll still chains out to the timeline.
         const scrolledUp = createUpwardScrollDetector({
           top: scrollNode.scrollTop,
           height: scrollNode.scrollHeight,
@@ -532,7 +486,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     legendListRef,
-    composerRef,
     isTimelineAtLogicalEndStable,
     timelineRealContentOverflowsViewportStable,
   ]);
@@ -638,10 +591,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     setTimelineAnchor(releaseChatTimelineAnchor);
   };
   // SCIENT-FORK:END
-  const onToolOutputCollapsedAtEnd = () => {
-    composerRef.current?.restoreAfterTimelineReachedEnd();
-  };
-  const onToolOutputCollapsedAtEndStable = useStableCallback(onToolOutputCollapsedAtEnd);
+  // SCIENT-FORK: upstream follows footer growth here. Footer status never moves the reader; the
+  // follow and chat/queuedRunsInView.ts keep the reader's queued messages in view.
 
   // SCIENT-FORK:START — the end-control hook owns the pill, the unread count
   // and the follow modes (its onReachedEnd/onLeftEnd above). The tool-activity
@@ -663,10 +614,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     setTimelineThreadReset({ threadKey: routeThreadKey, followEnd });
     setTimelinePositioningPending(false);
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets scroll refs and the end control for a new thread, invalidating the previous thread's scroll generation on cleanup
   useEffect(() => {
     const { followEnd } = timelineThreadReset;
     resetEndControlForThread(followEnd);
-    timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = followEnd ? "following-end" : "free-scrolling";
     liveFollowUserScrollGenerationRef.current = followEnd
       ? anchorUserScrollGenerationRef.current
@@ -696,7 +647,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     scrollToEnd,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,
-    onToolOutputCollapsedAtEndStable,
     onIsAtEndChange,
     captureSendReadingPosition,
     frameSubmittedMessage,

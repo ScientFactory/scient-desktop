@@ -47,6 +47,7 @@ export const LatexReferenceDialog = memo(
       if (insertion) props.onInsert(insertion.command, insertion.key);
       else props.onCancel?.();
     });
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finishes the pending insert with the editor when the dialog closes
     useEffect(() => {
       const closing = previouslyOpen.current && !props.open;
       previouslyOpen.current = props.open;
@@ -99,6 +100,7 @@ export const LatexReferenceDialog = memo(
         setPending(readsBibliographies);
       }
     }
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads bibliography files over the environment connection while the dialog is open, aborted on close or unmount
     useEffect(() => {
       if (!props.open) return;
       let cancelled = false;
@@ -160,6 +162,7 @@ export const LatexReferenceDialog = memo(
         setObjectsPending(objectsInWorker);
       }
     }
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- processes the document through the references worker, reporting choices back until cancelled
     useEffect(() => {
       if (!props.open || mode !== "reference" || !objectsInWorker) return;
       return processVisualDocument({ kind: "references", source: props.source }, (result) => {
@@ -171,9 +174,17 @@ export const LatexReferenceDialog = memo(
       ? mergedInlineBibliographyChoices(props.source, props.setupSource)
       : [];
     const candidates = mode === "reference" ? documentObjects : [...inlineSources, ...references];
-    const choices = candidates.filter((entry) =>
-      `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),
-    );
+    const occurrences = new Map<string, number>();
+    const choices = candidates
+      .map((entry) => {
+        const identity = JSON.stringify([entry.command, entry.key, entry.detail, entry.title]);
+        const occurrence = occurrences.get(identity) ?? 0;
+        occurrences.set(identity, occurrence + 1);
+        return { entry, identity: JSON.stringify([identity, occurrence]) };
+      })
+      .filter(({ entry }) =>
+        `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),
+      );
     const insert = (command: string, key: string) => {
       pendingInsert.current = { command, key };
       props.onOpenChange(false);
@@ -226,10 +237,10 @@ export const LatexReferenceDialog = memo(
                 aria-label="Search references"
               />
               <div className="scient-writing-choices">
-                {choices.map((entry, index) => (
+                {choices.map(({ entry, identity }) => (
                   <button
                     type="button"
-                    key={`${entry.key}:${index}`}
+                    key={identity}
                     aria-pressed={selected.includes(entry.key)}
                     onClick={() =>
                       setSelected((current) =>

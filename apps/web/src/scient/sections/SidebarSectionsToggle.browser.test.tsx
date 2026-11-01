@@ -24,6 +24,7 @@ function tokenColor(_fixture: _Fixture, className: string): string {
   return color;
 }
 
+// regression: 2818f38e4d fix(sidebar): keep the Sections toggle's gray mark inside the hover fill
 it("marks the on state with a small gray inset that the white hover surrounds", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

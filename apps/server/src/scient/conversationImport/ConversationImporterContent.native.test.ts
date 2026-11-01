@@ -711,6 +711,31 @@ describe("native imported content", () => {
           inherited,
           new Set(thread.messages.map((message) => message.turnId)),
         );
+        // Imported groups are inert item history, never executable native runs/transfers.
+        assert.isNull(thread.activeTurn);
+        assert.strictEqual(projection.thread.historyOrigin, "conversation_import");
+        assert.isEmpty(projection.contextTransfers);
+        assert.isEmpty(projection.contextHandoffs);
+        assert.isNull(projection.thread.forkLineage ?? null);
+        const pairs = [0, 1, 2].map((index) => {
+          const items = projection.turnItems.filter(
+            (item) => item.historyTurnId === first[2 * index]!.turnId,
+          );
+          const user = items.find((item) => item.type === "user_message")!;
+          const assistant = items.find((item) => item.type === "assistant_message")!;
+          assert.strictEqual(user.type, "user_message");
+          assert.strictEqual(assistant.type, "assistant_message");
+          return [user.messageId, assistant.messageId, user.status, assistant.status];
+        });
+        assert.deepStrictEqual(
+          pairs,
+          [0, 1, 2].map((index) => [
+            first[2 * index]!.id,
+            first[2 * index + 1]!.id,
+            "completed",
+            "completed",
+          ]),
+        );
 
         // The journal names the exact paths this attempt owns.
         const journal = yield* journalOf(lease.attemptDirectory);

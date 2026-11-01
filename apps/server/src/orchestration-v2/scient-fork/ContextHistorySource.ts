@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -402,7 +403,7 @@ const readContextSummaryPage = Effect.fn("ContextHistory.readSummaryPage")(funct
 
 /** One shared allowance across all pending handoffs. Only selected whole bodies
  * remain live; omitted bodies are released before the next candidate is read. */
-export const selectContextHistory = Effect.fn("ContextHistory.select")(function* (
+const selectCapturedContextHistory = Effect.fn("ContextHistory.selectCaptured")(function* (
   sql: SqlClient.SqlClient,
   input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
@@ -421,11 +422,11 @@ export const selectContextHistory = Effect.fn("ContextHistory.select")(function*
         detail: "Legacy context summary is malformed or missing.",
       });
     const summary = yield* readContextSummaryPage(sql, sourceId, 0, Math.floor(input.budget));
-    if (
-      summary.nextTextOffset === null &&
-      historyCost([], `${coverage}\n${summary.text}`) + 512 <= input.budget
-    )
-      coverage += `\n${summary.text}`;
+    // Upstream's thread reader cannot return this text, so name the reader that can.
+    const pointer = `Saved summary omitted. Read it with scient_handoff_summary_read({threadId:"${handoff.threadId}",contextHandoffId:"${handoff.id}"}), then textOffset=nextTextOffset until null.`;
+    const fits = (text: string) => historyCost([], `${coverage}\n${text}`) + 512 <= input.budget;
+    if (summary.nextTextOffset === null && fits(summary.text)) coverage += `\n${summary.text}`;
+    else if (fits(pointer)) coverage += `\n${pointer}`;
   }
   const groups = yield* Effect.forEach(input.handoffs, (handoff) =>
     contextCandidates(sql, handoff, input.budget),
@@ -479,6 +480,39 @@ export const selectContextHistory = Effect.fn("ContextHistory.select")(function*
       omittedBefore + candidates.length - messages.length,
     ),
   };
+});
+
+class UncommittedContextHistorySelection extends Data.TaggedError(
+  "UncommittedContextHistorySelection",
+)<{
+  readonly selected: Effect.Success<ReturnType<typeof selectCapturedContextHistory>>;
+}> {}
+
+/** A plan whose handoff event is not committed yet (a fit check before a start)
+ * reads its membership from a capture that is rolled back after selection. */
+export const selectContextHistory = Effect.fn("ContextHistory.select")(function* (
+  sql: SqlClient.SqlClient,
+  input: Parameters<typeof selectCapturedContextHistory>[1],
+) {
+  const uncommitted: Array<OrchestrationV2ContextHandoff> = [];
+  for (const handoff of input.handoffs) {
+    const source = handoff.historySource;
+    if (source?.entries === undefined || source.entries.length === 0) continue;
+    const captured = yield* sql`
+      SELECT 1 FROM scient_handoff_history WHERE source_id = ${source.id} LIMIT 1`;
+    if (captured.length === 0) uncommitted.push(handoff);
+  }
+  if (uncommitted.length === 0) return yield* selectCapturedContextHistory(sql, input);
+  return yield* Effect.gen(function* () {
+    for (const handoff of uncommitted) yield* captureContextHistory(sql, handoff);
+    const selected = yield* selectCapturedContextHistory(sql, input);
+    return yield* new UncommittedContextHistorySelection({ selected });
+  }).pipe(
+    sql.withTransaction,
+    Effect.catchTags({
+      UncommittedContextHistorySelection: ({ selected }) => Effect.succeed(selected),
+    }),
+  );
 });
 
 /** The requesting thread must own the handoff or retain its frozen timeline identity.

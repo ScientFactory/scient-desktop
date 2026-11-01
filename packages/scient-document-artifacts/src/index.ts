@@ -19,6 +19,7 @@ export {
   GeneratedDocumentArtifact,
   LogicalDocumentKey,
   PdfSourceCapabilities,
+  PdfBytesCopyRequest,
   PdfSourceDescriptor,
   ProducingOperationId,
   type PdfSourceActions,

@@ -1,13 +1,7 @@
 /**
- * Removes SQLite sidecars that Antigravity leaves in its private profile's
- * `conversations` directory without their database.
- *
- * After a failed `session/new` the database and its metadata are gone but
- * `<session>.db-wal` and `<session>.db-shm` remain, and the session id that
- * cleanup needs was never reported. The agent's exiting process can also write
- * the sidecars of a session after cleanup removed them.
- * A live session always has its `<session>.db`, so a sidecar without one
- * belongs to no session.
+ * Failed session/new may leave sidecars without reporting a session ID, and exiting agents can
+ * rewrite them after cleanup. A live session has its database; remove only sidecars with no
+ * corresponding database in the private profile.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

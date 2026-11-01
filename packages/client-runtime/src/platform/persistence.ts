@@ -1,7 +1,6 @@
 import {
   type EnvironmentId,
-  OrchestrationV2ShellSnapshot,
-  OrchestrationV2ShellSnapshotJson,
+  type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadDetailSnapshot,
   type ServerConfig,
   type ThreadId,
@@ -139,15 +138,6 @@ export class EnvironmentCacheStore extends Context.Service<
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/EnvironmentCacheStore") {}
-
-/**
- * Encode a shell snapshot for the on-disk orchestration cache.
- *
- * The cache persists the Json variant (thread shells use their JSON thread shape), so
- * this must go through `OrchestrationV2ShellSnapshotJson` rather than the plain schema —
- * encoding with the plain schema produces a payload the cache cannot read back.
- */
-export const encodeShellSnapshotForCache = Schema.encodeEffect(OrchestrationV2ShellSnapshotJson);
 
 export class EnvironmentOwnedDataCleanup extends Context.Reference<{
   readonly clear: (environmentId: EnvironmentId) => Effect.Effect<void>;

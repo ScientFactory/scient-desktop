@@ -48,6 +48,9 @@ import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
+const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
+const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
+
 const threadId = ThreadId.make("thread:native-reading-identity");
 const instanceId = ProviderInstanceId.make("claude-native-reading");
 const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
@@ -175,7 +178,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
   const nativeAdapter = yield* makeClaudeAdapterV2({
     crypto: yield* Crypto.Crypto,
     instanceId,
-    settings: yield* Schema.decodeEffect(ClaudeSettings)({}),
+    settings: yield* decodeClaudeSettings({}),
     environment: {},
     attachmentsDir: config.attachmentsDir,
     fileSystem: fs,
@@ -248,7 +251,7 @@ function onPrompt(message) {
       ? nativeAdapter
       : yield* makeDroidAdapterV2({
           instanceId,
-          settings: yield* Schema.decodeEffect(DroidSettings)({
+          settings: yield* decodeDroidSettings({
             enabled: true,
             binaryPath: droid.binaryPath,
           }),
@@ -348,13 +351,11 @@ function onPrompt(message) {
     });
   });
   const reopen = Effect.scoped(
-    projectionStoreLayer
-      .pipe(Layer.provide(databaseLayer))
-      .pipe((reader) =>
-        Effect.flatMap(ProjectionStoreV2, (store) => store.getThreadSnapshot(threadId)).pipe(
-          Effect.provide(reader),
-        ),
+    projectionStoreLayer.pipe(Layer.provide(databaseLayer), (reader) =>
+      Effect.flatMap(ProjectionStoreV2, (store) => store.getThreadSnapshot(threadId)).pipe(
+        Effect.provide(reader),
       ),
+    ),
   );
   return {
     layer,

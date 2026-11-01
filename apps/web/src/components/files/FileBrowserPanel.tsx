@@ -1,4 +1,5 @@
-import { RefreshIcon } from "~/components/ui/refresh-icon";
+// SCIENT-FORK:START — refresh moved into the Files menu; its icon import went with it
+// SCIENT-FORK:END
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
@@ -9,15 +10,16 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useRef, useState } from "react";
+// SCIENT-FORK:START — expand and collapse all moved into the Files menu
+// SCIENT-FORK:END
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { Button } from "~/components/ui/button";
-
-import { MorphIcon } from "~/components/MorphIcon";
+// SCIENT-FORK:START — the Files bar's buttons and their icons come from Scient's toolbar
+// SCIENT-FORK:END
 import { cn } from "~/lib/utils";
 import { toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+// SCIENT-FORK:START — the Files bar's buttons take their tooltips from Scient's toolbar
+// SCIENT-FORK:END
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -25,9 +27,9 @@ import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
-import { T3_PIERRE_ICONS } from "~/pierre-icons";
+// SCIENT-FORK:START — the tree's icons come from SCIENT_FILE_BROWSER_TREE_ICONS
+// SCIENT-FORK:END
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
-import { ScientMarkdownCreateButton } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
 // SCIENT-FORK:START
 import {
   FILE_SEARCH_LIMIT,
@@ -37,11 +39,20 @@ import {
   WorkspaceFilesMenu,
 } from "~/scient/files/ScientFileBrowserChrome";
 import {
+  SCIENT_FILE_BROWSER_TREE_ICONS,
   SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   scientReadOnlyRowDecoration,
   useScientLazyWorkspaceTree,
   useScientLazyWorkspaceTreeLoading,
 } from "~/scient/files/useScientLazyWorkspaceTree";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — the Files bar's New and Connect, and a folder's New document
+import type { OpenFileOptions } from "~/rightPanelStore";
+import type { ScientToolbarSlot } from "~/scient/files/FileBrowserToolbarActions";
+import { useScientFolderActions } from "~/scient/files/useScientFolderActions";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Overleaf: Connect for a folder, and the mark on linked folders
+import { useOverleafTreeMarks } from "~/scient/overleaf/useOverleafFolderConnect";
 // SCIENT-FORK:END
 import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle } from "~/pierre-tree-theme";
@@ -50,11 +61,9 @@ import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
-import {
-  refreshProjectEntriesQuery,
-  setProjectFileQueryData,
-  subscribeProjectFilesRefresh,
-} from "./projectFilesQueryState";
+// SCIENT-FORK:START — new documents are listed through useCreateNewDocument
+import { refreshProjectEntriesQuery, subscribeProjectFilesRefresh } from "./projectFilesQueryState";
+// SCIENT-FORK:END
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -63,38 +72,21 @@ interface FileBrowserPanelProps {
   selectedPath: string | null;
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
-  onOpenFileSource: (relativePath: string) => void;
-  /**
-   * Set when `cwd` is a host folder outside the workspace rather than the
-   * workspace root. Entries then open and mention as host paths. A host folder can
-   * be a home directory, so nothing walks it whole: there is no expand-all, and
-   * search filters the folders already loaded instead of indexing on the server.
-   */
+  // SCIENT-FORK:START — New opens a LaTeX document straight in Visual
+  onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
+  // SCIENT-FORK:END
+  /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
+   * loaded folders. */
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
+  // SCIENT-FORK:START — controls placed before the search field, such as a tab's Back
+  scientToolbarLeading?: ScientToolbarSlot;
+  // SCIENT-FORK:END
   workspaceMutationId: string | null;
 }
 
-function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Refresh workspace files"
-            onClick={props.onRefresh}
-          />
-        }
-      >
-        <RefreshIcon refreshing={props.isPending} />
-      </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
-    </Tooltip>
-  );
-}
+// SCIENT-FORK:START — refresh moved into the Files menu (WorkspaceFilesMenu)
+// SCIENT-FORK:END
 
 function areSamePaths(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((path) => right.has(path));
@@ -111,6 +103,9 @@ export default function FileBrowserPanel({
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
+  // SCIENT-FORK:START
+  scientToolbarLeading,
+  // SCIENT-FORK:END
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
@@ -139,20 +134,21 @@ export default function FileBrowserPanel({
   const fileContextMenu = useFileContextMenu(environmentId);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
+  // SCIENT-FORK:START — New document and Connect for a folder (scient/files)
+  const folderActions = useScientFolderActions({
+    environmentId,
+    cwd,
+    selectedPath,
+    entryKinds: entryKindsRef,
+    hostFolder,
+    onOpenFileSource,
+  });
+  // SCIENT-FORK:END
   const searchSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
 
-  // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
-  // capture the right-click position ourselves; contextmenu is a composed
-  // event, so a capture-phase listener sees it with viewport coordinates.
+  // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
-  useEffect(() => {
-    const capturePointer = (event: MouseEvent) => {
-      contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
-    };
-    document.addEventListener("contextmenu", capturePointer, true);
-    return () => document.removeEventListener("contextmenu", capturePointer, true);
-  }, []);
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -171,6 +167,8 @@ export default function FileBrowserPanel({
         : { x: anchorRect.left, y: anchorRect.bottom };
       const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
+      context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
@@ -182,12 +180,17 @@ export default function FileBrowserPanel({
             // SCIENT-FORK:END
             { id: "copy-mention", label: "Copy mention" },
             { id: "add-to-chat", label: "Add to chat" },
+            // SCIENT-FORK:START — start a document in, or connect, this folder
+            ...folderActions.menuItems(item.path),
+            // SCIENT-FORK:END
           ],
           position,
         );
         if (clicked === null) return;
-        // "Open with" submenu selections report the child id ("editor:<id>"),
-        // which is not present in the top-level item list.
+        // SCIENT-FORK:START
+        if (folderActions.handleMenuChoice(clicked, relativePath)) return;
+        // SCIENT-FORK:END
+        // Open-with submenu ids are absent from the top-level item list.
         const isFileMenuAction =
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
         if (isFileMenuAction) {
@@ -237,14 +240,15 @@ export default function FileBrowserPanel({
           }
         }
       }).then((result) => {
-        context.close();
-        // Keep surfacing unexpected failures as unhandled rejections.
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });
     },
   );
 
   const loadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
+  // SCIENT-FORK:START — folders linked to Overleaf, read by the row marks
+  const overleafFoldersRef = useRef<ReadonlySet<string>>(new Set());
+  // SCIENT-FORK:END
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
@@ -262,16 +266,20 @@ export default function FileBrowserPanel({
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: false,
     initialExpansion: "closed",
-    icons: T3_PIERRE_ICONS,
+    // SCIENT-FORK:START — the tree's icons include Overleaf's mark for linked folders
+    icons: SCIENT_FILE_BROWSER_TREE_ICONS,
+    // SCIENT-FORK:END
     onSelectionChange: (selectedPaths) => {
-      // The drag controller's selection cache must track every change,
-      // including reveal-driven ones, or drags act on a stale selection.
+      // Update drag selection even for reveals so subsequent drags cannot use stale paths.
       dragMention.handleSelectionChange(selectedPaths);
       if (syncingSelectionRef.current) return;
       if (dragMention.isDragInProgress()) {
         return;
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
+      // SCIENT-FORK:START
+      if (selectedPath) folderActions.rememberSelection(selectedPath);
+      // SCIENT-FORK:END
       if (selectedPath && entryKindsRef.current.get(selectedPath) !== "directory") {
         treeSelectionPathRef.current = selectedPath;
         onOpenFile(panelPath(selectedPath));
@@ -280,17 +288,32 @@ export default function FileBrowserPanel({
     paths: [],
     // SCIENT-FORK:START — preserve upstream first-load feedback and read-only locks
     renderRowDecoration: (context) =>
-      scientReadOnlyRowDecoration(treeEntriesRef, loadingDirectoriesRef)(context),
+      scientReadOnlyRowDecoration(
+        treeEntriesRef,
+        loadingDirectoriesRef,
+        overleafFoldersRef,
+      )(context),
     // SCIENT-FORK:END
     search: false,
     unsafeCSS: SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when loading directories change
   useEffect(() => {
     const next = treeSnapshot.loadingDirectories;
     if (areSamePaths(loadingDirectoriesRef.current, next)) return;
     loadingDirectoriesRef.current = next;
     model.setComposition(model.getComposition());
   }, [model, treeSnapshot.loadingDirectories]);
+  // SCIENT-FORK:START — Overleaf's mark on linked folders, redrawn when links change
+  const redrawRowMarks = useStableCallback(() => model.setComposition(model.getComposition()));
+  useOverleafTreeMarks({
+    environmentId,
+    cwd,
+    enabled: !hostFolder,
+    foldersRef: overleafFoldersRef,
+    onFoldersChanged: redrawRowMarks,
+  });
+  // SCIENT-FORK:END
   const treeSearch = useFileTreeSearch(model);
   const allLoadedDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, loadedDirectoryPaths),
@@ -343,16 +366,37 @@ export default function FileBrowserPanel({
     refresh: refreshEntries,
     resourceKey: `files:${environmentId}:${cwd}`,
   });
+  // Folders also change outside Scient, and nothing tells the tree when they do.
+  const refreshOnReturn = useEffectEvent(refreshEntries);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window focus so the tree catches up with changes made in other apps
+  useEffect(() => {
+    let away = false;
+    const onBlur = () => {
+      away = true;
+    };
+    const onFocus = () => {
+      if (away) refreshOnReturn();
+      away = false;
+    };
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
   const handleRefresh = () => {
     refreshEntries();
     onRefreshSelectedFile?.();
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to project file refresh requests for this workspace
   useEffect(
     () => subscribeProjectFilesRefresh(environmentId, cwd, refreshEntries),
     [environmentId, cwd, refreshEntries],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally selected path in the Pierre tree model by expanding, selecting and scrolling
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
@@ -377,8 +421,7 @@ export default function FileBrowserPanel({
       return;
     }
     const handledReveal = handledRevealRef.current;
-    // Branch refreshes update entry metadata while the same preview stays open.
-    // Replaying a handled reveal would steal focus from the user's current work.
+    // Branch refreshes update metadata; replaying handled reveals would steal focus from the user's work.
     if (
       handledReveal?.path === revealRequest.path &&
       handledReveal.revealId === revealRequest.revealId
@@ -394,8 +437,7 @@ export default function FileBrowserPanel({
       const selectedItem = model.getItem(selectedTreePath);
       if (!selectedItem) return;
 
-      // A selection that originated inside the tree is already visible. Only
-      // external opens (search, chat links, or another picker) need revealing.
+      // Reveal only external selections; tree selections are visible and re-revealing would close search.
       const selectedInTree = model
         .getSelectedPaths()
         .some((path) => path.replace(/\/$/, "") === selectedPath);
@@ -423,56 +465,29 @@ export default function FileBrowserPanel({
     };
   }, [entryKindsRef, isSearching, model, selectedPath, selectedPathRevealId, treeControllerRef]);
 
-  // The capture phase runs before the tree's own dragstart handler selects
-  // the dragged row, so the drag flag is up before that selection emits.
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (panel === null) {
-      return;
-    }
-    const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
-    const handleDragEnd = () =>
-      dragMention.handleDragEnd((path) => model.getItem(path)?.deselect());
-    panel.addEventListener("dragstart", handleDragStart, true);
-    panel.addEventListener("dragend", handleDragEnd);
-    return () => {
-      panel.removeEventListener("dragstart", handleDragStart, true);
-      panel.removeEventListener("dragend", handleDragEnd);
-    };
-  }, [dragMention, model]);
-
   const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
   const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;
 
   return (
+    // SCIENT-FORK: Scient's reading UI scopes this panel.
     <div
-      ref={panelRef}
       className="scient-reading-ui flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
+      // Capture runs before the tree's shadow-internal row handler opens the menu.
+      onContextMenuCapture={(event) => {
+        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+      }}
+      // Capture dragstart before the tree selects the row so selection sees the drag flag.
+      onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
+      onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
     >
       <div
         className="@container/file-browser-header flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
         data-surface-subheader
       >
-        <RefreshFilesButton
-          isPending={treeSnapshot.isPending || isSearchPending}
-          onRefresh={handleRefresh}
-        />
-        {/* SCIENT-FORK:START — host folders are read-only, so only the workspace creates documents */}
-        {hostFolder ? null : (
-          <ScientMarkdownCreateButton
-            environmentId={environmentId}
-            cwd={cwd}
-            selectedPath={selectedPath}
-            onCreated={(relativePath, contents, revision) => {
-              setProjectFileQueryData(environmentId, cwd, relativePath, contents, revision);
-              handleRefresh();
-              onOpenFile(relativePath);
-            }}
-          />
-        )}
-        {/* SCIENT-FORK:END */}
+        {/* SCIENT-FORK:START — search first, then New and Connect (useScientFolderActions);
+            refresh and expand-all live in the Files menu. */}
+        {scientToolbarLeading}
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
@@ -480,34 +495,21 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={handleSearchClose}
         />
-        <div className="ms-auto flex shrink-0 items-center gap-1">
-          {loadedDirectoryPaths.length > 0 && !hostFolder ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={
-                      allLoadedDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
-                    }
-                    onClick={toggleLoadedDirectories}
-                  />
-                }
-              >
-                <MorphIcon
-                  className="size-3.5"
-                  icon={allLoadedDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-                />
-              </TooltipTrigger>
-              <TooltipPopup>
-                {allLoadedDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <WorkspaceFilesMenu view={directoryView} onViewChange={changeDirectoryView} />
-        </div>
+        {folderActions.toolbarButtons}
+        <WorkspaceFilesMenu
+          view={directoryView}
+          onViewChange={changeDirectoryView}
+          refresh={{
+            pending: treeSnapshot.isPending || isSearchPending,
+            onRefresh: handleRefresh,
+          }}
+          folders={
+            loadedDirectoryPaths.length > 0 && !hostFolder
+              ? { allExpanded: allLoadedDirectoriesExpanded, onToggle: toggleLoadedDirectories }
+              : undefined
+          }
+        />
+        {/* SCIENT-FORK:END */}
       </div>
       {/* SCIENT-FORK:START — lazy tree load and search status around the tree */}
       <ScientFileTreeSurface
@@ -533,6 +535,7 @@ export default function FileBrowserPanel({
         />
         {/* SCIENT-FORK:START */}
       </ScientFileTreeSurface>
+      {folderActions.dialog}
       {/* SCIENT-FORK:END */}
     </div>
   );

@@ -34,24 +34,17 @@ subscription.
 
 ### Pull request linking compatibility
 
-Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
-environment descriptor, never through a client version or an assumed coordinated release:
+Every protocol-2 environment advertises `threadPullRequests`. Once an environment's server config
+has loaded, clients use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread
+lookup. Before that, they hide linking actions.
 
-| Environment capability                | Client behavior                                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
-| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
-| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
-
-V2 environments retain the linking capability and derived `linkedPullRequest` field, and use
-native `thread.metadata.update` for single-link metadata. The old `thread.meta.update` command
-belongs to older hosts; V2 rejects unsupported legacy-only commands with a client-update error.
-The retained message-boundary fork wire command is an explicit exception routed to a V2 service. That hostless field includes only
-links in the thread project's own repository; cross-host and cross-repository links require the
-multi-link protocol. New clients accept snapshots that
-omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
-does not schedule their removal. Missing new capabilities must also override cached multi-link data
-after an environment downgrade.
+Environments keep advertising `threadPullRequestLinking` and emitting the derived
+`linkedPullRequest` field, because older clients still read them. That hostless field includes
+only links in the thread project's own repository. V2 environments use native
+`thread.metadata.update` for single-link metadata. The old `thread.meta.update` command belongs
+to older hosts; V2 rejects unsupported legacy-only commands with a client-update error. The retained
+message-boundary fork wire command is an explicit exception routed to a V2 service. Retain the
+legacy wire fields, projection column, and replay support.
 
 [`ws.ts`][ws] serves the group. `websocketRpcRouteLayer` mounts `GET /ws`, authenticates the upgrade
 through `EnvironmentAuth.authenticateWebSocketUpgrade`, then hands the socket to
@@ -134,7 +127,8 @@ Thread settlement is server-owned. The
 and inactivity settings without a connected client. Merge notifications invalidate cached PR state
 and trigger a check. A merge outside T3, such as an agent running `gh pr merge`, sends no
 notification, so the [PR sync reactor](../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts)
-re-reads a thread's open links when a run that ran a merge or close command ends. The guarded
+re-reads a thread's open links when a run that ran a merge or close command ends. Each forge's
+definition names its CLI's commands in `changeRequestCloseCommand`. The guarded
 `thread.auto-settle` command rejects newer activity, explicit settlement overrides, and live or
 blocked work. It records the activity timestamp for stable
 sorting and detaches idle provider sessions. Clients render the persisted result; they do not
@@ -200,7 +194,8 @@ blindly replayed against a vanished runtime. Recovery persists outcomes before a
 Old database/queue readers hydrate saved facts into V2; they do not execute V1 commands.
 
 Native queued runs are the sole live queue authority. Admission, order, holds, and advancement
-belong to `Orchestrator`; `QueuedRunsControl` adapts them into the Scient `ThreadQueueStrip`.
+belong to `Orchestrator`; upstream's `QueuedRunsControl` shows them in the composer's drawer, with
+Scient's parts mounted from `scient/threadQueue/useScientQueueParts.tsx`.
 See [the queue contract](./scient-thread-queue.md) and
 [legacy import](./legacy-orchestration-migration.md).
 
@@ -224,7 +219,9 @@ refs through `VcsCheckpointOps`; `CheckpointDiffQuery` serves diff reads. These 
 Git-independent file-history backend.
 
 Capture admission retains its limits (512 MiB per changed file, 1 GiB in changed files, bounded
-path enumeration and execution time). Symlink accounting does not follow targets; porcelain paths
+path enumeration and execution time). A turn's first message waits for the size scan, so a scan
+that cannot finish in 2 seconds counts as too large, and a workspace found too large is not
+rescanned for 10 minutes. Symlink accounting does not follow targets; porcelain paths
 resolve from the repository root within the staging pathspec. Declined capture has a typed
 availability error. Capture stages in a temporary repository and publishes only after staging
 succeeds, with cleanup on failure or interruption. Shared-workspace restore safety is enforced by
@@ -264,6 +261,7 @@ ready. The HTTP listener can exist while command readiness is still gated.
 - [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)
 - [Mobile navigation headers](./mobile-navigation.md)
 - [Scient product analytics](./product-analytics.md)
+- [Scient Accounts](./scient-accounts.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 - [D4 bootstrap record](./scient-next-d4-bootstrap.md)
 

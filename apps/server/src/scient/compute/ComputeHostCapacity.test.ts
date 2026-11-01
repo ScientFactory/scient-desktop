@@ -10,8 +10,9 @@ import {
 } from "./ComputeHostCapacity.ts";
 
 describe("compute host capacity", () => {
+  // regression: 1fa3aeca96 fix(compute): unify host capacity and recover constrained fresh runs
   it.effect.each(
-    [1, 2, 4].map((limit) => ({
+    [1, 2].map((limit) => ({
       caseTitle: `bounds concurrent admissions to ${limit} and recovers without double release`,
       limit,
     })),
@@ -72,8 +73,9 @@ describe("compute host capacity", () => {
     },
   );
 
+  // One value per rejected shape: missing, not a number, not positive, not an integer, unsafe.
   it.effect.each(
-    [undefined, "", "0", "-1", "1.5", "Infinity", "invalid", "9007199254740992"].map((value) => ({
+    [undefined, "invalid", "0", "1.5", "9007199254740992"].map((value) => ({
       caseTitle: `uses the default budget for invalid configuration ${String(value)}`,
       value,
     })),

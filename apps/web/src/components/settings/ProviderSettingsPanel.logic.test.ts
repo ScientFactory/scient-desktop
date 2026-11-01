@@ -8,41 +8,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderInstanceOverridePatch,
-  resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
 } from "./ProviderSettingsPanel.logic";
-
-describe("primary operate access", () => {
-  it("denies unauthenticated sessions and sessions without the operate scope", () => {
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: { authenticated: false },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: { authenticated: true, scopes: ["orchestration:read"] },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: null,
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-  });
-});
 
 describe("buildProviderInstanceOverridePatch", () => {
   const projectId = ProjectId.make("project-a");
@@ -67,17 +34,9 @@ describe("buildProviderInstanceOverridePatch", () => {
     });
   });
 
-  it("resets the only override by clearing the whole project entry", () => {
-    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-      },
-    };
-
-    expect(
-      buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
-    ).toEqual({ [projectId]: null });
-  });
+  // SCIENT-FORK:START — Scient sends `{}` rather than a `null` entry here; its reset case lives in
+  // ProviderSettingsPanel.logic.scient.test.ts.
+  // SCIENT-FORK:END
 
   it("sends providerInstances: {} explicitly when clearing the last instance override leaves other keys", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {

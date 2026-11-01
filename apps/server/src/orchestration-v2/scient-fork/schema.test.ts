@@ -1,14 +1,4 @@
-/**
- * Comprehensive Scient migration runner tests.
- *
- * Covers VAL-MIGRATE-01 through VAL-MIGRATE-12, VAL-MIGRATE-14, and
- * VAL-MIGRATE-15, plus strict ledger-integrity preflight tests (gaps, name
- * mismatches, unknown future IDs). All fixtures are synthetic in-memory or
- * temporary file SQLite databases. No live user data is used.
- *
- * Each test gets its own fresh in-memory database via `Effect.provide` so
- * schema state never leaks between tests.
- */
+/** Each test needs its own synthetic database so migration state cannot leak between cases. */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -1221,8 +1211,8 @@ it.effect("concurrent runners on the same file apply each migration at most once
     `scient-test-concurrent-${NodeCrypto.randomUUID()}.sqlite`,
   );
 
-  return Effect.gen(function* () {
-    yield* Effect.acquireUseRelease(
+  return Effect.suspend(() =>
+    Effect.acquireUseRelease(
       Effect.succeed(tempFile),
       (filename) =>
         Effect.gen(function* () {
@@ -1277,8 +1267,8 @@ it.effect("concurrent runners on the same file apply each migration at most once
             }
           }
         }),
-    );
-  });
+    ),
+  );
 });
 
 // VAL-MIGRATE-09: T3 ledger is isolated
@@ -1786,8 +1776,8 @@ it.effect(
       `scient-test-concurrent-applied-at-${NodeCrypto.randomUUID()}.sqlite`,
     );
 
-    return Effect.gen(function* () {
-      yield* Effect.acquireUseRelease(
+    return Effect.suspend(() =>
+      Effect.acquireUseRelease(
         Effect.succeed(tempFile),
         (filename) =>
           Effect.gen(function* () {
@@ -1890,8 +1880,8 @@ it.effect(
               }
             }
           }),
-      );
-    });
+      ),
+    );
   },
 );
 

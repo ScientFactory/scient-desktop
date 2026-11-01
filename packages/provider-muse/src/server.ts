@@ -8,6 +8,7 @@ export {
 } from "./server/driver.ts";
 /** @public Upstream-compatible package default; Scient registers its app-composed wrapper. */
 export { MuseDriver } from "./server/driver.ts";
+export * as MuseUsageHome from "./server/MuseUsageHome.ts";
 export { makeMuseAdapterV2, type MuseAdapterV2Options } from "./server/adapter.ts";
 // SCIENT-FORK:START — the app qualifies native MSP through the same SDK owner.
 export { createMuseSdkHost, type MuseSdkHost } from "./server/sdk.ts";

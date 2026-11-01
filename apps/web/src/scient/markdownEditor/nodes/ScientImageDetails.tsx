@@ -42,6 +42,7 @@ export function ScientImageDetails(props: {
   const boundary =
     props.anchor.closest<HTMLElement>(".scient-markdown-document-shell") ?? undefined;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the pane DOM node's size via ResizeObserver and mirrors its width into state
   useLayoutEffect(() => {
     const pane = boundary ?? props.anchor.closest<HTMLElement>(".ProseMirror");
     if (!pane) return;

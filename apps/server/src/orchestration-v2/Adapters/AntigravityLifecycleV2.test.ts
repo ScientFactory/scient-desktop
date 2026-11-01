@@ -260,6 +260,7 @@ await import(${encodeString(mockAgentPath)});`,
     instanceId,
     selfInvocation: yield* resolveSelfInvocation(),
     withProcess: (_stop, task) => task,
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     defaultModel: Effect.succeed(undefined),
     makeRuntime: (input) =>
       makeAntigravityAcpRuntime({

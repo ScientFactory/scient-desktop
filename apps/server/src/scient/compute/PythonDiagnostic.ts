@@ -24,7 +24,6 @@ const MAX_DIAGNOSTIC_FRAMES = 64;
 // IPython or rich; stripping them keeps the diagnostic readable and prevents
 // control characters from reaching durable storage or the UI.
 const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex -- ANSI escape codes are the input we are cleaning.
   /(?:\u001B\[[0-9;]*[a-zA-Z])|(?:\u001B\][^\u0007]*(?:\u0007|\u001B\\))|(?:[\u0000-\u0008\u000B\u000C\u000E-\u001F])/g;
 
 const STANDARD_FRAME_PATTERN = /^\s*File\s+"([^"]+)",\s+line\s+(\d+)(?:,\s+in\s+(.+))?\s*$/;
@@ -173,14 +172,9 @@ function extractFrames(
 }
 
 /**
- * Normalizes a raw Python error report into one or more `ComputeDiagnostic`
- * records.
- *
- * Strips ANSI/control sequences, bounds every field, preserves the
- * human-readable traceback, and extracts only project-local source locations.
- * The adapter owns that decision because it has both runtime syntax knowledge
- * and the server-authoritative project root; clients never infer file authority
- * from traceback text.
+ * Only the runtime adapter has both Python syntax and the authorized project root. Extract
+ * project-local locations there; clients must never infer file authority from traceback text. Strip
+ * controls and bound diagnostics.
  */
 export function normalizePythonDiagnostic(
   report: ComputeRuntimeErrorReport,

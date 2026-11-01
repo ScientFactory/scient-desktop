@@ -36,6 +36,11 @@ const ScientSkillDocumentPreview = lazy(() =>
     default: module.ScientSkillDocumentPreview,
   })),
 );
+const OverleafReviewPanel = lazy(() =>
+  import("../overleaf/OverleafReviewPanel").then((module) => ({
+    default: module.OverleafReviewPanel,
+  })),
+);
 const ComputePanel = lazy(() =>
   import("../compute/ComputePanel").then((module) => ({
     default: module.ComputePanel,
@@ -75,6 +80,23 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     closeRightPanelSurface,
     openScientSourcePdf,
   } = input;
+  if (
+    renderedRightPanelSurface?.kind === "scient" &&
+    renderedRightPanelSurface.module === "overleaf-review"
+  ) {
+    return (
+      <Suspense fallback={null}>
+        <OverleafReviewPanel
+          key={renderedRightPanelSurface.id}
+          environmentId={activeThreadRef.environmentId}
+          cwd={renderedRightPanelSurface.cwd}
+          connectionId={renderedRightPanelSurface.connectionId}
+          threadRef={activeThreadRef}
+          onOpenFile={(relativePath) => input.openFileSourceSurface(relativePath)}
+        />
+      </Suspense>
+    );
+  }
   return renderedRightPanelSurface?.kind === "scient" &&
     renderedRightPanelSurface.module === "compute" &&
     activeThreadRef ? (

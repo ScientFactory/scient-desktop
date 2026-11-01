@@ -94,19 +94,6 @@ describe("buildThreadActionMenuItems", () => {
     ]);
   });
 
-  it("groups project settings with utility actions before archive", () => {
-    const items = buildThreadActionMenuItems(baseState);
-    const copyIndex = items.findIndex((item) => item.id === "copy");
-    // SCIENT-FORK: conversation export sits between Copy and Project settings.
-    expect(items[copyIndex + 1]).toMatchObject({ id: "export-conversation", label: "Export" });
-    expect(items[copyIndex + 2]).toMatchObject({
-      id: "project-settings",
-      label: "Project settings",
-      icon: "settings",
-    });
-    expect(items[copyIndex + 3]?.id).toBe("archive");
-  });
-
   // SCIENT-FORK:START
   it("places Section in the first group, after pin, settle and snooze", () => {
     const sectionMenu = {
@@ -155,6 +142,7 @@ describe("buildThreadActionMenuItems", () => {
     const copyItem = items.find((item) => item.id === "copy");
     expect(copyItem?.children?.map((child) => child.id)).toEqual([
       "copy-path",
+      "copy-thread",
       "copy-thread-id",
       "copy-conversation-markdown",
     ]);
@@ -162,10 +150,13 @@ describe("buildThreadActionMenuItems", () => {
   });
   // SCIENT-FORK:END
 
-  it("disables archive while the thread is running", () => {
-    const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
-      (item) => item.id === "archive",
-    );
-    expect(archiveItem?.disabled).toBe(true);
+  it("disables archive and turning into a project while the thread is running", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isRunning: true,
+      canTurnIntoProject: true,
+    });
+    expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
+    expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
 });

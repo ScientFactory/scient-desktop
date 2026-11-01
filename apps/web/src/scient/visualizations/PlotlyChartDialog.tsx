@@ -73,6 +73,7 @@ export function PlotlyChartDialog({
     open,
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the action-message timer on unmount
   useEffect(
     () => () => {
       if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);

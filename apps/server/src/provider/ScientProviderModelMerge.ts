@@ -16,12 +16,8 @@ export const scientRetainMissingProviderModels = (
     return false;
   }
 
-  // Droid's ACP catalog is likewise authoritative: models are discovered live
-  // from the CLI, and a model Factory removes or revokes must not linger in
-  // the picker. Same state-aware policy as OpenCode below — retain during
-  // pending initial probes and failed installed-probe refreshes, replace on
-  // successful discovery.
-  // Scient Agent lists its models live from the running agent, the same way.
+  // Successful Droid/Scient Agent discovery is authoritative: revoked models must disappear. Retain
+  // models only through pending initial or failed installed probes.
   if (
     provider.driver === ProviderDriverKind.make("droid") ||
     provider.driver === ProviderDriverKind.make("pi") ||

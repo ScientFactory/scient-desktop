@@ -8,7 +8,7 @@ import { Combobox, ComboboxInput } from "~/components/ui/combobox";
 import { Input } from "~/components/ui/input";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "~/components/ui/number-field";
-import { Select, SelectTrigger } from "~/components/ui/select";
+import { NativeSelect, Select, SelectTrigger } from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
@@ -18,12 +18,13 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode) => {
+// regression: 55bc1eda01 fix(web): preserve Scient single-border form focus
+// scient-form-focus.css is theme-independent, so one appearance covers it.
+it("keeps one form focus border", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   _fixture.host = document.createElement("div");
-  _fixture.host.className = mode;
   document.body.append(_fixture.host);
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),
@@ -43,6 +44,9 @@ it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode
       <Select>
         <SelectTrigger aria-label="Bordered select">Select</SelectTrigger>
       </Select>
+      <NativeSelect aria-label="Native select">
+        <option>One</option>
+      </NativeSelect>
       <Combobox>
         <ComboboxInput aria-label="Combobox" showTrigger={false} />
       </Combobox>
@@ -63,13 +67,14 @@ it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode
     "Text area",
     "Number",
     "Bordered select",
+    "Native select",
     "Combobox",
   ]) {
     const field = _fixture.host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
     const surface =
       field.closest<HTMLElement>('[data-slot="input-group"]') ??
       field.closest<HTMLElement>(
-        '[data-slot="input-control"], [data-slot="textarea-control"], [data-slot="number-field-group"], [data-slot="select-trigger"]',
+        '[data-slot="input-control"], [data-slot="textarea-control"], [data-slot="number-field-group"], [data-slot="select-trigger"], [data-slot="native-select"]',
       )!;
     let validBorder = "";
     for (const invalid of [false, true]) {

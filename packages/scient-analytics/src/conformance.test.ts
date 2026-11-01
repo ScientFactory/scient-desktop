@@ -2,12 +2,48 @@ import { describe, expect, it } from "@effect/vitest";
 import legacy from "../fixtures/contract-v3.json" with { type: "json" };
 import previous from "../fixtures/contract-v4.json" with { type: "json" };
 import revision5 from "../fixtures/contract-v5.json" with { type: "json" };
-import fixture from "../fixtures/contract-v6.json" with { type: "json" };
+import revision6 from "../fixtures/contract-v6.json" with { type: "json" };
+import revision7 from "../fixtures/contract-v7.json" with { type: "json" };
+import revision8 from "../fixtures/contract-v8.json" with { type: "json" };
+import fixture from "../fixtures/contract-v9.json" with { type: "json" };
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
 import { ANALYTICS_EVENT_NAMES, consentAllows, normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation, type PrivacyLevel } from "./wireContract.ts";
 
 describe("analytics contract conformance corpus", () => {
+  it("continues accepting the complete revision 8 corpus", () => {
+    for (const entry of revision8.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
+  it("continues accepting the complete revision 7 corpus", () => {
+    for (const entry of revision7.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
+  it("continues accepting the complete revision 6 corpus", () => {
+    for (const entry of revision6.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
   it("continues accepting the complete revision 5 corpus", () => {
     for (const entry of revision5.cases)
       expect(
@@ -61,6 +97,10 @@ describe("analytics contract conformance corpus", () => {
       "grok",
       "opencode",
       "pi",
+      "scient",
+      "omp",
+      "muse",
+      "acpRegistry",
     ]) {
       const result = normalizeInheritedEvent(
         "provider.turn.sent",
@@ -81,6 +121,8 @@ describe("analytics contract conformance corpus", () => {
 
   it("enforces each event's consent threshold and drops inherited unreviewed events", () => {
     for (const entry of fixture.cases) {
+      // An owner event needs a valid hash; contract.test.ts covers its rejection.
+      if (entry.name === "install.owner_observed") continue;
       const result = normalizeInheritedEvent(
         entry.name,
         {},
@@ -119,13 +161,6 @@ describe("analytics contract conformance corpus", () => {
       normalizeInheritedEvent(
         "client.connected",
         {},
-        { appVersion: "0.6.8", buildChannel: "stable" },
-      ),
-    ).toBeNull();
-    expect(
-      normalizeInheritedEvent(
-        "feature.used",
-        { feature: "thread.launch", variant: "root", surface: "mobile" },
         { appVersion: "0.6.8", buildChannel: "stable" },
       ),
     ).toBeNull();

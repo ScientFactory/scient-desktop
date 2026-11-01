@@ -151,9 +151,11 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const mountedRef = useRef(true);
   const linkOpenRequestRef = useRef(0);
   const linkFeedbackToastRef = useRef<ReturnType<typeof anchoredToastManager.add> | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the markdown path set for link-resolution callbacks to read
   useLayoutEffect(() => {
     markdownPathSetRef.current = markdownPathSet;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring whether directory entries are truncated for link-resolution callbacks to read
   useLayoutEffect(() => {
     entriesTruncatedRef.current = entriesQuery.data?.truncated ?? true;
   });
@@ -179,6 +181,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     });
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks component liveness in a ref and dismisses the link feedback toast on unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -222,13 +225,9 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       alt: file.name.replace(/\.[^.]+$/u, ""),
     };
   };
-  // Asks the environment that owns the files what a link means, exactly as a
-  // chat link does, and acts on the answer: the file at the link's own
-  // location opens; one workspace file the link meant opens instead;
-  // several open the link as written so the panel offers them; none leaves
-  // the reader here with a plain explanation. `request` is the click this
-  // belongs to: a newer click, an unmounted editor or a detached anchor drops
-  // the answer, and a stalled environment answers as if it could not be asked.
+  // Bind link resolution to the click: discard answers after a newer click, editor unmount, or
+  // anchor detach. A stalled environment must degrade like an unavailable one; only unique
+  // missing-path matches may redirect opening.
   const resolveAndOpenLink = async (input: {
     readonly request: number;
     readonly anchor: HTMLElement;

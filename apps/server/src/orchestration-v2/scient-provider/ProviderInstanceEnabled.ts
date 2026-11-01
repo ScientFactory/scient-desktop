@@ -1,12 +1,7 @@
 /**
- * Admission rejects a message for a provider that is turned off, but a start
- * runs later, from a durable effect. If settings turn the provider off in
- * between, the fresh session would still open, because adapter lookup returns
- * the instance whether or not it is enabled. A turn start's fresh session
- * therefore checks the current instance again, and the start settles at once
- * with a clear error instead of retrying: only turning the provider back on can
- * help. Other session opens (rollback of an existing conversation, driver
- * connection and shutdown paths) are not gated.
+ * Durable starts run after admission, so recheck provider enablement before opening a fresh
+ * session. A disabled instance must settle with a nonretryable error; rollback, connection, and
+ * shutdown opens remain ungated.
  */
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

@@ -57,6 +57,7 @@ vi.mock("~/components/ui/toast", () => ({ toastManager: { add: toast } }));
 import { environmentPdfSource, workspacePdfSource } from "../pdfSource";
 import {
   openPdfCitation,
+  pdfCitationActivation,
   pdfCitationFromLocation,
   pdfCitationHash,
   pdfCitationNavigation,
@@ -232,7 +233,8 @@ describe("PDF quote identity and navigation", () => {
 
   it("files the reveal under the document the reader will show", () => {
     const quote = citation(pdfDocumentIdentity(workspaceSource)!);
-    openPdfCitation(quote, "/project", now);
+    const previousActivation = pdfCitationActivation();
+    expect(openPdfCitation(quote, "/project", now)).toBe(previousActivation + 1);
     // The reader looks its pending reveal up by the source it shows.
     expect(pendingPdfReveal(pdfRevealDocumentKey(workspaceSource))?.target).toEqual(quote.target);
   });

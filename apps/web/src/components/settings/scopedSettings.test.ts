@@ -4,7 +4,6 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
-  type ProjectSettingsOverrides,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -18,6 +17,7 @@ import {
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  scopedIdleCompaction,
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
@@ -31,7 +31,6 @@ function environment(
     connected?: boolean;
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
-    projectOverrides?: boolean;
   } = {},
 ) {
   return {
@@ -45,9 +44,6 @@ function environment(
         ? null
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
-            environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
-            },
           },
   };
 }
@@ -95,6 +91,8 @@ const group: SidebarProjectSnapshot = {
   allRemoteMembersAreDesktopLocal: false,
   allRemoteMembersAreWsl: false,
   remoteEnvironmentLabels: [server.label, laptop.label],
+  pinned: false,
+  archived: false,
 };
 const project = resolveSettingsScope({ project: group.projectKey }, [group], environments);
 const checkout = resolveSettingsScope(
@@ -173,6 +171,8 @@ describe("scoped settings writes", () => {
         null,
       ),
     );
+    // SCIENT-FORK:START — Scient's worktree-cleanup resolution differs on worktreeKeepWhen here,
+    // so match the shared fields instead of the whole object.
     expect(policies).toMatchObject([
       {
         worktreeAfterDays: 12,
@@ -189,6 +189,43 @@ describe("scoped settings writes", () => {
         worktreeOnMerge: false,
         worktreeUnchanged: false,
       },
+    ]);
+    // SCIENT-FORK:END
+  });
+
+  it("compares idle compaction by mode, and offers Never only where every server stores it", () => {
+    const fixed = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        compactIdleThreads: false,
+        idleCompaction: "onReturn" as const,
+      },
+    };
+    const modes = {
+      settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: "onReturn" as const },
+    };
+    const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
+    expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
+    expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    expect(
+      scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
+        .mixed,
+    ).toBe(true);
+  });
+
+  it("sends an idle compaction mode in the form each environment's server reads", () => {
+    const targets = [
+      environment("Fixed", { settings: { compactIdleThreads: false, idleCompaction: "onReturn" } }),
+      environment("Modes", { settings: { compactIdleThreads: "onReturn" } }),
+      environment("Switch", { settings: { compactIdleThreads: false } }),
+    ];
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+      idleCompaction: "beforeCacheExpires",
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { idleCompaction: "beforeCacheExpires" },
+      { compactIdleThreads: "beforeCacheExpires" },
+      { compactIdleThreads: true },
     ]);
   });
 
@@ -229,6 +266,7 @@ describe("scoped settings writes", () => {
     const unsupported = [
       {
         label: server.label,
+        // SCIENT-FORK: product name.
         message: "This environment does not support this setting. Update Scient on it.",
       },
     ];
@@ -364,6 +402,7 @@ describe("scoped settings writes", () => {
       { [projectId]: { worktreeCleanup: { rules: { worktreeSettledAfterDays: 0 } } } },
       { [laptopProjectId]: { worktreeCleanup: { rules: { worktreeSettledAfterDays: 0 } } } },
     ]);
+    // SCIENT-FORK:START — as above, worktreeKeepWhen differs; match the shared fields.
     expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toMatchObject([
       {
         [projectId]: {
@@ -396,6 +435,7 @@ describe("scoped settings writes", () => {
         },
       },
     ]);
+    // SCIENT-FORK:END
     expect(
       planScopedSettingsClear(checkout, [customized], ["worktreeCleanup"]).serverWrites[0]?.patch,
     ).toEqual({
@@ -422,17 +462,13 @@ describe("scoped settings writes", () => {
     }
   });
 
-  it("refuses environment-wide keys and older servers at project scope", () => {
+  it("refuses environment-wide keys at project scope", () => {
     expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
     ).toMatchObject({
       serverWrites: [],
       unavailableReason: "This setting is environment-wide and cannot be overridden by a project.",
     });
-    const legacy = environment("Server", { projectOverrides: false });
-    expect(
-      planScopedSettingsPatch(checkout, [laptop, legacy], { defaultAutoPull: true }),
-    ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("update") });
   });
 
   it("clears overrides per member and removes an emptied entry", () => {
@@ -659,7 +695,6 @@ describe("partial object patches at project scope", () => {
           connection: { phase: "connected" },
           serverConfig: {
             settings,
-            environment: { capabilities: { projectSettingsOverrides: true } },
           },
         },
       ],
@@ -675,129 +710,6 @@ describe("partial object patches at project scope", () => {
           },
         },
       },
-    });
-  });
-});
-
-describe("model selection patches at project scope", () => {
-  const environmentId = EnvironmentId.make("laptop");
-  const projectId = ProjectId.make("fleet");
-  const codex = ProviderInstanceId.make("codex");
-  const claude = ProviderInstanceId.make("claudeAgent");
-  const projectScope = {
-    kind: "project" as const,
-    group: {} as never,
-    environmentId: null,
-    label: "fleet",
-    members: [
-      {
-        id: projectId,
-        environmentId,
-        physicalProjectKey: "laptop:/repo",
-        environmentLabel: "Laptop",
-        title: "fleet",
-        workspaceRoot: "/repo",
-        defaultModelSelection: null,
-        scripts: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      } as never,
-    ],
-    environmentIds: [environmentId],
-  };
-  const planWith = (overrides: ProjectSettingsOverrides, patch: object) =>
-    planScopedSettingsPatch(
-      projectScope,
-      [
-        {
-          environmentId,
-          label: "Laptop",
-          connection: { phase: "connected" },
-          serverConfig: {
-            settings: {
-              ...DEFAULT_SERVER_SETTINGS,
-              projectSettingsOverrides: { [projectId]: overrides },
-            },
-            environment: { capabilities: { projectSettingsOverrides: true } },
-          },
-        },
-      ],
-      patch,
-    ).serverWrites[0]?.patch.projectSettingsOverrides?.[projectId];
-
-  it("drops the previous model's options when the default model changes", () => {
-    const entry = planWith(
-      {
-        defaultModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "xhigh" }],
-        },
-      },
-      { defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" } },
-    );
-    expect(entry?.defaultModelSelection).toEqual({ instanceId: claude, model: "claude-opus-4-8" });
-  });
-
-  it("stores a changed effort as the whole selection", () => {
-    const entry = planWith(
-      {
-        defaultModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [
-            { id: "reasoningEffort", value: "xhigh" },
-            { id: "serviceTier", value: "fast" },
-          ],
-        },
-      },
-      {
-        defaultModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "low" }],
-        },
-      },
-    );
-    expect(entry?.defaultModelSelection).toEqual({
-      instanceId: codex,
-      model: "gpt-5.6",
-      options: [{ id: "reasoningEffort", value: "low" }],
-    });
-  });
-
-  it("replaces the writer model the same way", () => {
-    const entry = planWith(
-      {
-        sourceControlWriterModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
-      },
-      { sourceControlWriterModelSelection: { instanceId: claude, model: "claude-opus-4-8" } },
-    );
-    expect(entry?.sourceControlWriterModelSelection).toEqual({
-      instanceId: claude,
-      model: "claude-opus-4-8",
-    });
-  });
-
-  it("still completes an options-only text generation patch from the saved value", () => {
-    const entry = planWith(
-      {
-        textGenerationModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
-      },
-      { textGenerationModelSelection: { options: [{ id: "reasoningEffort", value: "low" }] } },
-    );
-    expect(entry?.textGenerationModelSelection).toEqual({
-      instanceId: codex,
-      model: "gpt-5.6",
-      options: [{ id: "reasoningEffort", value: "low" }],
     });
   });
 });

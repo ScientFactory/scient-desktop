@@ -4,6 +4,10 @@
  * and dispatches the mutations Codex exposes. See
  * docs/internals/scient-extensions.md.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- plugin key roots are plain paths checked with stat.
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import type {
   ServerProviderMcpServer,
   ServerProviderMcpServerStatus,
@@ -24,12 +28,15 @@ import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
+import { sharedPluginDisplayName } from "../scient/extensions/SharedPluginStore.ts";
+import { makeCodexProviderStore } from "../scient/extensions/CodexProviderStore.ts";
 import { nextInventoryReadSequence, nonEmptyText, uniqueBy } from "./ProviderNativeInventory.ts";
 import type {
   ProviderMcpSignInAttempt,
   ProviderNativeInventory,
   ProviderPluginActionFailure,
   ProviderPluginActions,
+  ProviderPluginRoot,
   ProviderWorkspaceInventory,
 } from "./ScientProviderInstanceSeams.ts";
 
@@ -95,7 +102,8 @@ export function parseCodexInstalledPlugins(
         const id = nonEmptyText(plugin.id);
         const name = nonEmptyText(plugin.name);
         if (!plugin.installed || !id || !name) return [];
-        const displayName = nonEmptyText(plugin.interface?.displayName);
+        const displayName =
+          nonEmptyText(plugin.interface?.displayName) ?? sharedPluginDisplayName(name);
         const description =
           nonEmptyText(plugin.interface?.shortDescription) ??
           nonEmptyText(plugin.interface?.longDescription);
@@ -172,7 +180,7 @@ export class CodexInventoryIncomplete extends Data.TaggedError("CodexInventoryIn
 }> {}
 
 /** `plugin/installed`; omit `cwds` for the plugins every workspace sees. */
-export const requestCodexInstalledPlugins = Effect.fn("requestCodexInstalledPlugins")(function* (
+const requestCodexInstalled = Effect.fn("requestCodexInstalled")(function* (
   client: CodexAppServerClient,
   cwds?: ReadonlyArray<string>,
 ) {
@@ -183,7 +191,66 @@ export const requestCodexInstalledPlugins = Effect.fn("requestCodexInstalledPlug
       message: `Codex could not load ${loadErrors.length === 1 ? "a plugin marketplace" : `${loadErrors.length} plugin marketplaces`}: ${loadErrors.map((failure) => `${failure.marketplacePath} (${failure.message})`).join("; ")}`,
     });
   }
-  return parseCodexInstalledPlugins(response);
+  return response;
+});
+
+export const requestCodexInstalledPlugins = (
+  client: CodexAppServerClient,
+  cwds?: ReadonlyArray<string>,
+) => requestCodexInstalled(client, cwds).pipe(Effect.map(parseCodexInstalledPlugins));
+
+/** A single path segment: never a separator, `.` or `..`, so a cache path cannot leave its slot. */
+const pathSegment = (value: string) =>
+  !/[\\/]/.test(value) && value !== "." && value !== ".." ? value : undefined;
+
+const directoryRealPath = (path: string) =>
+  NodeFSP.realpath(path).then(
+    (real) => NodeFSP.stat(real).then((info) => (info.isDirectory() ? real : undefined)),
+    () => undefined,
+  );
+
+/**
+ * Each installed plugin's own folder: a local plugin's source, or the version Codex unpacked into
+ * its plugin cache as `<marketplace>/<plugin>/<version>`, from Codex's own names and contained in
+ * that cache. A remote plugin Codex has not unpacked has no folder, so it declares no keys.
+ */
+export const codexInstalledPluginRoots = Effect.fn("codexInstalledPluginRoots")(function* (
+  response: CodexSchema.V2PluginInstalledResponse,
+  pluginCacheRoot: string | undefined,
+) {
+  const realCacheRoot = pluginCacheRoot
+    ? yield* Effect.promise(() => directoryRealPath(pluginCacheRoot))
+    : undefined;
+  const candidates = response.marketplaces.flatMap((marketplace) =>
+    marketplace.plugins.flatMap((plugin) => {
+      const id = nonEmptyText(plugin.id);
+      const name = nonEmptyText(plugin.name);
+      if (!plugin.installed || !id || !name) return [];
+      const version = nonEmptyText(plugin.localVersion) ?? nonEmptyText(plugin.version);
+      const segments = [marketplace.name, name, version ?? ""].map(pathSegment);
+      const cached =
+        plugin.source.type !== "local" && realCacheRoot && segments.every(Boolean)
+          ? NodePath.join(realCacheRoot, ...(segments as string[]))
+          : undefined;
+      const root = plugin.source.type === "local" ? plugin.source.path : cached;
+      return [{ id, name, enabled: plugin.enabled, root, cached: cached !== undefined }];
+    }),
+  );
+  return yield* Effect.forEach(
+    uniqueBy(candidates, (plugin) => plugin.id),
+    ({ root, cached, ...plugin }) =>
+      Effect.promise(async () => {
+        if (!root || !NodePath.isAbsolute(root)) return undefined;
+        const real = await directoryRealPath(root);
+        // A cache entry must still resolve inside the cache, through any links.
+        return real && (!cached || real.startsWith(`${realCacheRoot}${NodePath.sep}`))
+          ? real
+          : undefined;
+      }).pipe(
+        Effect.map((found): ProviderPluginRoot => (found ? { ...plugin, root: found } : plugin)),
+      ),
+    { concurrency: 16 },
+  );
 });
 
 /** `mcpServerStatus/list`, every page; `serverName` asks for one server. */
@@ -287,16 +354,12 @@ const listingFailure = (fallback: string) => (cause: unknown) => ({
 });
 
 /**
- * One Codex instance generation's native inventory: the bounded machine
- * listing that runs as snapshot enrichment, the reports it publishes, and the
- * plugin and MCP server actions. Scoped to the instance; closing the scope
- * retires the actions and ends pending work.
- *
- * `open` starts an initialized app-server in the caller's scope, in `cwd`
- * when given.
+ * Inventory and action seams belong to one instance generation. Closing its scope must retire
+ * actions and pending work so a replacement cannot inherit stale authority.
  */
 export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(function* <E>(
   open: (cwd: string | undefined) => Effect.Effect<CodexAppServerClient, E, Scope.Scope>,
+  pluginCacheRoot?: string,
 ) {
   const reportsPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ProviderNativeInventory>(),
@@ -392,11 +455,9 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       return next;
     });
   /**
-   * Stops the listings of the workspaces `stale` picks and waits until they
-   * have exited. Removing a listing from the map and handing it to an
-   * instance-owned fiber that interrupts it happen together, safe from
-   * interruption, so no stopped listing is lost and a queued one never
-   * starts its app-server. Only the wait for their teardown is interruptible.
+   * Remove listing ownership and hand interruption to an instance fiber atomically; otherwise
+   * cancellation can lose cleanup or let a queued app-server start. Only waiting for teardown may
+   * be interrupted.
    */
   const stopWorkspaceListings = (stale: (cwd: string) => boolean) =>
     Effect.uninterruptible(
@@ -418,6 +479,13 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       }),
     ).pipe(Effect.flatMap(Fiber.awaitAll), Effect.asVoid);
   const workspace: ProviderWorkspaceInventory = {
+    awaitCurrent: (cwd) =>
+      Ref.get(workspaceListingsRef).pipe(
+        Effect.flatMap((listings) => {
+          const listing = listings.get(cwd);
+          return listing ? Fiber.await(listing.fiber).pipe(Effect.asVoid) : Effect.void;
+        }),
+      ),
     cancel: (cwd) =>
       workspaceLock.withPermits(1)(stopWorkspaceListings((candidate) => candidate === cwd)),
     retain: (current) =>
@@ -429,7 +497,7 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
           yield* stopWorkspaceListings((cwd) => !keep.has(cwd));
         }),
       ),
-    refresh: (cwd) =>
+    refresh: (cwd, publish) =>
       workspaceLock.withPermits(1)(
         Effect.gen(function* () {
           // Waiting for the replaced listing to exit is interruptible: a
@@ -453,7 +521,7 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
                           requestCodexInstalledPlugins(client, [cwd]),
                         );
                         if (plugins) {
-                          yield* PubSub.publish(reportsPubSub, { cwd, plugins, sequence });
+                          yield* publish({ cwd, plugins, sequence });
                         }
                       }),
                     ),
@@ -473,23 +541,104 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       ),
   };
 
-  const actions: ProviderPluginActions = {
-    listPlugins: ({ cwd }) =>
-      open(cwd).pipe(
-        Effect.flatMap((client) =>
-          Effect.gen(function* () {
-            const sequence = yield* nextInventoryReadSequence;
-            const plugins = yield* requestCodexInstalledPlugins(
-              client,
-              cwd === undefined ? undefined : [cwd],
-            );
-            return { plugins, sequence };
-          }),
+  const store = yield* makeCodexProviderStore(open, undefined, pluginCacheRoot);
+  // SCIENT-FORK:START — plugin keys read installed plugins' own folders, never the catalog.
+  /**
+   * The last plain listing per workspace. `plugin/installed` alone takes Codex 0.7-3 seconds, so
+   * a session start answers from it and refreshes it behind. Scient's own installs and removals
+   * clear it; one installed outside Scient is seen from the session after next.
+   */
+  const pluginRootsRef = yield* Ref.make({
+    generation: 0,
+    byCwd: new Map<string | undefined, ReadonlyArray<ProviderPluginRoot>>(),
+  });
+  const refreshingPluginRoots = new Set<string | undefined>();
+  /** A listing that began before Scient changed plugins is returned but not kept. */
+  const rememberPluginRoots = (
+    cwd: string | undefined,
+    generation: number,
+    response: CodexSchema.V2PluginInstalledResponse,
+  ) =>
+    codexInstalledPluginRoots(response, pluginCacheRoot).pipe(
+      Effect.tap((roots) =>
+        Ref.update(pluginRootsRef, (current) =>
+          current.generation === generation
+            ? { generation, byCwd: new Map(current.byCwd).set(cwd, roots) }
+            : current,
         ),
-        Effect.timeout(CODEX_ACTION_TIMEOUT),
-        Effect.scoped,
-        Effect.mapError(listingFailure("Codex could not list its plugins.")),
       ),
+    );
+  const pluginRootsGeneration = Ref.get(pluginRootsRef).pipe(
+    Effect.map((current) => current.generation),
+  );
+  const forgetPluginRoots = Ref.update(pluginRootsRef, (current) => ({
+    generation: current.generation + 1,
+    byCwd: new Map(),
+  }));
+  const readPluginRoots = Effect.fn("CodexPluginInventory.readPluginRoots")(
+    function* (cwd: string | undefined) {
+      const generation = yield* pluginRootsGeneration;
+      const client = yield* open(cwd);
+      const response = yield* requestCodexInstalled(client, cwd === undefined ? undefined : [cwd]);
+      return yield* rememberPluginRoots(cwd, generation, response);
+    },
+    Effect.timeout(CODEX_ACTION_TIMEOUT),
+    Effect.scoped,
+    Effect.mapError(listingFailure("Codex could not list its plugins.")),
+  );
+  const listPluginRoots = (cwd: string | undefined, fresh: boolean) =>
+    Ref.get(pluginRootsRef).pipe(
+      Effect.flatMap((current) => {
+        const last = current.byCwd.get(cwd);
+        if (!last || fresh) return readPluginRoots(cwd);
+        if (refreshingPluginRoots.has(cwd)) return Effect.succeed(last);
+        refreshingPluginRoots.add(cwd);
+        return readPluginRoots(cwd).pipe(
+          Effect.ignore,
+          Effect.ensuring(Effect.sync(() => refreshingPluginRoots.delete(cwd))),
+          Effect.forkIn(instanceScope),
+          Effect.as(last),
+        );
+      }),
+    );
+  // SCIENT-FORK:END
+  const listPlugins = (cwd: string | undefined, refresh = false) =>
+    open(cwd).pipe(
+      Effect.flatMap((client) =>
+        Effect.gen(function* () {
+          const sequence = yield* nextInventoryReadSequence;
+          const generation = yield* pluginRootsGeneration;
+          const response = yield* requestCodexInstalled(
+            client,
+            cwd === undefined ? undefined : [cwd],
+          );
+          yield* rememberPluginRoots(cwd, generation, response);
+          const plugins = parseCodexInstalledPlugins(response);
+          const enriched = yield* store
+            .enrichInstalled(plugins, refresh)
+            .pipe(Effect.orElseSucceed(() => plugins));
+          return { plugins: enriched, sequence };
+        }),
+      ),
+      Effect.timeout(CODEX_ACTION_TIMEOUT),
+      Effect.scoped,
+      Effect.mapError(listingFailure("Codex could not list its plugins.")),
+    );
+  const actions: ProviderPluginActions = {
+    store,
+    refreshInventory: Effect.fn("CodexPluginInventory.refreshInventory")(function* ({
+      force,
+      connectionsOnly,
+    }: {
+      readonly force: boolean;
+      readonly connectionsOnly?: boolean | undefined;
+    }) {
+      if (!connectionsOnly) yield* store.search({ refresh: force, limit: 1 });
+      const listing = yield* listPlugins(undefined, force || connectionsOnly === true);
+      yield* publishMachine("plugins", listing);
+    }),
+    listPlugins: ({ cwd }) => listPlugins(cwd),
+    listPluginRoots: ({ cwd, fresh }) => listPluginRoots(cwd, fresh === true),
     readMcpServer: ({ serverName }) =>
       open(undefined).pipe(
         Effect.flatMap((client) => requestCodexMcpServers(client, serverName)),
@@ -503,6 +652,7 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
         Effect.flatMap((client) => client.request("plugin/uninstall", { pluginId })),
         Effect.timeout(CODEX_ACTION_TIMEOUT),
         Effect.scoped,
+        Effect.ensuring(forgetPluginRoots),
         Effect.asVoid,
         Effect.mapError((cause) => ({
           message: `Codex could not uninstall '${pluginId}'.`,
@@ -523,5 +673,14 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
     whenRetired: Deferred.await(retired),
   };
 
+  yield* store.changes.pipe(
+    Stream.runForEach(() =>
+      forgetPluginRoots.pipe(
+        Effect.andThen(actions.refreshInventory!({ force: false, connectionsOnly: true })),
+        Effect.ignore,
+      ),
+    ),
+    Effect.forkScoped,
+  );
   return { actions, refresh, workspace, reports };
 });

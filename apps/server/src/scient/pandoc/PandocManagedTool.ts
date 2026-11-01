@@ -1,29 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off -- The reviewed download boundary for the pinned Pandoc release, matching the TinyTeX installer: a streamed body with progress and a host allowlist over compile-time-constant URLs, hashed by the host.
 /**
- * Installs the pinned Pandoc release Word export runs, on first use.
- *
- * Download the archive named in `pandocManifest.ts`, check its exact size and
- * SHA-256 before anything is unpacked, expand it into a staging directory
- * under `<stateDir>/pandoc/managed`, prove the binary starts and reports the
- * pinned version, and only then record it as current. No elevation is asked
- * for, nothing outside the managed directory is touched, and a Pandoc already
- * on this computer is never used.
- *
- * The install runs on a supervised fiber and reports a single state value that
- * clients poll. One install runs at a time: asking again while one is running
- * answers with the running install. A run that dies midway (a failed download,
- * a crash, a shutdown) leaves the previous state file untouched, and the next
- * install clears whatever staging it left behind, so installing again always
- * recovers.
- *
- * An installed Pandoc that later cannot be started (its files were removed or
- * damaged) is reported by the conversion that tried to run it; its state file
- * is removed so status stops calling it installed, and clients offer to
- * reinstall until an install succeeds.
- *
- * macOS: Node's download carries no quarantine attribute and `tar` adds none,
- * so Scient does not strip or assume anything about Gatekeeper; the upstream
- * binary is Developer ID signed with the hardened runtime.
+ * Verify exact archive bytes and binary version before atomic managed activation; never use system
+ * Pandoc. Supervise one install and preserve prior state on failure for retry. Invalidate damaged
+ * installed state for reinstall; do not assume or strip macOS quarantine/signing state.
  */
 import * as NodeCrypto from "node:crypto";
 

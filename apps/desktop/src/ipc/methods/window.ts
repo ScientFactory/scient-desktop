@@ -31,6 +31,9 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { appWindowForSender } from "../../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
@@ -55,7 +58,9 @@ export const reloadMainWindow = DesktopIpc.makeIpcMethod({
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.window.reloadMainWindow")(function* (ignoreCache, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const main = yield* electronWindow.main;
+    // SCIENT-FORK:START — any app window may reload itself.
+    const main = yield* appWindowForSender(electronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       Option.isNone(main) ||
       main.value.isDestroyed() ||
@@ -79,13 +84,10 @@ export const reloadMainWindow = DesktopIpc.makeIpcMethod({
     contents.on("will-prevent-unload", blocked);
     contents.on("did-finish-load", finished);
     yield* Effect.forkDetach(Effect.sleep("5 seconds").pipe(Effect.tap(Effect.sync(cleanup))));
-    try {
-      if (ignoreCache) contents.reloadIgnoringCache();
-      else contents.reload();
-    } catch (error) {
-      cleanup();
-      throw error;
-    }
+    // A failed reload call is a defect; release the listeners before it propagates.
+    yield* Effect.sync(() =>
+      ignoreCache ? contents.reloadIgnoringCache() : contents.reload(),
+    ).pipe(Effect.onError(() => Effect.sync(cleanup)));
     return true;
   }),
 });
@@ -162,9 +164,14 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
 export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getWindowFullscreenState")(function* () {
+  // SCIENT-FORK:START — each app window reports its own fullscreen state.
+  handler: Effect.fn("desktop.ipc.window.getWindowFullscreenState")(function* (event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.currentMainOrFirst;
+    const senderWindow = yield* appWindowForSender(electronWindow, event?.sender?.id);
+    const window = Option.isSome(senderWindow)
+      ? senderWindow
+      : yield* electronWindow.currentMainOrFirst;
+    // SCIENT-FORK:END
     return Option.isSome(window) && window.value.isFullScreen();
   }),
 });
@@ -208,9 +215,7 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        // A backend launched with the desktop secret accepts whichever token the secret derives
-        // for the current window, so hand out that one rather than the token frozen into its
-        // launch config.
+        // Use the current window's derived token; the launch config's token may be stale.
         ...(bootstrap.desktopBootstrapSecret
           ? { bootstrapToken: yield* configuration.currentBootstrapToken }
           : bootstrap.desktopBootstrapToken
@@ -264,9 +269,7 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
       targetId !== undefined &&
       targetId !== PRIMARY_LOCAL_ENVIRONMENT_ID &&
       targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX);
-    // Fall back to the persisted wslDistro when the id is the
-    // "wsl:default" sentinel; the orchestrator uses the same fallback
-    // for the actual backend.
+    // Match the orchestrator's persisted distro fallback for wsl:default.
     const wslDistro = useWsl ? (wslDistroFromTarget ?? settings.wslDistro) : null;
     const defaultPath = useWsl
       ? Option.fromNullishOr(
@@ -361,10 +364,15 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,
   result: Schema.NullOr(Schema.String),
-  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input) {
+  // SCIENT-FORK:START — the menu opens over the app window that asked for it.
+  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input, event) {
     const electronMenu = yield* ElectronMenu.ElectronMenu;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.focusedMainOrFirst;
+    const senderWindow = yield* appWindowForSender(electronWindow, event?.sender.id);
+    const window = Option.isSome(senderWindow)
+      ? senderWindow
+      : yield* electronWindow.focusedMainOrFirst;
+    // SCIENT-FORK:END
     if (Option.isNone(window)) {
       return null;
     }
@@ -430,7 +438,9 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.pasteAsText")(function* (_input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
+    // SCIENT-FORK:START — any app window may paste into itself.
+    const window = yield* appWindowForSender(electronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       event === undefined ||
       Option.isNone(window) ||
@@ -456,7 +466,9 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.revealWindow")(function* (_input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
+    // SCIENT-FORK:START — any app window may reveal itself.
+    const window = yield* appWindowForSender(electronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       event === undefined ||
       Option.isNone(window) ||

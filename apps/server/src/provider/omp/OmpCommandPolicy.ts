@@ -110,11 +110,8 @@ interface OmpSlashInvocation {
 }
 
 /**
- * Parse a slash invocation both ways Oh My Pi 18.3.1 does. RPC `prompt` first
- * tries builtins through `parseSlashCommand`, which splits at the earliest
- * whitespace or ":" (so `/model:x` runs `/model`), then extension and custom
- * commands, which split at the first space only. Scient checks every name OMP
- * could resolve, so neither parse can reach a command the other hides.
+ * OMP builtins split slash commands at whitespace or colon, while extensions/custom commands split
+ * only at space. Check every resolved name so neither parser can hide a disallowed command.
  */
 const parseOmpSlashInvocation = (input: string): OmpSlashInvocation | undefined => {
   if (!input.startsWith("/")) return undefined;
@@ -151,11 +148,8 @@ export const ompCommandDecision = (
   // No command name contains "/", so a first word like /Users/alice/notes.md
   // is a pasted path and reaches OMP as text, even when discovery failed.
   if (builtin.includes("/")) return "not-a-command";
-  // Discovery did not report this command. OMP resolves a slash invocation it
-  // does not know as ordinary text, so Scient forwards it too. When discovery
-  // itself failed the catalog is empty and every invocation stays
-  // fail-closed, because an unreported extension or skill command must never
-  // be forwarded blind.
+  // Forward unknown slash text only after successful discovery. Failed discovery leaves an empty
+  // fail-closed catalog because unseen extensions/skills cannot be forwarded safely.
   if (catalog.known.size === 0) return "unavailable";
   return "not-a-command";
 };

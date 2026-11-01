@@ -88,6 +88,10 @@ describe("Muse recorded Scient request identity", () => {
                       "you are running in Scient through ",
                     )
                     .replace(
+                      "open it in T3 Code's files viewer.",
+                      "open it in Scient's files viewer.",
+                    )
+                    .replace(
                       "When the t3-code MCP server exposes ",
                       "When the Scient MCP server exposes ",
                     )

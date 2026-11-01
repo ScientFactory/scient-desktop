@@ -60,6 +60,8 @@ import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterReg
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
+const isProviderWorkDeferredError = Schema.is(OrchestratorProviderWorkDeferredError);
+
 const driver = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-initiated-fixture");
 const selection = { instanceId, model: "fixture-model" };
@@ -140,6 +142,7 @@ const withInitiatedWork = <A, E, R>(
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getInstance: () => Effect.succeed(undefined),
             }),
           ),
@@ -608,6 +611,53 @@ it.live(
     ),
 );
 
+it.live("repairs an abandoned predecessor without restarting a captured buffered generation", () =>
+  withInitiatedWork(({ orchestrator, emitWork, takeOffer, prompts, adopted, closes, waitFor }) =>
+    Effect.gen(function* () {
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const previous = before.runs[0]!;
+      const turn = before.providerTurns.find(
+        (candidate) => candidate.runAttemptId === previous.activeAttemptId,
+      )!;
+      assert.isDefined(turn);
+      const now = yield* DateTime.now;
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("buffered-generation:predecessor-failed"),
+            type: "run.updated",
+            threadId,
+            runId: previous.id,
+            occurredAt: now,
+            payload: { ...previous, status: "failed" },
+          },
+          {
+            id: EventId.make("buffered-generation:abandoned-turn"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: previous.id,
+            nodeId: turn.nodeId,
+            occurredAt: now,
+            payload: { ...turn, status: "running", completedAt: null },
+          },
+        ],
+      });
+      yield* emitWork("buffered-after-abandoned");
+      const background = yield* takeOffer;
+      assert.deepEqual(adopted, ["buffered-after-abandoned"]);
+      assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
+      assert.equal(closes(), 0);
+      yield* background.finish;
+      const settled = yield* waitFor((projection) => projection.runs[1]?.status === "completed");
+      assert.equal(
+        settled.providerTurns.find((candidate) => candidate.id === turn.id)?.status,
+        "interrupted",
+      );
+      assert.equal(closes(), 0);
+    }),
+  ),
+);
+
 it.live.each([
   "foreign-driver",
   "foreign-session",
@@ -1073,7 +1123,7 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
               }
               return dispatch.pipe(
                 Effect.tapError((cause) =>
-                  Schema.is(OrchestratorProviderWorkDeferredError)(cause)
+                  isProviderWorkDeferredError(cause)
                     ? Queue.offer(deferred, cause).pipe(Effect.asVoid)
                     : Effect.void,
                 ),

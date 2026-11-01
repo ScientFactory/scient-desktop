@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: keep MCP fixtures away from native credential stores.
+import * as AccountsTestkit from "../../../scient/accounts/Accounts.testkit.ts";
+// SCIENT-FORK:END
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
@@ -6,6 +9,7 @@ import * as ServerConfig from "../../../config.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
@@ -37,6 +41,10 @@ import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { DeviceToolkit } from "../device/tools.ts";
@@ -45,6 +53,7 @@ import * as ComputeMcpGateway from "../compute/ComputeMcpGateway.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
+import * as OverleafSync from "../../../scient/overleaf/OverleafSync.ts";
 import * as LegacyV1ThreadImporter from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
@@ -56,6 +65,9 @@ const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceContro
 );
 
 const StubServicesLive = Layer.mergeAll(
+  // SCIENT-FORK:START — Scient Accounts: use an in-memory account owner.
+  AccountsTestkit.layer,
+  // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),
@@ -81,7 +93,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-  ServerSettings.layerTest({}),
+  ServerSettings.layerTest({ linkedEnvironmentsEnabled: true }),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
@@ -98,6 +110,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(LatexBuildService.LatexBuildService)({}),
+  Layer.mock(OverleafSync.OverleafSync)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
@@ -152,6 +165,14 @@ it.effect.each(
         Layer.provide(layerEnvironment),
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(StubServicesLive),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(PeerForwarding.PeerForwarding)({}),
+            Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+            Layer.mock(PeerLinks.PeerLinks)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          ),
+        ),
         Layer.build,
       );
 
@@ -207,12 +228,13 @@ it.effect.each(
       const toolNames = tools.map((tool) => tool.name);
       const deviceNames = new Set(Object.keys(DeviceToolkit.tools));
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
-      expect(toolNames.filter((name) => name === "scient_thread_read")).toHaveLength(
+      expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,
       );
       if (includeThreadRead)
         expect(
-          tools.find((tool) => tool.name === "scient_thread_read")?.annotations?.readOnlyHint,
+          tools.find((tool) => tool.name === "scient_handoff_summary_read")?.annotations
+            ?.readOnlyHint,
         ).toBe(true);
       expect(toolNames.filter((name) => name === "scient_thread_inspect")).toHaveLength(1);
       expect(
@@ -259,7 +281,7 @@ it.effect.each(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-worktree-mcp-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
-        NodeServices.layer,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     ),
   ),

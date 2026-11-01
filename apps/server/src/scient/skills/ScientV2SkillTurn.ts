@@ -15,14 +15,8 @@ import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
 
 /**
- * The V2 counterpart of V1's `ProviderService.sendTurn` skill block.
- *
- * V1 read `selectedScientSkillNames` off the `thread.turn-start-requested` event
- * payload. V2 persists the same snapshot on the turn's user message and reads it
- * back here, so both engines build one provider turn from one selection set.
- *
- * Everything below is the shared `prepareScientSkillTurn` contract: explicit
- * names are the only selection authority, and serialized provider text is not.
+ * Explicit names on the persisted user message are the sole skill-selection authority; serialized
+ * provider text cannot select skills. Prepare each turn from that one snapshot.
  */
 export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
   readonly threadId: ThreadId;
@@ -133,7 +127,7 @@ export const prepareScientV2SkillScopeForSteer = (input: {
 
 /** Validates a steer's prepared text as current input, falling back to the
  * catalog-marker-free text when the marked text does not fit; `useFallback` receives
- * that text. Built synchronously, so the steer yields exactly the validation it did. */
+ * that text. Filesystem reads remain inside the returned validation effect. */
 export const validateScientV2SteerInput = (input: {
   readonly prepared: {
     readonly text: string;
@@ -144,13 +138,11 @@ export const validateScientV2SteerInput = (input: {
   readonly useFallback: (text: string) => void;
 }) => {
   const validateCurrent = (text: string) =>
-    Effect.fromResult(
-      validateProviderCurrentInput({
-        text,
-        attachments: input.attachments,
-        attachmentsDir: input.attachmentsDir,
-      }),
-    );
+    validateProviderCurrentInput({
+      text,
+      attachments: input.attachments,
+      attachmentsDir: input.attachmentsDir,
+    });
   return validateCurrent(input.prepared.text).pipe(
     Effect.catchTags({
       ProviderCurrentInputError: (cause) => {

@@ -1,11 +1,9 @@
 export type SyncTexRecord = Readonly<Record<string, string>>;
 
 /**
- * SyncTeX wraps an ordered candidate list in each `result begin` / `result
- * end` envelope. Every candidate starts with `Output:`; treating the whole
- * envelope as one record would let later candidates overwrite earlier, more
- * accurate ones. Values may contain colons (notably Windows paths), so only
- * the first colon separates a key from its value.
+ * One SyncTeX envelope can contain ordered candidates starting at each Output. Do not let later
+ * candidates overwrite earlier matches; split key/value only at the first colon to preserve Windows
+ * paths.
  */
 export function parseSyncTexRecords(output: string): ReadonlyArray<SyncTexRecord> {
   const records: Array<Record<string, string>> = [];

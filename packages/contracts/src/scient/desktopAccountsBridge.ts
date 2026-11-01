@@ -1,0 +1,114 @@
+import type { BrowserImportSourceId } from "../browserImport.ts";
+
+/** A profile found in another browser on this machine; metadata only, never its sign-ins. */
+export interface DesktopSourceProfileDetails {
+  readonly sourceId: BrowserImportSourceId;
+  /** Matches `BrowserImportSourceProfile.directory`. */
+  readonly directory: string;
+  readonly name: string;
+  readonly email?: string;
+  /** Square PNG data URI, at most 96 px. */
+  readonly picture?: string;
+  /** `#rrggbb` the source browser shows for this profile. */
+  readonly color?: string;
+  readonly passwordCount?: number;
+}
+
+/** Sites with cookies in a Scient browser profile on this desktop. */
+export interface DesktopProfileSignedInSite {
+  /** Registrable domain, e.g. `huji.ac.il`. */
+  readonly domain: string;
+  readonly cookies: number;
+}
+
+/** A sign-in the user submitted in a desktop browser tab. */
+export interface DesktopCapturedSignIn {
+  readonly tabId: string;
+  readonly profileId: string;
+  readonly url: string;
+  readonly username: string;
+  readonly password: string;
+}
+
+export interface DesktopLoginForm {
+  readonly tabId: string;
+  readonly profileId: string;
+  /** The page's origin. */
+  readonly url: string;
+  /** The full page address, for the tab Scient filled. */
+  readonly pageUrl?: string;
+  readonly documentId: string;
+  readonly userEdited: boolean;
+  readonly hasPassword: boolean;
+  readonly hasValues: boolean;
+}
+
+export interface DesktopSignInFill {
+  readonly tabId: string;
+  /** Reject if the main frame or a filled frame has a different origin at fill time. */
+  readonly expectedOrigin?: string;
+  readonly documentId?: string;
+  readonly automatic?: boolean;
+  /** Submit a complete sign-in after filling it. */
+  readonly submit?: boolean;
+  readonly username?: string;
+  readonly password?: string;
+  readonly otp?: string;
+}
+
+/** Scient Accounts members of the desktop bridge (`ScientDesktopBridge.accounts`). */
+export interface DesktopGoogleSession {
+  readonly email: string;
+  /** False when Google remembers the account but no longer accepts its session. */
+  readonly valid: boolean;
+}
+
+export interface DesktopAccountsBridge {
+  /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
+  readonly originBoundFill?: true;
+  /** A Chromium profile's saved passwords as CSV for `accountsImportPasswords`; local desktop only. */
+  readonly readBrowserPasswords?: (input: {
+    readonly sourceId: BrowserImportSourceId;
+    readonly directory: string;
+  }) => Promise<{ readonly content: string; readonly skipped: number } | null>;
+  readonly sourceProfiles: () => Promise<ReadonlyArray<DesktopSourceProfileDetails>>;
+  /** The site's icon as an image data URI, from the site itself and cached on disk; null if none. */
+  readonly siteIcon?: (site: string) => Promise<string | null>;
+  /** Omit environmentId for the primary local environment. */
+  readonly signedInSites: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<DesktopProfileSignedInSite>>;
+  /** Full cookie-domain/expiry inventory, or null when the read failed. Never includes values. */
+  readonly cookieMetadata?: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<{
+    readonly domain: string;
+    readonly httpOnly?: boolean;
+    readonly expires?: number;
+  }> | null>;
+  /** What Google says about this profile's accounts, or null when it couldn't be read. */
+  readonly googleSessions?: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<DesktopGoogleSession> | null>;
+  /** Asks a site for a page with the profile's session and no page opened; null if that failed. */
+  readonly quietVisit?: (
+    profileId: string,
+    url: string,
+    environmentId?: string,
+  ) => Promise<{ readonly url: string; readonly status: number } | null>;
+  /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
+  readonly signOutSite?: (
+    profileId: string,
+    site: string,
+    environmentId?: string,
+  ) => Promise<boolean>;
+  /** Fills the login form on the tab's current page. Resolves false when it found none. */
+  /** False when nothing was filled; "submitted" when the form was also really sent. */
+  readonly fill: (input: DesktopSignInFill) => Promise<boolean | "submitted">;
+  readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
+  readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
+  readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
+}

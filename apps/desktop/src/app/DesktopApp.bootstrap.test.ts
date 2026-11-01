@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import { vi } from "vite-plus/test";
 
@@ -25,10 +26,8 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopVoice from "./DesktopVoice.ts";
-
-// SCIENT-FORK:START keep-awake mount
+// SCIENT-FORK:START — the keep-awake IPC handler needs its service.
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
-
 // SCIENT-FORK:END
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
@@ -57,6 +56,7 @@ import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts"
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
@@ -155,6 +155,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
         quit: Effect.sync(() => {
           quitCalls += 1;
         }),
+        on: () => Effect.void,
       }),
       Layer.mock(ElectronDialog.ElectronDialog, {
         showErrorBox: (_title, content) =>
@@ -207,6 +208,9 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
         markComplete: Effect.void,
       }),
       Layer.mock(DesktopRendererHistory.DesktopRendererHistory, { shutdown: Effect.void }),
+      // SCIENT-FORK:START — the keep-awake IPC handler needs its service.
+      Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
+      // SCIENT-FORK:END
       Layer.mock(DesktopAppActivation.DesktopAppActivation, { start: Effect.void }),
       Layer.mock(DesktopSnapShot.DesktopSnapShot, { initialize: Effect.void }),
       Layer.mock(DesktopWslBackend.DesktopWslBackend, { reconcile: Effect.void }),
@@ -219,7 +223,17 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
         configure: Effect.void,
       }),
       Layer.mock(DesktopApplicationMenu.DesktopApplicationMenu, { configure: Effect.void }),
-      Layer.mock(DesktopUpdates.DesktopUpdates, { configure: Effect.void }),
+      Layer.mock(DesktopUpdates.DesktopUpdates, {
+        configure: Effect.void,
+        subscribe: Effect.succeed({
+          latest: createInitialDesktopUpdateState(
+            "0.0.0-test",
+            { hostArch: "arm64", appArch: "arm64", runningUnderArm64Translation: false },
+            "latest",
+          ),
+          changes: Stream.empty,
+        }),
+      }),
       Layer.mock(DesktopLinuxUrlHandler.DesktopLinuxUrlHandler, { register: Effect.void }),
       Layer.mock(PreviewPasskeys.PreviewPasskeys, {
         bridgeEnabled: false,
@@ -250,11 +264,6 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(ElectronShell.ElectronShell, {}),
       Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
       Layer.mock(DesktopVoice.DesktopVoice, {}),
-
-      // SCIENT-FORK:START keep-awake mount
-      Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
-
-      // SCIENT-FORK:END
       Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
       Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
       Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),

@@ -110,7 +110,9 @@ function spaced(math: MathfieldElement, rows: number, environment = "bmatrix") {
   );
 }
 
-it.each(["matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix"] as const)(
+// Every display matrix takes the same row-gap path; math/input/matrixSpacing.test.ts runs
+// each environment's source. Here: the bare matrix and a delimited one, as MathLive names them.
+it.each(["matrix", "Vmatrix"] as const)(
   "%s retains explicit spacing across native row commands, undo/redo and a source reload",
   async (environment) => {
     await using _fixture = _createFixture();

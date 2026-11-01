@@ -18,13 +18,8 @@ export class DuplexProcess extends Context.Service<DuplexProcess, DuplexProcessP
 ) {}
 
 /**
- * How long output is still drained after the direct child has exited.
- *
- * Long enough that anything already buffered in the operating-system pipe is
- * delivered even to a briefly stalled consumer, short enough that a leaked
- * descendant holding the inherited descriptor cannot stall a consumer for
- * long. Losing a peer's final protocol frame is the worse failure, so this
- * errs on the generous side.
+ * Drain long enough to preserve buffered final protocol frames after child exit, but bound it so
+ * leaked descendants holding the pipe cannot stall readers indefinitely.
  */
 const OUTPUT_DRAIN_GRACE = "1 second";
 
@@ -107,13 +102,9 @@ const make = Effect.gen(function* () {
         ),
       );
 
-      // `kill` signals the detached group on Unix and the tree via taskkill on
-      // Windows, falls back to the direct child, and resolves only once that
-      // child has exited — the stop acknowledgement the port promises. A tree
-      // that is already gone reports the absence differently on every platform
-      // (`ESRCH` once reaped, `EPERM` for an unreaped macOS zombie, a non-zero
-      // taskkill exit on Windows), so the child's own liveness, not the signal
-      // result, decides whether cancellation actually failed.
+      // Cancellation completion acknowledges direct-child exit. Missing-tree signals differ across
+      // ESRCH, macOS zombie EPERM, and taskkill failure; child liveness decides whether
+      // cancellation actually failed.
       const closeOwnedProcess = yield* makeLocalOwnedProcessCleanup(child, platform);
       const cancelProcessTree = closeOwnedProcess.pipe(
         Effect.mapError((cause) =>
@@ -126,13 +117,9 @@ const make = Effect.gen(function* () {
       // one-shot adapter before exposing the terminal exit to callers.
       const exitCode = directExitCode.pipe(Effect.tap(() => cancelProcessTree));
 
-      // A descendant that inherited the child's stdout keeps the pipe open
-      // after the child itself is gone, so end-of-file alone can leave a
-      // consumer pulling forever. Wait for owned-tree cleanup, then allow one
-      // drain window so buffered frames — a peer's final protocol reply, for
-      // instance — are still delivered, and only then stop pulling. The exit
-      // outcome is deliberately discarded: a cancelled process exits by
-      // signal, and that is a normal end of output, not a read failure.
+      // Descendants can keep stdout open after child exit. Wait for tree cleanup and a bounded
+      // drain window before stopping, preserving final frames without hanging on EOF. Signal exit
+      // is normal cancellation, not an output-read failure.
       const outputDrainDeadline = exitCode.pipe(
         Effect.exit,
         Effect.andThen(Effect.sleep(OUTPUT_DRAIN_GRACE)),

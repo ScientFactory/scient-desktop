@@ -6,23 +6,23 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "21da3061aa006fc852ea4bd84c31ec084a3afa26",
-  "reviewedThrough": "21da3061aa006fc852ea4bd84c31ec084a3afa26",
-  "reviewedAt": "2026-10-22",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261020-81dea7821d.md",
+  "integrationBase": "79f1fadfc6020b820d541ca4691d2feebb15dd1b",
+  "reviewedThrough": "79f1fadfc6020b820d541ca4691d2feebb15dd1b",
+  "reviewedAt": "2026-10-31",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261031-79f1fadfc6.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "80436ae5bead92d3cde82b90a6aa5b137aefde6b",
-  "lastRefreshPreviousOfficialTip": "81dea7821dca30b417182db6fa0cb99a0195bfd8",
-  "lastRefreshOfficialTip": "21da3061aa006fc852ea4bd84c31ec084a3afa26",
+  "lastRefreshBase": "f91025e88ce96d5f26bb4e7485af2db2f62d768c",
+  "lastRefreshPreviousOfficialTip": "59bb4e83bcf753e6ebb99b63b5232f5f41251c8a",
+  "lastRefreshOfficialTip": "79f1fadfc6020b820d541ca4691d2feebb15dd1b",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 133,
-  "lastRefreshMerge": "a495ed55e0d5f5e2740b750121772dcf1327108c",
-  "lastRefreshBranch": "codex/t3-sync-81dea7821d-20261020",
+  "lastRefreshRangeCount": 103,
+  "lastRefreshMerge": "5589000e86b47f1c227daa57521779cb8e93d5f9",
+  "lastRefreshBranch": "codex/t3-sync-79f1fadfc6-20261031",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,5 +43,5 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshVerifiedAt": "2026-10-22T20:32:48.837037Z"
+  "lastRefreshVerifiedAt": "2026-10-30T12:00:00Z"
 }

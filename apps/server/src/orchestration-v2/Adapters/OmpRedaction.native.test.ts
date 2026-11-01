@@ -246,16 +246,22 @@ describe("native OMP process redaction", () => {
           if (terminal?.type !== "turn.terminal") throw new Error("No native redaction terminal");
           expect(terminal.status).toBe("failed");
           expect(terminal.failure?.message).toContain("Incorrect API key provided: [REDACTED]");
-          const tools = events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          const notices = events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "error" || event.turnItem.type === "system_notice")
               ? [event.turnItem]
               : [],
           );
-          expect(tools.some((tool) => String(tool.output).includes("retrying"))).toBe(true);
-          expect(
-            tools.some((tool) => String(tool.output).includes("extension saw [REDACTED]")),
-          ).toBe(true);
-          expect(tools.some((tool) => String(tool.output).includes("cannot read"))).toBe(false);
+          expect(notices.some((item) => item.type === "error" && item.retry?.attempt === 1)).toBe(
+            true,
+          );
+          const messages = notices.map((item) =>
+            item.type === "error" ? item.failure.message : item.message,
+          );
+          expect(messages.some((message) => message.includes("extension saw [REDACTED]"))).toBe(
+            true,
+          );
+          expect(messages.some((message) => message.includes("cannot read"))).toBe(false);
           const text = events.findLast((event) => event.type === "message.updated");
           if (text?.type !== "message.updated")
             throw new Error("No native redacted assistant text");

@@ -116,7 +116,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
       name,
       scenario,
     })),
-  )("$caseTitle", ({ name, scenario }) =>
+  )("$caseTitle", ({ name: _name, scenario }) =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-07-01T00:00:00Z"));
       const config = yield* ServerConfig;
@@ -227,7 +227,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                       const isolatedPath = moves[0]![3]!;
                       assert.deepEqual(args, [
                         "-c",
-                        "status.showUntrackedFiles=all",
+                        "status.showUntrackedFiles=normal",
                         "worktree",
                         "remove",
                         "--",

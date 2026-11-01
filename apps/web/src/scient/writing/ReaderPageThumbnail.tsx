@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, type ReactNode, type ButtonHTMLAttributes } from "react";
 import "./readerPageThumbnail.css";
 
 /** Shared page navigation; each reader owns the preview inside it. */
@@ -9,10 +9,11 @@ export const ReaderPageThumbnail = forwardRef<
     readonly active: boolean;
     readonly children: ReactNode;
     readonly onSelect: (page: number) => void;
-  }
->(function ReaderPageThumbnail({ pageNumber, active, children, onSelect }, ref) {
+  } & Pick<ButtonHTMLAttributes<HTMLButtonElement>, "draggable" | "onDragStart" | "onDragEnd">
+>(function ReaderPageThumbnail({ pageNumber, active, children, onSelect, ...buttonProps }, ref) {
   return (
     <button
+      {...buttonProps}
       ref={ref}
       type="button"
       className="scient-reader-page-thumbnail"

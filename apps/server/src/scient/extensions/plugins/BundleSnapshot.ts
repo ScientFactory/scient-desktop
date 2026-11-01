@@ -1,36 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Bundle snapshots are a Node filesystem boundary, like skill releases.
 /**
- * Read a plugin bundle directory once into memory.
- *
- * Node has no `openat`, so reads are bracketed by pathname checks:
- * - the requested root is `lstat`ed once and that device/inode is carried into
- *   the walk: its canonical path must name the same directory, and the
- *   requested path must still name it after the walk;
- * - every directory is `lstat`ed (never a link), its `realpath` must equal its
- *   expected path beneath the root, and its device/inode must be unchanged
- *   before and after it is listed and after each of its files is read;
- * - every file is opened with `O_NOFOLLOW | O_NONBLOCK` (a link or FIFO swapped
- *   in cannot be followed or block), the open descriptor is `fstat`ed and must be
- *   a regular, singly linked file whose device, inode, size, modification time
- *   and change time match the `lstat` taken when it was listed, and it is read
- *   with a bounded read loop rather than trusting its size.
- * The file comparison follows git's stat check: a filesystem may hand a freed
- * inode number straight to a new file (Linux does), so device and inode alone
- * do not show that a listed file was left alone. A same-size rewrite within one
- * timestamp tick can still pass; that only affects which bundle bytes are read,
- * because every read goes through the descriptor checks above. Directories are
- * held to device/inode only: their times move whenever an entry inside them
- * changes, such as Finder writing `.DS_Store`.
- * Entries, files, bytes and depth are bounded before any further work, and the
- * scan stops when its signal aborts.
- *
- * Accepted residual window: these checks are not race-free containment. A
- * process that can rename directories inside the bundle while it is read can
- * swap an intermediate directory for a link to an outside directory after that
- * directory's last check, keep it swapped while one child is `lstat`ed, opened
- * and read, and restore the original before the post-read check. Every check
- * then passes and the snapshot holds that outside file's bytes. Closing this
- * requires descriptor-relative (`openat`/`O_NOFOLLOW`) traversal.
+ * Path checks are not race-free containment: an intermediate directory can be swapped/restored
+ * around a child read; closing that window needs openat/no-follow traversal. Bound reads and
+ * validate descriptor identity/size/times, not inode alone (it can be reused). Directory times may
+ * change benignly.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

@@ -1,27 +1,7 @@
 /**
- * The conversation importer: turns one validated, leased import into a new
- * independent thread with a single `thread.conversation.import` command, and
- * settles attempts that will not continue. See `ConversationImporter.ts` for
- * the contract with staging.
- *
- * One attempt, in order:
- *
- * 1. **Journal.** Mint fresh local ids, choose the exact final attachment
- *    paths, and write the journal durably. Nothing is published before this.
- * 2. **Publish.** Copy each staged attachment to its final path (temporary
- *    file and rename, in staging's `copyAttachment`), before the history that
- *    references it commits.
- * 3. **Commit once.** Dispatch the command with the journal's command id. Its
- *    native history events commit in
- *    one transaction with the command receipt. From the dispatch on, nothing
- *    is interruptible.
- *
- * The command receipt decides every outcome, never whether a thread exists
- * now (a committed thread may since have been deleted): accepted means the
- * published files belong to the thread and are never removed; rejected or
- * absent means exactly the journal-listed files are removed when the attempt
- * ends. An in-process lock per import keeps settling and importing apart, so
- * cleanup never runs while a dispatch for the attempt can still commit.
+ * Flush the journal before publication and publish attachments before history commits. Dispatch and
+ * settlement are uninterruptible; receipts, never current thread existence, decide ownership. Under
+ * the per-import lock, delete only journal-listed files proven uncommitted, never accepted files.
  */
 import { SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE, type CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";

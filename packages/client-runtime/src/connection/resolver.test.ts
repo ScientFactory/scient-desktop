@@ -29,10 +29,10 @@ import {
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import {
-  GitHubRoutingPermissions,
-  gitHubRoutingConnectionKey,
-  makeGitHubRoutingPermissions,
-} from "./githubRoutingPermissions.ts";
+  PullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
+  makePullRequestRoutingPermissions,
+} from "./pullRequestRoutingPermissions.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const ENDPOINT = {
@@ -108,6 +108,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
           },
         })),
     authorizeDpopHttp: () => Effect.die("unused"),
+    renewDpopBeforeExpiry: () => Effect.die("unused"),
   });
   const ssh = ClientCapabilities.SshEnvironmentGateway.of({
     provision: () => Effect.die("unused"),
@@ -181,7 +182,9 @@ describe("ConnectionResolver", () => {
       const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
 
       expect(error).toMatchObject({ reason: "unsupported" });
+      // SCIENT-FORK:START
       expect(error.message).toContain("Update Scient on Compatible environment");
+      // SCIENT-FORK:END
     }),
   );
 
@@ -289,11 +292,11 @@ describe("ConnectionResolver", () => {
           reason: "remote-unavailable",
           detail: "Could not persist routing consent.",
         });
-        const permissions = yield* makeGitHubRoutingPermissions({
+        const permissions = yield* makePullRequestRoutingPermissions({
           read: Effect.succeed([
             {
               environmentId: ENVIRONMENT_ID,
-              connectionKey: gitHubRoutingConnectionKey(entry)!,
+              connectionKey: pullRequestRoutingConnectionKey(entry)!,
               permission: "read-write",
             },
           ]),
@@ -342,7 +345,7 @@ describe("ConnectionResolver", () => {
         );
         const prepare = broker
           .prepare(entry)
-          .pipe(Effect.provideService(GitHubRoutingPermissions, permissions));
+          .pipe(Effect.provideService(PullRequestRoutingPermissions, permissions));
         if (scenario === "revocation-failed") {
           expect(yield* Effect.flip(prepare)).toBe(failure);
           expect(savedProfile).toBe(profile);

@@ -46,11 +46,9 @@ type ManagedOmpRuntimeDependencies = ConstructorParameters<typeof ManagedOmpRunt
 type ManagedOmpQualification = ManagedRpcQualification;
 
 /**
- * Oh My Pi's RPC mode exits at startup when it has no model at all, and the
- * isolated home has none of the user's sign-ins. This stub provider gives it
- * one; the check never sends a prompt, so nothing is sent to its unroutable
- * address. Local-server discovery is off so the result does not depend on
- * what else runs on the machine.
+ * OMP RPC exits without any model, so isolated qualification needs a stub. Never prompt its
+ * unroutable address; disable local discovery so readiness does not depend on other services on the
+ * machine.
  */
 const OMP_QUALIFICATION_MODELS = `providers:
   scient-qualification:

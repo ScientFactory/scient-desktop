@@ -1,26 +1,63 @@
-import {
-  settlePromise,
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
-import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
-import type { ChatAttachment, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
-import { useImperativeHandle, useRef, useState, type Ref } from "react";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import type {
+  ChatAttachment as ContractChatAttachment,
+  EnvironmentId,
+  MessageId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { Link } from "@tanstack/react-router";
+import {
+  ArrowUpIcon,
+  CalendarClockIcon,
+  ChevronDownIcon,
+  MessagesSquareIcon,
+  PencilIcon,
+  XIcon,
+} from "lucide-react";
+import * as DateTime from "effect/DateTime";
+import { useId, useImperativeHandle, useState, type ReactNode, type Ref } from "react";
+
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import type { ChatMessage } from "../../types";
-import { ThreadQueueStrip } from "../../scient/threadQueue/ThreadQueueStrip";
+import { isImageAttachment, type ChatMessage } from "../../types";
+import { cn } from "~/lib/utils";
+import { Button, InlineButton } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { GuestMessageName } from "./guestMessageStyle";
+import { TimelineRowTimestamp } from "./TimelineRowParts";
+import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
+// SCIENT-FORK:START queue-scient-parts
+import { queuePreviewText } from "~/scient/threadQueue/queuePreviewText";
+import {
+  QueueAdmissionStatus,
+  ScientQueueNotices,
+  useScientQueueParts,
+} from "../../scient/threadQueue/useScientQueueParts";
+// SCIENT-FORK:END queue-scient-parts
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly attachments: ReadonlyArray<ContractChatAttachment>;
 }
+
+interface QueuedRowThumbnail {
+  readonly key: string;
+  readonly name: string;
+  readonly url: string | null;
+}
+
+// A longer queue shows its first messages and a button that shows the rest.
+const QUEUE_VISIBLE_ROWS = 3;
+
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
   editLatest: (repeat: boolean) => boolean;
@@ -39,7 +76,6 @@ function queuedImageResources(projection: ThreadQueueProjection | undefined) {
   );
 }
 
-/** Native queue state and commands, presented once in Scient's composer strip. */
 export function QueuedRunsControl({
   ref,
   ...props
@@ -51,223 +87,511 @@ export function QueuedRunsControl({
   readonly threadId: ThreadId;
   readonly optimisticMessages: ReadonlyArray<
     Pick<ChatMessage, "id" | "inputIntent" | "text" | "attachments"> & {
+      // SCIENT-FORK:START queue-scient-parts — an admission preview and its acceptance.
       readonly queueAdmission?: { readonly accepted: boolean };
+      // SCIENT-FORK:END queue-scient-parts
     }
   >;
   readonly editingRunId: RunId | null;
+  /** Set while something else holds the composer, such as an open question. */
+  readonly editBlockedReason: string | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  readonly timestampFormat: TimestampFormat;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  // SCIENT-FORK:START queue-scient-parts
   readonly error?: string | null;
+  // SCIENT-FORK:END queue-scient-parts
 }) {
-  const threadRef = scopeThreadRef(props.environmentId, props.threadId);
-  const projection = useThreadProjection(threadRef)?.projection;
-  // SCIENT-FORK:START queue-head-send-rule
-  const shell = useThreadShell(threadRef);
-  // SCIENT-FORK:END queue-head-send-rule
-  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
+  const projection = useThreadProjection(
+    scopeThreadRef(props.environmentId, props.threadId),
+  )?.projection;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
-  const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const busyRef = useRef(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
+  const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const [showAll, setShowAll] = useState(false);
+  const queueListId = useId();
+  const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
+  // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
+  const acknowledgedMessageIds = new Set((projection?.messages ?? []).map((message) => message.id));
   const queuedImageAttachmentResources = queuedImageResources(projection);
+  const queuedImageAttachmentUrls = useAssetUrls(
+    props.environmentId,
+    queuedImageAttachmentResources,
+  );
+  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
   const queued = workflow?.queuedRuns ?? [];
-  const failedHead =
-    workflow?.isHeld === true &&
-    queued[0] !== undefined &&
-    projection?.turnItems.some(
-      (item) =>
-        item.type === "error" &&
-        item.runId === queued[0]?.run.id &&
-        item.failure.code === "queued_start_failed",
-    ) === true;
-  // SCIENT-FORK:START queue-head-send-rule — a held queue offers Send on every message
-  // the server accepts; Send starts that message and resumes the rest after it.
-  // A windowed snapshot can miss the session that lifts a usage limit, so the
-  // limit hides Send only when the server-computed shell confirms it.
-  const heldProjection = workflow?.isHeld === true && projection != null ? projection : null;
-  const usageLimited =
-    heldProjection !== null &&
-    isQueueUsageLimitProven(heldProjection, shell?.runtime?.lastErrorClass);
-  const canSendRun = (runId: RunId) =>
-    heldProjection !== null && canSendQueuedRun(heldProjection, runId, { usageLimited });
-  // SCIENT-FORK:END queue-head-send-rule
-  const items = queued.map(({ run, text, attachments }) => ({
-    queueItemId: run.id,
-    runId: run.id,
-    messageId: run.userMessageId,
-    text,
-    attachments,
-  }));
-  const imageUrls = useAssetUrls(props.environmentId, queuedImageAttachmentResources);
-  const attachmentUrls = new Map(
-    queuedImageAttachmentResources.flatMap((resource, index) => {
-      const url = imageUrls[index];
-      return url ? [[resource.attachmentId, url] as const] : [];
+  const activeRun = workflow?.activeRun ?? null;
+  const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
+  // SCIENT-FORK:START queue-scient-parts
+  const scient = useScientQueueParts({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    projection,
+    workflow,
+    editingRunId: props.editingRunId,
+    error: props.error,
+    setBusyRunId,
+  });
+  // SCIENT-FORK:END queue-scient-parts
+  const queuedImageUrlById = new Map(
+    queuedImageAttachmentUrls.flatMap((url, index) => {
+      const resource = queuedImageAttachmentResources[index];
+      return url && resource ? [[resource.attachmentId, url] as const] : [];
     }),
   );
-  // Acknowledged messages retire their optimistic copies even after their run
-  // has left the queue; filtering only by queued IDs would resurrect them.
-  const acknowledged = new Set((projection?.messages ?? []).map((message) => message.id));
-  const pendingMessages = props.optimisticMessages
-    .filter(
-      (message) =>
-        (message.inputIntent === "queued_turn" || message.queueAdmission !== undefined) &&
-        !acknowledged.has(message.id),
-    )
-    .map((message) => ({
-      id: message.id,
+  const optimisticQueued = props.optimisticMessages.filter(
+    (message) =>
+      // SCIENT-FORK:START queue-scient-parts — a send predicted to queue previews here too.
+      (message.inputIntent === "queued_turn" || message.queueAdmission !== undefined) &&
+      // SCIENT-FORK:END queue-scient-parts
+      !acknowledgedMessageIds.has(message.id),
+  );
+  const items = [
+    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
+      key: run.id,
+      message,
+      runId: run.id,
+      messageId: run.userMessageId,
+      serverIndex,
+      text,
+      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
+      editable: context?.guest === undefined,
+      attachments,
+      thumbnails: attachments
+        .filter((attachment) => attachment.type === "image")
+        .map<QueuedRowThumbnail>((attachment) => ({
+          key: attachment.id,
+          name: attachment.name,
+          url: queuedImageUrlById.get(attachment.id) ?? null,
+        })),
+      pending: false,
+    })),
+    ...optimisticQueued.map((message) => ({
+      key: message.id,
+      message: undefined,
+      runId: null,
+      messageId: null,
+      serverIndex: null,
       text: message.text,
-      attachmentCount: message.attachments?.length ?? 0,
-      imageCount: message.attachments?.filter((item) => item.type === "image").length ?? 0,
+      editable: true,
+      attachments: [] as ReadonlyArray<ContractChatAttachment>,
+      thumbnails: (message.attachments ?? [])
+        .filter(isImageAttachment)
+        .map<QueuedRowThumbnail>((attachment) => ({
+          key: attachment.id,
+          name: attachment.name,
+          url: attachment.previewUrl ?? null,
+        })),
+      pending: true,
+      // SCIENT-FORK:START queue-scient-parts
       accepted: message.queueAdmission?.accepted === true,
-    }));
-  const perform = async (
-    id: string,
-    action: () => Promise<AtomCommandResult<unknown, unknown>>,
-  ) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusyId(id);
-    setActionError(null);
-    const settled = await settlePromise(action);
-    const result = settled._tag === "Success" ? settled.value : settled;
-    if (result._tag === "Failure") {
-      const cause = squashAtomCommandFailure(result);
-      setActionError(
-        cause instanceof Error ? cause.message : "The queued message action failed. Try again.",
+      // SCIENT-FORK:END queue-scient-parts
+    })),
+  ];
+
+  // SCIENT-FORK:START queue-scient-parts
+  const sendQueuedMessage = async (queuedRunId: RunId) => {
+    if (!canSend || scient.sendRefused(queuedRunId)) return;
+    if (workflow?.canSendNow) {
+      await scient.perform(queuedRunId, () =>
+        resume({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, runId: queuedRunId },
+        }),
+      );
+    } else if (activeRun !== null) {
+      await scient.perform(queuedRunId, () =>
+        promote({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
+        }),
       );
     }
-    busyRef.current = false;
-    setBusyId(null);
   };
-  const edit = (item: (typeof items)[number]) =>
-    props.onEditQueuedRun({
-      runId: item.runId,
-      messageId: item.messageId,
-      text: item.text,
-      attachments: item.attachments,
-    });
-  const steer = (runId: RunId) => {
-    const active = workflow?.activeRun;
-    if (!active || !workflow.canPromoteToSteer) return;
-    void perform(runId, () =>
-      promote({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId, queuedRunId: runId, targetRunId: active.id },
-      }),
-    );
-  };
+  // SCIENT-FORK:END queue-scient-parts
+
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      const first = items[0];
-      if (!first || !workflow?.canPromoteToSteer) return false;
-      if (!repeat && !busyRef.current) steer(first.runId);
+      const next = queued[0];
+      // SCIENT-FORK:START queue-scient-parts
+      if (!next || !canSend || scient.sendRefused(next.run.id)) return false;
+      if (!repeat && !scient.isBusy()) void sendQueuedMessage(next.run.id);
+      // SCIENT-FORK:END queue-scient-parts
       return true;
     },
+    // Leave the key to caret navigation while editing.
     editLatest(repeat) {
-      const latest = items.at(-1);
-      if (!latest || props.editingRunId !== null || busyRef.current) return false;
-      if (!repeat) edit(latest);
+      const latest = queued.at(-1);
+      if (
+        !latest ||
+        latest.context?.guest !== undefined ||
+        props.editingRunId !== null ||
+        props.editBlockedReason !== null ||
+        busyRunId !== null
+      ) {
+        return false;
+      }
+      if (!repeat) {
+        setShowAll(true);
+        props.onEditQueuedRun({
+          runId: latest.run.id,
+          messageId: latest.run.userMessageId,
+          text: latest.text,
+          attachments: latest.attachments,
+        });
+      }
       return true;
     },
   }));
+
+  // SCIENT-FORK:START queue-scient-parts — notices and the detached-edit row lead the queue; the
+  // variable sizes their ComposerBanner rows outside a composer banner.
+  const scientNotices =
+    scient.notice === null && !scient.detachedEdit ? null : (
+      <div className="flex flex-col gap-1 text-xs [--composer-banner-icon-column:--spacing(6)]">
+        <ScientQueueNotices
+          parts={scient}
+          busy={busyRunId !== null}
+          onCancelEdit={props.onCancelEdit}
+        />
+      </div>
+    );
+  if (items.length === 0) {
+    return scientNotices === null ? null : (
+      <section
+        aria-label="Queued messages"
+        data-thread-queue="true"
+        className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
+      >
+        {scientNotices}
+      </section>
+    );
+  }
+
+  const remove = (runId: RunId) =>
+    scient.perform(runId, () =>
+      cancel({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, runId },
+      }),
+    );
+  // SCIENT-FORK:END queue-scient-parts
+
+  const collapsible = items.length > QUEUE_VISIBLE_ROWS;
+  const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
+
   return (
-    <ThreadQueueStrip
-      items={items}
-      pendingMessages={pendingMessages}
-      error={
-        actionError ??
-        props.error ??
-        (failedHead
-          ? "The queued message could not start. Retry it, or edit or delete the message."
-          : null)
-      }
-      threadBusy={workflow?.activeRun != null}
-      supportsExplicitSend={workflow?.isHeld === true}
-      awaitingCompletion={workflow?.isHeld === true}
-      canSendItem={(item) => canSendRun(item.runId)}
-      paused={false}
-      // The strip enables dragging only with two queued rows, and reserves the
-      // grip while a pending follow-up is about to become the second row.
-      canReorder={busyId === null}
-      canSteer={workflow?.canPromoteToSteer === true}
-      dispatchingItemId={busyId}
-      editingItemId={props.editingRunId}
-      onCancelEdit={props.onCancelEdit}
-      attachmentUrls={attachmentUrls}
-      onEdit={(item) => {
-        if (!busyRef.current) edit(item);
-      }}
-      onDelete={(item) => {
-        void perform(item.runId, () =>
-          cancel({
-            environmentId: props.environmentId,
-            input: { threadId: props.threadId, runId: item.runId },
-          }),
-        );
-      }}
-      onSend={(item) => {
-        void perform(item.runId, () =>
-          resume({
-            environmentId: props.environmentId,
-            input: { threadId: props.threadId, runId: item.runId },
-          }),
-        );
-      }}
-      onSteer={(item) => steer(item.runId)}
-      retryable={failedHead && queued[0] !== undefined && canSendRun(queued[0].run.id)}
-      onRetry={() => {
-        const head = queued[0];
-        if (head)
-          void perform(head.run.id, () =>
-            resume({
-              environmentId: props.environmentId,
-              input: { threadId: props.threadId, runId: head.run.id },
-            }),
+    <section
+      aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
+      data-thread-queue="true"
+      // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
+      className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
+    >
+      <span className="sr-only" aria-live="polite">
+        {items.length} queued
+      </span>
+      {/* SCIENT-FORK:START queue-scient-parts */}
+      {scientNotices}
+      {/* SCIENT-FORK:END queue-scient-parts */}
+      <ol className="flex flex-col items-end gap-3" id={queueListId}>
+        {visibleItems.map((item, position) => {
+          // SCIENT-FORK:START queue-scient-preview
+          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+            ? ""
+            : queuePreviewText(item.text, item.thumbnails.length > 0);
+          // SCIENT-FORK:END queue-scient-preview
+          const isEditing = item.runId !== null && item.runId === props.editingRunId;
+          // SCIENT-FORK:START queue-scient-parts — a refused held Send stays hidden.
+          const sendOffered =
+            canSend && !isEditing && !(item.runId !== null && scient.sendRefused(item.runId));
+          // SCIENT-FORK:END queue-scient-parts
+          return (
+            <li
+              key={item.key}
+              aria-label={`Queued message ${position + 1} of ${items.length}, not sent`}
+              aria-posinset={position + 1}
+              aria-setsize={items.length}
+              aria-current={isEditing ? "true" : undefined}
+              className="group/queued flex w-full flex-col items-end gap-1 transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
+            >
+              <QueuedMessage
+                environmentId={props.environmentId}
+                message={item.message}
+                previewText={previewText}
+                thumbnails={item.thumbnails}
+                isEditing={isEditing}
+                timestampFormat={props.timestampFormat}
+                onOpenThread={props.onOpenThread}
+              >
+                {sendOffered ? (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="flex shrink-0" />}>
+                        <Button
+                          size="xs"
+                          variant="ghost-muted"
+                          disabled={item.runId === null || busyRunId !== null}
+                          onClick={() => {
+                            if (item.runId !== null) {
+                              void sendQueuedMessage(item.runId);
+                            }
+                          }}
+                        >
+                          <ArrowUpIcon />
+                          Send now
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {`${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                      </TooltipPopup>
+                    </Tooltip>
+                  </>
+                ) : null}
+                {/* SCIENT-FORK:START queue-scient-parts — "Queuing…" only when admission is slow. */}
+                {item.pending ? (
+                  <span className="px-1 empty:hidden">
+                    <QueueAdmissionStatus
+                      messageId={item.key}
+                      accepted={"accepted" in item && item.accepted}
+                    />
+                  </span>
+                ) : null}
+                {/* SCIENT-FORK:END queue-scient-parts */}
+                {isEditing ? (
+                  <>
+                    <span className="px-1 text-foreground">Editing in the composer</span>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      aria-label="Cancel editing queued message"
+                      onClick={props.onCancelEdit}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Tooltip>
+                      {/* The span keeps the tooltip, and its reason, on a disabled button. */}
+                      <TooltipTrigger render={<span className="flex shrink-0" />}>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label="Edit queued message"
+                          disabled={
+                            item.runId === null ||
+                            !item.editable ||
+                            busyRunId !== null ||
+                            props.editBlockedReason !== null
+                          }
+                          onClick={() => {
+                            if (item.runId !== null && item.messageId !== null) {
+                              props.onEditQueuedRun({
+                                runId: item.runId,
+                                messageId: item.messageId,
+                                text: item.text,
+                                attachments: item.attachments,
+                              });
+                            }
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {props.editBlockedReason ??
+                          `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                      </TooltipPopup>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="icon-xs"
+                            variant="ghost-muted"
+                            aria-label="Remove queued message"
+                            disabled={item.runId === null || busyRunId !== null}
+                            onClick={() => {
+                              if (item.runId !== null) void remove(item.runId);
+                            }}
+                          />
+                        }
+                      >
+                        <XIcon />
+                      </TooltipTrigger>
+                      <TooltipPopup>Remove from queue</TooltipPopup>
+                    </Tooltip>
+                  </>
+                )}
+              </QueuedMessage>
+            </li>
           );
-      }}
-      onReorder={(ids) => {
-        if (!workflow?.canReorder || busyRef.current) return;
-        const movement = resolveNativeQueuedReorder(
-          items.map((item) => item.runId),
-          ids,
-        );
-        if (!movement) return;
-        const moved = items.find((item) => item.runId === movement.runId);
-        if (!moved) return;
-        const before = movement.beforeRunId;
-        void perform(moved.runId, () =>
-          reorder({
-            environmentId: props.environmentId,
-            input: { threadId: props.threadId, runId: moved.runId, beforeRunId: before },
-          }),
-        );
-      }}
-    />
+        })}
+      </ol>
+      {collapsible ? (
+        <div className="self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+          <InlineButton
+            tone="muted"
+            aria-expanded={showAll}
+            aria-controls={queueListId}
+            // Keep the composer focused; keyboard activation still works.
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => setShowAll((value) => !value)}
+          >
+            {showAll ? "Show fewer" : `Show all ${items.length} queued`}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                showAll && "rotate-180",
+              )}
+            />
+          </InlineButton>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
-/** One sortable drag is one native reorder command, including moves to the tail. */
-export function resolveNativeQueuedReorder(
-  prior: ReadonlyArray<RunId>,
-  next: ReadonlyArray<RunId>,
-) {
-  if (
-    prior.length !== next.length ||
-    new Set(next).size !== prior.length ||
-    next.some((id) => !prior.includes(id))
-  )
-    return null;
-  if (prior.every((id, index) => id === next[index])) return null;
-  for (const runId of prior) {
-    const index = next.indexOf(runId);
-    const reordered = prior.filter((id) => id !== runId);
-    reordered.splice(index, 0, runId);
-    if (reordered.every((id, at) => id === next[at]))
-      return { runId, beforeRunId: next[index + 1] ?? null };
-  }
-  return null;
+type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
+
+/** A queued turn wears its sent form's attribution; only the dashed edge and controls differ. */
+function QueuedMessage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly message: QueuedRunMessage | undefined;
+  readonly previewText: string;
+  readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
+  readonly isEditing: boolean;
+  readonly timestampFormat: TimestampFormat;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly children: ReactNode;
+}) {
+  const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
+  const attribution = presentation?.attribution ?? null;
+  const scheduledTaskId = presentation?.scheduledTaskId;
+  const senderThreadId = props.message?.senderThreadId;
+  const [expanded, setExpanded] = useState(false);
+  const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
+  const senderShell = useQuietThreadShell(
+    attribution === "agent" && senderThreadId
+      ? { environmentId: props.environmentId, threadId: senderThreadId }
+      : null,
+  );
+  const fold =
+    attribution === "automation"
+      ? {
+          icon: CalendarClockIcon,
+          label: "Automation",
+          summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
+        }
+      : attribution === "agent"
+        ? {
+            icon: MessagesSquareIcon,
+            label: senderShell?.title.trim() || "Agent",
+            summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
+          }
+        : null;
+  const bodyVisible = fold === null || expanded;
+
+  return (
+    <>
+      {attribution === "t3code" ? (
+        <p className="me-1 text-2xs text-muted-foreground/70">
+          {/* SCIENT-FORK:START — Scient product label. */}
+          Sent by Scient
+          {/* SCIENT-FORK:END */}
+        </p>
+      ) : null}
+      {presentation?.guestName === undefined ? null : (
+        <GuestMessageName name={presentation.guestName} />
+      )}
+      {/* Dashed and unfilled: a turn that has not been sent yet. */}
+      <div
+        className={cn(
+          "flex min-w-0 max-w-[80%] flex-col rounded-2xl border border-dashed text-sm",
+          props.isEditing
+            ? "border-primary/60 text-foreground"
+            : attribution === "guest"
+              ? "border-guest/50 text-muted-foreground"
+              : "border-muted-foreground/40 text-muted-foreground",
+          fold === null && "px-3 py-2",
+          fold !== null && expanded && "w-full",
+        )}
+      >
+        {fold ? (
+          <FoldedMessageHeader
+            icon={fold.icon}
+            label={fold.label}
+            summary={fold.summary}
+            expanded={expanded}
+            onToggle={() => setExpanded((value) => !value)}
+          />
+        ) : null}
+        {bodyVisible ? (
+          <div
+            className={cn(
+              "flex flex-col gap-2",
+              fold !== null && "max-h-96 overflow-auto px-3 pb-2",
+            )}
+          >
+            {props.thumbnails.length > 0 ? (
+              <span className="flex flex-wrap items-center gap-1">
+                {props.thumbnails.map((thumbnail) => (
+                  <span
+                    key={thumbnail.key}
+                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
+                  >
+                    {thumbnail.url ? (
+                      <img
+                        src={thumbnail.url}
+                        alt={thumbnail.name}
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
+                    )}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+            {/* In full, like a sent turn: a queued message is read before it is sent. */}
+            {props.previewText ? (
+              <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
+        {props.message ? (
+          <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
+            {attribution === "agent" && senderThreadId ? (
+              <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
+                Open thread
+              </InlineButton>
+            ) : null}
+            {scheduledTaskId ? (
+              <InlineButton
+                tone="muted"
+                render={
+                  <Link
+                    to="/settings/scheduled-tasks"
+                    search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
+                  />
+                }
+              >
+                Open automation
+              </InlineButton>
+            ) : null}
+            <TimelineRowTimestamp
+              createdAt={DateTime.formatIso(props.message.createdAt)}
+              timestampFormat={props.timestampFormat}
+              alwaysVisible
+            />
+          </span>
+        ) : null}
+        {props.children}
+      </div>
+    </>
+  );
 }

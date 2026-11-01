@@ -67,6 +67,7 @@ describe("ScientVoiceComposerControl recording actions", () => {
     expect(markup).not.toContain('aria-label="Transcribe and send"');
   });
 
+  // regression: 56f111fc99 fix(voice): center footer presentation and keep waveforms live
   it("uses a transparent inline row instead of covering the provider and toolbar", () => {
     const markup = renderToStaticMarkup(
       <ScientVoiceComposerControl onTranscript={() => undefined} />,
@@ -78,6 +79,7 @@ describe("ScientVoiceComposerControl recording actions", () => {
     expect(markup).not.toContain('aria-label="Dictate a voice message"');
   });
 
+  // regression: 51e61c3135 fix(voice): refine waveform growth, status labels, and errors
   it.each(["composer", "compact"] as const)(
     "grows from the left then clips old samples, retaining fixed bar geometry in %s",
     (presentation) => {
@@ -95,6 +97,7 @@ describe("ScientVoiceComposerControl recording actions", () => {
     },
   );
 
+  // regression: 51e61c3135 fix(voice): refine waveform growth, status labels, and errors
   it.each([
     ["requesting-permission", "Waiting for microphone access…", "Cancel microphone request"],
     ["transcribing", "Transcribing…", "Cancel transcription"],
@@ -122,6 +125,7 @@ describe("ScientVoiceComposerControl recording actions", () => {
     },
   );
 
+  // regression: 51e61c3135 fix(voice): refine waveform growth, status labels, and errors
   it("does not prefill the waveform before microphone samples arrive", () => {
     const markup = renderToStaticMarkup(
       <ScientVoiceComposerControl onTranscript={() => undefined} />,
@@ -130,6 +134,7 @@ describe("ScientVoiceComposerControl recording actions", () => {
     expect(markup).not.toContain("w-0.5 shrink-0 rounded-full bg-primary/60");
   });
 
+  // regression: 51e61c3135 fix(voice): refine waveform growth, status labels, and errors
   it("bounds long errors without displacing the microphone or recovery action", () => {
     controllerState.phase = "idle";
     controllerState.errorMessage = "An explanatory voice failure ".repeat(20);

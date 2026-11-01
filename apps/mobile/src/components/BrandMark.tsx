@@ -3,14 +3,11 @@ import { Image } from "expo-image";
 import { View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
-import { SCIENT_BRAND_MARK_SOURCE } from "./brandAssets";
+import { T3_CODE_BRAND_MARK_SOURCE } from "./brandAssets";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
-// SCIENT-FORK:START mobile-stage-label
-// Scient keeps its own release-stage label; upstream T3's Alpha-to-Beta rename is not adopted.
 const DEFAULT_STAGE_LABEL =
-  appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Alpha";
-// SCIENT-FORK:END mobile-stage-label
+  appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Beta";
 
 export function BrandMark(props: { readonly compact?: boolean; readonly stageLabel?: string }) {
   const compact = props.compact ?? false;
@@ -20,7 +17,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
   return (
     <View className="flex-row items-center gap-3">
       <Image
-        source={SCIENT_BRAND_MARK_SOURCE}
+        source={T3_CODE_BRAND_MARK_SOURCE}
         accessibilityIgnoresInvertColors
         style={{
           width: iconSize,

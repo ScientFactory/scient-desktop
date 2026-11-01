@@ -147,6 +147,6 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
         heightPoints: size.heightPoints,
       };
     },
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 });

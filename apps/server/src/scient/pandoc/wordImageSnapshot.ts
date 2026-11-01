@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -45,11 +46,9 @@ const inside = (path: Path.Path, root: string, candidate: string) => {
 };
 
 /**
- * The converter receives this map and never opens a workspace image itself.
- * Each image is read through a handle bound to the file its path check saw
- * (`verifiedWorkspaceRead.ts`). Where that is not possible (Windows), a
- * caller that sets `requireVerifiedReads` is refused; otherwise the image is
- * left out, as PDF export leaves it out there, and the document still converts.
+ * Converters must use captured verified image handles, never reopen workspace paths. If
+ * verification is unavailable, requireVerifiedReads refuses; otherwise omit the image while
+ * allowing conversion.
  */
 export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(function* (
   references: ReadonlyArray<string>,
@@ -115,12 +114,9 @@ export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(fu
   for (const url of references) {
     if (captured.has(url)) continue;
     if (/^(?:data:|[a-z][a-z\d+.-]*:)/iu.test(url) && !/^[a-z]:[\\/]/iu.test(url)) continue;
-    let relative: string;
-    try {
-      relative = decodeURIComponent(url).replaceAll("\\", "/");
-    } catch {
-      continue;
-    }
+    const decoded = Result.try(() => decodeURIComponent(url).replaceAll("\\", "/"));
+    if (Result.isFailure(decoded)) continue;
+    const relative = decoded.success;
     if (
       !relative ||
       relative.includes("\0") ||

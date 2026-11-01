@@ -21,11 +21,9 @@ export function followModeAfterEndTransition(
 export const END_CONTROL_SHOW_DELAY_MS = 150;
 
 /**
- * The Scroll to end control and its unread count. Only transitions across
- * the end count: scroll and size events repeat while the reader stays put,
- * and must neither restart the control's delay nor reopen a composer the
- * reader collapsed. Showing is debounced so the control doesn't flash during
- * thread switches; hiding is immediate.
+ * Only crossing the reading end may restart the delay or reopen the composer; repeated scroll/size
+ * events must not undo a manual collapse. Debounce showing across thread switches; hide
+ * immediately.
  */
 export function useTimelineEndControl({
   isAtEndRef,
@@ -46,6 +44,7 @@ export function useTimelineEndControl({
   const [unreadBelowCount, setUnreadBelowCount] = useState(0);
   const onReachedEndRef = useRef(onReachedEnd);
   const onLeftEndRef = useRef(onLeftEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the reached/left-end callback refs current for the debounced end control
   useLayoutEffect(() => {
     onReachedEndRef.current = onReachedEnd;
     onLeftEndRef.current = onLeftEnd;

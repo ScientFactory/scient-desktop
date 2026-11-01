@@ -1,20 +1,26 @@
+import * as NodeUtil from "node:util";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
+// SCIENT-FORK:START — the kept service onboarding offer.
+import type { PlatformError } from "effect/PlatformError";
 import * as Terminal from "effect/Terminal";
+// SCIENT-FORK:END
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
-import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
+import * as ServiceProtection from "../cloud/serviceProtection.ts";
+import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import { resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -34,13 +40,70 @@ export type ServiceReconcileResult =
       readonly plan: BootService.BootServicePlan;
     };
 
-const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
+const SERVICE_ENV_KEY = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/u;
+
+/**
+ * Sets or removes (`undefined`) entries in `service.env` text and keeps every
+ * other line, including comments, as the user wrote it.
+ */
+export const upsertServiceEnv = (
+  contents: string,
+  entries: Readonly<Record<string, string | undefined>>,
+): string => {
+  const written = new Set<string>();
+  const lines = contents.split("\n").flatMap((line) => {
+    const key = SERVICE_ENV_KEY.exec(line)?.[1];
+    if (key === undefined || !Object.hasOwn(entries, key)) return [line];
+    const value = entries[key];
+    if (value === undefined || written.has(key)) return [];
+    written.add(key);
+    return [`${key}=${value}`];
+  });
+  while (lines.at(-1) === "") lines.pop();
+  for (const [key, value] of Object.entries(entries)) {
+    if (value !== undefined && !written.has(key)) lines.push(`${key}=${value}`);
+  }
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
+};
+
+/** `service.env` under `baseDir`, parsed as the service launcher parses it. */
+export const readServiceEnv = Effect.fn("cli.service.read_env")(function* (baseDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = (yield* Path.Path).join(baseDir, SERVICE_ENV_FILE);
+  const contents = (yield* fs.exists(path)) ? yield* fs.readFileString(path) : "";
+  const entries = Object.entries(NodeUtil.parseEnv(contents)).flatMap(([key, value]) =>
+    value === undefined ? [] : [[key, value] as const],
+  );
+  return { path, contents, entries: Object.fromEntries(entries) };
+});
+
+export const writeServiceEnv = Effect.fn("cli.service.write_env")(function* (
+  baseDir: string,
+  entries: Readonly<Record<string, string | undefined>>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const current = yield* readServiceEnv(baseDir);
+  const next = upsertServiceEnv(current.contents, entries);
+  if (next === current.contents) return;
+  yield* fs.makeDirectory(baseDir, { recursive: true });
+  yield* fs.writeFileString(current.path, next);
+});
+
+export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
   readonly allowDowngrade?: boolean;
 }) {
+  const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
+  }
+  if (status.supported && !status.installed) {
+    // A new service listens on this machine only, until `t3 up` opens the local network.
+    const { entries } = yield* readServiceEnv(baseDir);
+    if (entries.T3CODE_LAN === undefined && entries.T3CODE_HOST === undefined) {
+      yield* writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
+    }
   }
   if (
     status.installedVersion !== undefined &&
@@ -60,19 +123,32 @@ const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?:
   } satisfies ServiceReconcileResult;
 });
 
-function formatServiceChange(
+export function formatServiceChange(
   result: Extract<ServiceReconcileResult, { readonly changed: true }>,
 ): string {
   if (result.plan.handedOff === true) {
-    return `Handed the Scient service switch to t3@${packageJson.version} to a separate systemd unit, since this session runs inside the service and disconnects when it restarts.\nResult: ${result.plan.logPath}`;
+    return `Service update to t3@${packageJson.version} queued. This session will disconnect.\nLog: ${result.plan.logPath}`;
   }
-  return `${result.previouslyInstalled ? "Updated" : "Installed"} Scient service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`;
+  return `Service ${result.previouslyInstalled ? "updated" : "installed"} · t3@${packageJson.version}\nLog: ${result.plan.logPath}`;
+}
+
+function formatProtection(
+  protection: ServiceProtection.ServiceProtectionState | undefined,
+): ReadonlyArray<string> {
+  if (protection === undefined) return [];
+  return [
+    protection.unprotected === undefined
+      ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
+      : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
+    ...(protection.oomScoreAdj === undefined ? [] : [`  OOM score: ${protection.oomScoreAdj}`]),
+  ];
 }
 
 export function formatServiceStatus(
   status: BootService.BootServiceStatus,
   cliVersion: string,
   repairCommand?: string,
+  protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
     return "Scient service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
@@ -94,6 +170,7 @@ export function formatServiceStatus(
       `  Status: installed · t3@${installedVersion} (newer than this t3@${cliVersion} CLI)`,
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
+      ...formatProtection(protection),
       ...problems,
       `  Next: Use a Scient CLI matching t3@${installedVersion} to repair it, or pass \`--allow-downgrade\` explicitly.`,
     ].join("\n");
@@ -103,6 +180,7 @@ export function formatServiceStatus(
     `  Status: ${status.current ? `installed · t3@${installedVersion}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
+    ...formatProtection(protection),
     ...problems,
     // SCIENT-FORK:START — never suggest downloading a different installation for a repair.
     ...(status.current
@@ -116,20 +194,13 @@ export function formatServiceStatus(
   ].join("\n");
 }
 
-const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
+const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E, R>(
   flags: { readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"] },
-  run: Effect.Effect<
-    A,
-    E,
-    BootService.BootService | ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
-  >,
+  run: Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
-  return yield* run.pipe(
-    Effect.provide(layer(config)),
-    Effect.provideService(ServerConfig.ServerConfig, config),
-  );
+  return yield* run.pipe(Effect.provide(Layer.merge(layer(config), ServerConfig.layer(config))));
 });
 
 const serviceReconcileFlags = {
@@ -141,17 +212,24 @@ const serviceReconcileFlags = {
 };
 
 const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pipe(
-  Command.withDescription("Install Scient as a background service for this user."),
+  Command.withDescription(
+    "Install Scient as a background service for this user. `t3 up` also chooses how your other devices reach it.",
+  ),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
       Effect.gen(function* () {
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`Scient service is already installed with t3@${packageJson.version}.`);
+          yield* Console.log(
+            `Scient service is already installed with t3@${packageJson.version} (${yield* resolveEntryPath}).`,
+          );
           return;
         }
         yield* Console.log(formatServiceChange(result));
+        if (!result.previouslyInstalled) {
+          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+        }
       }),
     ),
   ),
@@ -167,7 +245,9 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
       Effect.gen(function* () {
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`Scient service is already using t3@${packageJson.version}.`);
+          yield* Console.log(
+            `Scient service is already using t3@${packageJson.version} (${yield* resolveEntryPath}).`,
+          );
           return;
         }
         yield* Console.log(formatServiceChange(result));
@@ -231,14 +311,132 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
           "--base-dir",
           config.baseDir,
         ]);
+        const path = yield* Path.Path;
+        const status = yield* service.status;
+        const protection =
+          status.installed && (yield* HostProcess.Platform) === "linux"
+            ? yield* ServiceProtection.readProtection(path.dirname(status.unitPath)).pipe(
+                Effect.provide(ProcessRunner.layer),
+              )
+            : undefined;
         yield* Console.log(
-          formatServiceStatus(yield* service.status, packageJson.version, repairCommand),
+          formatServiceStatus(status, packageJson.version, repairCommand, protection),
         );
       }),
     ),
   ),
 );
 
+const formatDropIns = (dropIns: ReadonlyArray<ServiceProtection.DropIn>) =>
+  dropIns.map(
+    ({ path, contents }) => `  ${path}: ${contents.trimEnd().split("\n").slice(1).join(" ")}`,
+  );
+
+const confirm = (yes: boolean, message: string) =>
+  yes ? Effect.succeed(true) : Prompt.run(Prompt.Confirm({ message, initial: false }));
+
+const serviceProtectCommand = Command.make("protect", {
+  ...projectLocationFlags,
+  undo: Flag.Boolean("undo").pipe(
+    Flag.withDescription("Remove the protection this command set up."),
+    Flag.withDefault(false),
+  ),
+  yes: Flag.Boolean("yes").pipe(
+    Flag.withDescription("Answer yes to every question, including SSH and Tailscale."),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "Protect the Scient server from agents under memory pressure (Linux with systemd). Asks for sudo.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const unsupported = "Service protection needs Linux with systemd.";
+      if ((yield* HostProcess.Platform) !== "linux") return yield* Console.log(unsupported);
+      // Before resolving config, which creates Scient directories that root would then own.
+      if ((yield* HostProcess.UserId) === 0) {
+        return yield* Console.log(
+          "Run `t3 service protect` as the user that runs Scient, without sudo. It asks for sudo when it needs root.",
+        );
+      }
+      return yield* runServiceCommand(
+        flags,
+        Effect.gen(function* () {
+          const uid = yield* HostProcess.UserId;
+          const remote = yield* ServiceProtection.detectRemoteAccessUnits;
+          const { unitPath } = yield* (yield* BootService.BootService).status;
+          if (uid === undefined || remote === undefined || unitPath === "") {
+            return yield* Console.log(unsupported);
+          }
+          const userUnitDir = (yield* Path.Path).dirname(unitPath);
+
+          if (flags.undo) {
+            const installed = yield* ServiceProtection.installedProtection(
+              ServiceProtection.protectionPlan({
+                uid,
+                userUnitDir,
+                remoteAccessUnits: ServiceProtection.REMOTE_ACCESS_UNITS,
+              }),
+            );
+            if (installed === undefined) {
+              return yield* Console.log("Scient service protection is not set up.");
+            }
+            yield* Console.log(
+              [
+                "Removes:",
+                ...[...installed.system, ...installed.user, installed.managerDefaults].map(
+                  ({ path, shared }) =>
+                    `  ${path}${shared === true ? " (kept while another user is protected)" : ""}`,
+                ),
+              ].join("\n"),
+            );
+            if (!(yield* confirm(flags.yes, "Remove Scient service protection?"))) return;
+            yield* ServiceProtection.removeProtection(installed);
+            return yield* Console.log(
+              "Removed Scient service protection. The server's OOM score returns to normal after `t3 service restart`.",
+            );
+          }
+
+          yield* Console.log(
+            [
+              "Keeps Scient running when agents fill this machine's memory:",
+              "  - reserves memory for the Scient server, so the kernel takes memory from agents first",
+              "  - makes the out-of-memory killer pick agents before the server",
+              "It adds systemd drop-in files and changes nothing else. Undo with `t3 service protect --undo`.",
+            ].join("\n"),
+          );
+          const names = remote.map((unit) => unit.replace(/\.service$/, "")).join(" and ");
+          const protectRemote =
+            remote.length > 0 &&
+            (yield* confirm(
+              flags.yes,
+              `Also protect ${names} so you can still reach this machine under memory pressure?`,
+            ));
+          const plan = ServiceProtection.protectionPlan({
+            uid,
+            userUnitDir,
+            remoteAccessUnits: protectRemote ? remote : [],
+          });
+          yield* Console.log(
+            [
+              "Drop-ins it writes, as root through sudo:",
+              ...formatDropIns(plan.system),
+              "As you:",
+              ...formatDropIns([plan.managerDefaults, ...plan.user]),
+            ].join("\n"),
+          );
+          if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
+          yield* ServiceProtection.applyProtection(plan);
+          yield* Console.log(
+            "Protected Scient. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
+          );
+        }).pipe(Effect.provide(ProcessRunner.layer)),
+      );
+    }),
+  ),
+);
+
+// SCIENT-FORK:START — `t3 up` replaced this offer upstream; the dormant connect keeps it.
 export type ServiceOnboardingOutcome = "ready" | "pending" | "skipped";
 
 const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
@@ -262,6 +460,14 @@ const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
   ) {
     yield* Console.log(
       `A newer t3@${status.installedVersion} background service is installed. Leaving it unchanged.`,
+    );
+    return "skipped" as const;
+  }
+  // Both streams must be terminals: with stdout redirected the prompt is
+  // invisible and the command would hang waiting on it.
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+    yield* Console.log(
+      "Not a terminal, so background setup was skipped. Run `t3 service install` to set it up.",
     );
     return "skipped" as const;
   }
@@ -303,7 +509,7 @@ export const offerServiceDuringOnboarding = SCIENT_DESKTOP_IDENTITY.safetyEnvelo
     ).pipe(Effect.as("skipped" as const))
   : offerInheritedServiceDuringOnboarding;
 
-const reportServiceSetupFailure = (error: BootService.BootServiceError) =>
+const reportServiceSetupFailure = (error: { readonly message: string }) =>
   Console.warn(`Background setup did not finish: ${error.message}`).pipe(
     Effect.as("skipped" as const),
   );
@@ -311,7 +517,7 @@ const reportServiceSetupFailure = (error: BootService.BootServiceError) =>
 export const recoverServiceOnboardingOffer = <R>(
   offer: Effect.Effect<
     ServiceOnboardingOutcome,
-    BootService.BootServiceError | Terminal.QuitError,
+    BootService.BootServiceError | PlatformError | Terminal.QuitError,
     R
   >,
 ) =>
@@ -327,8 +533,10 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServicePrerequisiteError: reportServiceSetupFailure,
       BootServiceUpdatePendingError: reportServiceSetupFailure,
       BootServiceDowngradeRefusedError: reportServiceSetupFailure,
+      PlatformError: reportServiceSetupFailure,
     }),
   );
+// SCIENT-FORK:END
 
 export const serviceCommand = Command.make("service").pipe(
   Command.withDescription("Manage the Scient background service."),
@@ -338,5 +546,6 @@ export const serviceCommand = Command.make("service").pipe(
     serviceUninstallCommand,
     serviceUpdateCommand,
     serviceStatusCommand,
+    serviceProtectCommand,
   ]),
 );

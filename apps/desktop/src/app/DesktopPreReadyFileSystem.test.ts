@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START desktop-state-isolation
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -41,6 +42,7 @@ it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
         yield* Effect.addFinalizer(() => fileSystem.chmod(root, 0o700).pipe(Effect.orDie));
 
         const exit = yield* Effect.exit(DesktopPreReadyFileSystem.make.exists(statePath));
+        // SCIENT-FORK:END desktop-state-isolation
 
         assert.isTrue(Exit.isFailure(exit));
       }),

@@ -1,15 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- entry digests are computed synchronously while the package is assembled.
 /**
- * Assembles a portable conversation file from a captured snapshot and the
- * attachment bytes present at capture.
- *
- * The package's snapshot is the captured one made portable: every attachment
- * is renamed to a package resource (`attachment-N`), attachments outside the
- * chat attachment media policy or whose bytes contradict their declared type
- * travel as unavailable, the attachment warnings are rebuilt from those facts,
- * Scient's own storage paths are redacted from every string, and the content
- * digest is recomputed over the result. The readable copy is written from that
- * same snapshot, with its attachment links pointing into the package.
+ * The readable copy and content digest must derive from the same portable snapshot. Redact Scient
+ * storage paths in every string; mark disallowed or type-mismatched attachments unavailable rather
+ * than exporting their bytes.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -199,12 +192,9 @@ const UNAVAILABLE_NOTES: Record<Exclude<ScicUnavailableReason, "missing">, strin
 };
 
 /**
- * The importer maps each source turn to one local turn and so requires a
- * turn's messages to form one run (steering prompts, which have no turn, may
- * sit inside it). A turn whose messages return after another turn therefore
- * continues as a new turn, `<turnId>~2`, `~3`, …, and every other record of
- * that turn joins the run it was recorded in: the latest run that had started
- * by its time, or the first.
+ * Import requires each turn's messages to be contiguous. Split returning messages into numbered
+ * runs and attach other turn records to the latest run started by their timestamp, or the first
+ * run.
  */
 function splitReappearingTurns(snapshot: ConversationSnapshotV1): ConversationSnapshotV1 {
   const taken = new Set<string>(

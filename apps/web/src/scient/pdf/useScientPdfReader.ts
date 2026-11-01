@@ -10,7 +10,7 @@ import {
   type PdfPasswordChallenge,
   type ScientPdfRuntime,
 } from "./pdfRuntime";
-import { clampPdfPage, nextPdfRotation, normalizePdfZoom } from "./pdfReaderModel";
+import { clampPdfPage, nextPdfRotation, normalizePdfZoom, pdfZoomOrigin } from "./pdfReaderModel";
 import {
   createPdfResponsiveZoomController,
   type PdfResponsiveZoomController,
@@ -192,6 +192,7 @@ export function useScientPdfReader(input: {
   >(null);
   const disposePresentedRef = useRef<(() => void) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps invalidateRef holding the latest onSourceInvalidated callback
   useLayoutEffect(() => {
     invalidateRef.current = input.onSourceInvalidated;
   });
@@ -202,6 +203,7 @@ export function useScientPdfReader(input: {
     candidateReady: input.candidateReady,
     loadAttempt: input.loadAttempt,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps requestedSourceRef holding the latest requested source identity
   useLayoutEffect(() => {
     requestedSourceRef.current = {
       documentKey: input.documentKey,
@@ -226,6 +228,7 @@ export function useScientPdfReader(input: {
   const resetDocumentSearch = useEffectEvent((..._changes: readonly unknown[]) => {
     activeSearchQueryRef.current = "";
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the document search state in the find controller when the document changes
   useLayoutEffect(() => resetDocumentSearch(input.documentKey), [input.documentKey]);
 
   const clearSyncMarker = useStableCallback(() => {
@@ -245,6 +248,7 @@ export function useScientPdfReader(input: {
     clearSyncMarker();
     return clearSyncMarker;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the sync source marker when the source URL changes
   useEffect(
     () => resetSourceMarker(clearSyncMarker, input.sourceUrl),
     [clearSyncMarker, input.sourceUrl],
@@ -260,11 +264,13 @@ export function useScientPdfReader(input: {
     responsiveZoomRef.current = null;
     setPresentedRequest(null);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retires the presented document's DOM layer when the container or document changes
   useEffect(
     () => retirePresentedDocument(input.container, input.viewerElement, input.documentKey),
     [input.container, input.viewerElement, input.documentKey],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the PDF via PDF.js into the container DOM node, wiring its eventBus, wheel listener, and teardown until the source changes or unmount
   useEffect(() => {
     if (!input.container || !input.viewerElement) return;
     // Render already moved the reader state: cleared, settled or updating.
@@ -449,7 +455,6 @@ export function useScientPdfReader(input: {
         const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
           if (!displayed()) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
-          runtime.refreshForContainerSize();
         };
         const onScaleChanging = ({
           scale,
@@ -526,7 +531,12 @@ export function useScientPdfReader(input: {
           if (!event.ctrlKey || runtime.viewer.currentScale <= 0) return;
           event.preventDefault();
           pendingPinchFactor *= Math.exp(Math.min(0.5, Math.max(-0.5, -event.deltaY * 0.01)));
-          pendingPinchOrigin = [event.clientX, event.clientY];
+          pendingPinchOrigin = pdfZoomOrigin(
+            runtime.viewer,
+            container,
+            event.clientX,
+            event.clientY,
+          );
           if (pinchFrame !== null) return;
           pinchFrame = requestAnimationFrame(() => {
             pinchFrame = null;
@@ -711,7 +721,24 @@ export function useScientPdfReader(input: {
     if (!runtime) return;
     runtime.cancelContainerSizeRefresh();
     const normalized = responsiveZoomRef.current?.rememberScale(scale) ?? normalizePdfZoom(scale);
-    runtime.viewer.currentScale = normalized;
+    const current = runtime.viewer.currentScale;
+    const container = runtime.viewer.container;
+    if (!(current > 0) || normalized === current) {
+      runtime.viewer.currentScale = normalized;
+      return;
+    }
+    // Zoom around the middle of the view, as pinching does around the fingers, rather
+    // than PDF.js's default of keeping the top-left corner still.
+    const rect = container.getBoundingClientRect();
+    runtime.viewer.updateScale({
+      scaleFactor: normalized / current,
+      origin: pdfZoomOrigin(
+        runtime.viewer,
+        container,
+        rect.left + container.clientLeft + container.clientWidth / 2,
+        rect.top + container.clientTop + container.clientHeight / 2,
+      ),
+    });
   });
 
   const setZoomMode = useStableCallback((mode: "page-width" | "page-fit" | "page-actual") => {

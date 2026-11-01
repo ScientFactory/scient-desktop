@@ -5,15 +5,19 @@
  * feature does not widen generic upstream interfaces. Git arguments are passed
  * directly to the existing bounded process service; no shell is involved.
  */
-import type { CheckpointRef, VcsError } from "@t3tools/contracts";
+import { CheckpointRef, type ThreadId, type VcsError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
 import { CheckpointPublicationWitness } from "../../vcs/ScientCheckpointCapture.ts";
+
+export const checkpointRefForThreadTurn = (threadId: ThreadId, turnCount: number) =>
+  CheckpointRef.make(`refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turnCount}`);
 
 export interface ScientForkCheckpointBaselineShape {
   readonly workspaceExists: (cwd: string) => Effect.Effect<boolean>;
@@ -38,11 +42,9 @@ export interface ScientForkCheckpointBaselineShape {
     readonly toCheckpointRef: CheckpointRef;
   }) => Effect.Effect<void, VcsError>;
   /**
-   * Whether a fork worktree is this repository's checkout of the fork branch at
-   * the frozen checkpoint, with no checkout still in progress. A reused
-   * worktree must also be clean: that scan reads the whole tree, so a worktree
-   * Git has just created is not scanned. A check that cannot run (Git fails or
-   * times out) proves nothing, so it reads as false.
+   * Reused worktrees must be clean and match the frozen branch/checkpoint with no checkout in
+   * progress. Skip the full-tree clean scan only for newly created worktrees; failed/timed-out
+   * checks prove nothing.
    */
   readonly verifyWorktree: (input: {
     readonly cwd: string;

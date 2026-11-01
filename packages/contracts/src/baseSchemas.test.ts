@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:START
 import * as SchemaGetter from "effect/SchemaGetter";
+// SCIENT-FORK:END
 
 import {
   ForwardCompatibleArray,
@@ -35,14 +37,10 @@ describe("ForwardCompatibleArray", () => {
   const Named = ForwardCompatibleArray(Schema.Struct({ name: TrimmedNonEmptyString }));
 
   it("drops an element it cannot encode instead of failing the array", () => {
+    const encodeNamed = Schema.encodeUnknownSync(Schema.toCodecJson(Named));
+
     const wire = JSON.parse(
-      JSON.stringify(
-        Schema.encodeUnknownSync(Schema.toCodecJson(Named))([
-          { name: "a" },
-          { name: " " },
-          { name: "b" },
-        ]),
-      ),
+      JSON.stringify(encodeNamed([{ name: "a" }, { name: " " }, { name: "b" }])),
     );
     expect(wire).toEqual([{ name: "a" }, { name: "b" }]);
     expect(fromWire(Named)(wire)).toEqual([{ name: "a" }, { name: "b" }]);
@@ -77,6 +75,7 @@ describe("ForwardCompatibleUnion", () => {
 });
 
 describe("ForwardCompatibleUnionArray", () => {
+  // SCIENT-FORK:START
   it("keeps a portable historical notice that decodes to a canonical boundary", () => {
     const Notice = Schema.Struct({ kind: Schema.Literal("notice"), boundary: Schema.String });
     const Boundary = Schema.Struct({ kind: Schema.Literal("boundary"), source: Schema.String });
@@ -102,6 +101,7 @@ describe("ForwardCompatibleUnionArray", () => {
       { kind: "notice", boundary: "message-1" },
     ]);
   });
+  // SCIENT-FORK:END
 
   it("keeps a known member however its fields are named", () => {
     const Flagged = Schema.Struct({

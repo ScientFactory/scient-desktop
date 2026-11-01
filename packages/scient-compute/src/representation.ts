@@ -55,13 +55,9 @@ const RepresentationMetadataJson = Schema.String.check(
 );
 
 /**
- * One independently renderable form of the same scientific result.
- *
- * Text and JSON stay inline only while individually bounded. Binary and large
- * representations are content-addressed resources, so durable transcript JSON
- * never becomes a binary transport or a second artifact store. JSON remains an
- * encoded string so its exact bytes are preserved and bounded before a
- * renderer performs format-specific validation.
+ * Keep bounded text/JSON inline and large/binary forms in addressed resources. Preserve JSON as
+ * exact encoded bytes, bounded before format-specific validation, so transcript JSON never becomes
+ * binary transport or another artifact store.
  */
 export const ComputeRepresentation = Schema.Struct({
   mediaType: ComputeMediaType,

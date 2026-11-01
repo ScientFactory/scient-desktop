@@ -105,11 +105,8 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 const EXTERNAL_CSS_REFERENCE = /url\(\s*(?!['"]?#)[^)]+\)|@import/iu;
 
 /**
- * Why a rendered diagram cannot be rasterized, or `null` when it can. A
- * saved document may contain arbitrary Mermaid, and rasterization must never
- * make the browser retrieve an external image, stylesheet, or reference.
- * Links are allowed: an `<a href>` (or `xlink:href`) is a navigation target
- * and never loads anything when the SVG is drawn as an image.
+ * Rasterization must never fetch external images/styles/references from authored Mermaid.
+ * Navigation-only anchor hrefs are safe because drawing SVG as an image does not follow them.
  */
 export function svgRasterizationRefusal(svgElement: Element): string | null {
   for (const element of [svgElement, ...svgElement.querySelectorAll("*")]) {

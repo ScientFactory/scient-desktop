@@ -34,7 +34,7 @@ export const withCustomModelKeyHints = Effect.fn("CustomModels.keyHints")(functi
     }
     const stored = yield* secrets
       .get(customModelSecretName(connection.credentialId))
-      .pipe(Effect.catch(() => Effect.succeed(Option.none<Uint8Array>())));
+      .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
     connections.push({
       ...connection,
       apiKeySuffix: Option.isSome(stored)
@@ -129,7 +129,7 @@ export const prepareCustomModelSave = Effect.fn("CustomModels.prepareSave")(func
   if (key === undefined && credentialId) {
     const stored = yield* secrets
       .get(customModelSecretName(credentialId))
-      .pipe(Effect.catch(() => Effect.succeed(Option.none<Uint8Array>())));
+      .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
     const usable = Option.isSome(stored) ? usableStoredKey(stored.value) : undefined;
     if (Option.isNone(stored))
       credentialError = "Saved API key is unavailable. Re-enter or remove it.";
@@ -217,33 +217,35 @@ export const resolveCustomModels = Effect.fn("CustomModels.resolve")(function* (
   for (const connection of settings.connections) {
     const models = connection.models.filter((model) => model.instanceIds.includes(instanceId));
     if (!models.length) continue;
-    const stored = yield* (
-      connection.credentialId
-        ? secrets.get(customModelSecretName(connection.credentialId))
-        : Effect.succeed(Option.none<Uint8Array>())
-    ).pipe(Effect.result);
-    const usable =
-      stored._tag === "Success" && Option.isSome(stored.success)
-        ? usableStoredKey(stored.success.value)
-        : undefined;
-    if (
-      stored._tag === "Failure" ||
-      (connection.credentialId && Option.isNone(stored.success)) ||
-      (Option.isSome(stored.success) && usable === undefined)
-    ) {
-      // Keep the failure attached to its connection, never turn it into keyless access.
-      connections.push({
-        ...connection,
-        models,
-        credentialError: `Re-enter the API key for ${connection.name} in Custom models.`,
-      });
-      continue;
-    }
-    connections.push({
-      ...connection,
-      models,
-      apiKey: usable === undefined ? null : Redacted.make(usable),
-    });
+    // SCIENT-FORK:START — Scient Accounts: share the owning key resolver with linked accounts.
+    const resolved = yield* resolveCustomModelKey(connection, secrets);
+    connections.push({ ...connection, models, ...resolved });
+    // SCIENT-FORK:END
   }
   return connections;
 });
+
+// SCIENT-FORK:START — Scient Accounts: linked keys use Custom models' validation and storage owner.
+export const resolveCustomModelKey = Effect.fn("CustomModels.resolveKey")(function* (
+  connection: CustomModelConnection,
+  secrets: ServerSecretStore["Service"],
+) {
+  const stored = yield* (
+    connection.credentialId
+      ? secrets.get(customModelSecretName(connection.credentialId))
+      : Effect.succeed(Option.none<Uint8Array>())
+  ).pipe(Effect.result);
+  const usable =
+    stored._tag === "Success" && Option.isSome(stored.success)
+      ? usableStoredKey(stored.success.value)
+      : undefined;
+  if (
+    stored._tag === "Failure" ||
+    (connection.credentialId && Option.isNone(stored.success)) ||
+    (Option.isSome(stored.success) && usable === undefined)
+  ) {
+    return { credentialError: `Re-enter the API key for ${connection.name} in Custom models.` };
+  }
+  return { apiKey: usable === undefined ? null : Redacted.make(usable) };
+});
+// SCIENT-FORK:END

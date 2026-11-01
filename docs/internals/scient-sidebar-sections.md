@@ -206,8 +206,8 @@ section when un-settled or woken.
 - **Rendering:** rows are T3's `SidebarThreadRow`, and shelves are T3's shelf
   headers.
 - **Ordering:** order keys come from T3's `planPinnedReorder`, over the same
-  `pinOrderKey`/`activeOrderKey` values. Status uses this canonical manual order. Sections may apply the local
-  automatic-placement presentation described below.
+  `pinOrderKey`/`activeOrderKey` values. Both sidebar views may apply the local automatic-placement presentation below
+  without changing the canonical manual order.
 - **Lone drops keep their key:** a thread dropped alone into an empty or
   collapsed section keeps its order key. With no neighbours, a new key would
   only move it in the Status view.
@@ -215,17 +215,26 @@ section when un-settled or woken.
 **Automatic placement is a local presentation, not a new server order.**
 
 - **Preference:** `scient:sidebar:automatic-placement` defaults on. General →
-  Organization exposes **Keep active threads near the top**; Status view is unaffected.
+  Organization exposes one **Keep active threads near the top** switch for both views.
+  Status applies it to the complete unpinned inbox; Sections applies it within each section.
+  Existing off preferences remain off. The Working-section beta retains its own Status
+  ordering and excludes Status automatic placement while enabled. Search, mobile and
+  legacy lists keep their existing behavior.
 - **Membership:** unpinned, unshelved threads use the existing status, unread-answer,
   and unread-Woke predicates. Working, Monitoring, Done, Approval, Input, Failed,
   and Woke have equal placement priority. No execution or read semantics change.
   Unread is judged from the same visit as the sidebar rows: the server's when it
   tracks visits, so a thread read on another client leaves the upper group.
-- **State:** `automaticPlacement.ts` reconciles complete section membership,
+- **State:** `automaticPlacement.ts` reconciles complete inbox or section membership,
   independently of project filtering and collapse. Scoped environment/thread keys
   prevent collisions. An arrival appends below existing upper members, then re-forms the
   upper group at the top; transitions that remain eligible keep their place. Departures
   prepend to inactive rows, with simultaneous departures preserving their visible order.
+  Reconciliation commits in a layout effect, so both views render through
+  `displayedPlacementOrders`: the same reconciliation, run during render, with known rows'
+  order keys held for the acknowledgement bridges. Arrivals and transitions show in their
+  final places from the first commit. Before placement is ready, and while paused, saved
+  rows hold and an unseen row joins its canonical neighbours.
 - **Unsynchronized environments:** placement waits only until the catalog lists every
   environment (`frozenPlacementEnvironmentsKeyAtom`). After that, an enabled environment
   without a live thread list is frozen: its rows keep their saved eligibility and order
@@ -234,19 +243,31 @@ section when un-settled or woken.
 - **Reading:** an open thread that loses eligibility retains placement. Leaving starts
   one three-second deadline; reopening or renewed eligibility cancels it. Timers pause
   during drags, acknowledged drop writes, native menus, and before the catalog is
-  complete. Resume revalidates current state rather than replaying stale decisions.
+  complete. Only the visible sidebar view reconciles and runs review timers; Status
+  also pauses during renaming and action sweeps. Resume revalidates current state rather than replaying stale decisions.
 - **Manual moves:** the existing lifecycle and membership-first drop transaction stays
   intact. The planner projects only the dragged row onto canonical manual neighbours,
   without writing automatically promoted positions of other rows. After successful
   writes, local presentation records the exact drop slot and bridges the old shell values
-  until membership and order echoes arrive. A newer external value releases that bridge.
+  until membership and order echoes arrive; a row woken or moved in from elsewhere is
+  bridged with its assigned key. A newer external value releases that bridge.
+  Echoes that precede the command result still belong to that drop: its re-keyed neighbours
+  must not be treated as unrelated remote moves. Status holds its preview through this acknowledgement.
   An inactive row dropped above active ones holds until the next arrival re-forms the
   upper group. An active row dropped within or just below the upper group joins it;
-  dropped lower, below inactive rows, it is set aside (`aside`): it stays put and later
+  dropped lower, below inactive rows, it is set aside (`aside`): judged by the rows shown,
+  so rows a project filter hides never set a drop aside. It stays put and later
   arrivals ignore it until it goes inactive, after which its next activation is an
   ordinary arrival. Remotely acknowledged order-key changes are deliberate placement too.
 - **Persistence:** positions live under `scient:sidebar:placement-order:sections`, keyed
   by section group ids, so they no longer depend on which environment is primary.
+  Status independently uses `scient:sidebar:placement-order:status` with one inbox group.
+  The legacy section migration excludes that current Status key, even before Sections
+  has saved a history, so a restart never consumes Status history as a legacy environment.
+  Both use `placementThreads.ts` for complete, capability-aware canonical membership;
+  `useStatusAutomaticPlacement.ts` applies that order before row, navigation and selection
+  lists are built. `planStatusThreadDrop` retains the displayed drop slot while planning
+  keys against canonical neighbours, including rows hidden by a project filter.
   The one entry saved under the former `placement-order:<primary environment>` key moves
   there once, its group ids qualified with that environment (`placementMigration.ts`);
   anything ambiguous reseeds.
@@ -452,6 +473,12 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
 | `apps/web/src/contextMenuFallback.ts`                                                                                                      | `list-filter` icon                                                                                                                                                                                                                                                                                                                                                                       |
 | `apps/web/src/components/settings/SettingsPanels.tsx`, `settingsSearch.ts`                                                                 | `AutomaticThreadPlacementSettings` and `EmptySectionCleanupSettings` under General → Organization, and their search entries                                                                                                                                                                                                                                                              |
 | `apps/web/src/components/CommandPalette.tsx`, `CommandPalette.logic.ts`                                                                    | "Add project" at the end of the "New thread in…" picker, which also opens with no projects. In place: `shouldOpenNewThreadTargetPicker` is true whatever the number of projects, and the picker's early return and its two project lists (the pushed picker and the palette's "New thread in…" submenu)                                                                                  |
+
+Status also mounts `useStatusAutomaticPlacement` in `Sidebar.tsx`, before deriving rows,
+selection and keyboard order. Its active-row/key bindings and two drop-planner calls change
+in place. `planStatusThreadDrop` plans against canonical membership; capability checks and
+order acknowledgements include hidden re-keyed rows. Successful writes alone acknowledge
+the displayed slot. Drag, pending-write, rename, sweep and native-menu interactions pause it.
 
 **When aligning:**
 

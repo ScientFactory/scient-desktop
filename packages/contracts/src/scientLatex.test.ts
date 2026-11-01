@@ -12,6 +12,8 @@ import {
 
 const decodeRequest = Schema.decodeUnknownSync(ScientLatexResolveRequest);
 const decodeResult = Schema.decodeUnknownSync(ScientLatexResolveResult);
+const decodeForwardSyncRequest = Schema.decodeUnknownSync(ScientLatexForwardSyncRequest);
+const decodeInverseSyncResult = Schema.decodeUnknownSync(ScientLatexInverseSyncResult);
 
 describe("Scient LaTeX document-root resolution contract", () => {
   it("carries workspace-relative source and optional selected-root context", () => {
@@ -108,16 +110,16 @@ describe("SyncTeX source revision admission", () => {
       line: 18,
     };
     const inverse = { _tag: "found", relativePath: "chapter.tex", line: 18, column: null };
-    expect(() => Schema.decodeUnknownSync(ScientLatexForwardSyncRequest)(forward)).toThrow();
-    expect(() => Schema.decodeUnknownSync(ScientLatexInverseSyncResult)(inverse)).toThrow();
+    expect(() => decodeForwardSyncRequest(forward)).toThrow();
+    expect(() => decodeInverseSyncResult(inverse)).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(ScientLatexForwardSyncRequest)({
+      decodeForwardSyncRequest({
         ...forward,
         sourceRevision: "",
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(ScientLatexInverseSyncResult)({
+      decodeInverseSyncResult({
         ...inverse,
         sourceRevision: "",
       }),

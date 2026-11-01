@@ -27,13 +27,9 @@ import * as ServerConfig from "../../config.ts";
 import { buildDocumentPageCapture, bundleSourceDigest } from "./documentPageInput.ts";
 
 /**
- * A capture is the export's frozen input: one document bundle and copies of
- * the asset bytes its Markdown refers to, written to a server-owned temporary
- * directory before anything renders. Rendering reads only the capture, so a
- * slow render can neither hold the source open nor observe it changing
- * midway. A capture is removed after publication or when the desktop refuses
- * to print it, and expires if the render never returns. Expired captures are
- * swept at server start and before each new capture.
+ * Freeze bundle/assets before rendering so slow printing cannot hold or observe changing sources.
+ * Release captures after publication/refusal and expire abandoned ones, sweeping at startup and
+ * before new capture.
  */
 
 const CAPTURE_DIRECTORY = "document-exports";

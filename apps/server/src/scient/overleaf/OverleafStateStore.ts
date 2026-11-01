@@ -1,24 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Durable replacement needs file and directory fsync.
 /**
- * Private on-disk state for manual Overleaf connections, under
- * `stateDir/overleaf`:
- *
- * - `connections/<id>.json`: one document per connection, replaced durably and
- *   only by compare-and-set on its revision;
- * - `receipts/<connection>/<request>.json`: idempotency records, created once;
- * - `quarantine/`: unreadable documents moved aside with their bytes intact;
- * - `retained/<connection>/`: the applier's application directory when this
- *   tree shares the checkout's volume (otherwise `.scient-overleaf` beside the
- *   checkout; see `OverleafRetentionVault.ts`);
- * - `lease.sqlite`: the process lease.
- *
- * Every mutation first holds the process lease, an exclusive SQLite lock held
- * for the service's lifetime. A second server process sharing this directory is
- * refused (`OverleafStateLockedError`) rather than waiting or stealing. The
- * lease is taken lazily, at the first mutation that needs it, so a process that
- * started while an older one was still exiting acquires it later instead of
- * losing writable access for its lifetime. Reads need no lease.
+ * Mutations require a lifetime exclusive SQLite process lease; refuse competing servers rather than
+ * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
+ * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
+import { windowsNativeFile, windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -38,15 +25,19 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
 import * as ServerConfig from "../../config.ts";
-import { makeRuntimeSqliteLayer } from "../../persistence/Sqlite.ts";
-import { directoryIdentity, syncDirectory } from "../workspace/RetainedFileMutation.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import {
+  directoryIdentity,
+  replaceByRename,
+  syncDirectory,
+} from "../workspace/RetainedFileMutation.ts";
 import {
   locateOverleafRetention,
-  macVolumeUuid,
   type OverleafVolumeFileIdentity,
   type OverleafVolumeIdentityResolver,
 } from "./OverleafRetentionVault.ts";
 import {
+  decodeOverleafConnectionDocument,
   OverleafConnectionDocument,
   OverleafOperationReceipt,
   OverleafServerId,
@@ -54,6 +45,12 @@ import {
   overleafTransitionViolation,
   OVERLEAF_CONNECTION_SCHEMA_VERSION,
 } from "./OverleafConnectionState.ts";
+
+import { overleafCloudRoot } from "./overleafCloudRoots.ts";
+import {
+  ensureNativePrivateRetentionDirectory,
+  resolveNativeFilePublicationHelperPath,
+} from "../workspace/NativeFilePublication.ts";
 
 export class OverleafStateLockedError extends Schema.TaggedError<OverleafStateLockedError>()(
   "OverleafStateLockedError",
@@ -154,6 +151,9 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
       "volume-unavailable",
       "no-volume-identity",
       "unsupported-filesystem",
+      "network-filesystem",
+      "volatile-filesystem",
+      "sync-managed-folder",
       "read-only-parent",
       "shared-parent",
       "disk-root-checkout",
@@ -169,6 +169,12 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
         return "The disk holding this project is not connected.";
       case "no-volume-identity":
         return "This disk does not report a stable identity, so Scient cannot keep replaced files safely on it.";
+      case "network-filesystem":
+        return "Scient cannot keep recovery files on this network filesystem.";
+      case "volatile-filesystem":
+        return "Scient cannot keep recovery files on temporary memory storage.";
+      case "sync-managed-folder":
+        return "Scient's state and kept files must be outside cloud-managed folders.";
       case "unsupported-filesystem":
         return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS.";
       case "read-only-parent":
@@ -194,7 +200,10 @@ export type OverleafConnectionRead =
   | { readonly _tag: "corrupt" }
   | { readonly _tag: "unsupported" };
 
-type WriteError = OverleafStateLockedError | OverleafStateIoError;
+type WriteError =
+  | OverleafStateLockedError
+  | OverleafStateIoError
+  | OverleafRetentionUnavailableError;
 
 /** @public Context tag; the coordinator (contract step 2+) consumes it. */
 export class OverleafStateStore extends Context.Service<
@@ -259,8 +268,8 @@ export class OverleafStateStore extends Context.Service<
       readonly environmentId: string;
       readonly connectionId: string;
       readonly checkoutRoot: string;
-      /** The host's exchange helper; null only for the declared development fallback (D8). */
-      readonly exchangeHelper: string | null;
+      /** The host's publication helper; null only for the declared development fallback (D8). */
+      readonly publicationHelper: string | null;
       /** The connection's recorded location, or null when connecting for the first time. */
       readonly expected: OverleafVolumeFileIdentity | null;
     }) => Effect.Effect<
@@ -278,9 +287,6 @@ export interface OverleafStateStoreHooks {
   ) => Promise<void>;
 }
 
-const decodeConnection = Schema.decodeUnknownExit(
-  Schema.fromJsonString(OverleafConnectionDocument),
-);
 const decodeReceipt = Schema.decodeUnknownExit(Schema.fromJsonString(OverleafOperationReceipt));
 /** Documents are validated before they are written, not only when read back. */
 const validateConnection = Schema.decodeUnknownExit(OverleafConnectionDocument);
@@ -292,7 +298,21 @@ const isServerId = Schema.is(OverleafServerId);
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
 
 /** Owner-only, non-symlink directory created by this process's user. */
-async function privateDirectory(directory: string, userId: number | undefined): Promise<boolean> {
+async function privateDirectory(
+  directory: string,
+  userId: number | undefined,
+  configuredHelper?: string,
+): Promise<boolean> {
+  if (await overleafCloudRoot(directory))
+    throw new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" });
+  const platform = HostProcess.Platform.defaultValue();
+  if (platform === "linux" || platform === "win32") {
+    const helper = configuredHelper ?? (await resolveNativeFilePublicationHelperPath());
+    if (!helper) return false;
+    if (platform === "win32") await windowsPrivateDirectory(directory, true, helper);
+    else await ensureNativePrivateRetentionDirectory(helper, directory);
+    return true;
+  }
   // mkdir returns the first directory it created; sync each new entry's parent
   // so a durable record inside it cannot vanish with its directory after a crash.
   const created = await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -307,14 +327,15 @@ async function privateDirectory(directory: string, userId: number | undefined): 
   const stat = await NodeFSP.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
   if (userId !== undefined && stat.uid !== userId) return false;
-  if ((stat.mode & 0o077) !== 0) await NodeFSP.chmod(directory, 0o700);
+  if ((stat.mode & 0o077) !== 0) return false;
   return true;
 }
 
 export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   readonly root: string;
+  readonly publicationHelper?: string | undefined;
   readonly hooks?: OverleafStateStoreHooks;
-  /** Test seam: the disk's volume UUID for a path. Defaults to `diskutil`. */
+  /** Test seam for macOS volume discovery; Linux uses the held native object. */
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
 }) {
   const userId = yield* HostProcess.UserId;
@@ -353,7 +374,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   const acquireLease = Effect.gen(function* () {
     yield* io("prepare-directory", async () => {
       for (const directory of [root, connections, receipts, quarantine])
-        if (!(await privateDirectory(directory, userId)))
+        if (!(await privateDirectory(directory, userId, options.publicationHelper)))
           throw new Error("Overleaf state directory is not private.");
     });
     // Record which file SQLite is about to open. Create it first (never
@@ -370,7 +391,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     const scope = yield* Scope.make();
     yield* Effect.gen(function* () {
       const context = yield* Layer.buildWithScope(
-        makeRuntimeSqliteLayer({ filename: leasePath, busyTimeout: 0, disableWAL: true }),
+        NodeSqliteClient.layer({ filename: leasePath }),
         scope,
       );
       const sql = Context.get(context, SqlClient.SqlClient);
@@ -420,11 +441,8 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     return { dev: String(stat.dev), ino: String(stat.ino) };
   };
   /**
-   * The lock protects the file this connection opened. If that file or the
-   * state root was replaced, another process may lock the replacement, so the
-   * old lease is dropped and the lock is taken again on what is there now.
-   * A replacement between this check and the write that follows is not
-   * detected; that window is the boundary of this protection.
+   * Reacquire when the locked file/state root is replaced or another process could lock its
+   * successor. A swap between this check and the write remains outside this protection.
    */
   const ensureLease = Effect.gen(function* () {
     const held = lease;
@@ -448,8 +466,40 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     }
     yield* acquireLease;
   });
+  let publicationHelper: Promise<string | undefined> | undefined;
+  const resolvePublicationHelper = () => {
+    if (publicationHelper === undefined)
+      publicationHelper =
+        options.publicationHelper !== undefined
+          ? Promise.resolve(options.publicationHelper)
+          : resolveNativeFilePublicationHelperPath();
+    return publicationHelper;
+  };
+  /**
+   * Re-check on every write: a folder can become sync-managed after the lease
+   * was taken. Windows registrations are not in config files, so the helper
+   * answers for the state root; an absent root is checked when it is created.
+   */
+  const cloudGuard = Effect.tryPromise({
+    try: async () => {
+      if (await overleafCloudRoot(root)) return true;
+      if (HostProcess.Platform.defaultValue() !== "win32") return false;
+      const helper = await resolvePublicationHelper();
+      if (!helper) return false;
+      return (await windowsNativeFile(root, "private", helper)).syncManaged === true;
+    },
+    catch: (cause) => new OverleafStateIoError({ operation: "prepare-directory", cause }),
+  }).pipe(
+    Effect.flatMap((managed) =>
+      managed
+        ? Effect.fail(new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" }))
+        : Effect.void,
+    ),
+  );
   const withLease = <A, E>(effect: Effect.Effect<A, E>) =>
-    writes.withPermits(1)(Effect.uninterruptible(ensureLease.pipe(Effect.andThen(effect))));
+    writes.withPermits(1)(
+      Effect.uninterruptible(cloudGuard.pipe(Effect.andThen(ensureLease), Effect.andThen(effect))),
+    );
   const admitWritable: OverleafStateStore["Service"]["admitWritable"] = withLease(Effect.void);
 
   /** Writes a complete, synced temporary next to `file`. */
@@ -474,7 +524,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     const temporary = await writeTemporary(file, contents);
     try {
       await hook("before-publish", file);
-      await NodeFSP.rename(temporary, file);
+      await replaceByRename(temporary, file);
     } catch (error) {
       // A temporary left by a crash is removed at the next lease acquisition.
       await NodeFSP.rm(temporary, { force: true });
@@ -518,11 +568,12 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
         if (errorCode(error) === "ENOENT") return { _tag: "missing" };
         throw error;
       }
-      const decoded = decodeConnection(text);
-      if (Exit.isSuccess(decoded)) {
+      // The current version, or an older one upgraded in memory.
+      const decoded = decodeOverleafConnectionDocument(text);
+      if (decoded !== null) {
         // A document filed under another name is not this connection's state.
-        if (decoded.value.connectionId !== connectionId) return { _tag: "corrupt" };
-        return { _tag: "ready", document: decoded.value };
+        if (decoded.connectionId !== connectionId) return { _tag: "corrupt" };
+        return { _tag: "ready", document: decoded };
       }
       let version: unknown;
       try {
@@ -530,7 +581,8 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
       } catch {
         return { _tag: "corrupt" };
       }
-      return typeof version === "number" && version !== OVERLEAF_CONNECTION_SCHEMA_VERSION
+      // A newer version is another release's; an older one that does not upgrade is damaged.
+      return typeof version === "number" && version > OVERLEAF_CONNECTION_SCHEMA_VERSION
         ? { _tag: "unsupported" }
         : { _tag: "corrupt" };
     });
@@ -638,7 +690,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
         yield* requireValid("receipt", receipt);
         const file = yield* io("write", async () => {
           const file = receiptFile(receipt.connectionId, receipt.requestId);
-          if (!(await privateDirectory(NodePath.dirname(file), userId)))
+          if (!(await privateDirectory(NodePath.dirname(file), userId, options.publicationHelper)))
             throw new Error("Overleaf receipt directory is not private.");
           return file;
         });
@@ -693,9 +745,9 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
             connectionId: input.connectionId,
             checkoutRoot: input.checkoutRoot,
             userId,
-            exchangeHelper: input.exchangeHelper,
+            publicationHelper: input.publicationHelper,
             expected: input.expected,
-            volumeUuid: options.volumeUuid ?? macVolumeUuid,
+            volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
           });
         });
         if (located._tag === "refused")
@@ -717,11 +769,16 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = Layer.effect(
   OverleafStateStore,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return yield* make({ root: NodePath.join(config.stateDir, "overleaf") });
+    return yield* make({
+      root: NodePath.join(config.stateDir, "overleaf"),
+      publicationHelper: yield* Effect.promise(() =>
+        resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+      ),
+    });
   }),
 );

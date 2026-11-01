@@ -5,7 +5,13 @@
  * absent keep pure T3 behaviour.
  */
 import type {
+  ExtensionPluginContents,
+  ExtensionSkillDocument,
   ModelSelection,
+  ProviderStoreInstallResult,
+  ProviderStoreEntry,
+  ProviderStorePage,
+  ProviderStoreSearchInput,
   ProviderAuthorizationUrlKind,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
@@ -18,6 +24,7 @@ import type {
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
 
 /** Optional, tightly sandboxed one-shot cleanup for local voice transcripts. */
@@ -65,6 +72,47 @@ export interface ProviderMcpSignInAttempt {
  * changes the configuration that generation was created with.
  */
 export interface ProviderPluginActions {
+  readonly store?:
+    | {
+        readonly contents?:
+          | ((id: string) => Effect.Effect<ExtensionPluginContents, ProviderPluginActionFailure>)
+          | undefined;
+        readonly skillDocument?:
+          | ((
+              id: string,
+              skillId: string,
+            ) => Effect.Effect<ExtensionSkillDocument, ProviderPluginActionFailure>)
+          | undefined;
+        readonly changes?: Stream.Stream<void> | undefined;
+        readonly marketplaceSource?:
+          | ((entryId: string) => Effect.Effect<string, ProviderPluginActionFailure>)
+          | undefined;
+        readonly ensureMarketplace?:
+          | ((input: {
+              readonly name: string;
+              readonly source: string;
+            }) => Effect.Effect<void, ProviderPluginActionFailure>)
+          | undefined;
+        readonly search: (
+          input: Omit<ProviderStoreSearchInput, "instanceId">,
+        ) => Effect.Effect<ProviderStorePage, ProviderPluginActionFailure>;
+        readonly entry: (
+          entryId: string,
+        ) => Effect.Effect<ProviderStoreEntry, ProviderPluginActionFailure>;
+        readonly install: (
+          entryId: string,
+        ) => Effect.Effect<void | ProviderStoreInstallResult, ProviderPluginActionFailure>;
+        readonly addOfficialStore?:
+          | (() => Effect.Effect<void, ProviderPluginActionFailure>)
+          | undefined;
+      }
+    | undefined;
+  readonly refreshInventory?:
+    | ((input: {
+        readonly force: boolean;
+        readonly connectionsOnly?: boolean | undefined;
+      }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | undefined;
   /**
    * A fresh listing of the plugins this generation sees, in `cwd` when given.
    * Fails unless the provider listed every plugin source.
@@ -72,10 +120,29 @@ export interface ProviderPluginActions {
   readonly listPlugins: (input: {
     readonly cwd?: string | undefined;
   }) => Effect.Effect<ProviderPluginListing, ProviderPluginActionFailure>;
+  // SCIENT-FORK:START — plugin keys read installed plugins' own folders, never the catalog.
+  /**
+   * Installed plugins and their folders on disk, without catalog or app reads. Unless `fresh`, it
+   * may answer from the last listing; providers without it list folders through `listPlugins`.
+   */
+  readonly listPluginRoots?:
+    | ((input: {
+        readonly cwd?: string | undefined;
+        readonly fresh?: boolean | undefined;
+      }) => Effect.Effect<ReadonlyArray<ProviderPluginRoot>, ProviderPluginActionFailure>)
+    | undefined;
+  // SCIENT-FORK:END
   /** Fresh status of one configured MCP server; `undefined` when it is not configured. */
   readonly readMcpServer: (input: {
     readonly serverName: string;
   }) => Effect.Effect<ServerProviderMcpServer | undefined, ProviderPluginActionFailure>;
+  readonly setEnabled?:
+    | ((input: {
+        readonly pluginId: string;
+        readonly enabled: boolean;
+        readonly cwd?: string | undefined;
+      }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | undefined;
   readonly uninstall: (input: {
     readonly pluginId: string;
     /** Workspace whose provider inventory lists the plugin. */
@@ -88,6 +155,14 @@ export interface ProviderPluginActions {
   readonly isRetired: Effect.Effect<boolean>;
   /** Completes when this generation is retired. */
   readonly whenRetired: Effect.Effect<void>;
+}
+
+/** An installed plugin and its own folder, the only place a plugin declares keys. */
+export interface ProviderPluginRoot {
+  readonly id: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly root?: string | undefined;
 }
 
 /** A complete plugin listing and when it began, as `nextInventoryReadSequence` orders reads. */
@@ -116,14 +191,19 @@ export interface ProviderNativeInventory {
 
 /**
  * Workspace plugin listing that runs after a workspace scan is published, so
- * a slow listing never delays the scan. Owned by the instance; its reports
- * arrive on the instance's native inventory stream with `cwd` set.
+ * a slow listing never delays an ordinary scan. The registry publishes each
+ * complete report before the instance releases its listing's completion.
  */
 export interface ProviderWorkspaceInventory {
   /** A newer scan of `cwd` started: stop any listing still running for it. */
   readonly cancel: (cwd: string) => Effect.Effect<void>;
   /** Start a bounded listing of `cwd` in the background, replacing a running one. */
-  readonly refresh: (cwd: string) => Effect.Effect<void>;
+  readonly refresh: (
+    cwd: string,
+    publish: (inventory: ProviderNativeInventory) => Effect.Effect<void>,
+  ) => Effect.Effect<void>;
+  /** Wait for an existing listing, including registry publication; cancellation leaves it owned by the instance. */
+  readonly awaitCurrent: (cwd: string) => Effect.Effect<void>;
   /**
    * Stop every queued or running listing of a workspace outside `current`,
    * the workspaces whose snapshots are published now. `current` is read
@@ -165,11 +245,8 @@ export interface ProviderConnectionAttempt {
     | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
     | undefined;
   /**
-   * For a flow that can ask after the attempt is described: resolves when the
-   * provider asks its next question, the first one after the link or another
-   * after an answer. The manager runs it again after each question and
-   * republishes the operation as accepting an answer. Absent when the flow
-   * asks nothing after it starts.
+   * After each provider question, re-arm this wait so the manager can republish answer
+   * availability; some flows ask again after the link or a submitted answer.
    */
   readonly nextQuestion?:
     | Effect.Effect<{
@@ -227,11 +304,9 @@ export interface ProviderManagedRuntimeActions {
     action: ProviderManagedRuntimeAction,
   ) => Effect.Effect<Omit<ProviderRuntimePlan, "instanceId">, ProviderConnectionActionFailure>;
   /**
-   * Runs a planned action. Download, verification, and staging may proceed
-   * while the provider is in use; `awaitActivationWindow` must complete
-   * immediately before the live runtime changes. The runtime manager always
-   * supplies it: it waits for the provider's running work to finish and then
-   * stops its sessions. Direct callers such as tests may omit it.
+   * Downloads and staging may run while the provider is busy, but awaitActivationWindow must finish
+   * immediately before live runtime mutation. The manager waits for work and stops sessions; only
+   * direct callers such as tests may omit it.
    */
   readonly run: (
     action: ProviderManagedRuntimeAction,

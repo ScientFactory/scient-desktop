@@ -183,7 +183,7 @@ it.live.each(["sql", "replay"] as const)(
           IdAllocator.layer,
           storage === "sql"
             ? ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory))
-            : ProjectionStore.layerMemory,
+            : ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
         ),
       ),
     ),

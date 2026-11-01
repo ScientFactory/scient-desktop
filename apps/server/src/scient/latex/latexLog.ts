@@ -1,14 +1,6 @@
 /**
- * Parses TeX engine output into structured diagnostics. Builds run with
- * `-file-line-error`, so errors arrive as `./path.tex:12: message`; warnings
- * keep LaTeX's prose form. tectonic prefixes the same lines with `error:` or
- * `warning:`, which the parser strips before matching. The parser reads both
- * interleaved from one combined stdout/stderr transcript and never throws on
- * unfamiliar output — unrecognized lines are simply not diagnostics.
- *
- * Paths are reported exactly as the engine printed them, which means relative
- * to the compiler's working directory. `LatexBuildService` rebases them onto
- * the workspace root before they reach a client.
+ * Ignore unfamiliar transcript lines safely and strip Tectonic prefixes before matching. Engine
+ * paths stay compile-cwd-relative here; LatexBuildService must rebase them before clients see them.
  */
 
 export interface LatexDiagnostic {
@@ -26,7 +18,7 @@ const WARNING_LINE_SUFFIX_PATTERN = /on input line (\d+)\.?\s*$/u;
 const MISSING_FILE_PATTERN = /^No file\s+(.+?)\.\s*$/u;
 /** tectonic labels every line it forwards; the label is severity, not path. */
 const SEVERITY_PREFIX_PATTERN = /^(error|warning):\s+/iu;
-/** LaTeX upstream issue #1907: the engine explicitly ignores this longtable warning. */
+/** The engine explicitly ignores this longtable warning. */
 const IGNORED_GLUE_PATTERN =
   /^ignored error:\s*Infinite glue shrinkage found in box being split\b/iu;
 const LONGTABLE_WIDTH_WARNING_PATTERN =
@@ -34,13 +26,9 @@ const LONGTABLE_WIDTH_WARNING_PATTERN =
 const ENGINE_PASS_PATTERN = /^Run number \d+ of rule '(?:pdf|xe|lua)?latex'/u;
 
 /**
- * Wrapper output that wears the `file:line:` shape without being an error in
- * the document. TeX Live drives its Perl tools through `runscript.tlu`, which
- * reports the exit code of the program it ran — "runscript.tlu:933: command
- * failed with exit code 12: perl.exe …" — at a path inside the distribution.
- * Read as a diagnostic it outranks the engine's own error, names a file no
- * reader can open, and is the last thing anyone needs to know about a missing
- * package.
+ * TeX Live's runscript.tlu exit wrapper resembles file:line but is not a document diagnostic. Do
+ * not let its distribution path outrank the actual engine error or become an unusable navigation
+ * target.
  */
 const WRAPPER_SCRIPT_EXTENSIONS: ReadonlySet<string> = new Set([".tlu", ".lua"]);
 const WRAPPER_MESSAGE_PATTERN = /^command failed with exit code/iu;
@@ -243,11 +231,8 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
 }
 
 /**
- * `latexmk` collects what went wrong under this heading and indents each
- * entry. It is the only thing it prints when it decides not to run the engine
- * at all — "pdflatex: gave an error in previous invocation of latexmk." — and
- * that decision is exactly the case where there is no engine transcript to
- * parse, so this is the reason or there is none.
+ * latexmk may print only its indented collected-error summary when refusing to rerun. Parse that
+ * explanation because no engine transcript exists in this case.
  */
 const ERROR_SUMMARY_HEADING_PATTERN = /^Collected error summary/iu;
 const INDENTED_ENTRY_PATTERN = /^\s+(\S.*?)\s*$/u;
@@ -302,15 +287,8 @@ export function latexmkErrorSummary(transcript: string): string | null {
 }
 
 /**
- * The reason a run failed when it left no diagnostic behind.
- *
- * A compile that never reaches TeX has no `file:line:` anywhere in it — the
- * ordinary case is `latexmk` refusing to redo a target it already failed on,
- * which prints its own prose and exits non-zero — and reporting that as
- * nothing at all is how a build tells its reader only that it failed. So the
- * run's own last words are read instead: its collected error summary if it
- * printed one, otherwise the tail of what it did say, otherwise the status it
- * exited with, which is at least true.
+ * No parsed diagnostic does not mean no explanation. Prefer latexmk's collected summary, then
+ * transcript tail, then exit status so failed pre-engine runs never report only a generic failure.
  */
 export function transcriptFailureDiagnostic(input: {
   readonly transcript: string;

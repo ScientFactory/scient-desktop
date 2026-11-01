@@ -49,6 +49,7 @@ function ConnectModelsDialog({
     setOverlayInstanceId?.(next ? instanceId : null);
     setOpen(next);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the overlay instance id in the parent store if unmounted while open
   useEffect(
     () => () => {
       if (open) setOverlayInstanceId?.(null);

@@ -180,7 +180,7 @@ export const makeUsageAccounting = Effect.gen(function* () {
           yield* encodeCache(cache).pipe(
             Effect.flatMap((serialized) => fs.writeFileString(nextPath, serialized)),
             Effect.andThen(fs.rename(nextPath, input.cachePath)),
-            Effect.catchCause(() => Effect.void),
+            Effect.ignoreCause,
           );
         }
         return summaries;

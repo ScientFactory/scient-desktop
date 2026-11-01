@@ -337,7 +337,7 @@ it.effect(
       // Compaction now keeps each message's first event, but databases compacted by
       // earlier releases lost it; remove it as those releases did.
       yield* sql`DELETE FROM orchestration_events WHERE event_id = 'migration:v1:message:answer'`;
-      yield* maintenance.compactEventStore;
+      yield* maintenance.compactEventStore();
       yield* maintenance.rebuild;
       yield* migration.ensureTranscript(THREAD);
       const repaired = yield* projections.getThreadProjection(THREAD);
@@ -1208,7 +1208,7 @@ it.effect(
           },
         ],
       });
-      yield* maintenance.compactEventStore;
+      yield* maintenance.compactEventStore();
       // The current compactor retains turn-item history; replay must still select the newer V2 answer.
       assert.equal(
         (yield* sql`SELECT event_id FROM orchestration_events WHERE event_id = ${answerId}`).length,

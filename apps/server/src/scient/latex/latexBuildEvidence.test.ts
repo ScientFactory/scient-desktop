@@ -44,11 +44,8 @@ const makeWorkspace = (files: Readonly<Record<string, string>>) =>
   });
 
 /**
- * A workspace whose files can be *present and unreadable*, which is the one
- * state a real temporary directory cannot be put into portably and the one
- * this module's hardest bug lives in. `locked` stands for every way a file on
- * Windows answers `EBUSY`/`EACCES` while existing perfectly well: another
- * writer holding it, an antivirus scan, a OneDrive placeholder mid-sync.
+ * Model present-but-unreadable separately: portable real directories cannot reliably reproduce
+ * Windows EBUSY/EACCES locks, scanner holds, and OneDrive placeholders.
  */
 type FakeEntry = { readonly kind: "file"; readonly contents: string } | { readonly kind: "locked" };
 

@@ -1,11 +1,6 @@
 /**
- * Scient Agent account sign-in over the agent's own RPC.
- *
- * The agent owns every sign-in flow, its credentials and their storage. Scient
- * starts one isolated agent process per attempt, asks it to sign in to one
- * entry of its own list, shows the link and each question it sends, and hands
- * every pasted answer straight back to that process. Nothing the user pastes is
- * kept in Scient's state. The process lives in the attempt's scope.
+ * The agent owns sign-in credentials and storage. Forward pasted answers directly to the isolated
+ * attempt process and never retain them in Scient state; its scope owns process lifetime.
  */
 import type { ProviderConnectionAccount, ProviderConnectionMethod } from "@t3tools/contracts";
 import type { OmpRpcClient } from "effect-omp-rpc/client";
@@ -230,7 +225,7 @@ export function makeScientAgentConnectionActions(input: {
     const completion = Fiber.join(login);
 
     const first = yield* Effect.raceFirst(
-      Queue.take(prompts).pipe(Effect.map((prompt) => Option.some(prompt))),
+      Queue.take(prompts).pipe(Effect.asSome),
       completion.pipe(Effect.as(Option.none<Prompt>())),
     ).pipe(
       Effect.timeoutOrElse({
@@ -252,6 +247,7 @@ export function makeScientAgentConnectionActions(input: {
       else question ??= prompt;
     };
     take(first.value);
+    // oxlint-disable-next-line no-unmodified-loop-condition -- take(next.value) fills link or question on each iteration.
     while (link === undefined || question === undefined) {
       const next = yield* Queue.take(prompts).pipe(
         Effect.timeoutOption(input.promptSettle ?? PROMPT_SETTLE),

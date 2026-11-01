@@ -67,9 +67,10 @@ const reconcileClaims = Effect.fn("LegacyQueueCutover.reconcileClaims")(function
   if (messages.length !== 1) return;
   const config = yield* ServerConfig;
   const retained = new Set(
-    messages[0]!.attachments.map((attachment) =>
-      resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
-    ),
+    messages[0]!.attachments.flatMap((attachment) => {
+      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      return path ? [path, `${path}.txt`] : [];
+    }),
   );
   yield* releaseClaimedAttachments(claimedPaths.filter((path) => !retained.has(path)));
 });
@@ -186,7 +187,7 @@ export const cutOverLegacyQueue = Effect.fn("LegacyQueueCutover.thread")(functio
             reconcileClaims(threadId, messageId, commandId, claimed.claimedPaths)
               // Failed receipt/event reads cannot establish nonacceptance. Retain copies.
               .pipe(
-                Effect.catch(() => Effect.void),
+                Effect.ignore,
                 Effect.andThen(
                   reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id)),
                 ),

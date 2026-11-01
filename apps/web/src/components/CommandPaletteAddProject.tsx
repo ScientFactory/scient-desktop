@@ -60,7 +60,8 @@ export function CommandPaletteSubmitButton(props: {
         }
       >
         <span>{props.label}</span>
-        <KbdGroup className="pointer-events-none -me-0.5">
+        {/* SCIENT-FORK: the key sits level with the button's top and bottom gaps. */}
+        <KbdGroup className="pointer-events-none -me-1.5">
           <Kbd>{props.shortcutLabel}</Kbd>
         </KbdGroup>
       </TooltipTrigger>

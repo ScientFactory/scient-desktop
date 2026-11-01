@@ -1,20 +1,17 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
-import { END_GAP, FIRST_LINES_PX, promptResponseLastIndex } from "./useBoundedAnswerFollow";
+import {
+  END_GAP,
+  FIRST_LINES_PX,
+  followLimitIndex,
+  promptResponseLastIndex,
+} from "./useBoundedAnswerFollow";
 
 /**
- * Where the follow of `promptId` would have the view now (a scroll offset),
- * for a reader who left while following it and comes back. If everything
- * since that prompt fits, the end of its response (the bottom when it is the
- * latest prompt). Otherwise the prompt rests at the top of the reading area,
- * unless its response's latest message's start would then be below the
- * screen: that start rests at the top instead. A later prompt and its
- * response never move it further.
- *
- * When a row this needs has never been rendered (outside the list's window),
- * it says which row to bring into view first, so it can be measured. Null
- * when the list cannot be measured or the prompt is not in the loaded rows.
+ * Restore only this prompt's response, where its follow would be now; later prompts must not pull
+ * it further. Request rendering of any unmeasured target row before computing its offset, and
+ * return null when measurements or the prompt are unavailable.
  */
 function liveFollowOffset(
   list: LegendListRef,
@@ -28,11 +25,10 @@ function liveFollowOffset(
   const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
   const viewportTop = viewport.getBoundingClientRect().top;
   // A row's top in scroll offsets: measured on screen when it is rendered.
-  const rowTop = (index: number, selector?: string) => {
+  const rowTop = (index: number) => {
     const element = state.elementAtIndex(index);
     if (element?.isConnected) {
-      const target = (selector && element.querySelector(selector)) || element;
-      return viewport.scrollTop + target.getBoundingClientRect().top - viewportTop;
+      return viewport.scrollTop + element.getBoundingClientRect().top - viewportTop;
     }
     return state.positionAtIndex(index) ?? null;
   };
@@ -54,10 +50,13 @@ function liveFollowOffset(
     if (lastTop === null || size === undefined) return { mount: lastIndex };
     end = Math.min(bottom, Math.max(0, lastTop + size - (readingHeight - END_GAP)));
   }
-  const promptTop = rowTop(promptIndex, '[data-user-message-body="true"]');
-  if (promptTop === null) return { mount: promptIndex };
-  const promptAtTop = Math.max(0, promptTop - CHAT_TIMELINE_ANCHOR_OFFSET);
-  if (end <= promptAtTop) return { offset: end };
+  // As the follow would: to the end, unless that pushes a reading row's start past the margin.
+  const limitIndex = followLimitIndex(rows, promptIndex, lastIndex, new Set());
+  if (limitIndex < 0) return { offset: end };
+  const limitTop = rowTop(limitIndex);
+  if (limitTop === null) return { mount: limitIndex };
+  const limitAtTop = Math.max(0, limitTop - CHAT_TIMELINE_ANCHOR_OFFSET);
+  if (end <= limitAtTop) return { offset: end };
   let latestIndex = -1;
   for (let index = lastIndex; index > promptIndex; index -= 1) {
     const row = rows[index];
@@ -66,22 +65,19 @@ function liveFollowOffset(
       break;
     }
   }
-  if (latestIndex < 0) return { offset: promptAtTop };
+  if (latestIndex < 0) return { offset: limitAtTop };
   const latestTop = rowTop(latestIndex);
   if (latestTop === null) return { mount: latestIndex };
-  // Its first lines already show below the prompt: stay with the prompt.
-  if (latestTop + FIRST_LINES_PX <= promptAtTop + readingHeight) return { offset: promptAtTop };
+  // Its first lines already show below the limit: stay with the limit.
+  if (latestTop + FIRST_LINES_PX <= limitAtTop + readingHeight) return { offset: limitAtTop };
   return {
-    offset: Math.min(end, Math.max(promptAtTop, latestTop - CHAT_TIMELINE_ANCHOR_OFFSET)),
+    offset: Math.min(end, Math.max(limitAtTop, latestTop - CHAT_TIMELINE_ANCHOR_OFFSET)),
   };
 }
 
 /**
- * Brings a reader who left while following `promptId` back to where its
- * follow would be now: to the end first, then to `liveFollowOffset` until it
- * holds for two frames (at most 60 frames). A needed row the list has not
- * rendered yet is scrolled into view first and measured there. Frames go through `nextFrame`, so the caller's restore
- * cleanup cancels them; `done` runs once it holds, or when it gives up.
+ * Render and measure needed rows before restoring follow. Route frames through nextFrame so restore
+ * cleanup can cancel them; finish after stability or the bounded frame limit.
  */
 export function returnToLiveFollow(input: {
   list: LegendListRef;

@@ -149,7 +149,9 @@ describe("DesktopWslBackend", () => {
 
       yield* recordOwnershipFailure();
       const refusal = yield* backend.lastPreflightError;
+      // SCIENT-FORK:START scient-branding
       assert.include(Option.getOrThrow(refusal), "Another Scient server");
+      // SCIENT-FORK:END scient-branding
       yield* backend.reconcile;
       assert.equal(startCount, 1);
       assert.deepEqual(yield* backend.lastPreflightError, refusal);

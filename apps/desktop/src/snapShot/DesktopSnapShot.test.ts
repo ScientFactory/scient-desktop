@@ -1,3 +1,7 @@
+// SCIENT-FORK:START restored-behavior-guards
+import * as Logger from "effect/Logger";
+// SCIENT-FORK:END restored-behavior-guards
+
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import { assert, it } from "@effect/vitest";
 import {
@@ -11,7 +15,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -493,7 +496,9 @@ const layerTest = (
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
+            // SCIENT-FORK:START scient-branding
             displayName: "Scient (Dev)",
+            // SCIENT-FORK:END scient-branding
             stateDir: "/state",
             linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
             appRoot: "/repo",
@@ -799,7 +804,6 @@ it.effect.each(["darwin", "win32"] as const)(
 
         for (const finish of heldFlights) finish();
         yield* Fiber.join(landing);
-        // Landing releases the guard even before the first capture is acknowledged.
         yield* Effect.promise(fixture.trigger);
         assert.equal(fixture.state.snapshots, 2);
         assert.lengthOf(fixture.readyIds, 2);
@@ -1050,9 +1054,15 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
   );
 });
 
-it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
-  "persists %s text without inventing AT-SPI screen coordinates",
-  (backend) => {
+it.effect.each([
+  { backend: "gnome", screenshot: "PNG" },
+  { backend: "niri", screenshot: "PNG" },
+  { backend: "kde", screenshot: "PNG" },
+  { backend: "hyprland", screenshot: "PNG" },
+  { backend: "gnome", screenshot: "invalid" },
+] as const)(
+  "persists $backend accessibility text with a $screenshot screenshot",
+  ({ backend, screenshot }) => {
     vi.stubEnv("XDG_SESSION_TYPE", "wayland");
     flashWindows.length = 0;
     const window = {
@@ -1069,7 +1079,16 @@ it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
       ...(backend === "niri" ? { accessibilityBoundsReliable: false } : {}),
       ...(backend === "kde" ? { clientBounds: { x: 479, y: 371, width: 700, height: 520 } } : {}),
     };
-    linuxCaptureMock.mockResolvedValueOnce({ png: Buffer.from([1, 2, 3]), window });
+    // The captured pixels differ from the compositor's logical window bounds.
+    const imageSize = screenshot === "PNG" ? { width: 1400, height: 1040 } : window.bounds;
+    const png =
+      screenshot === "PNG"
+        ? Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAABXgAAAQQAQAAAABwoA4ZAAAAyElEQVR4nO3BMQEAAADCoPVPbQwfoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgYyx4AAepc/c0AAAAASUVORK5CYII=",
+            "base64",
+          )
+        : Buffer.from([1, 2, 3]);
+    linuxCaptureMock.mockResolvedValueOnce({ png, window });
     activeWindowMock.mockClear();
     getSourcesMock.mockClear();
     accessibilityByPidMock.mockReset().mockResolvedValue({
@@ -1109,7 +1128,7 @@ it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
         assert.deepInclude(saved.source.accessibility, {
           format: "element-tree",
           coordinateSpace: "captured-image",
-          imageSize: { width: 700, height: window.bounds.height },
+          imageSize: { width: imageSize.width, height: imageSize.height },
           truncated: false,
         });
         assert.deepInclude(
@@ -1119,7 +1138,7 @@ it.effect.each(["gnome", "niri", "kde", "hyprland"] as const)(
           {
             role: "window",
             name: "Editor",
-            bounds: { x: 0, y: 0, width: 700, height: window.bounds.height },
+            bounds: { x: 0, y: 0, width: imageSize.width, height: imageSize.height },
             state: { active: true },
           },
         );
@@ -1778,7 +1797,9 @@ it.effect("flags revoked macOS permissions on read and re-registers once they re
       const revoked = yield* service.state;
       assert.equal(
         revoked.message,
+        // SCIENT-FORK:START scient-branding
         "Allow Screen Recording in System Settings, then restart Scient.",
+        // SCIENT-FORK:END scient-branding
       );
       assert.deepEqual(revoked.macPermissions, { screenRecording: false, accessibility: true });
 
@@ -1791,7 +1812,9 @@ it.effect("flags revoked macOS permissions on read and re-registers once they re
       const blocked = yield* service.state;
       assert.equal(
         blocked.message,
+        // SCIENT-FORK:START scient-branding
         "Allow Screen Recording in System Settings, then restart Scient.",
+        // SCIENT-FORK:END scient-branding
       );
       assert.isFalse(blocked.shortcutRegistered);
 
@@ -2150,7 +2173,9 @@ it.effect.each([false, true])(
           assert.equal(error.reason, "setup-failed");
           assert.equal(
             error.message,
+            // SCIENT-FORK:START scient-branding
             'Could not capture a test snapshot. Capturing the window failed. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "Scient (Dev)" is allowed for both.',
+            // SCIENT-FORK:END scient-branding
           );
         } else yield* service.setup("test-mac-capture");
         assert.equal(macCaptureMock.mock.calls.length, 1);
@@ -2176,6 +2201,7 @@ it.effect.each([false, true])(
   },
 );
 
+// SCIENT-FORK:START scient-mac-test-capture - fix guards upstream's snap dropped: one per failure branch.
 const macTestCaptureLayer = layerTest("darwin", {
   makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
   readDirectory: () => Effect.succeed([]),
@@ -2188,6 +2214,7 @@ const macTestCaptureWindow = {
   bounds: { x: 0, y: 0, width: 800, height: 600 },
 };
 
+// regression: a26428f833 fix(desktop): a failed macOS test capture no longer blames the GNOME extension (#18857)
 it.effect("names the failed macOS window lookup without repeating what it printed", () => {
   const script = 'ObjC.import("CoreGraphics"); function run() { return ""; }';
   const stderr = "execution error: Error: Not authorized to send Apple events. (-1743)";
@@ -2214,6 +2241,7 @@ it.effect("names the failed macOS window lookup without repeating what it printe
   ).pipe(Effect.provide(macTestCaptureLayer));
 });
 
+// regression: a26428f833 fix(desktop): a failed macOS test capture no longer blames the GNOME extension (#18857)
 it.effect("says when macOS has no window to test capture", () => {
   activeWindowMock.mockReset().mockResolvedValue(undefined);
   macCaptureMock.mockReset();
@@ -2230,6 +2258,7 @@ it.effect("says when macOS has no window to test capture", () => {
   ).pipe(Effect.provide(macTestCaptureLayer));
 });
 
+// regression: a26428f833 fix(desktop): a failed macOS test capture no longer blames the GNOME extension (#18857)
 it.effect("says when the macOS test capture command timed out", () => {
   activeWindowMock.mockReset().mockResolvedValue(macTestCaptureWindow);
   macCaptureMock.mockReset().mockRejectedValue(
@@ -2250,18 +2279,11 @@ it.effect("says when the macOS test capture command timed out", () => {
     }),
   ).pipe(Effect.provide(macTestCaptureLayer));
 });
+// SCIENT-FORK:END scient-mac-test-capture
 
-it.effect("rejects macOS test capture on other platforms", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopSnapShot.make;
-      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
-      assert.equal(error.reason, "unsupported-session");
-      assert.equal(error.message, "Test capture requires macOS.");
-    }),
-  ).pipe(Effect.provide(layerTest("win32"))),
-);
+// SCIENT-FORK:START restored-behavior-guards
 
+// regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
 it.effect(
   "logs a GNOME activation failure and completes the shell flight before acknowledging the image",
   () => {
@@ -2353,3 +2375,19 @@ it.effect(
     );
   },
 );
+// SCIENT-FORK:END restored-behavior-guards
+
+// SCIENT-FORK:START restored-behavior-guards
+
+// regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
+it.effect("rejects macOS test capture on other platforms", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(error.reason, "unsupported-session");
+      assert.equal(error.message, "Test capture requires macOS.");
+    }),
+  ).pipe(Effect.provide(layerTest("win32"))),
+);
+// SCIENT-FORK:END restored-behavior-guards

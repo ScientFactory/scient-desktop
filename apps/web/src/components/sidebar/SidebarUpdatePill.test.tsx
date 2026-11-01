@@ -23,6 +23,7 @@ const nightlyState: DesktopUpdateState = {
 };
 
 describe("sidebar update restart icon", () => {
+  // regression: 1f49898313 test(web): protect update retry icon states
   it("hides the icon when the downloaded update is ready to restart", () => {
     expect(
       shouldShowSidebarUpdateRestartIcon({
@@ -32,23 +33,24 @@ describe("sidebar update restart icon", () => {
       }),
     ).toBe(false);
   });
+});
 
-  it("shows the icon only when retrying a failed install", () => {
-    expect(
-      shouldShowSidebarUpdateRestartIcon({
-        ...nightlyState,
-        status: "error",
-        errorContext: "install",
-        canRetry: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowSidebarUpdateRestartIcon({
-        ...nightlyState,
-        status: "error",
-        errorContext: "download",
-        canRetry: true,
-      }),
-    ).toBe(false);
-  });
+// regression: 1f49898313 test(web): protect update retry icon states
+it("shows the icon only when retrying a failed install", () => {
+  expect(
+    shouldShowSidebarUpdateRestartIcon({
+      ...nightlyState,
+      status: "error",
+      errorContext: "install",
+      canRetry: true,
+    }),
+  ).toBe(true);
+  expect(
+    shouldShowSidebarUpdateRestartIcon({
+      ...nightlyState,
+      status: "error",
+      errorContext: "download",
+      canRetry: true,
+    }),
+  ).toBe(false);
 });

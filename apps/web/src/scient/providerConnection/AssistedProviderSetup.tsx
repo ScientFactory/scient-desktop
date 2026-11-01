@@ -169,13 +169,9 @@ export function AssistedSetupDiagnostics(props: {
 }
 
 /**
- * The status of an offered update, told by how Scient applies it. A managed
- * update installs a reviewed runtime beside the current one, which stays in
- * use until the new one is verified; an external update runs the
- * installation's own updater in place and checks the version afterwards.
- * `working` is the external updater's progress; managed updates report
- * progress as runtime operations. `issue` is why the last attempt did not
- * take effect.
+ * Managed updates preserve the current runtime until reviewed replacement verification. External
+ * updates mutate in place and establish version only afterward; their progress/failure evidence
+ * must stay distinct from managed operations.
  */
 export function AssistedSetupUpdateStatus(props: {
   readonly name: string;

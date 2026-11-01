@@ -5,6 +5,9 @@ import * as Option from "effect/Option";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
+// SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
+import { makeWebLinkRenderers } from "../scient/multiWindow/webLinkRenderers.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — compatible routing is dormant until browser activation is authorized.
 export const desktopWebLinksEnabled = false;
 // SCIENT-FORK:END
@@ -20,77 +23,47 @@ export const isWebLink = (value: string) => {
 export const isWebPageFile = (path: string) => /\.x?html?$/i.test(path);
 
 /**
- * Web links and HTML files macOS opens with Scient once it is the default
- * browser, plus Scient prompt and thread links on every platform. Files
- * arrive as file:// URLs. They can
- * arrive before the app is ready (the link that launched it) or while the web
- * app reloads, so they wait until the renderer says it is listening.
+ * OS links can arrive before startup or during renderer reload; queue them until the renderer listens.
+ * macOS default-browser files arrive as file:// URLs; Scient prompt/thread schemes work on every platform.
  */
 export class DesktopWebLinks extends Context.Service<
   DesktopWebLinks,
   {
     readonly receive: (url: string) => Effect.Effect<void>;
-    readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
+    // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
+    readonly setRendererReady: (ready: boolean, senderId?: number) => Effect.Effect<void>;
+    // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/app/DesktopWebLinks") {}
 
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const pending: Array<string> = [];
-  let listening: Electron.WebContents | null = null;
-  let detachListening: (() => void) | null = null;
-
-  const stopListening = () => {
-    detachListening?.();
-    detachListening = null;
-    listening = null;
-  };
+  // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
+  const webLinkRenderers = makeWebLinkRenderers(electronWindow);
 
   const flush = Effect.gen(function* () {
-    if (listening === null || pending.length === 0) return;
-    const window = yield* electronWindow.currentMainOrFirst;
-    if (Option.isNone(window) || window.value.webContents !== listening) return;
-    if (listening.isDestroyed()) {
-      stopListening();
-      return;
-    }
+    if (pending.length === 0) return;
+    const window = yield* webLinkRenderers.target;
+    if (Option.isNone(window)) return;
+    const listening = window.value.webContents;
     for (const url of pending.splice(0)) listening.send(WEB_LINK_OPEN_CHANNEL, url);
     yield* electronWindow.reveal(window.value);
   });
-
-  const startListening = Effect.gen(function* () {
-    const window = yield* electronWindow.currentMainOrFirst;
-    if (Option.isNone(window) || window.value.webContents.isDestroyed()) return;
-    const webContents = window.value.webContents;
-    if (listening === webContents) return;
-    stopListening();
-    listening = webContents;
-    const onNavigation = (
-      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-    ) => {
-      if (event.isMainFrame && !event.isSameDocument) stopListening();
-    };
-    webContents.on("did-start-navigation", onNavigation);
-    webContents.on("render-process-gone", stopListening);
-    webContents.once("destroyed", stopListening);
-    detachListening = () => {
-      webContents.removeListener("did-start-navigation", onNavigation);
-      webContents.removeListener("render-process-gone", stopListening);
-      webContents.removeListener("destroyed", stopListening);
-    };
-  });
+  // SCIENT-FORK:END
 
   return DesktopWebLinks.of({
-    receive: (url) =>
-      Effect.suspend(() => {
+    receive: Effect.fn("DesktopWebLinks.receive")(function (url) {
+      return Effect.suspend(() => {
         pending.push(url);
         return flush;
-      }).pipe(Effect.withSpan("DesktopWebLinks.receive")),
-    setRendererReady: (ready) =>
-      (ready ? startListening : Effect.sync(stopListening)).pipe(
-        Effect.andThen(flush),
-        Effect.withSpan("DesktopWebLinks.setRendererReady"),
-      ),
+      });
+    }),
+    // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
+    setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready, senderId) {
+      return webLinkRenderers.setReady(ready, senderId);
+    }, Effect.andThen(flush)),
+    // SCIENT-FORK:END
   });
 });
 

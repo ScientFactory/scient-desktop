@@ -1300,6 +1300,54 @@ describe("Oh My Pi RPC client commands", () => {
     ),
   );
 
+  it.effect("requests delta-only message updates and reads whether the agent applied them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* negotiate(harness.stdout, harness.stdin);
+        const projected = yield* harness.client
+          .setEventFilter(OMP_KNOWN_EVENT_TYPES, { messageUpdates: "delta" })
+          .pipe(Effect.forkScoped);
+        const written = decodeFrame(yield* Queue.take(harness.stdin));
+        expect(written).toMatchObject({
+          type: "set_event_filter",
+          events: OMP_KNOWN_EVENT_TYPES,
+          messageUpdates: "delta",
+        });
+        yield* harness.respond(
+          { id: String(written.id), type: "set_event_filter" },
+          { events: OMP_KNOWN_EVENT_TYPES, messageUpdates: "delta" },
+        );
+        expect(yield* Fiber.join(projected)).toEqual({
+          events: OMP_KNOWN_EVENT_TYPES,
+          messageUpdates: "delta",
+        });
+
+        // A release without the projection ignores the option and omits the echo.
+        const older = yield* harness.client
+          .setEventFilter(OMP_KNOWN_EVENT_TYPES, { messageUpdates: "delta" })
+          .pipe(Effect.forkScoped);
+        const olderFrame = decodeFrame(yield* Queue.take(harness.stdin));
+        yield* harness.respond(
+          { id: String(olderFrame.id), type: "set_event_filter" },
+          { events: OMP_KNOWN_EVENT_TYPES },
+        );
+        expect(yield* Fiber.join(older)).toEqual({ events: OMP_KNOWN_EVENT_TYPES });
+
+        const unchanged = yield* harness.client
+          .setEventFilter(OMP_KNOWN_EVENT_TYPES)
+          .pipe(Effect.forkScoped);
+        const unchangedFrame = decodeFrame(yield* Queue.take(harness.stdin));
+        expect(unchangedFrame).not.toHaveProperty("messageUpdates");
+        yield* harness.respond(
+          { id: String(unchangedFrame.id), type: "set_event_filter" },
+          { events: OMP_KNOWN_EVENT_TYPES },
+        );
+        yield* Fiber.join(unchanged);
+      }),
+    ),
+  );
+
   it("derives the known event types from the event schema", () => {
     expect(OMP_KNOWN_EVENT_TYPES).toEqual(
       expect.arrayContaining([
@@ -1545,6 +1593,120 @@ describe("Oh My Pi RPC client decoding", () => {
           "message_end",
           "message_end",
         ]);
+      }),
+    ),
+  );
+});
+
+// SCIENT-FORK: optional desktop observations survive both known and degraded frames.
+describe("desktop RPC observations", () => {
+  it.effect("retains message usage even when another optional message field drifts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* negotiate(h.stdout, h.stdin);
+        const usage = {
+          input: 12,
+          cacheRead: 30,
+          cacheWrite: 20,
+          output: 4,
+          totalTokens: 66,
+          futureCounter: 1,
+        };
+        yield* Queue.offer(
+          h.stdout,
+          line({
+            type: "message_end",
+            messageId: "normal",
+            message: { role: "assistant", provider: "vendor", model: "model", usage },
+          }),
+        );
+        yield* Queue.offer(
+          h.stdout,
+          line({
+            type: "message_end",
+            messageId: "drifted",
+            message: {
+              role: "assistant",
+              provider: "vendor",
+              model: "model",
+              usage,
+              stopReason: { changed: true },
+            },
+          }),
+        );
+        const notifications = yield* h.drain;
+        const normal = eventsOf(notifications).find((event) => event.messageId === "normal");
+        expect(normal?.message).toMatchObject({ usage, provider: "vendor", model: "model" });
+        const degraded = notifications.find(
+          (notification) => notification._tag === "UndecodableEvent",
+        );
+        expect(degraded).toMatchObject({ eventType: "message_end" });
+        expect(
+          eventsOf(notifications).find((event) => event.messageId === "drifted")?.message,
+        ).toMatchObject({ usage, provider: "vendor", model: "model" });
+      }),
+    ),
+  );
+
+  it.effect(
+    "retains dialog deadlines, notice provenance, fallback identity and billed warming usage",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          yield* negotiate(h.stdout, h.stdin);
+          const frames = [
+            {
+              type: "extension_ui_request",
+              id: "editor",
+              method: "editor",
+              prefill: " text\n",
+              timeout: 2000,
+            },
+            {
+              type: "notice",
+              level: "error",
+              source: "session-persistence",
+              message: "Saving failed",
+            },
+            {
+              type: "retry_fallback_applied",
+              from: "vendor/a",
+              to: "vendor/b",
+              reason: "Rate limit",
+            },
+            { type: "cache_warming_end", usage: { input: 1, cost: { total: 0.1 } } },
+          ];
+          for (const frame of frames) yield* Queue.offer(h.stdout, line(frame));
+          const notifications = yield* h.drain;
+          expect(notifications.every((notification) => notification._tag === "Event")).toBe(true);
+          expect(eventsOf(notifications)).toEqual(
+            frames.map((frame) => expect.objectContaining(frame)),
+          );
+        }),
+      ),
+  );
+
+  it.effect("decodes optional context and todo state while accepting older state responses", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* negotiate(h.stdout, h.stdin);
+        const pending = yield* h.client.getState().pipe(Effect.forkScoped);
+        const request = yield* h.takeCommand;
+        const todoPhases = [{ name: "Plan", tasks: [{ content: "Work", status: "pending" }] }];
+        yield* h.respond(request, {
+          contextUsage: { tokens: 40, contextWindow: 1000 },
+          todoPhases,
+        });
+        expect(yield* Fiber.join(pending)).toMatchObject({
+          contextUsage: { tokens: 40 },
+          todoPhases,
+        });
+        const old = yield* h.client.getState().pipe(Effect.forkScoped);
+        yield* h.respond(yield* h.takeCommand, { isStreaming: false });
+        expect(yield* Fiber.join(old)).toEqual({ isStreaming: false });
       }),
     ),
   );

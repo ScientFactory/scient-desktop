@@ -11,11 +11,8 @@ import * as Schema from "effect/Schema";
 import { checkCodexProviderStatus, codexAppServerEnvironment } from "./CodexProvider.ts";
 
 /**
- * Stand-in for Codex 0.162's app-server catalog behavior:
- * - `model/list` answers from `CODEX_HOME/models_cache.json` while it is fresh.
- * - A startup refresh runs before `initialize`, so it uses the originator set
- *   at spawn (the override env var, else the plain CLI's `codex_cli_rs`).
- * - The backend grants Ultrafast only to entitled accounts on app originators.
+ * Codex can serve a fresh models_cache.json before initialize; startup refresh uses the spawn
+ * originator. Ultrafast entitlement depends on both account and app originator.
  */
 const FAKE_CODEX_APP_SERVER = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
@@ -150,18 +147,22 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     }),
   );
 
+  // regression: ed0f7b908b fix(server): Sol Ultrafast stops vanishing from the Codex model picker (#18200).
+  // Its probe also pins the real child's originator and client identity.
   it.effect("keeps Ultrafast when another Codex client wrote the shared catalog cache", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(true), ["default", "priority", "ultrafast"]);
     }).pipe(Effect.scoped),
   );
 
+  // regression: ed0f7b908b (the not-entitled branch)
   it.effect("drops Ultrafast once the account is no longer entitled to it", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(false), ["default", "priority"]);
     }).pipe(Effect.scoped),
   );
 
+  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
   it.effect("displays the inherited global Fast tier on every discovered model", () =>
     Effect.gen(function* () {
       for (const tier of ["fast", "priority"]) {
@@ -190,6 +191,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     }).pipe(Effect.scoped),
   );
 
+  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
   it.effect(
     "preserves the catalog when global tier config is missing, unknown, failing, or stalled",
     () =>

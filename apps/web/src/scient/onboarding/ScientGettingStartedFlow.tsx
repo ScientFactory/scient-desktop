@@ -9,7 +9,6 @@ import { usePrimarySessionState } from "../../environments/primary";
 import {
   deriveProviderInstanceEntries,
   isProviderInstancePickerReady,
-  sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -51,9 +50,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   const [otherSelected, setOtherSelected] = useState(profile.fieldOrTopic.trim().length > 0);
   const [otherWork, setOtherWork] = useState(profile.fieldOrTopic);
 
-  const instanceEntries = sortProviderInstanceEntries(
-    deriveProviderInstanceEntries(serverProviders),
-  );
+  const instanceEntries = deriveProviderInstanceEntries(serverProviders);
   const providerReady = instanceEntries.some(isProviderInstancePickerReady);
   const preferencesSaved = hasSavedScientPreferences(profile);
   // Omit work already done at entry, then keep Back stable while setup state changes.
@@ -120,6 +117,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     }
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the onboarding store's step in step with the active step in automatic mode
   useEffect(() => {
     if (props.mode !== "automatic") return;
     if (onboardingState.status === "unseen") {

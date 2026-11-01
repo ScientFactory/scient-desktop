@@ -58,3 +58,10 @@ export const setProviderSkillEnabled = createEnvironmentRpcCommand(connectionAto
     key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
   },
 });
+
+export const providerSkillDocument = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:provider-skills:document",
+  tag: WS_METHODS.providerSkillsReadDocument,
+  staleTimeMs: 60_000,
+  idleTtlMs: 60_000,
+});

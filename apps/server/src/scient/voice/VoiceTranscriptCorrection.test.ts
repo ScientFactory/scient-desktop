@@ -52,6 +52,7 @@ function settings(): ServerSettingsService["Service"] {
     getSettings: Effect.succeed(current),
     updateSettings: () => Effect.succeed(current),
     updateProviderInstance: () => Effect.succeed(current),
+    removeProjectSettingsOverrides: () => Effect.succeed(current),
     withSettingsSnapshot: (use) => use(current),
     streamChanges: Stream.make(current),
     subscribeChanges: Effect.succeed(Stream.make(current)),

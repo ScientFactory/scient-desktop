@@ -1,10 +1,6 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
-// SCIENT-FORK:START keep-awake menu mount
-import {
-  keepAwakeMenu,
-  type KeepAwakeMenuState,
-  type KeepAwakeMenuId,
-} from "../scient/keepAwake/menu";
+// SCIENT-FORK:START — keep the computer awake until a thread is done.
+import { keepAwakeMenu, type KeepAwakeMenuId } from "../scient/keepAwake/menu";
 // SCIENT-FORK:END
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 // SCIENT-FORK:START
@@ -14,15 +10,19 @@ import {
   conversationExportMenuItem,
   type ConversationExportMenuId,
 } from "../scient/conversationExport/menu";
+import type { OpenInNewWindowMenuId } from "../scient/multiWindow/openInNewWindow";
 // SCIENT-FORK:END
 
 export type ThreadActionMenuId =
   // SCIENT-FORK:START
   | SectionMenuId
   | ConversationExportMenuId
+  | OpenInNewWindowMenuId
   // SCIENT-FORK:END
+  | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
+  | "turn-into-project"
   | "project-settings"
   | "pin"
   | "unpin"
@@ -31,7 +31,7 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
-  // SCIENT-FORK:START keep-awake menu identifiers
+  // SCIENT-FORK:START — keep the computer awake until a thread is done.
   | KeepAwakeMenuId
   // SCIENT-FORK:END
   | "snooze"
@@ -40,14 +40,19 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "share-guest"
   | "copy"
   | "copy-path"
   | "copy-branch"
+  | "copy-thread"
   | "copy-thread-id"
   | "archive"
   | "delete";
 
 export type DraftActionMenuId =
+  // SCIENT-FORK:START
+  | OpenInNewWindowMenuId
+  // SCIENT-FORK:END
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -58,8 +63,15 @@ export function buildDraftActionMenuItems(options: {
   readonly hasPath: boolean;
   readonly hasBranch: boolean;
   readonly hasProject: boolean;
+  // SCIENT-FORK:START
+  /** Present only where the app can open another window. */
+  readonly openInNewWindow?: ContextMenuItem<OpenInNewWindowMenuId> | null;
+  // SCIENT-FORK:END
 }): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
   return [
+    // SCIENT-FORK:START
+    ...(options.openInNewWindow ? [options.openInNewWindow] : []),
+    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",
@@ -86,10 +98,11 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
-  // SCIENT-FORK:START keep-awake menu state
-  readonly keepAwake?: KeepAwakeMenuState | undefined;
+  // SCIENT-FORK:START — keep the computer awake until a thread is done.
+  readonly keepAwakeChosen?: boolean | undefined;
   // SCIENT-FORK:END
   readonly canOperate: boolean;
+  readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -101,7 +114,7 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
+  /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
   readonly supports: {
     readonly settlement: boolean;
@@ -113,21 +126,30 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   // SCIENT-FORK:START — the Section submenu, when the thread's server supports it.
   readonly sectionMenu?: ContextMenuItem<SectionMenuId> | null;
+  /** Present only where the app can open another window. */
+  readonly openInNewWindow?: ContextMenuItem<OpenInNewWindowMenuId> | null;
   // SCIENT-FORK:END
+  /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
+  readonly canShareWithGuest?: boolean;
+  /** A No project thread with its own folder, on a server that can promote it. */
+  readonly canTurnIntoProject?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
-  // SCIENT-FORK:START local sleep preference needs no remote operate scope
-  if (action === "keep-awake" || action.startsWith("keep-awake:")) return false;
-  // SCIENT-FORK:END
   return ![
+    "find",
+    // SCIENT-FORK:START
+    "open-in-new-window",
+    // SCIENT-FORK:END
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
+    "share-guest",
     "copy",
     "copy-path",
     "copy-branch",
+    "copy-thread",
     "copy-thread-id",
   ].includes(action);
 }
@@ -136,6 +158,12 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canFind
+      ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      : []),
+    // SCIENT-FORK:START
+    ...(state.openInNewWindow ? [state.openInNewWindow] : []),
+    // SCIENT-FORK:END
     ...(state.branch
       ? [
           {
@@ -173,7 +201,11 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
-                  { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
+                  {
+                    id: "snooze:custom" as const,
+                    label: "Custom…",
+                    separatorBefore: state.snoozePresets.length > 0,
+                  },
                 ],
               },
         ]
@@ -195,6 +227,9 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.canShareWithGuest
+      ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
+      : []),
     ...(state.projectFilter
       ? [
           {
@@ -203,6 +238,16 @@ export function buildThreadActionMenuItems(
               ? "Show all projects"
               : `Filter by ${state.projectFilter.label}`,
             icon: "folder-tree",
+          },
+        ]
+      : []),
+    ...(state.canTurnIntoProject
+      ? [
+          {
+            id: "turn-into-project" as const,
+            label: "Turn into project",
+            icon: "folder-plus",
+            disabled: state.isRunning,
           },
         ]
       : []),
@@ -227,8 +272,8 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    // SCIENT-FORK:START keep-awake menu mount
-    ...keepAwakeMenu(state.keepAwake),
+    // SCIENT-FORK:START — keep the computer awake until a thread is done.
+    ...keepAwakeMenu(state.keepAwakeChosen),
     // SCIENT-FORK:END
     {
       id: "copy",
@@ -240,6 +285,7 @@ export function buildThreadActionMenuItems(
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
+        { id: "copy-thread", label: "Thread", icon: "message-square" },
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
         // SCIENT-FORK:START
         COPY_CONVERSATION_MARKDOWN_MENU_ITEM,

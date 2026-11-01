@@ -1,10 +1,5 @@
-/**
- * Scient first-party analytics adapter.
- *
- * The inherited T3 call sites remain unchanged, but this boundary accepts only
- * Scient-registered events and properties. Delivery is disabled by default and
- * goes only through Scient's first-party gateway when deliberately enabled.
- *
+/** Scient analytics accepts only registered events and properties.
+ * Delivery is disabled by default and uses Scient's first-party gateway when enabled.
  * @module AnalyticsService
  */
 
@@ -25,12 +20,14 @@ export class AnalyticsService extends Context.Service<
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
+      /** In-memory observer fence; never persisted or exported. */
+      expectedCollectionEpoch?: number,
     ) => Effect.Effect<void>;
 
     /** Attempt delivery of the currently due local outbox batch. */
     readonly flush: Effect.Effect<void>;
 
-    /** Compatibility only: Scient never records provider or installation owner identities. */
+    /** Report who an install belongs to, as hashed ids, once per owner per process. */
     readonly recordOwners: (
       owners: ReadonlyArray<TelemetryOwner>,
       observedBy: "server" | "client",
@@ -42,15 +39,14 @@ export class AnalyticsService extends Context.Service<
   // SCIENT-FORK:START — Scient first-party analytics replaces the PostHog client
   /** No-op layer for tests and callers that intentionally disable analytics. */
   static readonly layerDisabled = Layer.succeed(AnalyticsService, disabledAnalyticsService);
-  static readonly layerTest = AnalyticsService.layerDisabled;
   // SCIENT-FORK:END
 }
 
 // SCIENT-FORK:START — Scient first-party analytics replaces the PostHog client
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export { make };
 // SCIENT-FORK:END
 
 export const layer = Layer.effect(AnalyticsService, make);
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layerDisabled = AnalyticsService.layerDisabled;

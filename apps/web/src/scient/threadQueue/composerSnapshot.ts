@@ -93,7 +93,7 @@ export function migrateQueueComposerContext(
 }
 
 export function decodeQueueComposerSnapshot(value: string): ContextDraft {
-  const decoded = Schema.decodeUnknownSync(snapshot)(value);
+  const decoded = Schema.decodeSync(snapshot)(value);
   if (decoded.version === 1) return migrateQueueComposerContext(decoded);
   const { version: _version, ...draft } = decoded;
   return {

@@ -7,6 +7,7 @@ import {
   normalizePdfZoom,
   parseSafePdfExternalUrl,
   parsePdfPageInput,
+  pdfZoomOrigin,
   stepPdfZoom,
 } from "./pdfReaderModel";
 
@@ -36,6 +37,17 @@ describe("PDF reader model", () => {
     expect(stepPdfZoom(1.12, "out")).toBe(1.1);
     expect(stepPdfZoom(5, "in")).toBe(5);
     expect(stepPdfZoom(0.25, "out")).toBe(0.25);
+  });
+
+  it("anchors zoom at the screen point even when the viewer sits inside offset panels", () => {
+    // PDF.js subtracts containerTopLeft, its offsetTop/offsetLeft, from the origin.
+    const container = {
+      getBoundingClientRect: () => ({ left: 300, top: 50 }),
+      clientLeft: 8,
+      clientTop: 8,
+    };
+    const [x, y] = pdfZoomOrigin({ containerTopLeft: [40, 120] }, container, 500, 200);
+    expect([x - 120, y - 40]).toEqual([192, 142]);
   });
 
   it("allows only browser-safe PDF outline URLs", () => {

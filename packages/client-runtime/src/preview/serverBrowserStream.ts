@@ -21,6 +21,9 @@ export interface PreviewStreamControl {
   readonly generation: number;
   /** Ephemeral navigation lease disclosed only to the viewer currently in control. */
   readonly controllingViewerId?: string;
+  // SCIENT-FORK:START — how many other windows watch the page
+  readonly otherViewers?: number;
+  // SCIENT-FORK:END
   readonly dialog: null | {
     readonly type: string;
     readonly message: string;
@@ -264,6 +267,9 @@ export function createPreviewStreamClient(
         controller,
         generation,
         controllingViewerId,
+        // SCIENT-FORK:START
+        otherViewers,
+        // SCIENT-FORK:END
         dialog,
         text,
         id,
@@ -345,6 +351,9 @@ export function createPreviewStreamClient(
           controllingViewerId.length > 0
             ? { controllingViewerId }
             : {}),
+          // SCIENT-FORK:START
+          ...(typeof otherViewers === "number" && otherViewers >= 0 ? { otherViewers } : {}),
+          // SCIENT-FORK:END
           dialog,
         };
         control = nextControl;

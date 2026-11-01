@@ -161,7 +161,7 @@ export function DockCommandCheckboxItem({
   const queue = useContext(DockCommandContext);
   return (
     <MenuCheckboxItem
-      variant="icon"
+      variant="icon-slot"
       {...props}
       closeOnClick
       onClick={() => {
@@ -196,6 +196,7 @@ export function DockMenu(props: {
   const queueCommand = useStableCallback((action: () => void) => {
     pendingCommand.current = action;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores editor selection via a DOM event and runs the pending command when the chrome closes
   useEffect(() => {
     if (open) return;
     const command = pendingCommand.current;
@@ -313,14 +314,8 @@ export function DockDivider() {
 }
 
 /**
- * One collapsible section of a dock. `bar` renders in the dock row while the
- * group fits; `overflow` renders inside the unified overflow menu once the
- * group no longer fits. `alwaysInOverflow` also exposes that complete menu
- * while the compact bar controls remain visible. Lower `priority` collapses
- * sooner; `pinned` groups never collapse. `estimatedWidth` is only used until
- * the group has been measured on screen, so bias it low: an over-optimistic
- * estimate is corrected after one measured paint, while an over-pessimistic
- * one would keep the group hidden without ever being re-measured.
+ * Bias unmeasured widths low: visible groups get corrected after paint, but an overestimate can
+ * hide a group permanently before it can be measured.
  */
 export interface DockGroup {
   readonly id: string;
@@ -372,15 +367,8 @@ function sameStringSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean 
 const EMPTY_GROUP_SET: ReadonlySet<string> = new Set();
 
 /**
- * The dock row with priority-based overflow. While expanded it renders every
- * group that fits, in array order, and moves the hidden ones (same order)
- * into the unified "More actions" menu it owns, ahead of any
- * `overflowItems` the surface always keeps there. Pinned groups (core
- * formatting) never collapse; if even they exceed the width the dock falls
- * back to horizontal scrolling. The expand/collapse handle stays at the
- * leading edge in both states, separated from expanded controls by the same
- * divider used between control groups. The bar keeps a fixed height in every
- * state so toggling never shifts the document.
+ * Pinned controls never collapse; scroll horizontally if they alone exceed the width. Keep bar
+ * height fixed so toggling overflow never shifts the document.
  */
 export function DockOverflowRow(props: {
   readonly label: string;
@@ -403,6 +391,7 @@ export function DockOverflowRow(props: {
   const compactWidthsRef = useRef(new Map<string, number>());
   const fixedRef = useRef(props.fixed);
   const groupsRef = useRef(props.groups);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps fixed and groups refs holding the latest props
   useLayoutEffect(() => {
     fixedRef.current = props.fixed;
     groupsRef.current = props.groups;
@@ -474,6 +463,7 @@ export function DockOverflowRow(props: {
   const measureDockLayout = useEffectEvent((..._changes: readonly unknown[]) => {
     recompute();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the dock DOM layout before paint and recomputes overflow
   useLayoutEffect(
     () =>
       measureDockLayout(
@@ -495,6 +485,7 @@ export function DockOverflowRow(props: {
       recompute,
     );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the dock DOM layout and recomputes overflow when it changes
   useEffect(
     () =>
       observeDockLayout(

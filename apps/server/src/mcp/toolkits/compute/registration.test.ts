@@ -30,7 +30,7 @@ it.effect("registers an object-shaped read-only Compute inventory tool", () =>
     ).toEqual(["scient_compute_inventory"]);
     expect(registered?.tool.inputSchema.type).toBe("object");
     expect(registered?.tool.description).toContain(
-      "a listed executable path does not authorize launching it",
+      "a listed executable is not permission to launch it",
     );
     expect(registered?.tool.annotations).toMatchObject({
       readOnlyHint: true,

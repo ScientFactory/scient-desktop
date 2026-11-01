@@ -68,10 +68,9 @@ it.live(
             resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
           );
         yield* remove(source.thread.id);
-        yield* Effect.all(
-          forks.slice(0, -1).map((f) => remove(f.projection.thread.id)),
-          { concurrency: "unbounded" },
-        );
+        yield* Effect.forEach(forks.slice(0, -1), (f) => remove(f.projection.thread.id), {
+          concurrency: "unbounded",
+        });
         for (const path of paths) assert.isTrue(yield* fs.exists(path));
         const store = yield* ProjectionStoreV2;
         assert.deepEqual(
@@ -130,10 +129,9 @@ it.live("all last forks deleted concurrently release files without leaks", () =>
           resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
         );
       yield* remove(source.thread.id);
-      yield* Effect.all(
-        forks.map((f) => remove(f.projection.thread.id)),
-        { concurrency: "unbounded" },
-      );
+      yield* Effect.forEach(forks, (f) => remove(f.projection.thread.id), {
+        concurrency: "unbounded",
+      });
       for (const path of paths) assert.isFalse(yield* fs.exists(path));
     }),
   ),

@@ -24,33 +24,10 @@ export interface OmpScientExtensionBootstrap {
 }
 
 /**
- * The extension body. It proxies the conversation's Scient MCP tools into
- * OMP and appends Scient's awareness to the system prompt, like Pi's
- * `PiScientExtension`, with OMP's differences written out:
- *
- * - OMP presents extension tools as `discoverable` unless they declare a load
- *   mode, which hides them from the model's top-level tool list, so every
- *   tool is `essential`.
- * - OMP's `before_agent_start` passes `systemPrompt` as `string[]` and treats
- *   a returned prompt as the whole replacement, so awareness is appended as
- *   one more element, and the prompt is left alone when there is none.
- * - The MCP connection is made once per OMP process and shared with the
- *   extension's re-runs for in-process subagents, which register the same
- *   tools on their own sessions.
- *
- * Connectors are proxied the same way, each over its own Scient connector
- * endpoint with the session's bearer. OMP's extension API has no MCP server
- * registration, so each connector tool is registered as
- * `<serverName>__<tool>`, with the tool reduced to the characters model APIs
- * accept and a leading `_` when the name would not start with a letter or
- * underscore. A name over 64 characters or already taken (Scient's own tools
- * register first, then connectors in delivered order) becomes its first 55
- * characters, `_`, and the first 8 hex digits of SHA-256 of
- * `<serverName>\0<tool>`; a tool whose alias is also taken, or whose name
- * enters OMP's native `mcp__` namespace, is skipped. Calls always use the
- * connector's own tool name. A connector that fails to connect within its
- * deadline contributes no tools and leaves Scient's tools and the other
- * connectors untouched.
+ * OMP tools need essential load mode, and before_agent_start replaces the entire string-array
+ * prompt. Share MCP connections across subagent reruns. Connector aliases must avoid native
+ * namespaces/collisions and preserve original call names; one failed connector must not remove
+ * others' tools.
  */
 const ompScientExtensionBody = (target: OmpTarget): string => `
 import { createHash as scientCreateHash } from "node:crypto";

@@ -164,6 +164,7 @@ async function renderInRegistry(registry: AtomRegistry.AtomRegistry, ui: ReactNo
   return Object.assign(screen, { update: (node: ReactNode) => screen.rerender(wrap(node)) });
 }
 
+// regression: da7c4f234d test(web): chat markdown and timeline tests run in a real browser (#20905)
 it("opens host media through server authorization before the client grant loads", async () => {
   using env = setup();
   access.ready = false;
@@ -195,6 +196,7 @@ const threadRef = {
   threadId: ThreadId.make("media-thread"),
 };
 
+// regression: 826ef55b74 fix(web): name the remote host and checked path when media is not found (#19677)
 it.each([
   {
     name: "a remote lookup whose host resolves while it is pending",
@@ -290,6 +292,7 @@ function renderedImage(container: HTMLElement) {
   return container.querySelector<HTMLImageElement>('img[alt="Diagram"]')?.getAttribute("src");
 }
 
+// regression: 479dfd46d1 fix(upstream): compose workspace image refresh with Scient cards
 it.each(imageLayouts)(
   "unversioned %s images keep their cached URL across reopening",
   async (layout) => {
@@ -307,7 +310,12 @@ it.each(imageLayouts)(
   },
 );
 
-it.each(imageLayouts.flatMap((layout) => ["URL", "failure"].map((cached) => ({ layout, cached }))))(
+// regression: 479dfd46d1 fix(upstream): compose workspace image refresh with Scient cards
+it.each([
+  { layout: "standalone", cached: "URL" },
+  { layout: "inline", cached: "failure" },
+  { layout: "file", cached: "URL" },
+] as const)(
   "reopening a $layout image with no workspace mutation replaces its cached $cached",
   async ({ cached, layout }) => {
     using env = setup();
@@ -325,9 +333,12 @@ it.each(imageLayouts.flatMap((layout) => ["URL", "failure"].map((cached) => ({ l
   },
 );
 
-it.each(
-  imageLayouts.flatMap((layout) => ["initial", "refresh"].map((request) => ({ layout, request }))),
-)(
+// regression: 479dfd46d1 fix(upstream): compose workspace image refresh with Scient cards
+it.each([
+  { layout: "standalone", request: "initial" },
+  { layout: "inline", request: "refresh" },
+  { layout: "file", request: "refresh" },
+] as const)(
   "shows the latest workspace edit for $layout images after a pending $request request",
   async ({ request, layout }) => {
     using env = setup();

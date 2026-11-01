@@ -37,6 +37,7 @@ describe("Antigravity native model presentation", () => {
     expect(catalog).toEqual(before);
   });
 
+  // regression: 44709fc8ff feat(antigravity): separate reasoning choices from model families
   it.each(["High", "Medium", "Low"])(
     "keeps an existing %s selection instead of resetting it",
     (level) => {
@@ -81,6 +82,7 @@ describe("Antigravity native model presentation", () => {
     );
   });
 
+  // regression: 44709fc8ff feat(antigravity): separate reasoning choices from model families
   it.each(["codex", "claudeAgent", "grok", "cursor", "droid", "opencode"])(
     "does not alter %s",
     (driver) => {

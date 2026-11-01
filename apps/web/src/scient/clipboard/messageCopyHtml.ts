@@ -1,14 +1,6 @@
 /**
- * Rich `text/html` for the Copy message button when a message contains
- * right-to-left text, so a paste into Word, Google Docs, or Pages keeps each
- * paragraph's direction. Other messages keep their Markdown-only copy.
- *
- * The HTML is rendered from the message's Markdown, the same text the plain
- * flavour carries, with chat's own Markdown pipeline (`chatMarkdownPipeline.ts`)
- * and direction transform. The live
- * row is not the source: it may be unmounted by the virtualized timeline, and
- * a collapsed details block has no body in the DOM. When the row is mounted,
- * its displayed direction is reused as the message direction.
+ * Render clipboard HTML from Markdown: virtualized rows may be unmounted and collapsed details
+ * absent from the DOM. Reuse displayed direction when mounted so RTL pastes match the message.
  */
 import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplates";
 import { artifactTemplateFromHastProperties } from "@t3tools/shared/codexMarkdownDirectives";

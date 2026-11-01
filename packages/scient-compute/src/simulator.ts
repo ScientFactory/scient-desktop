@@ -52,13 +52,8 @@ function completionBoundary(
 }
 
 /**
- * Image bytes a scripted runtime hands over, keyed by the sequence of the
- * `image` output they belong to.
- *
- * A real transport delivers bytes exactly once, next to the durable metadata
- * that describes them, and never again. Keying by sequence says that in the
- * script too, so a consumer that stores bytes under the wrong output cannot
- * pass here by accident.
+ * Key scripted image bytes by their output sequence and deliver once, matching real transport.
+ * Otherwise a consumer storing bytes under the wrong output could pass tests accidentally.
  */
 export type SimulatedComputeImageBytes = ReadonlyMap<number, Uint8Array>;
 export type SimulatedComputeResourceBytes = ReadonlyMap<
@@ -80,17 +75,9 @@ export interface SimulatedComputeRuntimeError {
 }
 
 /**
- * What a scripted runtime does when it is given code.
- *
- * `runs-until-interrupted` exists so a test can hold an execution open without
- * a clock: races between running work and interrupt, restart, or shutdown are
- * the cases most likely to be wrong, and a simulator that always finished
- * immediately could not express them. Nothing here sleeps, so every ordering a
- * test observes is the ordering it asked for.
- *
- * `runtimeError` is scripted separately from `outcome` because a runtime
- * reports the error and the end of the execution as two facts, and a consumer
- * that assumed the second implied the first would drop the diagnostic.
+ * Hold simulated executions without clocks to expose requested interrupt/restart/shutdown races
+ * deterministically. Script runtimeError separately from terminal outcome because neither event
+ * implies delivery of the other.
  */
 export type SimulatedComputeExecution =
   | {
@@ -123,12 +110,8 @@ function transportError(
 }
 
 /**
- * A runtime that exists only as a script.
- *
- * It is the proof that the session contracts describe a runtime rather than a
- * Python one: it speaks no language, runs no process, and still drives a
- * complete session lifecycle. Anything the coordinator can only do against a
- * real kernel is a leak of transport detail into the coordinator.
+ * The coordinator must complete lifecycle against a language-free simulated transport. Requiring a
+ * real kernel there would leak language/transport behavior into shared session ownership.
  */
 export function createSimulatedComputeTransport(plan: SimulatedComputeRuntime): ComputeTransport {
   return {

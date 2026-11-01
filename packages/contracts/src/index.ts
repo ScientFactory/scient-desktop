@@ -1,5 +1,4 @@
 export * from "./baseSchemas.ts";
-export * from "./orchestrationV2SnapshotWire.ts";
 export * from "./assistantCitations.ts";
 export * from "./fileCitations.ts";
 export * from "./composerContext.ts";
@@ -35,6 +34,8 @@ export * from "./server.ts";
 export * from "./settings.ts";
 // SCIENT-FORK: conversation-fork preferences.
 export * from "./scientForkSettings.ts";
+// SCIENT-FORK: one-time resets of saved client preferences.
+export * from "./scientClientSettingsResets.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
@@ -63,15 +64,13 @@ export * from "./pullRequestReviewGuide.ts";
 export * from "./orchestrationDispatch.ts";
 // SCIENT-FORK: current wire names stay independent of the legacy barrel.
 export { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
-// SCIENT-FORK: retained SQL approval codecs stay independent of the legacy barrel.
-export {
-  ProjectionPendingApprovalStatus,
-  ProjectionPendingApprovalDecision,
-} from "./scientApprovalProjection.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
+export * from "./guestShare.ts";
+export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
+export * from "./peerLink.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./threadSearch.ts";
@@ -93,6 +92,12 @@ export * from "./scientSkills.ts";
 // SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";
 export * from "./scient/extensions.ts";
+export * from "./scient/nativeSubagentControl.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts contracts (new files, no upstream edits).
+export * from "./scient/accounts.ts";
+export * from "./scient/accountRpcs.ts";
+export * from "./scient/desktopAccountsBridge.ts";
 // SCIENT-FORK:END
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
@@ -100,6 +105,9 @@ export * from "./browserPdfExport.ts";
 export * from "./htmlPdfBuild.ts";
 export * from "./scientDocumentExport.ts";
 export * from "./scientMarkdown.ts";
+// SCIENT-FORK:START — Scient tool input schema checks (new file, no upstream edits).
+export * from "./scientToolSchemas.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
@@ -112,6 +120,12 @@ export * from "./scientConversationImport.ts";
 // SCIENT-FORK:START — Scient managed Pandoc contracts (new file, no upstream edits).
 export * from "./scientPandoc.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Overleaf sync contracts (new file, no upstream edits).
+export * from "./scientOverleaf.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keep-awake contracts (new file, no upstream edits).
+export * from "./scientKeepAwake.ts";
+// SCIENT-FORK:END
 export * from "./mcpApps.ts";
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
@@ -119,7 +133,6 @@ export * from "./device.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
-export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./worktreeMcp.ts";
@@ -133,11 +146,12 @@ export * from "./worktreeSetup.ts";
 
 export * from "./providerCitationPresentation.ts";
 export * from "./secretRequest.ts";
+export * from "./secretReference.ts";
+export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";
-
-// SCIENT-FORK:START keep-awake mount
-export * from "./scientKeepAwake.ts";
-
+export * from "./scientPdfEdits.ts";
+// SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
+export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:END

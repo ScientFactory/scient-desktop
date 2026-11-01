@@ -26,6 +26,7 @@ export interface ScientSkillManagementShape {
   ) => Effect.Effect<ScientSkillInventory, ScientSkillManagementError>;
   readonly readDocument: (
     releaseKey: string,
+    projectRoot?: string,
   ) => Effect.Effect<ScientSkillDocument, ScientSkillManagementError>;
   readonly setUserActivation: (input: {
     readonly releaseKey: string;
@@ -193,8 +194,16 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
 
   const readDocument: ScientSkillManagementShape["readDocument"] = Effect.fn(
     "ScientSkillManagement.readDocument",
-  )(function* (releaseKey) {
-    const release = (yield* skillRegistry.current).resolveReleaseKey(releaseKey);
+  )(function* (releaseKey, projectRoot) {
+    let release = (yield* skillRegistry.current).resolveReleaseKey(releaseKey);
+    if (!release && projectRoot) {
+      const project = yield* inspectProject(projectRoot);
+      if (project.skills.some((skill) => skill.releaseKey === releaseKey)) {
+        release = project.catalog.releases.find(
+          (candidate) => skillReleaseKey(candidate) === releaseKey,
+        );
+      }
+    }
     if (!release) {
       return yield* new ScientSkillManagementError({
         operation: "readDocument",

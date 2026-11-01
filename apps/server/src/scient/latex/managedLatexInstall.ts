@@ -1,10 +1,6 @@
 /**
- * Where a Scient-installed LaTeX distribution lives on disk, and how to find
- * out whether one is really there.
- *
- * The installer writes this state and the toolchain probe reads it, so the
- * layout lives here rather than in either of them: neither has to know how the
- * other is wired, and the probe stays free of any dependency on the installer.
+ * Share managed-install layout between installer and discovery without making the probe depend on
+ * installer wiring.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -67,12 +63,8 @@ export function managedLatexPaths(input: {
 }
 
 /**
- * Where one unpacked distribution lives. Every install gets its own directory,
- * suffixed with a value nothing else will pick: an install must never write
- * over — or remove — the tree a running engine is executing from, and on
- * Windows it could not if it tried, because the loaded `latexmk.exe` is locked
- * for as long as it runs. The previous tree is simply left behind for the
- * post-commit cleanup, and `managed-state.json` is what decides which one is current.
+ * Use a fresh unique directory per install; never overwrite a running engine's tree (Windows locks
+ * it). Only atomic managed-state selects current, with old-tree cleanup after commit.
  */
 export function managedLatexInstallRoot(input: {
   readonly managedRoot: string;
@@ -84,11 +76,9 @@ export function managedLatexInstallRoot(input: {
 }
 
 /**
- * An install root outside the managed directory is rejected rather than
- * probed, so a tampered state file cannot point the engine at an arbitrary
- * executable on this computer. Both paths are resolved first: a prefix test
- * alone reads `<managedRoot>\..\..\..` as contained, which is the whole
- * escape.
+ * Resolve paths before containment checks and reject roots outside managed storage without probing.
+ * Prefix matching alone would let a tampered state file select arbitrary executables through parent
+ * walks.
  */
 export function isManagedInstallRootContained(input: {
   readonly root: string;

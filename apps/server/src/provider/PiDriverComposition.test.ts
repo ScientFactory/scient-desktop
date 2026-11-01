@@ -23,6 +23,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ModelManifest from "./ModelManifest.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -52,10 +53,13 @@ import {
   scientToolProjectionForProvider,
 } from "./ScientToolProjection.ts";
 
+const decodeProviderTurn = Schema.decodeSync(OrchestrationV2ProviderTurn);
+
 const PI = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-scient-composition");
 
 const piVersionSpawner = ChildProcessSpawner.make((_command) =>
+  // oxlint-disable-next-line require-yield -- Keep handle construction deferred inside the spawner's existing Effect generator.
   Effect.gen(function* () {
     const output = new TextEncoder().encode("0.82.0\n");
     return ChildProcessSpawner.makeHandle({
@@ -189,6 +193,7 @@ const testLayer = Layer.mergeAll(
   ),
   ServerSettings.layerTest(),
   ManagedRuntimeCatalog.layerTest,
+  Layer.mock(SecretResolver.SecretResolver)({}),
   TestProviderHost.layer({
     cwd: "/machine",
     settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
@@ -232,7 +237,7 @@ it("preserves an existing Pi native turn receipt", () => {
   const threadId = ThreadId.make("thread:pi-receipt");
   const providerThreadId = ProviderThreadId.make("provider-thread:pi-receipt");
   const runId = RunId.make("run:pi-receipt");
-  const receipt = Schema.decodeUnknownSync(OrchestrationV2ProviderTurn)({
+  const receipt = decodeProviderTurn({
     id: ProviderTurnId.make("provider-turn:pi-receipt"),
     providerThreadId,
     nodeId: NodeId.make("node:pi-receipt"),

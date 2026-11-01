@@ -4,6 +4,8 @@ import {
   render as _fixtureRender,
   type Screen,
 } from "../../../test/render";
+import { waitForMeasuredRow } from "../../../test/listMeasurement";
+import { advanceTestClock } from "../../../test/testClock";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import {
@@ -14,24 +16,20 @@ import {
   type OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, useLayoutEffect, useRef } from "react";
+import { createRef, useLayoutEffect, useRef, useState } from "react";
 
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
+import { cdp } from "vite-plus/test/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
-import { useQueuedDeliveryFollow, useResponseFollow } from "./responseFollow";
+import { useArrivedPromptFollow, useResponseFollow } from "./responseFollow";
+import { useQueuedRunsInView } from "./queuedRunsInView";
 import { deriveTimelineWorking } from "./timelineWorkingState";
 import { CHAT_TIMELINE_ANCHOR_OFFSET, readTimelinePosition } from "./timelineScrollAnchoring";
 
-/*
- * The send follow as ChatView wires it: the controller (chat/responseFollow.ts)
- * owns the follow and reads V2 runs and messages; the timeline runs it. The
- * harness below calls the controller exactly as ChatView does: a send at the
- * end starts it, Scroll to end and a thread switch clear it, and a queued
- * delivery is decided by the controller itself. Tests feed V2 state only.
- *
- * Motion reads `motionClock`, which these tests drive: every frame advances
- * it by 16ms, so the follow and the answer reveal move by known amounts.
+/**
+ * Mirror ChatView's V2 controller wiring so tests establish prompt-owned follow behavior. Drive
+ * motionClock per controlled frame so response reveal and follow use the same deterministic time.
  */
 
 const env = EnvironmentId.make("response-follow-tests");
@@ -49,27 +47,27 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   motionClock.now = realNow;
   _fixture.chat.sending.clear();
 }
-async function play(_fixture: _Fixture, ms: number, eachFrame?: () => void) {
+async function play(_fixture: _Fixture, ms: number, eachFrame?: () => void | Promise<void>) {
   if (!eachFrame) {
-    await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+    await advanceTestClock(_fixture.signal, ms);
     return;
   }
   for (let elapsed = 0; elapsed < ms; elapsed += 16) {
-    await _fixtureAct(() => vi.advanceTimersByTimeAsync(Math.min(16, ms - elapsed)));
-    eachFrame();
+    await advanceTestClock(_fixture.signal, Math.min(16, ms - elapsed));
+    await eachFrame();
   }
 }
+/**
+ * Plays frames until `done`, for at most `ms` of motion time. Bounded by the
+ * owned clock only: a real-time bound (vi.waitFor's) would cap how much motion
+ * a slow machine gets to play. A test past its deadline stops at the next frame.
+ */
 async function playUntil(_fixture: _Fixture, done: () => boolean, ms = 6000) {
   const motionDeadline = motionClock.now() + ms;
-  await vi.waitFor(
-    async () => {
-      if (!done() && motionClock.now() < motionDeadline) {
-        await _fixtureAct(() => vi.advanceTimersByTimeAsync(16));
-      }
-      expect(done()).toBe(true);
-    },
-    { interval: 0 },
-  );
+  while (!done() && motionClock.now() < motionDeadline) {
+    await advanceTestClock(_fixture.signal, 16);
+  }
+  expect(done()).toBe(true);
 }
 
 /** Legend's receipt needs scheduled work; waitFor drives the owned clock while it is pending. */
@@ -137,19 +135,27 @@ const run = (id: string, userMessageId: string, status: OrchestrationV2RunStatus
 
 /** What ChatView does with the controller; the test drives these. */
 
+/** Messages waiting in the queue; `own` ones this window queued (ChatView's optimistic previews). */
+interface Queued {
+  readonly id: string;
+  readonly own?: boolean;
+}
+
 function Chat({
   fixture: _fixture,
   threadKey,
   entries,
   runs,
+  queued,
 }: { fixture: _Fixture } & {
   threadKey: string;
   entries: readonly Entry[];
   runs: readonly Run[];
+  queued: readonly Queued[];
 }) {
   const messages = entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : []));
   const follow = useResponseFollow({ threadKey, runs, messages, loaded: true });
-  const { start, followSent, clear } = follow;
+  const { start, join, clear } = follow;
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
   const cancelPositioning = useStableCallback(() => {
     cancelPositionRestoreRef.current?.();
@@ -157,15 +163,28 @@ function Chat({
   });
   const atEndRef = useRef(true);
   const readerAtEnd = useStableCallback(() => atEndRef.current);
-  const followDelivered = useStableCallback((promptId: MessageId) => {
+  const followArrived = useStableCallback((promptId: MessageId) => {
+    if (!follow.followable(promptId)) return;
     clear();
-    start(promptId, true);
+    start(promptId);
   });
-  useQueuedDeliveryFollow({
+  useArrivedPromptFollow({
     threadKey,
     latestPrompt: messages.findLast((entry) => entry.role === "user") ?? null,
     readerAtEnd,
-    follow: followDelivered,
+    followingPromptId: follow.promptId,
+    follow: followArrived,
+  });
+  // ChatView's queue in the timeline's footer.
+  const [queueElement, setQueueElement] = useState<HTMLDivElement | null>(null);
+  const queueHidden = useQueuedRunsInView({
+    listRef: _fixture.listRef,
+    element: queueElement,
+    composerInset: _fixture.base.contentInsetEndAdjustment,
+    threadKey,
+    ownQueuedIds: queued.flatMap((entry) => (entry.own ? [entry.id] : [])),
+    readerAtEnd,
+    following: follow.promptId !== null,
   });
   // A thread switch clears the follow (ChatView's thread reset).
   const shownThread = useRef(threadKey);
@@ -177,14 +196,16 @@ function Chat({
   useLayoutEffect(() => {
     _fixture.publishChat({
       followPromptId: follow.promptId,
-      sendAtEnd: (promptId, options) => {
+      queueHidden,
+      sendAtEnd: (promptId) => {
         _fixture.markSending(promptId);
-        if (atEndRef.current) followSent(MessageId.make(promptId), options?.firstMessage ?? false);
+        if (atEndRef.current) start(MessageId.make(promptId));
       },
       scrollToEnd: async () => {
         cancelPositioning();
         await _fixture.listRef.current?.scrollToEnd({ animated: false });
         _fixture.listRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
+        join();
       },
     });
   });
@@ -211,6 +232,19 @@ function Chat({
       runningRunId={running?.id ?? null}
       readingFollowPromptId={follow.promptId}
       responseFollow={follow.timeline}
+      footer={
+        queued.length === 0 ? null : (
+          <div ref={setQueueElement}>
+            <section data-thread-queue="true" style={{ paddingBottom: 16 }}>
+              {queued.map((entry) => (
+                <div key={entry.id} data-queued={entry.id} style={{ height: 60 }}>
+                  {entry.id}
+                </div>
+              ))}
+            </section>
+          </div>
+        )
+      }
       cancelPositionRestoreRef={cancelPositionRestoreRef}
       onManualNavigation={cancelPositioning}
       onIsAtEndChange={(atEnd) => {
@@ -225,6 +259,7 @@ async function render(
   threadKey: string,
   entries: readonly Entry[],
   runs: readonly Run[] = [],
+  queued: readonly Queued[] = [],
 ) {
   if (!_fixture.host) {
     _fixture.host = document.createElement("div");
@@ -234,12 +269,20 @@ async function render(
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
-    _fixture.cleanup.use(fakeTimers());
+    // On the outer stack: the tree unmounts (cleanup) while its frames are
+    // still the fake ones it can cancel; then the real timers come back.
+    _fixture.stack.use(fakeTimers());
   }
   await _fixtureAct(
     async () =>
       await _fixture.root0!.rerender(
-        <Chat fixture={_fixture} threadKey={threadKey} entries={entries} runs={runs} />,
+        <Chat
+          fixture={_fixture}
+          threadKey={threadKey}
+          entries={entries}
+          runs={runs}
+          queued={queued}
+        />,
       ),
   );
 }
@@ -278,8 +321,8 @@ async function visitElsewhere(_fixture: _Fixture, key: string) {
   await play(_fixture, 96);
 }
 
-it("follows a later prompt sent at the end through its run's start, to the prompt at the top", async () => {
-  await using _fixture = _createFixture();
+it("follows a later prompt sent at the end through its run's start and all its work, past the prompt", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -302,43 +345,34 @@ it("follows a later prompt sent at the end through its run's start, to the promp
     await play(_fixture, 320);
   }
   expect(_fixture.chat.followPromptId).toBe("message-10");
-  // The run runs and its steps arrive: each is followed, staying at the end,
-  // until the prompt's text reaches the top margin.
+  // The run works: its steps and a short progress note between them are
+  // followed to the live end, past the prompt.
+  const note = message(20, "assistant", { text: "Checking the logs next.", runId: "run-10" });
   const start = viewport(_fixture).scrollTop;
-  let count = 0;
-  while (promptTextTop(_fixture, "message-10") > CHAT_TIMELINE_ANCHOR_OFFSET + 1 && count < 40) {
-    count += 1;
+  for (let count = 1; count <= 16; count++) {
+    const work =
+      count <= 8
+        ? steps(count, "run-10")
+        : [
+            ...steps(8, "run-10"),
+            note,
+            ...Array.from({ length: count - 8 }, (_, i) => tool(8 + i, "run-10")),
+          ];
     await render(
       _fixture,
       key,
-      [...history, prompt, ...steps(count, "run-10")],
+      [...history, prompt, ...work],
       [...runs, run("run-10", "message-10", "running")],
     );
-    await playUntil(
-      _fixture,
-      () =>
-        toEnd(_fixture) <= 1 ||
-        promptTextTop(_fixture, "message-10") <= CHAT_TIMELINE_ANCHOR_OFFSET + 1,
-    );
-    expect(promptTextTop(_fixture, "message-10")).toBeGreaterThanOrEqual(
-      CHAT_TIMELINE_ANCHOR_OFFSET - 1,
-    );
+    await playUntil(_fixture, () => toEnd(_fixture) <= 1);
   }
   expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
-  // At the top it stops: later steps go below.
-  const stopped = viewport(_fixture).scrollTop;
-  await render(
-    _fixture,
-    key,
-    [...history, prompt, ...steps(count + 8, "run-10")],
-    [...runs, run("run-10", "message-10", "running")],
-  );
-  await play(_fixture, 320);
-  expect(Math.abs(viewport(_fixture).scrollTop - stopped)).toBeLessThanOrEqual(1);
+  expect(promptTextTop(_fixture, "message-10")).toBeLessThan(CHAT_TIMELINE_ANCHOR_OFFSET);
+  expect(_fixture.chat.followPromptId).toBe("message-10");
 });
 
-it("ends once the prompt's own run has ended and its answer is shown", async () => {
-  await using _fixture = _createFixture();
+it("ends once the prompt's own run has ended and its answer is shown", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -362,8 +396,39 @@ it("ends once the prompt's own run has ended and its answer is shown", async () 
   expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
 });
 
-it("follows a queued prompt the server delivers in one update while the reader is at the end", async () => {
-  await using _fixture = _createFixture();
+it("drops the follow from the saved position when it ends, with nothing else to save it", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const key = "follow:settle-save";
+  const { history, runs } = await answeredThread(_fixture, key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
+  const answer = message(11, "assistant", { text: "Done.", runId: "run-10" });
+  const entries = [...history, prompt, ...steps(1, "run-10"), answer];
+  await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "running")]);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
+  // Isolate the follow's final position save from late real scroll/resize events. Measure first,
+  // hold the real-time working header open, and intercept scrolls at window capture before React
+  // and Legend bookkeeping; fake frames do not determine when those events arrive.
+  await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
+  const host = _fixture.host!;
+  const holdScroll = (event: Event) => event.stopPropagation();
+  for (const type of ["scroll", "scrollend"]) {
+    window.addEventListener(type, holdScroll, true);
+    _fixture.cleanup.defer(() => window.removeEventListener(type, holdScroll, true));
+  }
+  await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "completed")]);
+  for (const animation of host.getAnimations({ subtree: true })) animation.pause();
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
+  await play(_fixture, 16);
+  expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
+});
+
+it("follows a queued prompt the server delivers in one update while the reader is at the end", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -393,8 +458,8 @@ it("follows a queued prompt the server delivers in one update while the reader i
   expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
 });
 
-it("follows this window's queued send when its delivery arrives before its receipt", async () => {
-  await using _fixture = _createFixture();
+it("follows this window's queued send when its delivery arrives before its receipt", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -429,8 +494,8 @@ it("follows this window's queued send when its delivery arrives before its recei
   expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
 });
 
-it("leaves a prompt another window sent directly alone, and never saves that as following", async () => {
-  await using _fixture = _createFixture();
+it("follows a prompt another window sent while the reader is at the end", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -443,24 +508,17 @@ it("leaves a prompt another window sent directly alone, and never saves that as 
   });
   const runningRuns = [...runs, run("run-10", "message-10", "running")];
   await render(_fixture, key, [...history, direct], runningRuns);
-  await play(_fixture, 64);
-  // Nothing moves for it; the reader scrolls down to it themselves.
-  expect(_fixture.chat.followPromptId).toBeNull();
-  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  viewport(_fixture).dispatchEvent(new Event("scroll"));
-  await play(_fixture, 64);
-  // Resting at the end of a working thread is not following it.
-  expect(readTimelinePosition(key)?.atEnd).toBe(true);
-  expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
-  const resting = viewport(_fixture).scrollTop;
-  await render(_fixture, key, [...history, direct, ...steps(8, "run-10")], runningRuns);
-  await play(_fixture, 320);
-  expect(_fixture.chat.followPromptId).toBeNull();
-  expect(Math.abs(viewport(_fixture).scrollTop - resting)).toBeLessThanOrEqual(1);
+  await play(_fixture, 16);
+  expect(_fixture.chat.followPromptId).toBe("message-10");
+  await render(_fixture, key, [...history, direct, ...steps(12, "run-10")], runningRuns);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  await vi.waitFor(() => {
+    expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
+  });
 });
 
-it("keeps a follow cancelled by scrolling up cancelled across a thread switch", async () => {
-  await using _fixture = _createFixture();
+it("keeps a follow cancelled by scrolling up cancelled across a thread switch", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -476,6 +534,12 @@ it("keeps a follow cancelled by scrolling up cancelled across a thread switch", 
   viewport(_fixture).scrollTop -= 20;
   viewport(_fixture).dispatchEvent(new Event("scroll"));
   await play(_fixture, 64);
+  // Still at the end, but they ended the follow: new work does not pull them along.
+  const resting = viewport(_fixture).scrollTop;
+  await render(_fixture, key, [...history, prompt, ...steps(4, "run-10")], runningRuns);
+  await play(_fixture, 320);
+  expect(_fixture.chat.followPromptId).toBeNull();
+  expect(Math.abs(viewport(_fixture).scrollTop - resting)).toBeLessThanOrEqual(1);
   const saved = readTimelinePosition(key)!;
   expect(saved.followingPromptId).toBeUndefined();
   await visitElsewhere(_fixture, "follow:cancel-sticks-elsewhere");
@@ -489,8 +553,8 @@ it("keeps a follow cancelled by scrolling up cancelled across a thread switch", 
   expect(toEnd(_fixture)).toBeGreaterThan(40);
 });
 
-it("ends only for keys that scroll the timeline, not for a menu's arrow keys or shortcuts", async () => {
-  await using _fixture = _createFixture();
+it("ends only for keys that scroll the timeline, not for a menu's arrow keys or shortcuts", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -535,39 +599,49 @@ it("ends only for keys that scroll the timeline, not for a menu's arrow keys or 
   expect(_fixture.chat.followPromptId).toBeNull();
 });
 
-it("lets Scroll to end cancel a follow resumed after coming back to the thread", async () => {
-  await using _fixture = _createFixture();
+it("rejoins the follow when the reader comes back to the end or clicks Scroll to end", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  const key = "follow:resumed-cancel";
+  const key = "follow:rejoin";
   const { history, runs } = await answeredThread(_fixture, key);
   const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
   const runningRuns = [...runs, run("run-10", "message-10", "running")];
   await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
   await render(_fixture, key, [...history, prompt, ...steps(1, "run-10")], runningRuns);
   await playUntil(_fixture, () => toEnd(_fixture) <= 1);
-  await vi.waitFor(() => {
-    expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
-  });
-  await visitElsewhere(_fixture, "follow:resumed-cancel-elsewhere");
-  // Back: the follow is restored for that prompt and carries on.
-  await render(_fixture, key, [...history, prompt, ...steps(2, "run-10")], runningRuns);
-  await playUntil(_fixture, () => _fixture.chat.followPromptId === "message-10");
-  // The reader clicks Scroll to end: a one-shot jump that ends the follow.
-  await scroll(() => _fixture.chat.scrollToEnd());
-  await play(_fixture, 32);
-  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
-  expect(_fixture.chat.followPromptId).toBeNull();
-  const after = viewport(_fixture).scrollTop;
-  await render(_fixture, key, [...history, prompt, ...steps(12, "run-10")], runningRuns);
+  const scrollUp = async () => {
+    viewport(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: -200, bubbles: true }));
+    viewport(_fixture).scrollTop -= 300;
+    viewport(_fixture).dispatchEvent(new Event("scroll"));
+    await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
+  };
+  // Away from the end, the work goes on below without moving the reader.
+  await scrollUp();
+  const away = viewport(_fixture).scrollTop;
+  await render(_fixture, key, [...history, prompt, ...steps(6, "run-10")], runningRuns);
   await play(_fixture, 320);
-  expect(Math.abs(viewport(_fixture).scrollTop - after)).toBeLessThanOrEqual(1);
+  expect(Math.abs(viewport(_fixture).scrollTop - away)).toBeLessThanOrEqual(1);
+  // Scrolling back down to the end on their own: they follow it again.
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  viewport(_fixture).dispatchEvent(new Event("scroll"));
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === "message-10");
+  await render(_fixture, key, [...history, prompt, ...steps(12, "run-10")], runningRuns);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  // Away again, then Scroll to end: the same.
+  await scrollUp();
+  await render(_fixture, key, [...history, prompt, ...steps(18, "run-10")], runningRuns);
+  await play(_fixture, 160);
   expect(toEnd(_fixture)).toBeGreaterThan(40);
+  await scroll(() => _fixture.chat.scrollToEnd());
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === "message-10");
+  await render(_fixture, key, [...history, prompt, ...steps(24, "run-10")], runningRuns);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
 });
 
-it("brings a reader who left while following back to where the follow would be now", async () => {
-  await using _fixture = _createFixture();
+it("brings a reader who left while following back to where the follow would be now", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -598,8 +672,8 @@ it("brings a reader who left while following back to where the follow would be n
   expect(toEnd(_fixture)).toBeGreaterThan(100);
 });
 
-it("returns a reader who scrolled well up before leaving a working thread to that spot", async () => {
-  await using _fixture = _createFixture();
+it("returns a reader who scrolled well up before leaving a working thread to that spot", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -625,8 +699,8 @@ it("returns a reader who scrolled well up before leaving a working thread to tha
   expect(toEnd(_fixture)).toBeGreaterThan(200);
 });
 
-it("scrolls smoothly with an answer appearing line by line, never ahead of it", async () => {
-  await using _fixture = _createFixture();
+it("scrolls smoothly with an answer appearing line by line, never ahead of it", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -653,7 +727,7 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
   const revealed = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   const positions: number[] = [];
   let aheadOfReveal = 0;
-  await play(_fixture, 2600, () => {
+  await play(_fixture, 2600, async () => {
     positions.push(viewport(_fixture).scrollTop);
     const element = text();
     if (!element) return;
@@ -665,6 +739,8 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
       viewport(_fixture).clientHeight -
       _fixture.base.contentInsetEndAdjustment;
     aheadOfReveal = Math.max(aheadOfReveal, readingBottom - shownBottom - 64);
+    // The reveal changes native layout; fake RAF must not outrun Legend's size delivery.
+    await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
   });
   const moves = positions.slice(1).map((value, index) => value - positions[index]!);
   expect(positions.at(-1)! - positions[0]!).toBeGreaterThan(40);
@@ -675,8 +751,8 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
   await playUntil(_fixture, () => toEnd(_fixture) <= 1);
 });
 
-it("yields to the reader scrolling down mid-follow, then carries on from where they stop", async () => {
-  await using _fixture = _createFixture();
+it("yields to the reader scrolling down mid-follow, then carries on from where they stop", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -720,21 +796,19 @@ it("yields to the reader scrolling down mid-follow, then carries on from where t
   expect(followWrites).toBe(0);
   delete (node as { scrollTop?: number }).scrollTop;
   // Once they stop, the follow carries on to where it rests: this answer is
-  // taller than the reading area, so the prompt's text at the top margin.
-  expect(promptTextTop(_fixture, "message-10")).toBeGreaterThan(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
-  await playUntil(
-    _fixture,
-    () => promptTextTop(_fixture, "message-10") <= CHAT_TIMELINE_ANCHOR_OFFSET + 1,
-  );
+  // taller than the reading area, so its start at the top margin.
+  const answerTop = () =>
+    _fixture.host!.querySelector('[data-message-id="message-13"]')!.getBoundingClientRect().top -
+    node.getBoundingClientRect().top;
+  expect(answerTop()).toBeGreaterThan(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
+  await playUntil(_fixture, () => answerTop() <= CHAT_TIMELINE_ANCHOR_OFFSET + 1);
   await play(_fixture, 192);
-  expect(promptTextTop(_fixture, "message-10")).toBeGreaterThanOrEqual(
-    CHAT_TIMELINE_ANCHOR_OFFSET - 1,
-  );
+  expect(answerTop()).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
   expect(toEnd(_fixture)).toBeGreaterThan(1);
 });
 
-it("rests between changes: no frames while the run works and nothing changes", async () => {
-  await using _fixture = _createFixture();
+it("rests between changes: no frame loop while the run works and nothing changes", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -761,7 +835,8 @@ it("rests between changes: no frames while the run works and nothing changes", a
   };
   try {
     await play(_fixture, 480);
-    expect(motionFrames).not.toHaveBeenCalled();
+    // A running loop takes a frame every 16 ms. A real late resize may still wake one.
+    expect(motionFrames.mock.calls.length).toBeLessThanOrEqual(2);
     // More text arrives: the reveal wakes and shows it, and the follow keeps up.
     const longer = message(11, "assistant", {
       runId: "run-10",
@@ -776,8 +851,8 @@ it("rests between changes: no frames while the run works and nothing changes", a
   }
 });
 
-it("follows a queued prompt promoted to a steer through the run it went into", async () => {
-  await using _fixture = _createFixture();
+it("follows a queued prompt promoted to a steer through the run it went into", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -938,8 +1013,8 @@ const answerBottom = (_fixture: _Fixture, messageId: string) => {
 const readingBottom = (_fixture: _Fixture) =>
   viewport(_fixture).clientHeight - _fixture.base.contentInsetEndAdjustment;
 
-it("brings a reader back to the prompt they followed, not past it to a later one", async () => {
-  await using _fixture = _createFixture();
+it("brings a reader back to the prompt they followed, not past it to a later one", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -962,8 +1037,8 @@ it("brings a reader back to the prompt they followed, not past it to a later one
   expect(Math.abs(viewport(_fixture).scrollTop - resting)).toBeLessThanOrEqual(1);
 });
 
-it("brings a reader back to the prompt they followed when it finished while they were away", async () => {
-  await using _fixture = _createFixture();
+it("brings a reader back to the prompt they followed when it finished while they were away", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -982,32 +1057,10 @@ it("brings a reader back to the prompt they followed when it finished while they
   expect(_fixture.chat.followPromptId).toBeNull();
 });
 
-it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const key = "follow:first";
-  const { history, runs } = await answeredThread(_fixture, key);
-  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
-  const working = [...runs, run("run-10", "message-10", "running")];
-  // Sent as a thread's first prompt (ChatView's first-message path).
-  await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10", { firstMessage: true }));
-  await render(_fixture, key, [...history, prompt], working);
-  await play(_fixture, 160);
-  expect(_fixture.chat.followPromptId).toBe("message-10");
-  for (let count = 1; count <= 8; count++) {
-    await render(_fixture, key, [...history, prompt, ...steps(count, "run-10")], working);
-    await play(_fixture, 96);
-  }
-  // Without whole-response following, the traces are left below the view.
-  expect(toEnd(_fixture)).toBeGreaterThan(100);
-});
-
-it.each(["running", "completed"] as const)(
+it.for(["running", "completed"] as const)(
   "brings a reader back to the prompt they followed across rows never rendered (%s)",
-  async (followed) => {
-    await using _fixture = _createFixture();
+  async (followed, context) => {
+    await using _fixture = _createFixture(context);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1079,21 +1132,127 @@ it.each(["running", "completed"] as const)(
   },
 );
 
-function _createFixture() {
+it("stops at a substantial message mid-run, and follows the work after it once the reader reads down to the end", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const key = "follow:read-mid-run";
+  const { history, runs } = await answeredThread(_fixture, key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  const runningRuns = [...runs, run("run-10", "message-10", "running")];
+  await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
+  await render(_fixture, key, [...history, prompt, ...steps(2, "run-10")], runningRuns);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  const report = message(11, "assistant", {
+    runId: "run-10",
+    text: Array.from({ length: 8 }, () => "A long report paragraph. ".repeat(10)).join("\n\n"),
+  });
+  const after = (count: number) => Array.from({ length: count }, (_, i) => tool(20 + i, "run-10"));
+  await render(
+    _fixture,
+    key,
+    [...history, prompt, ...steps(2, "run-10"), report, ...after(6)],
+    runningRuns,
+  );
+  const reportTop = () =>
+    _fixture.host!.querySelector('[data-message-id="message-11"]')!.getBoundingClientRect().top -
+    viewport(_fixture).getBoundingClientRect().top;
+  // The report is read: the follow rests with its start at the top margin.
+  await playUntil(_fixture, () => Math.abs(reportTop() - CHAT_TIMELINE_ANCHOR_OFFSET) <= 2);
+  await play(_fixture, 320);
+  expect(reportTop()).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
+  expect(toEnd(_fixture)).toBeGreaterThan(40);
+  expect(_fixture.chat.followPromptId).toBe("message-10");
+  // Read down to the end: the work after it is followed again.
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  viewport(_fixture).dispatchEvent(new Event("scroll"));
+  await play(_fixture, 64);
+  await render(
+    _fixture,
+    key,
+    [...history, prompt, ...steps(2, "run-10"), report, ...after(14)],
+    runningRuns,
+  );
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+});
+
+it("joins a working thread's follow when the reader opens it at its end", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const { history, runs } = await answeredThread(_fixture, "follow:open-elsewhere");
+  const key = "follow:open-working";
+  const prompt = message(10, "user", { text: "Started elsewhere", runId: "run-10" });
+  const runningRuns = [...runs, run("run-10", "message-10", "running")];
+  await render(_fixture, key, [...history, prompt, ...steps(2, "run-10")], runningRuns);
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === "message-10");
+  await render(_fixture, key, [...history, prompt, ...steps(14, "run-10")], runningRuns);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+});
+
+it("keeps the reader's queued messages reachable", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+  const emulateReducedMotion = (value: string) =>
+    cdp().send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value }],
+    });
+  await emulateReducedMotion("reduce");
+  _fixture.cleanup.defer(async () => {
+    await emulateReducedMotion("");
+  });
+
+  const key = "follow:queue";
+  const { history, runs } = await answeredThread(_fixture, key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  const runningRuns = [...runs, run("run-10", "message-10", "running")];
+  const entries = [...history, prompt, ...steps(2, "run-10")];
+  const queueBottom = () =>
+    _fixture.host!.querySelector('[data-thread-queue="true"]')!.getBoundingClientRect().bottom -
+    viewport(_fixture).getBoundingClientRect().top;
+  const readingBottom = viewport(_fixture).clientHeight - _fixture.base.contentInsetEndAdjustment;
+  await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
+  await render(_fixture, key, entries, runningRuns);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  // While following, a message queued from anywhere is part of the end.
+  await render(_fixture, key, entries, runningRuns, [{ id: "q1" }]);
+  await playUntil(_fixture, () => queueBottom() <= readingBottom);
+  await vi.waitFor(() => expect(_fixture.chat.queueHidden).toBe(false));
+  // Away from the end, a hidden queue is reported for Scroll to end.
+  viewport(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: -200, bubbles: true }));
+  viewport(_fixture).scrollTop -= 300;
+  viewport(_fixture).dispatchEvent(new Event("scroll"));
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
+  await vi.waitFor(() => expect(_fixture.chat.queueHidden).toBe(true));
+  // The run ends; back at the end, a message this window queues there comes into view.
+  const done = [...runs, run("run-10", "message-10", "completed")];
+  await render(_fixture, key, entries, done, [{ id: "q1" }]);
+  await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
+  viewport(_fixture).dispatchEvent(new Event("scroll"));
+  await vi.waitFor(() => expect(_fixture.chat.queueHidden).toBe(false));
+  await render(_fixture, key, entries, done, [{ id: "q1" }, { id: "q2", own: true }]);
+  await vi.waitFor(() => {
+    expect(queueBottom()).toBeLessThanOrEqual(readingBottom);
+    expect(_fixture.chat.queueHidden).toBe(false);
+  });
+});
+
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   const listRef = createRef<LegendListRef>();
   let clock = 0;
   const base = {
     listRef,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     turnDiffSummaries: [],
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
@@ -1112,18 +1271,21 @@ function _createFixture() {
     onManualNavigation: () => {},
   };
   const chat: {
-    /** A later prompt sent from this window (ChatView's frameSubmittedMessage). */
-    sendAtEnd: (promptId: string, options?: { firstMessage?: boolean }) => void;
+    /** A prompt sent from this window (ChatView's frameSubmittedMessage). */
+    sendAtEnd: (promptId: string) => void;
     /** Prompts sent from this window whose send is still being dispatched (no V2 run yet). */
     sending: Set<string>;
-    /** The Scroll to end control (ChatView's scrollToEnd → cancelTimelinePositioning). */
+    /** The Scroll to end control (ChatView's scrollToEnd: cancel, jump, rejoin). */
     scrollToEnd: () => Promise<void>;
     followPromptId: string | null;
+    /** The queue is below the reading area (Scroll to end shows for it). */
+    queueHidden: boolean;
   } = {
     sendAtEnd: () => {},
     sending: new Set(),
     scrollToEnd: async () => {},
     followPromptId: null,
+    queueHidden: false,
   };
   return {
     listRef,
@@ -1139,6 +1301,8 @@ function _createFixture() {
     host: undefined! as HTMLDivElement | undefined,
     stack,
     cleanup,
+    /** Aborts at the test's deadline; the clock drivers stop on it. */
+    signal: context.signal,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {
       try {

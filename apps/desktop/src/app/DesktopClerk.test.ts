@@ -1,11 +1,22 @@
-import * as NodePath from "@effect/platform-node/NodePath";
+// @effect-diagnostics nodeBuiltinImport:off - Clerk storage tests use a real temporary state directory.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
+// SCIENT-FORK:START scient-deferred-auth
 import { codexAuthHandoffUrl } from "@t3tools/shared/codexAuthHandoff";
+// SCIENT-FORK:END scient-deferred-auth
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { beforeEach, vi } from "vite-plus/test";
+import { afterAll, beforeEach, vi } from "vite-plus/test";
+
+const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
+afterAll(() => {
+  NodeFS.rmSync(clerkStateDir, { recursive: true, force: true });
+});
 
 const { createClerkBridgeMock, requestSingleInstanceLockMock, storageAdapter, storageMock } =
   vi.hoisted(() => ({
@@ -26,8 +37,6 @@ vi.mock("@clerk/electron", () => ({
 vi.mock("@clerk/electron/storage", () => ({
   storage: storageMock,
 }));
-
-import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -54,17 +63,21 @@ const layerDesktopClerk = (
     openExternal: () => Effect.succeed(true),
     openSystemSettings: () => Effect.succeed(false),
     copyText: () => Effect.void,
+    // SCIENT-FORK:START desktop-shell-copy-png
     copyPng: () => Effect.succeed(true),
+    // SCIENT-FORK:END desktop-shell-copy-png
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: "/tmp/t3-state",
+    stateDir: clerkStateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
+    // SCIENT-FORK:START desktop-state-isolation
     userDataDirName: isDevelopment ? "scient-next-dev" : "scient-next",
     legacyUserDataDirName: "__scient_next_legacy_disabled__",
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
+    // SCIENT-FORK:END desktop-state-isolation
     platform,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -96,7 +109,7 @@ const layerDesktopClerk = (
   return DesktopClerk.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        NodePath.layerPosix,
+        NodePathLayer.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
@@ -106,6 +119,18 @@ const layerDesktopClerk = (
   );
 };
 
+// SCIENT-FORK:START restored-sole-guards - the bridge takes upstream's owner-only store around Clerk's storage.
+const assertBridgeConfigured = (renderer: { readonly scheme: string; readonly host: string }) => {
+  assert.equal(createClerkBridgeMock.mock.calls.length, 1);
+  const { storage, ...options } = createClerkBridgeMock.mock.calls[0]![0];
+  assert.deepEqual(options, { manageSingleInstanceLock: false, passkeys: true, renderer });
+  assert.notStrictEqual(storage, storageAdapter);
+  storageAdapter.getItem.mockReturnValueOnce("stored-token");
+  assert.equal(storage.getItem("session"), "stored-token");
+  assert.deepEqual(storageAdapter.getItem.mock.lastCall, ["session"]);
+};
+// SCIENT-FORK:END restored-sole-guards
+
 describe("DesktopClerk", () => {
   beforeEach(() => {
     createClerkBridgeMock.mockReset();
@@ -113,41 +138,8 @@ describe("DesktopClerk", () => {
     storageMock.mockReset();
   });
 
-  it.effect("acquires and releases the SDK bridge with the layer", () => {
-    const cleanup = vi.fn();
-    const events: string[] = [];
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementation(() => {
-      events.push("createClerkBridge");
-      return { cleanup, isPrimaryInstance: true };
-    });
-
-    return Effect.gen(function* () {
-      yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
-
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "scient-next-dev", host: "app" },
-          },
-        ],
-      ]);
-      assert.equal(cleanup.mock.calls.length, 1);
-      assert.deepEqual(events, [
-        "setPath:userData:/tmp/t3-state/electron-userdata",
-        "requestSingleInstanceLock",
-        "on:second-instance",
-        "createClerkBridge",
-      ]);
-      storageMock.mockClear();
-      createClerkBridgeMock.mockClear();
-    });
-  });
-
   it.each([
+    // SCIENT-FORK:START desktop-state-isolation — Scient resolves userData to its own directories and never adopts a T3 one
     {
       name: "packaged macOS",
       isDevelopment: false,
@@ -164,17 +156,15 @@ describe("DesktopClerk", () => {
       name: "packaged Windows",
       isDevelopment: false,
       platform: "win32" as const,
-      // Scient resolves userData to its own established directories and never
-      // probes or adopts a T3 directory. Upstream expects "t3code-v2" here; the
-      // ordering assertion this test exists for is unaffected.
       userData: "/tmp/app-data/scient-next",
     },
     {
       name: "development",
       isDevelopment: true,
       platform: "win32" as const,
-      userData: "/tmp/t3-state/electron-userdata",
+      userData: `${clerkStateDir}/electron-userdata`,
     },
+    // SCIENT-FORK:END desktop-state-isolation
   ])(
     "creates the bridge before startup can yield to the event loop ($name)",
     ({ isDevelopment, platform, userData }) => {
@@ -197,8 +187,13 @@ describe("DesktopClerk", () => {
         `setPath:userData:${userData}`,
         "requestSingleInstanceLock",
         "on:second-instance",
+        "on:open-url",
         "createClerkBridge",
       ]);
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
+      ]);
+      assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
   );
 
@@ -241,14 +236,47 @@ describe("DesktopClerk", () => {
     },
   );
 
-  it.effect("delivers queued startup links and later links once in arrival order", () => {
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+
+  // regression: 3e01c4bc57 Migrate desktop auth to Clerk bridge (#3092) - sole guard: skipping bridge.cleanup() on release passed every other desktop test
+  it.effect("acquires and releases the SDK bridge with the layer", () => {
+    const cleanup = vi.fn();
+    const events: string[] = [];
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockImplementation(() => {
+      events.push("createClerkBridge");
+      return { cleanup, isPrimaryInstance: true };
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
+
+      assertBridgeConfigured({ scheme: "scient-next-dev", host: "app" });
+      assert.equal(cleanup.mock.calls.length, 1);
+      assert.deepEqual(events, [
+        `setPath:userData:${clerkStateDir}/electron-userdata`,
+        "requestSingleInstanceLock",
+        "on:second-instance",
+        "on:open-url",
+        "createClerkBridge",
+      ]);
+      storageMock.mockClear();
+      createClerkBridgeMock.mockClear();
+    });
+  });
+  // SCIENT-FORK:END restored-sole-guards
+
+  it.effect("delivers each queued startup link once, before later links", () => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
     const listeners = new Map<string, (...args: unknown[]) => void>();
     const received: string[] = [];
+    // SCIENT-FORK:START scient-url-scheme
     const first = "scient://new?prompt=first";
     const second = "scient://threads/env-1/thread-1";
     const later = "scient://new?prompt=later";
+    const launchPair = "scient://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
+    // SCIENT-FORK:END scient-url-scheme
     const delivered = Promise.withResolvers<void>();
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
@@ -261,13 +289,14 @@ describe("DesktopClerk", () => {
       const clerk = yield* DesktopClerk.DesktopClerk;
       listeners.get("second-instance")?.({}, ["t3", first]);
       listeners.get("second-instance")?.({}, ["t3", second]);
+      listeners.get("open-url")?.({ preventDefault: () => undefined }, launchPair);
       assert.deepEqual(received, []);
 
       yield* clerk.configure;
       listeners.get("second-instance")!({}, ["t3", later]);
       yield* Effect.promise(() => delivered.promise);
 
-      assert.deepEqual(received, [first, second, later]);
+      assert.deepEqual(received, [launchPair, first, second, later]);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
@@ -290,6 +319,7 @@ describe("DesktopClerk", () => {
     );
   });
 
+  // SCIENT-FORK:START scient-url-scheme — the renderer origin follows Scient's development and production schemes
   it.effect.each(
     [
       { isDevelopment: true, scheme: "scient-next-dev" },
@@ -306,21 +336,15 @@ describe("DesktopClerk", () => {
       createClerkBridgeMock.mockReturnValue(bridge);
 
       yield* Effect.scoped(Layer.build(layerDesktopClerk(isDevelopment)));
-      assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme, host: "app" },
-          },
-        ],
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
       ]);
+      assertBridgeConfigured({ scheme, host: "app" });
       storageMock.mockClear();
       createClerkBridgeMock.mockClear();
     }),
   );
+  // SCIENT-FORK:END scient-url-scheme
 
   it.effect.each(["darwin", "win32", "linux"] as const)(
     "quits a second launch before initializing Clerk or the application runtime on %s",
@@ -342,7 +366,9 @@ describe("DesktopClerk", () => {
 
         assert.isTrue(Exit.hasInterrupts(exit));
         assert.deepEqual(events, [
+          // SCIENT-FORK:START desktop-state-isolation
           "setPath:userData:/tmp/app-data/scient-next",
+          // SCIENT-FORK:END desktop-state-isolation
           "requestSingleInstanceLock",
           "quit",
         ]);
@@ -352,6 +378,7 @@ describe("DesktopClerk", () => {
   );
 });
 
+// SCIENT-FORK:START scient-deferred-auth — Scient defers provider auth deep links and ChatGPT handoff, and holds default-browser activation
 it.effect("deferred provider auth deep links do not navigate or start authentication", () => {
   storageMock.mockReturnValue(storageAdapter);
   createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
@@ -366,7 +393,7 @@ it.effect("deferred provider auth deep links do not navigate or start authentica
       }),
   } as unknown as ElectronApp.ElectronApp["Service"];
   const electronWindow = {
-    currentMainOrFirst: Effect.succeed(Option.some(window)),
+    currentMainOrFirst: Effect.succeedSome(window),
     reveal: () => Effect.sync(() => revealed.resolve()),
   } as unknown as ElectronWindow.ElectronWindow["Service"];
   return Effect.gen(function* () {
@@ -452,9 +479,9 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell, listeners)),
         Effect.provideService(HostProcess.Arguments, entry === "startup" ? ["t3", link] : ["t3"]),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
-        Effect.provideService(ElectronWindow.ElectronWindow, {
-          currentMainOrFirst: Effect.succeed(Option.none()),
-        } as ElectronWindow.ElectronWindow["Service"]),
+        Effect.provide(
+          Layer.mock(ElectronWindow.ElectronWindow)({ currentMainOrFirst: Effect.succeedNone }),
+        ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );
     }).pipe(Effect.scoped),
@@ -473,6 +500,7 @@ it.effect("hands Scient app links to the renderer while browser activation stays
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const received: Array<string> = [];
+    const pairLink = "scient://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -487,6 +515,9 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       assert.strictEqual(open("scient://new?prompt=hi"), 1);
       assert.strictEqual(open("scient-next-dev://threads/env-1/thread-1"), 1);
       assert.strictEqual(open("t3code://new?prompt=hi"), 0);
+      assert.strictEqual(open(pairLink), 1);
+      assert.strictEqual(open("scient://pair"), 0);
+      assert.strictEqual(open(pairLink.replace("scient:", "t3code:")), 0);
       // Unregistered app identities and other protocols retain their handling.
       assert.strictEqual(open("mailto:hello@example.com"), 0);
       assert.strictEqual(open("t3code://somewhere-else"), 0);
@@ -494,6 +525,7 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       assert.deepStrictEqual(received, [
         "scient://new?prompt=hi",
         "scient-next-dev://threads/env-1/thread-1",
+        pairLink,
       ]);
     }).pipe(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
@@ -513,3 +545,4 @@ it.effect("hands Scient app links to the renderer while browser activation stays
     );
   }).pipe(Effect.scoped),
 );
+// SCIENT-FORK:END scient-deferred-auth

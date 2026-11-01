@@ -1,21 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The reference document is packed in memory with yazl's stream API.
 /**
- * Scient's default Word style: the reference document Pandoc takes its styles
- * and page setup from (`--reference-doc`).
- *
- * It is written here, from Scient's own style definitions, rather than copied
- * from Pandoc's default: the package holds only `word/styles.xml` and a body
- * whose section sets the page, and Pandoc supplies every other part (numbering,
- * theme, settings, footnote separators) from its embedded defaults. Pandoc
- * reads the reference document under `--sandbox` because it is named on the
- * command line; it is copied into each conversion's scratch directory under a
- * fixed name.
- *
- * Styles: body text and headings, speaker labels (one colour per speaker), a
- * editable, text-width table style, captions, footnotes, code,
- * and the Scient block styles `Scient Work Log`, `Scient Reasoning`,
- * `Scient Alert`, `Scient Task List`, and `Scient Placeholder`, so each can be
- * restyled or removed in Word in one place.
+ * Supply only Scient styles/page setup and let Pandoc fill standard package parts. Copy the
+ * reference into each scratch directory under a fixed name so sandboxed command-line reads stay
+ * explicit.
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

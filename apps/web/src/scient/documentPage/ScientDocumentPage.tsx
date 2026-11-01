@@ -38,11 +38,8 @@ import "../math/scient-math.css";
 import "./scient-document-page.css";
 
 /**
- * The document page: one complete, non-virtualized, print-ready rendering of
- * a captured document bundle. It shares chat's Markdown grammar, math, Mermaid
- * runtime, and bidirectional text handling, but none of chat's interaction:
- * links to files, citations, and chips print as plain text, and nothing here
- * talks to a Scient server beyond the capture it was given.
+ * Print a complete non-virtualized capture without contacting the server beyond that bundle. File
+ * links, citations, and chips must render as plain text rather than chat interactions.
  */
 
 type KatexRuntime = typeof import("../math/katexRuntime");
@@ -218,6 +215,7 @@ function PrintMermaid({ source }: { readonly source: string }) {
     "source" in state && state.source === source && state.tracker === tracker
       ? state
       : { status: "pending" as const };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renders the diagram through the async Mermaid renderer into the capture tracker, ignoring replies after unmount
   useEffect(() => {
     let active = true;
     const finish = tracker.track();
@@ -253,6 +251,7 @@ function PrintMermaid({ source }: { readonly source: string }) {
       finish();
     };
   }, [source, tracker]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finishes the capture tracker entry when the render state settles
   useEffect(() => {
     if ("finish" in state) state.finish();
   }, [state]);
@@ -335,6 +334,7 @@ function PrintImage({
       : /^data:image\//iu.test(src)
         ? src
         : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finishes the capture tracker entry when the image resolves to nothing
   useEffect(() => {
     if (resolved === null) finish();
   }, [finish, resolved]);
@@ -342,6 +342,7 @@ function PrintImage({
   // decodes; a decoded image with other bytes than the capture is not the
   // capture either.
   const capturedDigest = asset?.content._tag === "captured" ? asset.content.sha256 : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- verifies the captured asset digest against the resolved image through the capture tracker
   useEffect(() => {
     if (asset === undefined || resolved === null || capturedDigest === undefined) return;
     void tracker.checkCapturedAsset(

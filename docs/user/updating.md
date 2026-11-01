@@ -36,7 +36,7 @@ If the app restarts on its old version, Scient tells you the update did not
 apply. It does not install that version again on its own, even when another
 device asks. Use the update control on that machine to retry.
 
-Choose **Stable** or **Beta** in **Settings → General → Update track**. Existing
+Choose **Stable** or **Beta** in **Settings → About → Update track**. Existing
 Stable installations stay on Stable until you choose Beta. Beta offers previews
 from a separate release feed. Before the first Beta is published, choosing Beta
 simply reports no available update. Your choice is saved across restarts.
@@ -95,11 +95,10 @@ are ready. A server that is still restarting finishes on its own.
 
 ## Keep a connected server in sync
 
-If a connected environment uses a different server version, Scient shows the
-version warning above the composer and in **Settings → Connections**. Hiding
-the composer warning does not change either runtime.
+If a connected environment uses a different server version, the update control
+at the bottom of the sidebar and **Settings → Environments** offer to update it.
 
-**Settings → General → Continue threads after restarts** is off by default.
+**Settings → Maintenance → Continue threads after restarts** is off by default.
 When enabled, supported active threads can resume after an update, crash, or machine restart.
 Scient must start again on that machine; this does not enable automatic startup. Threads without
 saved provider resume state need a new message, and terminal commands may still be interrupted.
@@ -107,9 +106,10 @@ Changes apply to connected environments that support the setting. After an offli
 reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
 If you previously enabled continuation only for updates, enable this setting once to allow recovery
 without a connected client.
-A thread that finished its turn to wait on a monitor, subagent, or background task
-is woken and told that this work stopped. A background shell, such as a dev server,
-does not wake it; the thread learns about it with your next message.
+A thread that finished its turn to wait on a subagent, a background task, or a
+command or monitor the agent said it was waiting on is woken and told that this work
+stopped. Other background shells and monitors, such as a dev server and its
+watchdog, do not wake it; the thread learns about them with your next message.
 A thread is not resumed while it waits for your approval, answer, or secret, or
 while it is archived, snoozed, or settled. After three automatic resumes in a row,
 the thread waits for your next message.
@@ -166,6 +166,23 @@ newer release; see [Run a Scient server without the desktop app](./background-se
 Only one server can use a Scient data directory at a time. If startup reports
 that another server owns it, stop that server before retrying, or use a separate
 data directory and pair with the running server.
+
+## If the desktop app does not start
+
+If the desktop app's server keeps failing at startup, Scient shows a "Scient
+could not start" window instead of the app. If a newer version is available,
+choose **Update** to install it. If not, the window links to the last version
+that started on your computer. Download and install it to go back. Use **Copy
+details** to include the error in a bug report.
+
+## Registries and proxies
+
+Each server checks providers installed with npm through its own npm, so the
+checks use npm's configured registry, authentication, and proxy settings.
+Providers installed with Homebrew or pnpm check through those tools. Configure
+npm on the server's machine. If that registry cannot be reached, the release
+shows as unavailable; Scient does not try the public registry instead. Machines
+without npm check the public npm registry directly.
 
 ## Update providers
 

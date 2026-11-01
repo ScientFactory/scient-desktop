@@ -3,12 +3,9 @@ import { GENERAL_SECTION_GROUP_ID, sectionGroupId } from "./logic";
 const PREFIX = "scient:sidebar:placement-order:";
 
 /**
- * Carries automatic placement saved before section group ids named their
- * environment over to `scope`. It was saved per primary environment,
- * `placement-order:<environment id>`, with bare section ids; that environment
- * held the catalog, so each id becomes its group id there. Runs only while
- * `scope` has nothing saved and exactly one such entry exists; anything
- * ambiguous is left to reseed from the current manual order.
+ * Migrate legacy placement only into an empty scope with exactly one source entry. IDs belong to
+ * that entry's environment; ambiguous entries must reseed from current manual order rather than
+ * guessing.
  */
 export function migrateLegacyPlacement(readStorage: () => Storage, scope: string): void {
   try {
@@ -18,7 +15,11 @@ export function migrateLegacyPlacement(readStorage: () => Storage, scope: string
     if (storage.getItem(target) !== null) return;
     const legacy = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(
       (key): key is string =>
-        key !== null && key.startsWith(PREFIX) && key !== target && key !== `${PREFIX}unavailable`,
+        key !== null &&
+        key.startsWith(PREFIX) &&
+        key !== target &&
+        key !== `${PREFIX}status` &&
+        key !== `${PREFIX}unavailable`,
     );
     if (legacy.length !== 1) return;
     const [key] = legacy as [string];

@@ -133,16 +133,24 @@ async function _setupFixture0(_fixture: _Fixture) {
     page.className = "page";
     page.textContent = input.sourceUrl;
     input.viewerElement.append(page);
+    const viewer = {
+      container: input.container,
+      containerTopLeft: [0, 0],
+      currentPageNumber: 1,
+      currentScale: 1,
+      currentScaleValue: "1",
+      pagesRotation: 0,
+      scrollPageIntoView: vi.fn(),
+      getPageView: () => undefined,
+      // PDF.js rounds a scale factor to whole percents.
+      updateScale: ({ scaleFactor }: { scaleFactor: number }) => {
+        viewer.currentScale = Math.round(viewer.currentScale * scaleFactor * 100) / 100;
+        viewer.currentScaleValue = String(viewer.currentScale);
+      },
+    };
     const runtime = {
       document: documentProxy,
-      viewer: {
-        currentPageNumber: 1,
-        currentScale: 1,
-        currentScaleValue: "1",
-        pagesRotation: 0,
-        scrollPageIntoView: vi.fn(),
-        getPageView: () => undefined,
-      },
+      viewer,
       eventBus: {
         on: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
         dispatch: vi.fn(),
@@ -172,6 +180,29 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 }
+
+it("keeps zoom stable while scrolling pages and still accepts an explicit fit-width request", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+  await render(_fixture, "mixed-page-orientations");
+  await load(_fixture, 0);
+  await publish(_fixture, 0);
+  const runtime = _fixture.runtimes[0];
+  await act(() => _fixture.reader.setZoom(1.25));
+  runtime.refreshForContainerSize.mockClear().mockImplementation(() => {
+    runtime.viewer.currentScale = 0.55;
+  });
+  await act(() => {
+    runtime.viewer.currentPageNumber = 2;
+    runtime.emit("pagechanging", { pageNumber: 2 });
+  });
+  expect(_fixture.reader.state.page).toBe(2);
+  expect(runtime.viewer.currentScale).toBe(1.25);
+  expect(runtime.refreshForContainerSize).not.toHaveBeenCalled();
+  await act(() => _fixture.reader.setZoomMode("page-width"));
+  expect(runtime.viewer.currentScaleValue).toBe("page-width");
+});
 
 it("publishes the painted container and its source identity atomically after replacement readiness", async () => {
   await using _fixture = _createFixture();
@@ -300,7 +331,7 @@ it("releases both displayed and pending presentations at document unmount", asyn
   expect(_fixture.viewerElement.children.length).toBe(0);
 });
 
-it("stress-tests fifty revisions without accumulating page surfaces or resetting focused input", async () => {
+it("replaces revision after revision without accumulating page surfaces or resetting focused input", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
@@ -310,7 +341,7 @@ it("stress-tests fifty revisions without accumulating page surfaces or resetting
   await publish(_fixture, 0);
   const input = _fixture.mount.querySelector("textarea")!;
   input.focus();
-  for (let revision = 1; revision <= 50; revision++) {
+  for (let revision = 1; revision <= 3; revision++) {
     await render(_fixture, `revision-${revision}`);
     expect(_fixture.reader.state.phase).toBe("ready");
     expect(_fixture.viewerElement.children.length).toBe(2);

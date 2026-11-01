@@ -446,7 +446,7 @@ describe("managed runtime catalog resolution", () => {
     assert.strictEqual(artifact.auxiliaryExecutablePaths?.includes("codex-path/rg"), true);
   });
 
-  it("protects revision 1, 2 and 3 clients while accepting the new Codex contract", () => {
+  it("protects revision 1 through 4 clients while accepting the new Codex contract", () => {
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
     const codex = bundled.providers.codex!;
     const claude = bundled.providers.claudeAgent!;
@@ -461,6 +461,10 @@ describe("managed runtime catalog resolution", () => {
     const revisionThreeClient = {
       ...bundled,
       providers: { ...bundled.providers, codex: { ...codex, contractRevision: 3 } },
+    };
+    const revisionFourClient = {
+      ...bundled,
+      providers: { ...bundled.providers, codex: { ...codex, contractRevision: 4 } },
     };
     const feed = {
       ...bundled,
@@ -480,6 +484,10 @@ describe("managed runtime catalog resolution", () => {
       mergeManagedRuntimeCatalogs(revisionThreeClient, feed).providers.codex,
       revisionThreeClient.providers.codex,
     );
+    assert.deepStrictEqual(
+      mergeManagedRuntimeCatalogs(revisionFourClient, feed).providers.codex,
+      revisionFourClient.providers.codex,
+    );
     assert.strictEqual(oldResult.providers.claudeAgent?.version, nextPatch(claude.version));
     assert.strictEqual(
       resolveFetchedManagedRuntimeCatalog(feed).providers.codex?.version,
@@ -493,18 +501,18 @@ describe("managed runtime catalog resolution", () => {
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 1 }),
     );
     assert.deepStrictEqual(
-      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 4 })
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 5 })
         ?.extractionLimits,
-      { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
+      { maxEntries: 128, maxExpandedBytes: 768 * 1024 * 1024 },
     );
     const windowsPolicy = resolveReviewedCodexArtifact({ platform: "win32", arch: "x64" })!;
     assert.deepStrictEqual(
       resolveManagedRuntimeCatalogArtifact({
         catalog: feed,
         policy: windowsPolicy,
-        contractRevision: 4,
+        contractRevision: 5,
       })?.extractionLimits,
-      { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
+      { maxEntries: 128, maxExpandedBytes: 768 * 1024 * 1024 },
     );
     assert.isUndefined(
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 }),
@@ -512,7 +520,10 @@ describe("managed runtime catalog resolution", () => {
     assert.isUndefined(
       resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 3 }),
     );
-    assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.codex.historicalRevisions, [1, 2, 3]);
+    assert.isUndefined(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 4 }),
+    );
+    assert.deepStrictEqual(MANAGED_RUNTIME_POLICY.codex.historicalRevisions, [1, 2, 3, 4]);
   });
 
   it("never lets an older cache outrank a newer bundled provider release", () => {
@@ -1222,6 +1233,7 @@ describe("ManagedRuntimeCatalog service", () => {
 });
 
 describe("latest qualified repair selection", () => {
+  // regression: e434651620 merge(upstream): align T3 through 468ade3049
   it.each(
     policies.map(({ provider, resolve }) => ({
       caseTitle: `repairs latest for ${provider} and never downgrades a newer compatible receipt offline`,

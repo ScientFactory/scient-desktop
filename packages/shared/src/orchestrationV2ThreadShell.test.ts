@@ -12,6 +12,7 @@ const answer = {
 };
 const visit = "2026-10-04T09:00:00.000Z";
 describe("canonical completed-answer attention", () => {
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
   it.each(["running", "failed", "interrupted", "rolled_back", "completed"])(
     "retains the last completed answer across a newer %s run",
     (status) => {

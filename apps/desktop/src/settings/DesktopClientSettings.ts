@@ -12,6 +12,9 @@ import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+// SCIENT-FORK:START — one-time resets of saved client preferences.
+import { withClientSettingsResets } from "../scient/clientSettingsResets.ts";
+// SCIENT-FORK:END
 
 const ClientSettingsJson = fromLenientJson(ClientSettingsSchema);
 const decodeClientSettingsDocument = Schema.decodeEffect(
@@ -194,8 +197,8 @@ export const make = Effect.gen(function* () {
     get: readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
       Effect.withSpan("desktop.clientSettings.get"),
     ),
-    set: (settings) =>
-      crypto.randomUUIDv4().pipe(
+    set: Effect.fn("desktop.clientSettings.set")(function (settings) {
+      return crypto.randomUUIDv4().pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
         Effect.mapError(
           (cause) =>
@@ -214,12 +217,17 @@ export const make = Effect.gen(function* () {
             suffix,
           }),
         ),
-        Effect.withSpan("desktop.clientSettings.set"),
-      ),
+      );
+    }),
   });
 });
 
-export const layer = Layer.effect(DesktopClientSettings, make);
+// SCIENT-FORK:START — one-time resets of saved client preferences.
+export const layer = Layer.effect(
+  DesktopClientSettings,
+  make.pipe(Effect.flatMap(withClientSettingsResets)),
+);
+// SCIENT-FORK:END
 
 export const layerTest = (initialSettings: Option.Option<ClientSettings> = Option.none()) =>
   Layer.effect(
@@ -228,7 +236,9 @@ export const layerTest = (initialSettings: Option.Option<ClientSettings> = Optio
       const settingsRef = yield* Ref.make(initialSettings);
       return DesktopClientSettings.of({
         get: Ref.get(settingsRef),
-        set: (settings) => Ref.set(settingsRef, Option.some(settings)),
+        set: Effect.fn("DesktopClientSettings.set")(function (settings) {
+          return Ref.set(settingsRef, Option.some(settings));
+        }),
       });
     }),
   );

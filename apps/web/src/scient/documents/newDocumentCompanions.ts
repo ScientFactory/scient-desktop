@@ -7,14 +7,8 @@ export interface CreatedCompanion {
 }
 
 /**
- * Brings the files a new document keeps beside itself in line with its
- * template: creates missing files, refreshes unchanged private files, and
- * removes private files this document created earlier that it no longer needs.
- * Bibliographies remain because other documents can share them. A file that was
- * already there is used as it is and never removed; a removal succeeds only
- * while the file is still exactly as it was created. Returns the files the
- * document has created and still needs, and whether every file the template
- * needs (a bibliography aside, which may be anyone's) is now as it wants it.
+ * Keep shared bibliographies and pre-existing files. Remove private companions only while their
+ * bytes still match what this document created, so template changes cannot delete user edits.
  */
 export async function syncCompanionFiles(input: {
   /** The document's folder: "" or "papers/". */

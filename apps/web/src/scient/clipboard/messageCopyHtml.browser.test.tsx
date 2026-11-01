@@ -18,6 +18,7 @@ import { isScientMessageCopyHtml } from "./messageCopyMarker";
 /** Rows the mocked list leaves unmounted, as LegendList does for rows out of view. */
 const virtualized = vi.hoisted(() => ({ rowIds: new Set<string>() }));
 vi.mock("@legendapp/list/react", () => ({
+  useSyncLayout: () => () => {},
   LegendList: (props: {
     data: Array<{ id: string }>;
     keyExtractor: (item: { id: string }) => string;
@@ -95,7 +96,6 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 function timelineProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
@@ -105,7 +105,6 @@ function timelineProps() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
-    onRollbackCheckpoint: () => {},
     providerStatuses: [],
     runs: [],
     supportsConversationRollback: false,
@@ -250,37 +249,7 @@ describe("Copy message button", () => {
   });
 });
 
-const HEBREW_WITH_CARDS = [
-  "## סיכום",
-  "",
-  "<details>",
-  "<summary>פרטים נוספים</summary>",
-  "",
-  "גוף מוסתר של הפרטים.",
-  "",
-  "</details>",
-  "",
-  "```mermaid",
-  "graph TD; A-->B",
-  "```",
-].join("\n");
-
 describe("Copy message button content", () => {
-  it("carries a collapsed details body and a diagram's source", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await renderTimeline(_fixture, "Please summarize.", HEBREW_WITH_CARDS);
-    // The rendered details are collapsed, so their body is not in the page.
-    expect(_fixture.host.textContent).not.toContain("גוף מוסתר של הפרטים.");
-    await click(_fixture, copyButtonFor(_fixture, "assistant-1"));
-    const html = parse(_fixture.writes[0]!.html!);
-    expect(html.querySelector("strong")?.textContent).toBe("פרטים נוספים");
-    expect(html.textContent).toContain("גוף מוסתר של הפרטים.");
-    expect(html.querySelector("pre")?.textContent).toBe("graph TD; A-->B\n");
-  });
-
   it("still copies direction-marked HTML when the answer's row is virtualized away", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

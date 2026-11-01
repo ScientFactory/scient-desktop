@@ -3,27 +3,26 @@ type VisibilityEntry = Pick<
   "intersectionRatio" | "isIntersecting" | "target"
 >;
 
-export type SettingsSectionVisibilityScope = {
-  readonly path: string;
-};
-
+/** What one watcher last reported, labelled with the settings page it watched. */
 export type SettingsSectionVisibilityState = {
-  readonly scope: SettingsSectionVisibilityScope;
+  readonly path: string;
   readonly targetIds: ReadonlySet<string>;
 };
 
 const EMPTY_VISIBLE_SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set();
 
+// Results count only for the page they were observed on, and only once navigation has
+// settled there: while a new page is still loading the old page's results do not apply.
 export function getVisibleSettingsSectionIds({
   activePath,
-  scope,
+  observedPath,
   visibility,
 }: {
   readonly activePath: string | undefined;
-  readonly scope: SettingsSectionVisibilityScope | null;
+  readonly observedPath: string | undefined;
   readonly visibility: SettingsSectionVisibilityState | null;
 }): ReadonlySet<string> {
-  if (!scope || activePath !== scope.path || visibility?.scope !== scope) {
+  if (!observedPath || activePath !== observedPath || visibility?.path !== observedPath) {
     return EMPTY_VISIBLE_SETTINGS_SECTION_IDS;
   }
   return visibility.targetIds;
@@ -88,7 +87,9 @@ export function observeSettingsSectionVisibility({
   const targetsById = new Map<string, Element>();
   const targetIdsByElement = new Map<Element, string>();
   const visibleTargetIds = new Set<string>();
-  let lastEmission: string | null = null;
+  // Callers start from "nothing visible", so only departures from that are reported. A start
+  // report would always be empty (intersections arrive later) and only cost the caller a render.
+  let lastEmission = "";
   let stopped = false;
   let root: Element | null = null;
   let intersectionObserver: ElementObserver | null = null;
@@ -172,7 +173,6 @@ export function observeSettingsSectionVisibility({
 
   const mutationObserver = environment.createMutationObserver(syncTargets, container);
   syncTargets();
-  emit();
 
   return () => {
     stopped = true;

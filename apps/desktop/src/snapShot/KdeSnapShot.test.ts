@@ -91,6 +91,7 @@ it("detects a bundled update, updates explicitly, and removes only capture's reg
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep me");
 });
 
+// SCIENT-FORK:START scient-native-helper-names
 it("installs under the Scient name and replaces a helper installed under T3's name", async () => {
   const { executable, desktop } = kdeCapturePaths(paths);
   expect(NodePath.basename(executable)).toBe("scient-kde-snap-shot");
@@ -120,6 +121,7 @@ it("installs under the Scient name and replaces a helper installed under T3's na
   await setup.perform("remove-kde-helper");
   expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([]);
 });
+// SCIENT-FORK:END scient-native-helper-names
 
 it("repairs the old semicolon permission entry without replacing unrelated registrations", async () => {
   await setup.perform("install-kde-helper");

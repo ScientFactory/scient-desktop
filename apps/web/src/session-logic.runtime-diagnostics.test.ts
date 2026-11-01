@@ -10,8 +10,10 @@ import {
 
 const retainedMessage =
   "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/skills/monorepo-scaffolding/SKILL.md: invalid YAML: mapping va...";
+// SCIENT-FORK:START
 const warningSummary =
   "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/sk...";
+// SCIENT-FORK:END
 const now = DateTime.makeUnsafe("2026-09-05T00:00:00.000Z");
 const baseItem = {
   id: TurnItemId.make("diagnostic"),
@@ -63,6 +65,7 @@ function errorItem(
   };
 }
 
+// SCIENT-FORK:START
 describe("runtime diagnostics in the work log", () => {
   it("keeps the issue heading and the full diagnostic beyond its truncated title", () => {
     const entry = workEntry(errorItem({ title: warningSummary }));
@@ -82,6 +85,7 @@ describe("runtime diagnostics in the work log", () => {
     expect(entry.label).toBe(retainedMessage);
     expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
     expect(entry.detail).toBeUndefined();
+    // SCIENT-FORK:END
   });
 
   it("keeps retry progress visible while retaining its diagnostic detail", () => {
@@ -145,10 +149,12 @@ describe("runtime diagnostics in the work log", () => {
     if (diagnostic?.kind !== "work") throw new Error("Expected a diagnostic row");
     expect(diagnostic.isExpandedToolGroup).toBe(false);
     expect(diagnostic.groupedEntries).toHaveLength(1);
+    // SCIENT-FORK:START
     expect(workEntryDisplayLabel(diagnostic.groupedEntries[0]!, undefined)).toBe(
       "The agent encountered a problem",
     );
     expect(diagnostic.groupedEntries[0]?.detail).toBe(retainedMessage);
+    // SCIENT-FORK:END
   });
 
   it("does not turn an unrelated tool payload message into a diagnostic", () => {

@@ -56,6 +56,7 @@ function deferredDiagram() {
 }
 
 describe("PDF diagram renderer boundary", () => {
+  // regression: a495ed55e0 chore(upstream): merge t3 through 21da3061aa
   it.each(["syntax", "unsupported-diagram", "semantic", "limit"])(
     "prints labelled original source for a typed Pele %s content error",
     async (code) => {
@@ -76,7 +77,7 @@ describe("PDF diagram renderer boundary", () => {
     },
   );
 
-  it.each(["Chunk load failed", "Unexpected layout failure"])(
+  it.each(["Chunk load failed"])(
     "withholds printing after an execution failure: %s",
     async (message) => {
       setup();

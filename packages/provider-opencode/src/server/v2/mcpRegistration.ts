@@ -46,11 +46,9 @@ export const openCode2ConnectorKey = Effect.fn("openCode2ConnectorKey")(function
 });
 
 /**
- * A connector's server name in OpenCode. One OpenCode server serves many
- * threads in one directory, so each name carries its thread's key, and it
- * stays under `t3-code-` so every other thread's rules deny its tools. A
- * connector's `serverName` is at most 48 characters, which leaves the key at
- * least 7 of its digits.
+ * OpenCode shares a server across directory threads. Include the thread key under t3-code- so other
+ * threads' rules deny its connector tools; the bounded server name must leave at least seven key
+ * digits.
  */
 export const openCode2ConnectorServerName = (connectorKey: string, serverName: string) =>
   `${SERVER_NAME_PREFIX}${connectorKey.slice(

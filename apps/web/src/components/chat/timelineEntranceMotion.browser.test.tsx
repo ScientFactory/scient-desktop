@@ -14,6 +14,7 @@ import { userEvent } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { showStreamedAnswersNow, streamingTextAppearing } from "./useStreamingBlockEntrance";
+import { waitForMeasuredRow } from "../../../test/listMeasurement";
 
 const env = EnvironmentId.make("entrance-motion-tests");
 const date = "2026-09-29T00:00:00.000Z";
@@ -148,7 +149,7 @@ const animationsOf = (element: Element | null | undefined) =>
             animation.playState !== "finished",
         )
     : [];
-const working = { isWorking: true, activeTurnInProgress: true, runningRunId: RunId.make("run-1") };
+const working = { isWorking: true, runningRunId: RunId.make("run-1") };
 
 it("marks the working header with its dot while the turn works, the sweep staying on Thinking", async () => {
   await using _fixture = _createFixture();
@@ -246,14 +247,12 @@ it("reveals a streaming answer line by line after a short wait, once, and nothin
     [prompt, answer("First paragraph.\n\nSecond paragraph.", false)],
     {
       isWorking: false,
-      activeTurnInProgress: false,
     },
   );
   await playUntil(_fixture, () => text()?.classList.contains("streamed-reveal") === false);
   // A finished answer that was never revealed here simply shows.
   await render(_fixture, "motion:finished", [prompt, answer("Already done.", false)], {
     isWorking: false,
-    activeTurnInProgress: false,
   });
   await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
@@ -282,7 +281,6 @@ it("shows what arrived at once when the reader presses Stop, instead of typing i
   // The cut-off answer settles with nothing left to play out.
   await render(_fixture, "motion:stop", [prompt, answer(false)], {
     isWorking: false,
-    activeTurnInProgress: false,
   });
   await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
@@ -310,7 +308,6 @@ it("shows a stopped answer in full when its row comes back, after leaving mid-re
   // Back to the stopped answer: everything shows, nothing left to type out.
   await render(_fixture, "motion:stop-away", [prompt, answer(false)], {
     isWorking: false,
-    activeTurnInProgress: false,
   });
   await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
@@ -330,7 +327,7 @@ it("drops an answer's appearing state when its row unmounts mid-reveal", async (
   expect(streamingTextAppearing(answer.message.id)).toBe(false);
 });
 
-it("closes a finished turn's working header gradually, so the answer slides up", async () => {
+it("closes a finished turn's working header gradually, so the answer slides up", async (context) => {
   await using _fixture = _createFixture();
   await _setupFixture0(_fixture);
 
@@ -355,12 +352,15 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   const before = answerTop();
   await render(_fixture, "motion:exit", [prompt, answer(false)], {
     isWorking: false,
-    activeTurnInProgress: false,
   });
   // Held halfway through its exit: still in place, the answer part of the way up.
   const animation = exit()!;
   animation.pause();
   animation.currentTime = 160;
+  // The answer moves once the list has measured the header at its held size.
+  const list = _fixture.listRef.current!;
+  const headerRow = list.getState().data.find((row: { kind: string }) => row.kind === "working");
+  await waitForMeasuredRow(list, (headerRow as { id: string }).id, context.signal);
   await advanceClock(_fixture, 64);
   expect(header()).not.toBeNull();
   const midway = answerTop();
@@ -392,7 +392,6 @@ it("cancels a header's exit when the next run's header takes its place", async (
   const height = root()!.getBoundingClientRect().height;
   await render(_fixture, "motion:exit-reuse", [prompt, reply(2, "The answer.", false)], {
     isWorking: false,
-    activeTurnInProgress: false,
   });
   const animation = root()!.getAnimations().at(-1)!;
   animation.pause();
@@ -542,7 +541,6 @@ function _createFixture() {
   const base = {
     listRef,
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     runningRunId: null,
@@ -550,7 +548,6 @@ function _createFixture() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

@@ -116,10 +116,10 @@ export function createPdfRuntime(input: {
     updateMatchesCountOnProgress: true,
   });
   const viewerLifetime = new AbortController();
-  const viewer = new PDFViewer({
+  const viewerOptions = {
     // Supported by the pinned PDF.js runtime (its generated declaration omits
     // this option). Releases its internal scroll and resize observers on swap.
-    ...{ abortSignal: viewerLifetime.signal },
+    abortSignal: viewerLifetime.signal,
     container: input.container,
     viewer: input.viewerElement,
     eventBus,
@@ -136,9 +136,11 @@ export function createPdfRuntime(input: {
     imageResourcesPath: `${pdfAssetRoot()}images/`,
     maxCanvasDim: 8_192,
     maxCanvasPixels: 16_777_216,
-    removePageBorders: false,
+    // Page margins come from the container's border; see scientPdfReader.css.
+    removePageBorders: true,
     supportsPinchToZoom: true,
-  });
+  };
+  const viewer = new PDFViewer(viewerOptions);
 
   linkService.setViewer(viewer);
   linkService.setDocument(input.document);

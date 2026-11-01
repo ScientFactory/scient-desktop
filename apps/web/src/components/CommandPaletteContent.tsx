@@ -1,8 +1,25 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import { type ComponentProps, type ReactNode, useEffect, useImperativeHandle, useRef } from "react";
+import { type ComponentProps, type ReactNode, useImperativeHandle, useRef } from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
+
+/**
+ * A view replacing another inside an open dialog mounts with focus on the body,
+ * left there by the removed input. Claim it so typing cannot reach the composer
+ * behind the modal. On first open the dialog's own initial focus handles it.
+ */
+function claimFocusInOpenDialog(input: HTMLInputElement | null) {
+  if (!input) return;
+  const active = input.ownerDocument.activeElement;
+  if (
+    active === null ||
+    active === input.ownerDocument.body ||
+    input.closest('[role="dialog"]')?.contains(active)
+  ) {
+    input.focus();
+  }
+}
 
 type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children"> & {
   readonly children: ReactNode;
@@ -35,20 +52,18 @@ export function CommandPaletteContent({
   // replacing the local ref used by upstream's autofocus behavior.
   useImperativeHandle(inputProps.ref, () => inputRef.current!, []);
 
-  // Direct-open flows replace the initial palette view after the dialog has
-  // already moved focus. Reclaim it when the replacement input mounts so
-  // typing cannot continue in the composer behind the modal. Defer until the
-  // dialog has recorded the previous focus target for restoration on close.
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
   return (
     <div {...containerProps} className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput autoFocus={false} {...inputProps} ref={inputRef} />
+          <CommandInput
+            autoFocus={false}
+            {...inputProps}
+            ref={(input) => {
+              inputRef.current = input;
+              claimFocusInOpenDialog(input);
+            }}
+          />
           {inputAccessory}
         </div>
         <CommandPanel

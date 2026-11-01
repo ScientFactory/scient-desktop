@@ -83,7 +83,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     it.live.each(
       [false, true].map((interrupted) => ({
         caseTitle: interrupted
-          ? "stops the actual OMP child and resumes held SQL work through its owned transcript"
+          ? "pauses the actual OMP child and resumes held SQL work in the same process"
           : "completes and automatically drains unheld work through the default OMP subprocess",
         interrupted,
       })),
@@ -273,7 +273,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
               );
               const stoppedAudit = yield* readAudit();
               assert.equal(stoppedAudit.filter((row) => row.command === "prompt").length, 1);
-              assert.equal(stoppedAudit.filter((row) => row.type === "closed").length, 1);
+              assert.equal(stoppedAudit.filter((row) => row.type === "closed").length, 0);
+              assert.equal(
+                stoppedAudit.filter((row) => row.command === "abort_and_restore_queue").length,
+                1,
+              );
               const file = stoppedTranscript(stoppedAudit);
               assert.ok(file);
               stoppedPrefix = yield* readTranscript(file);
@@ -317,7 +321,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             const audit = yield* readAudit();
             const opened = audit.filter((row) => row.type === "opened");
             const closed = audit.filter((row) => row.type === "closed");
-            assert.equal(opened.length, interrupted ? 2 : 1);
+            assert.equal(opened.length, 1);
             assert.deepEqual(
               closed.map((row) => row.pid).sort(),
               opened.map((row) => row.pid).sort(),
@@ -351,10 +355,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
               interrupted ? 2 : 3,
             );
             if (interrupted) {
-              const switchReceipt = audit.find((row) => row.command === "switch_session");
-              assert.ok(switchReceipt);
-              const ownedTranscript = stoppedTranscript(audit);
-              assert.equal(switchReceipt.switchTarget, ownedTranscript);
+              assert.isFalse(audit.some((row) => row.command === "switch_session"));
               assert.ok(stoppedPrefix);
               assert.deepEqual(transcript.slice(0, stoppedPrefix.length), stoppedPrefix);
             }

@@ -24,9 +24,10 @@ runs:
   steps:
     - id: detect
       shell: bash
+      # SCIENT-FORK:START — every detector uses the event base and tested commit, queue included.
       env:
         EVENT_NAME: ${{ github.event_name }}
-        BEFORE_SHA: ${{ github.event.before }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
       run: |
         set -uo pipefail
 
@@ -40,24 +41,14 @@ runs:
           decide
         }
 
-        # Reads the change from git rather than the REST API: every job that
-        # runs this shares the repository's 1,000 requests/hour GITHUB_TOKEN quota.
-        if [[ "$EVENT_NAME" == pull_request ]]; then
-          # A pull request checks out GitHub's merge commit with fetch-depth: 2,
-          # so its first parent is the base branch and the diff is the PR's change.
-          base=HEAD^1
-          mode=()
-        else
-          base=$BEFORE_SHA
-          git fetch --quiet --no-tags --depth=1 --filter=blob:none origin "$base" \
-            || fail_open "Could not fetch ${base}."
-          # main keeps a full run as the backstop for anything the gate misses.
-          mode=(--full)
+        [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "Missing comparison base."
+        git cat-file -e "$BASE_SHA^{commit}" || fail_open "Comparison base is unavailable."
+        # NULs preserve whitespace, newlines and non-UTF-8 paths. No rename scoring:
+        # both the removed and added names must participate in package ownership.
+        git diff --name-only --no-renames -z "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths" \
+          || fail_open "Could not resolve changed paths."
+        if [[ "$EVENT_NAME" == push ]]; then
+          decide --paths0 "$RUNNER_TEMP/changed-paths" --full
         fi
-
-        # --no-renames lists a rename as its old and new path: renaming a file out
-        # of a package changes that package just like editing it. It also keeps
-        # git from fetching file contents to score renames.
-        git diff --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-paths" \
-          || fail_open "Could not diff against ${base}."
-        decide --paths "$RUNNER_TEMP/changed-paths" "${mode[@]}"
+        decide --paths0 "$RUNNER_TEMP/changed-paths"
+      # SCIENT-FORK:END

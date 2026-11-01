@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Executes Windows batch launchers with native cmd.exe.
+// SCIENT-FORK:START scient-cli-command
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, beforeEach, expect, it } from "@effect/vitest";
@@ -29,6 +30,7 @@ const environmentFor = (
     isPackaged?: boolean;
     serverRoot?: string;
   },
+  // SCIENT-FORK:END scient-cli-command
 ) =>
   DesktopEnvironment.DesktopEnvironment.of({
     path,
@@ -37,6 +39,7 @@ const environmentFor = (
     homeDirectory: input.home,
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
+    // SCIENT-FORK:START scient-cli-command
     serverRoot: input.serverRoot ?? "/opt/T3 Code/resources/app.asar",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
@@ -55,6 +58,7 @@ const commandIn = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const baseDir = input.baseDir ?? path.join(input.home, ".scient-next");
+    // SCIENT-FORK:END scient-cli-command
     yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
     const make = DesktopCliCommand.make.pipe(
       Effect.provideService(
@@ -103,6 +107,7 @@ const fakePowerShell = (initial: string) => {
   return { registry, spawner };
 };
 
+// SCIENT-FORK:START scient-cli-command
 const machineEnvironment = {
   PATH: process.env.PATH,
   SCIENT_NEXT_HOME: process.env.SCIENT_NEXT_HOME,
@@ -217,9 +222,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: false,
         onPath: false,
+        launcherPath: null,
       });
       const installed = yield* command.install;
       expect(installed.installedPath).toBe(link);
+      expect(installed.launcherPath).toBe(path.join(home, ".scient-next", "bin", "scient"));
       expect(yield* fs.readLink(link)).toBe(path.join(home, ".scient-next", "bin", "scient"));
       expect(yield* fs.exists(path.join(home, ".scient-next", "bin", "t3"))).toBe(false);
       expect((yield* command.install).installedPath).toBe(link);
@@ -309,6 +316,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: true,
         onPath: false,
+        launcherPath: null,
       });
       expect((yield* command.uninstall).legacyInstalled).toBe(false);
       expect(yield* fs.exists(link)).toBe(false);
@@ -477,7 +485,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
   );
 
   unix(
-    "executes shortcuts through 40 install, reload, profile, update, and removal cycles",
+    "executes shortcuts through repeated install, reload, profile, update, and removal cycles",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -497,7 +505,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         yield* fs.writeFileString(unrelated, "unrelated app command\n");
         process.env.PATH = path.dirname(link);
         let legacyRemoved = false;
-        for (let cycle = 0; cycle < 40; cycle += 1) {
+        // Two four-cycle periods cover both profiles, the legacy link before and after its
+        // removal, and a reinstall that must not recreate it.
+        for (let cycle = 0; cycle < 8; cycle += 1) {
           const baseDir = path.join(home, `profile-${cycle % 2}`);
           const serverRoot = yield* fixtureServer(path.join(home, `app-${cycle}`), `${cycle}`);
           const command = yield* commandIn({ home, baseDir, serverRoot });
@@ -528,6 +538,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
               installedPath: null,
               legacyInstalled: false,
               onPath: false,
+              launcherPath: installed.launcherPath,
             });
             expect(yield* fs.exists(link)).toBe(false);
             expect(yield* fs.exists(legacyLink)).toBe(false);
@@ -543,7 +554,6 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           expect(yield* fs.readFileString(unrelated)).toBe("unrelated app command\n");
         }
       }).pipe(Effect.scoped),
-    60_000,
   );
 
   unix("never replaces or removes a scient it did not create", () =>
@@ -563,10 +573,19 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "scient"))).toBe(path.join(home, "gone"));
+
+      const launcher = path.join(home, ".scient-next", "bin", "scient");
+      yield* fs.writeFileString(launcher, "npm's t3\n");
+      process.env.PATH = path.dirname(launcher);
+      expect(yield* command.state).toMatchObject({ onPath: false, shadowedBy: launcher });
+      expect((yield* Effect.flip(command.install)).message).toContain("Could not set up");
+      yield* command.uninstall;
+      expect(yield* fs.readFileString(launcher)).toBe("npm's t3\n");
     }).pipe(Effect.scoped),
   );
 
   unix("finds and removes a link left by a previous Scient home", () =>
+    // SCIENT-FORK:END scient-cli-command
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -577,6 +596,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
       expect((yield* after.state).installedPath).toBe(link);
       expect((yield* after.install).installedPath).toBe(link);
+      // SCIENT-FORK:START scient-cli-command
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "scient"));
       yield* after.uninstall;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "scient"))).toBe(false);
@@ -613,7 +633,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
       const foreign = path.join(shadow, "scient");
-      yield* fs.writeFileString(foreign, "foreign command\n");
+      yield* fs.writeFileString(foreign, "foreign command\n", { mode: 0o755 });
       process.env.PATH = [shadow, path.dirname(link)].join(":");
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-profile") });
       expect((yield* Effect.flip(after.install)).message).toContain(foreign);
@@ -686,10 +706,76 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(installed).toMatchObject({
         onPath: true,
         installedPath: path.join(home, ".local", "bin", "scient"),
+        // SCIENT-FORK:END scient-cli-command
       });
       expect(installed.shadowedBy).toBeUndefined();
     }).pipe(Effect.scoped),
   );
+
+  // SCIENT-FORK:START scient-cli-command
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "skips a scient directory or a file this user cannot execute",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const folder = path.join(home, "folder");
+        const plain = path.join(home, "plain");
+        const shadow = path.join(home, "shadow");
+        yield* fs.makeDirectory(path.join(folder, "scient"), { recursive: true });
+        yield* fs.makeDirectory(plain);
+        yield* fs.writeFileString(path.join(plain, "scient"), "notes\n");
+        // Root can execute mode 0o601; other users must honor the owner permissions.
+        yield* fs.chmod(path.join(plain, "scient"), process.getuid?.() === 0 ? 0o600 : 0o601);
+        yield* fs.makeDirectory(shadow);
+        yield* fs.writeFileString(path.join(shadow, "scient"), "#!/bin/sh\n", { mode: 0o755 });
+        process.env.PATH = [folder, plain, shadow, path.join(home, ".local", "bin")].join(":");
+
+        const command = yield* commandIn({ home });
+        expect((yield* command.state).shadowedBy).toBe(path.join(shadow, "scient"));
+
+        const error = yield* Effect.flip(command.install);
+        expect(error.message).toContain(path.join(shadow, "scient"));
+
+        yield* fs.remove(shadow, { recursive: true });
+        expect(yield* command.install).toMatchObject({
+          onPath: true,
+          installedPath: path.join(home, ".local", "bin", "scient"),
+        });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "does not treat its own launcher as another scient when its folder is first on PATH",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const launcher = path.join(home, ".scient-next", "bin", "scient");
+        process.env.PATH = [path.dirname(launcher), path.join(home, ".local", "bin")].join(":");
+
+        const command = yield* commandIn({ home });
+        const installed = yield* command.install;
+
+        expect(yield* fs.exists(launcher)).toBe(true);
+        expect(installed).toMatchObject({
+          onPath: true,
+          installedPath: path.join(home, ".local", "bin", "scient"),
+        });
+        expect(installed.shadowedBy).toBeUndefined();
+        expect(yield* command.state).toEqual(installed);
+
+        const removed = yield* command.uninstall;
+        expect(removed.installedPath).toBeNull();
+        expect(removed.onPath).toBe(true);
+        expect(yield* command.state).toEqual(removed);
+        expect(yield* fs.exists(installed.installedPath!)).toBe(false);
+        expect(yield* fs.exists(launcher)).toBe(true);
+      }).pipe(Effect.scoped),
+  );
+  // SCIENT-FORK:END scient-cli-command
 
   it.effect("leaves the Windows PATH alone when it cannot be read", () =>
     Effect.gen(function* () {
@@ -706,6 +792,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
       registry.failReads = false;
       const launcherDir = DesktopCliShim.launcherPath(
+        // SCIENT-FORK:START scient-cli-command
         environmentFor(yield* Path.Path, {
           home,
           baseDir: `${home}/.scient-next`,
@@ -740,6 +827,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: true,
         onPath: false,
+        launcherPath: null,
       });
       expect((yield* command.install).installedPath).toBe(path.join(bin, "scient.cmd"));
       expect(registry.writes).toBe(0);
@@ -777,6 +865,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: false,
         onPath: false,
+        launcherPath: path.join(launcherDir, "scient.cmd"),
       });
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
@@ -809,26 +898,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           installedPath: null,
           legacyInstalled: false,
           onPath: false,
+          launcherPath: installed.launcherPath,
         });
         yield* command.uninstall;
         expect(registry.path).toBe(userAddedPath);
       }).pipe(Effect.scoped),
-  );
-
-  it.effect("offers nothing for a development build", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const command = yield* commandIn({
-        home: yield* fs.makeTempDirectoryScoped(),
-        isPackaged: false,
-      });
-      expect(yield* command.state).toEqual({
-        supported: false,
-        installedPath: null,
-        legacyInstalled: false,
-        onPath: false,
-      });
-    }).pipe(Effect.scoped),
   );
 
   unix("does not let a development build remove packaged-app shortcuts", () =>
@@ -867,6 +941,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           installedPath: null,
           legacyInstalled: true,
           onPath: false,
+          launcherPath: null,
         });
         registry.failReads = true;
         expect((yield* Effect.flip(command.uninstall)).message).toContain("left unchanged");
@@ -887,7 +962,8 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         const home = yield* fs.makeTempDirectoryScoped({ prefix: "Scient José's CLI space-" });
         const { registry, spawner } = fakePowerShell("C:\\OtherApp");
         const args = ["app", "a project with spaces", 'single \' and "double" quotes', "", "José"];
-        for (let cycle = 0; cycle < 40; cycle += 1) {
+        // Cycle 0 upgrades the legacy t3.cmd; later cycles alternate profiles without it.
+        for (let cycle = 0; cycle < 3; cycle += 1) {
           const baseDir = path.join(home, `profile ${cycle % 2}`);
           const bin = path.join(baseDir, "bin");
           const serverRoot = yield* fixtureServer(
@@ -929,9 +1005,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
             installedPath: null,
             legacyInstalled: false,
             onPath: false,
+            launcherPath: installed.launcherPath,
           });
           expect(registry.path).toBe("C:\\OtherApp");
         }
       }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:END scient-cli-command
 });

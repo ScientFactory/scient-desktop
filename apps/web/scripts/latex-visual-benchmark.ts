@@ -1,14 +1,5 @@
-// Measures the Visual LaTeX editor in a production build: opening, scrolling,
-// typing, structural edits and memory (one and three documents open, peak and
-// steady, repeated open/close), against the gates in
-// docs/internals/scient-latex-visual-performance.md.
-//
-//   node apps/web/scripts/latex-visual-benchmark.ts [--fixture file.tex] [--pages 100]
-//     [--scenarios open,scroll,typing,structure,memory] [--cycles 10] [--skip-build]
-//     [--json out.json] [--shots dir] [--headed] [--dpr 1] [--profile open|typing|structure]
-//
-// A fixture path is read locally and never copied; without one, a deterministic
-// synthetic manuscript of --pages pages is used.
+// Use docs/internals/scient-latex-visual-performance.md for qualification gates. Read supplied
+// fixtures in place; without one, use a deterministic synthetic manuscript.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";

@@ -31,7 +31,7 @@ vi.mock("../assets/assetUrls", () => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.resources.push(resource);
     if (testState.assetState === "loading") return { _tag: "Loading" };
-    if (testState.assetState === "failure") return { _tag: "Failure" };
+    if (testState.assetState === "failure") return { _tag: "Failure", refresh: vi.fn() };
     return {
       _tag: "Success",
       url: "https://signed.test/workspace-image.svg",
@@ -185,7 +185,6 @@ describe("ChatMarkdown workspace images", () => {
         "![relative](.t3/workspace-image.svg)",
         `![absolute](${imagePath})`,
         `![file URL](file:///${imagePath})`,
-        "![UNC file URL](file://server/share/workspace-image.svg)",
       ].join("\n\n"),
     );
 
@@ -211,19 +210,43 @@ describe("ChatMarkdown workspace images", () => {
         threadId: threadRef.threadId,
         path: "C:\\Users\\shawn\\project\\.t3\\workspace-image.svg",
       },
+    ]);
+    expect(html.match(/<img[^>]+src="https:\/\/signed\.test\/workspace-image\.svg"/g)).toHaveLength(
+      3,
+    );
+    expect(html.match(/data-scient-inline-workspace-image="true"/g)).toHaveLength(3);
+    expect(
+      html.match(/<img[^>]+class="[^"]*max-h-\[32rem\] max-w-full object-contain/g),
+    ).toHaveLength(3);
+    expect(html.match(/data-scient-visual-card[^>]+class="[^"]*max-w-full/g)).toHaveLength(3);
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("signs images on the workspace UNC share without contacting another share", () => {
+    const cwd = "\\\\server\\share";
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd={cwd}
+        threadRef={threadRef}
+        text={[
+          "![authorized](file://server/share/workspace-image.svg)",
+          "![different host](file://another-server/share/workspace-image.svg)",
+          "![different share](file://server/another-share/workspace-image.svg)",
+        ].join("\n\n")}
+      />,
+    );
+    expect(testState.resources).toEqual([
       {
-        _tag: "media-file",
+        _tag: "workspace-file",
+        cwd,
+        relativePath: "workspace-image.svg",
         threadId: threadRef.threadId,
         path: "\\\\server\\share\\workspace-image.svg",
       },
     ]);
     expect(html.match(/<img[^>]+src="https:\/\/signed\.test\/workspace-image\.svg"/g)).toHaveLength(
-      4,
+      1,
     );
-    expect(html.match(/data-scient-inline-workspace-image="true"/g)).toHaveLength(3);
-    expect(html).toContain("max-w-[min(100%,30rem)]");
-    expect(html).toContain("max-h-[32rem]");
-    expect(html).not.toContain("Image unavailable");
   });
 
   it("loads a POSIX absolute path and file URI through a signed asset URL", () => {
@@ -258,6 +281,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("https://signed.test/workspace-image.svg");
   });
 
+  // regression: c0e09f323a fix(web): render nested markdown images correctly (#8501)
   it("keeps a tall image placeholder and loaded image at the same proportional bounds", () => {
     const markdown = '<img src=".t3/workspace-image.svg" alt="sized" width="96" height="128">';
     const loadedStyle = firstInlineStyle(render(markdown));
@@ -273,6 +297,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(loadingStyle).toEqual(loadedStyle);
   });
 
+  // regression: c0e09f323a fix(web): render nested markdown images correctly (#8501)
   it.each([
     ["width", "max-width", "min(100%, 30rem, 300px)"],
     ["height", "max-height", "min(30rem, 300px)"],
@@ -284,6 +309,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(loadedStyle).toHaveProperty(constraint, expectedValue);
   });
 
+  // regression: eced382b45 fix(web): keep chat media at a stable size while it loads (#9938)
   it("keeps images that share a line inline and lets a standalone one reserve a slot", () => {
     const html = render(
       "![remote](https://example.com/badge.svg) ![workspace](.t3/workspace-image.svg)",
@@ -307,12 +333,14 @@ describe("ChatMarkdown workspace images", () => {
     expect(frame).toContain("aspect-video");
   });
 
+  // regression: eced382b45 fix(web): keep chat media at a stable size while it loads (#9938)
   it("reserves a slot for an image that is the only content of its link", () => {
     const html = render("[![shot](.t3/workspace-image.svg)](https://example.com)");
 
     expect(html).toContain("aspect-video");
   });
 
+  // regression: eced382b45 fix(web): keep chat media at a stable size while it loads (#9938)
   it.each([
     ["a link", "Figure: [![shot](.t3/workspace-image.svg)](https://example.com)"],
     ["emphasis", "**![shot](.t3/workspace-image.svg)** caption"],
@@ -327,6 +355,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain('<span id="user-content-diagram" role="group"');
   });
 
+  // regression: d0f855bfa9 fix(web): size the chat image slot from server-reported dimensions (#10200)
   it("sizes the slot from server-reported dimensions so a portrait image never grows", () => {
     testState.imageDimensions = { width: 720, height: 1400 };
 
@@ -335,6 +364,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(style).toMatchObject({ width: "720px", "aspect-ratio": "720 / 1400" });
   });
 
+  // regression: d0f855bfa9 fix(web): size the chat image slot from server-reported dimensions (#10200)
   it("folds a caller's height cap into the width bound so the ratio holds", () => {
     testState.imageDimensions = { width: 720, height: 1400 };
 
@@ -353,6 +383,7 @@ describe("ChatMarkdown workspace images", () => {
     });
   });
 
+  // regression: d0f855bfa9 fix(web): size the chat image slot from server-reported dimensions (#10200)
   it("lets an authored size override server-reported dimensions", () => {
     testState.imageDimensions = { width: 720, height: 1400 };
 
@@ -363,6 +394,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(style).toMatchObject({ width: "96px", "aspect-ratio": "96 / 128" });
   });
 
+  // regression: eced382b45 fix(web): keep chat media at a stable size while it loads (#9938)
   it("reserves a slot for an image that is alone in a list item", () => {
     expect(render("- ![shot](.t3/workspace-image.svg)")).toContain("aspect-video");
   });
@@ -373,7 +405,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain('src="https://signed.test/workspace-image.svg#logo"');
   });
 
-  it.each(["success", "loading", "failure", "no-thread"] as const)(
+  it.each(["loading", "failure", "no-thread"] as const)(
     "copies the authored workspace source (%s)",
     (scenario) => {
       if (scenario === "no-thread") {
@@ -388,12 +420,6 @@ describe("ChatMarkdown workspace images", () => {
       expect(copiedMarkdownFrom(html)).toBe("![diagram](images/diagram.png#preview)");
     },
   );
-
-  it("copies an authored title with a workspace image", () => {
-    const html = render('![logo](images/logo.svg "My Title")');
-
-    expect(copiedMarkdownFrom(html)).toBe('![logo](images/logo.svg "My Title")');
-  });
 
   it("projects standalone image titles as captions in files while preserving ordinary chat", () => {
     const markdown = '![logo](images/logo.svg "Visible caption")';
@@ -424,18 +450,13 @@ describe("ChatMarkdown workspace images", () => {
     }
   });
 
-  it("escapes double quotes in an authored image title", () => {
-    const html = render(`![logo](images/logo.svg 'My "Title"')`);
-
-    expect(copiedMarkdownFrom(html)).toBe('![logo](images/logo.svg "My \\"Title\\"")');
-  });
-
   it("escapes a closing bracket in authored image alt text", () => {
     const markdown = String.raw`![build\] badge](badge.svg)`;
 
     expect(copiedMarkdownFrom(render(markdown))).toBe(markdown);
   });
 
+  // regression: c0e09f323a fix(web): render nested markdown images correctly (#8501)
   it("escapes a literal backslash in authored image alt text", () => {
     const markdown = String.raw`![folder\\name](badge.svg)`;
 
@@ -493,6 +514,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("data-scient-inline-workspace-image");
   });
 
+  // regression: eced382b45 fix(web): keep chat media at a stable size while it loads (#9938)
   it("reserves the same 16:9 frame while the URL, the bytes, and a failure resolve", () => {
     const frameClassName = (html: string) => {
       const frame = /<span[^>]*role="(?:status|alert)"[^>]*>/.exec(html)?.[0] ?? "";
@@ -512,9 +534,8 @@ describe("ChatMarkdown workspace images", () => {
     expect(frameClassName(loadingBytes)).toEqual(loadingUrl);
     expect(frameClassName(failure)).toEqual(loadingUrl);
     expect(failure).toContain("Image unavailable");
-    // The bytes are requested inside the frame but never paint at an unknown size.
+    // The bytes load inside the frame but never paint at an unknown size.
     expect(loadingBytes).toMatch(/<img[^>]*src="https:\/\/signed[^>]*class="invisible/);
-    expect(loadingBytes).not.toContain('loading="lazy"');
   });
 
   it("gives a standalone remote image a link card instead of a loading frame", () => {

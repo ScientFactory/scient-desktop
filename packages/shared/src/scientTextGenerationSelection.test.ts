@@ -28,6 +28,7 @@ const disabled = Object.fromEntries(
 );
 
 describe("Scient writer fallback across scopes", () => {
+  // regression: de8482724f chore(upstream): align Scient with T3 f23d0084b6
   it.each(["droid", "omp", "scient"])("retains the %s-only project writer", (driver) => {
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       providerInstances: disabled,
@@ -59,7 +60,7 @@ describe("Scient writer fallback across scopes", () => {
     expect(selected?.instanceId).toBe("codex-a");
   });
 
-  // A backend behind a custom model may refuse the built-in default (upstream #12651).
+  // A custom-model backend may refuse the built-in default.
   it("uses the thread default only when it is a custom model on the chosen instance", () => {
     const claude = ProviderInstanceId.make("claudeAgent");
     const claudeWork = ProviderInstanceId.make("claude-work");

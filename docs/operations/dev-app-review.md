@@ -15,7 +15,7 @@ uncommitted work.
 
 ## Install Once
 
-From any up-to-date checkout of this repository, with Node 24 active:
+From any up-to-date checkout of this repository, with the Node version pinned in its `package.json` active:
 
 ```sh
 pnpm dev:app:stable install
@@ -111,6 +111,11 @@ Privacy & security > Microphone. Staging voice on Windows needs Visual Studio
 - A dependency install that stops printing for six minutes or runs past 45
   minutes is stopped and retried once from a clean `node_modules`; the old
   folder is set aside under the stable root, not deleted.
+- Checkout dependency installs support native pnpm binaries and JavaScript entry
+  points, using the pinned Node only for JavaScript. Existing installed controllers
+  retain their copied implementation until explicitly reinstalled from the updated
+  checkout with `pnpm dev:app:stable install`; reviewing a commit does not replace
+  the controller.
 
 ## Remove
 

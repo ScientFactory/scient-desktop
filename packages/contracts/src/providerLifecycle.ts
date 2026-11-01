@@ -245,6 +245,11 @@ export const ProviderRuntimeSummary = Schema.Struct({
   catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),
   operation: Schema.NullOr(ProviderRuntimeOperation),
   message: TrimmedNonEmptyString,
+  /**
+   * Whether the selected runtime passed the provider's own capability check, for a provider that
+   * runs one. A failed status check of a healthy runtime is not a repair; absent keeps older rules.
+   */
+  healthy: Schema.optionalKey(Schema.Boolean),
   diagnostics: Schema.optionalKey(ProviderRuntimeDiagnostics),
   installation: Schema.optionalKey(ProviderRegistryInstallation),
 });
@@ -270,14 +275,8 @@ export const ProviderConnectionSummary = Schema.Struct({
    */
   accounts: Schema.optionalKey(Schema.Array(ProviderConnectionAccount)),
   /**
-   * The sign-in to one of `accounts` that is running or last ended. It is
-   * published here and never in `operation`.
-   *
-   * Both account fields are optional keys on purpose: a client that predates
-   * them ignores them and keeps decoding the provider. For the same reason
-   * such a provider leaves `methods` empty (its list is what says sign-in is
-   * available), so the `scient_agent_account` method never reaches a field an
-   * older client decodes.
+   * Account fields stay optional and methods empty so older clients ignore them without decoding an
+   * unknown scient_agent_account method. Publish account sign-in separately from operation.
    */
   accountOperation: Schema.optionalKey(Schema.NullOr(ProviderConnectionOperation)),
 });

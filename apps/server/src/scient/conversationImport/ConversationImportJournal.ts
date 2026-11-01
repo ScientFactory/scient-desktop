@@ -1,12 +1,7 @@
 /**
- * The importer's attempt journal: one small JSON file in the import's
- * `attemptDirectory`, written atomically and flushed before any attachment is
- * published or the import command is dispatched. It is the only record of
- * what an uncommitted attempt owns, so it names the exact final paths.
- *
- * An attempt directory holds either nothing (no attempt), or this journal
- * (possibly beside the temporary directory of an interrupted write, which
- * never names published files: publication starts only after the rename).
+ * Atomically write and flush the exact-path journal before publication/dispatch: it alone proves
+ * uncommitted ownership. Interrupted temporary writes name no published files because publication
+ * begins only after journal rename.
  */
 import {
   ConversationExternalExportId,

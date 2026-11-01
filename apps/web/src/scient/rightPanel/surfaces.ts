@@ -7,6 +7,7 @@ import {
   type PdfSourceDescriptor as PdfSourceDescriptorType,
 } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
+import { randomUUID } from "~/lib/utils";
 import {
   MAX_COMPUTE_CONTEXT_ID_LENGTH,
   type ComputeContextId,
@@ -20,6 +21,7 @@ const isPdfSourceDescriptor = Schema.is(PdfSourceDescriptor);
 
 export type ScientRightPanelSurface =
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
+  | { readonly id: `scient:new-tab:${string}`; readonly kind: "scient"; readonly module: "new-tab" }
   | {
       readonly id: `scient:compute:${string}`;
       readonly kind: "scient";
@@ -61,10 +63,31 @@ export type ScientRightPanelSurface =
       readonly module: "skill";
       readonly releaseKey: string;
       readonly title: string;
+    }
+  | {
+      /** One Overleaf link's review: its changes and any conflicts to settle. */
+      readonly id: `scient:overleaf-review:${string}`;
+      readonly kind: "scient";
+      readonly module: "overleaf-review";
+      readonly cwd: string;
+      readonly connectionId: string;
+      /** The linked folder, for the tab's title. */
+      readonly folder: string;
     };
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
   return { id: "scient:sources", kind: "scient", module: "sources" };
+}
+
+/** The launcher page as a tab: what "+" opens. Each one is a separate tab. */
+export function scientNewTabSurface(
+  key: string = randomUUID(),
+): Extract<ScientRightPanelSurface, { module: "new-tab" }> {
+  return { id: `scient:new-tab:${key}`, kind: "scient", module: "new-tab" };
+}
+
+export function isScientNewTabSurface(surface: { readonly id: string } | undefined): boolean {
+  return surface?.id.startsWith("scient:new-tab:") === true;
 }
 
 export function scientComputeSurface(input: {
@@ -155,12 +178,35 @@ export function scientSkillSurface(input: {
   };
 }
 
+export function scientOverleafReviewSurface(input: {
+  readonly cwd: string;
+  readonly connectionId: string;
+  readonly folder: string;
+}): Extract<ScientRightPanelSurface, { module: "overleaf-review" }> {
+  return {
+    id: `scient:overleaf-review:${encodeURIComponent(input.cwd)}:${encodeURIComponent(input.connectionId)}`,
+    kind: "scient",
+    module: "overleaf-review",
+    cwd: input.cwd,
+    connectionId: input.connectionId,
+    folder: input.folder,
+  };
+}
+
 export function normalizeScientRightPanelSurface(value: unknown): ScientRightPanelSurface | null {
   if (typeof value !== "object" || value === null) return null;
   const surface = value as Record<string, unknown>;
   if (surface.kind !== "scient") return null;
   if (surface.id === "scient:sources" && surface.module === "sources") {
     return scientSourcesSurface();
+  }
+  if (
+    surface.module === "new-tab" &&
+    typeof surface.id === "string" &&
+    surface.id.startsWith("scient:new-tab:") &&
+    surface.id.length <= 128
+  ) {
+    return scientNewTabSurface(surface.id.slice("scient:new-tab:".length));
   }
   if (
     surface.module === "compute" &&
@@ -231,6 +277,24 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   ) {
     return scientSkillSurface({ releaseKey: surface.releaseKey, title: surface.title });
   }
+  if (
+    surface.module === "overleaf-review" &&
+    typeof surface.cwd === "string" &&
+    surface.cwd.length > 0 &&
+    surface.cwd.length <= 4_096 &&
+    !surface.cwd.includes("\0") &&
+    typeof surface.connectionId === "string" &&
+    /^[a-z0-9][a-z0-9-]{0,63}$/u.test(surface.connectionId) &&
+    typeof surface.folder === "string" &&
+    surface.folder.length <= 4_096 &&
+    !surface.folder.includes("\0")
+  ) {
+    return scientOverleafReviewSurface({
+      cwd: surface.cwd,
+      connectionId: surface.connectionId,
+      folder: surface.folder,
+    });
+  }
   return null;
 }
 
@@ -238,6 +302,8 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
   switch (surface.module) {
     case "sources":
       return "Sources";
+    case "new-tab":
+      return "New tab";
     case "compute":
       return surface.contextId === undefined ? "Compute history" : "Compute session";
     case "source-pdf":
@@ -252,5 +318,9 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
     }
     case "skill":
       return surface.title;
+    case "overleaf-review": {
+      const folder = surface.folder.replace(/\/+$/u, "");
+      return folder === "" ? "Overleaf" : `Overleaf · ${folder.slice(folder.lastIndexOf("/") + 1)}`;
+    }
   }
 }

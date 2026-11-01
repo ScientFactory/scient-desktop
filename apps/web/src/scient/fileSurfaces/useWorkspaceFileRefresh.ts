@@ -125,6 +125,7 @@ export function useWorkspaceFileRefresh(input: {
   const [saveError, setSaveError] = useState<FileSaveErrorNotice | null>(null);
   const [saveResolution, setSaveResolution] = useState<FileSaveResolution | null>(null);
   const saveResolutionRef = useRef<FileSaveResolution | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the save resolution for async save handlers to read
   useLayoutEffect(() => {
     saveResolutionRef.current = saveResolution;
   });
@@ -167,6 +168,7 @@ export function useWorkspaceFileRefresh(input: {
     setSaveResolution(null);
   }
   const observedPath = useRef(input.relativePath);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets observed-change and confirmed-save refs when the workspace path changes
   useEffect(() => {
     if (observedPath.current === input.relativePath) return;
     observedPath.current = input.relativePath;
@@ -194,6 +196,7 @@ export function useWorkspaceFileRefresh(input: {
       });
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the file and viewer when the file-change subscription observes a change
   useEffect(() => {
     if (fileChanges.change === null || lastObservedChangeRef.current === fileChanges.change) {
       return;
@@ -205,6 +208,7 @@ export function useWorkspaceFileRefresh(input: {
     refreshViewer();
   }, [fileChanges.change, refreshViewer]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- raises the external-change reload notice when the authoritative file read conflicts with a pending save
   useEffect(() => {
     const relativePath = input.relativePath;
     const authoritative = file.authoritativeData;

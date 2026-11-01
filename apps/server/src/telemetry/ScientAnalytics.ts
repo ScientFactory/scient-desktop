@@ -12,6 +12,7 @@ import {
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
+import * as NodeSea from "node:sea";
 import * as Config from "effect/Config";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -51,12 +52,19 @@ export function localAnalyticsTestEndpoint(value: string): string | undefined {
 }
 
 /** Scient consent and deletion controls on the analytics service. */
+export type AnalyticsCollectionBoundaryPhase = "invalidated" | "ready";
+
 export interface ScientAnalyticsControls {
   /** Read the current local consent state and master availability gate. */
   readonly status: Effect.Effect<AnalyticsStatus>;
 
   /** Internal observer fence; never part of a wire event or public identity. */
   readonly collectionEpoch: Effect.Effect<number>;
+
+  /** In-memory boundary watermark acquisition; not telemetry or a public API. */
+  readonly observeCollectionBoundary?: (
+    listener: (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>,
+  ) => Effect.Effect<() => void>;
 
   /** Persist and apply a new local consent level before accepting later events. */
   readonly setConsent: (consent: AnalyticsConsent) => Effect.Effect<AnalyticsStatus>;
@@ -106,29 +114,9 @@ function disabledRuntime(outboxPath: string): AnalyticsRuntime {
 function packagedAnalyticsWorkerUrl(): URL {
   const moduleUrl = new URL(import.meta.url);
   // Lazy CLI chunks and the entry bundle share the emitted worker's directory.
-  return moduleUrl.pathname.endsWith(".mjs")
+  return NodeSea.isSea() || moduleUrl.pathname.endsWith(".mjs")
     ? new URL("./analytics-worker.mjs", moduleUrl)
     : new URL("../../dist/analytics-worker.mjs", moduleUrl);
-}
-
-async function readStoredConsent(path: string): Promise<AnalyticsConsent | null> {
-  try {
-    const parsed = JSON.parse(await NodeFSP.readFile(path, "utf8")) as unknown;
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !("version" in parsed) ||
-      parsed.version !== 1 ||
-      !("consent" in parsed) ||
-      typeof parsed.consent !== "string"
-    ) {
-      return "off";
-    }
-    return AnalyticsConsent.find((candidate) => candidate === parsed.consent) ?? "off";
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    return "off";
-  }
 }
 
 async function writeStoredConsent(path: string, consent: AnalyticsConsent): Promise<void> {
@@ -150,7 +138,7 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
   deleteData: Effect.succeed(false),
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
   if (!analyticsConfig.enabled) {
@@ -159,13 +147,12 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
   const preferencePath = NodePath.join(serverConfig.stateDir, "analytics", "preferences.json");
-  const storedConsent = analyticsConfig.enabled
-    ? yield* Effect.promise(() => readStoredConsent(preferencePath))
-    : null;
-  let consent = storedConsent ?? parseConsent(analyticsConfig.consent);
+  // Like T3, analytics is on for everyone; a saved preference no longer applies.
+  // SCIENT_ANALYTICS_ENABLED=false is the off switch.
+  let consent = parseConsent(analyticsConfig.consent);
   let sessionStartedAt = yield* Clock.currentTimeMillis;
 
-  if (storedConsent === null && consent === "off" && analyticsConfig.consent !== "off") {
+  if (consent === "off" && analyticsConfig.consent !== "off") {
     yield* Effect.logWarning("Invalid Scient analytics consent; analytics remains off");
   }
 
@@ -234,15 +221,53 @@ export const make = Effect.gen(function* () {
 
   let controlInProgress = false;
   let collectionEpoch = 0;
+  type BoundaryListener = (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>;
+  const boundaryListeners = new Set<BoundaryListener>();
+  const notifyBoundary = async (
+    listener: BoundaryListener,
+    phase: AnalyticsCollectionBoundaryPhase,
+  ) => {
+    try {
+      await listener(collectionEpoch, phase);
+    } catch {
+      // An observer must fail closed itself; it cannot prevent Off or erasure.
+    }
+  };
+  const advanceCollectionEpoch = async (phase: AnalyticsCollectionBoundaryPhase) => {
+    collectionEpoch += 1;
+    await Promise.all([...boundaryListeners].map((listener) => notifyBoundary(listener, phase)));
+  };
+  const observeCollectionBoundary: NonNullable<
+    ScientAnalyticsControls["observeCollectionBoundary"]
+  > = (listener) =>
+    Effect.promise(async () => {
+      boundaryListeners.add(listener);
+      await notifyBoundary(listener, "ready");
+      return () => boundaryListeners.delete(listener);
+    });
 
-  const record: AnalyticsService["Service"]["record"] = (event, properties) =>
+  const record: AnalyticsService["Service"]["record"] = (event, properties, expectedEpoch) =>
     Effect.try({
       try: () => {
-        if (controlInProgress) return;
+        if (controlInProgress || (expectedEpoch !== undefined && expectedEpoch !== collectionEpoch))
+          return;
         runtimeHolder.current.record(event, properties);
       },
       catch: () => "analytics-record-failed" as const,
     }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics event could not be queued")));
+
+  const recordedOwners = new Set<string>();
+  const recordOwners: AnalyticsService["Service"]["recordOwners"] = (owners, observedBy) =>
+    Effect.forEach(
+      owners,
+      ({ source, ownerId }) => {
+        const key = `${observedBy}:${source}:${ownerId}`;
+        if (recordedOwners.has(key)) return Effect.void;
+        recordedOwners.add(key);
+        return record("install.owner_observed", { ownerSource: source, ownerId, observedBy });
+      },
+      { discard: true },
+    );
 
   const flush: AnalyticsService["Service"]["flush"] = Effect.tryPromise({
     try: () => runtimeHolder.current.flush(),
@@ -277,7 +302,7 @@ export const make = Effect.gen(function* () {
           serializeControl(async () => {
             if (!analyticsConfig.enabled) return { available: false, consent: "off" } as const;
             controlInProgress = true;
-            collectionEpoch += 1;
+            await advanceCollectionEpoch("invalidated");
             const previousConsent = consent;
             const previousRuntime = runtimeHolder.current;
             let candidateRuntime: AnalyticsRuntime | null = null;
@@ -311,7 +336,7 @@ export const make = Effect.gen(function* () {
               }
               return { available: true, consent } as const;
             } finally {
-              collectionEpoch += 1;
+              await advanceCollectionEpoch("ready");
               controlInProgress = false;
             }
           }),
@@ -329,7 +354,7 @@ export const make = Effect.gen(function* () {
         serializeControl(async () => {
           if (!analyticsConfig.enabled) return false;
           controlInProgress = true;
-          collectionEpoch += 1;
+          await advanceCollectionEpoch("invalidated");
           try {
             const temporaryRuntime = runtimeHolder.current.enabled
               ? null
@@ -353,7 +378,7 @@ export const make = Effect.gen(function* () {
               if (temporaryRuntime) await temporaryRuntime.close();
             }
           } finally {
-            collectionEpoch += 1;
+            await advanceCollectionEpoch("ready");
             controlInProgress = false;
           }
         }),
@@ -369,12 +394,12 @@ export const make = Effect.gen(function* () {
 
   return {
     record,
-    // Provider and installation owner identities are outside Scient's analytics contract.
-    recordOwners: disabledAnalyticsService.recordOwners,
+    recordOwners,
     flush,
     status,
     setConsent,
     deleteData,
     collectionEpoch: Effect.sync(() => collectionEpoch),
+    observeCollectionBoundary,
   } satisfies AnalyticsService["Service"];
 });

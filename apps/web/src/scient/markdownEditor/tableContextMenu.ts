@@ -86,7 +86,7 @@ export function scientMarkdownTableContextMenuItems(): readonly ContextMenuItem<
       id: "table-direction-actions",
       label: "Table direction",
       children: [
-        { id: "direction-auto", label: "Auto — detect from table" },
+        { id: "direction-auto", label: "Auto (detect from table)" },
         { id: "direction-ltr", label: "Left to right" },
         { id: "direction-rtl", label: "Right to left" },
       ],

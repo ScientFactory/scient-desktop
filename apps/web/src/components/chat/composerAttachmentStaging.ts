@@ -6,7 +6,16 @@ import {
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import { composerFileDedupKey, composerImageDedupKey } from "../../composerDraftStore";
-import { isHeicImageFile, prepareImageForAttachment } from "../../lib/imageCompression";
+import {
+  inheritComposerImageThumbnail,
+  isHeicImageFile,
+  prepareImageForAttachment,
+} from "../../lib/imageCompression";
+
+interface StagedComposerImage {
+  readonly id: string;
+  readonly file: File;
+}
 
 type AttachmentFacts = Pick<ChatAttachment, "type" | "mimeType" | "sizeBytes"> & {
   /** Only the target draft grants deduplication; other question drafts still count. */
@@ -15,7 +24,7 @@ type AttachmentFacts = Pick<ChatAttachment, "type" | "mimeType" | "sizeBytes"> &
 
 function uniqueBatch(
   existing: ReadonlyArray<AttachmentFacts>,
-  images: ReadonlyArray<File>,
+  images: ReadonlyArray<StagedComposerImage>,
   files: ReadonlyArray<ComposerFileAttachment>,
 ) {
   const imageKeys = new Set(
@@ -25,7 +34,7 @@ function uniqueBatch(
     existing.filter((item) => item.type === "file").map((item) => item.dedupKey),
   );
   return {
-    images: images.filter((file) => {
+    images: images.filter(({ file }) => {
       const key = composerImageDedupKey({
         name: file.name,
         mimeType: file.type,
@@ -46,26 +55,30 @@ function uniqueBatch(
 
 /** Convert locally, then admit and commit the entire batch against the current draft. */
 export async function stageComposerAttachmentBatch(input: {
-  readonly images: ReadonlyArray<File>;
+  readonly images: ReadonlyArray<StagedComposerImage>;
   readonly files: ReadonlyArray<ComposerFileAttachment>;
   readonly readExisting: () => ReadonlyArray<AttachmentFacts>;
   readonly stillWanted: () => boolean;
+  readonly isImageWanted: (id: string) => boolean;
   readonly commit: (input: {
-    readonly images: ReadonlyArray<File>;
+    readonly images: ReadonlyArray<StagedComposerImage>;
     readonly files: ReadonlyArray<ComposerFileAttachment>;
   }) => boolean;
 }): Promise<{ readonly inserted: boolean; readonly error: string | null }> {
   // These images take the byte-for-byte passthrough path. HEIC and oversized
   // rasters have unknown output sizes until local conversion completes.
   const unchangedImages = input.images.filter(
-    (file) => !isHeicImageFile(file) && file.size <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+    ({ id, file }) =>
+      input.isImageWanted(id) &&
+      !isHeicImageFile(file) &&
+      file.size <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   );
   const initialExisting = input.readExisting();
   const unchanged = uniqueBatch(initialExisting, unchangedImages, input.files);
   const earlyError = getProviderAttachmentLimitError([
     ...initialExisting,
     ...unchanged.files,
-    ...unchanged.images.map((file) => ({
+    ...unchanged.images.map(({ file }) => ({
       type: "image" as const,
       mimeType: file.type,
       sizeBytes: file.size,
@@ -73,28 +86,41 @@ export async function stageComposerAttachmentBatch(input: {
   ]);
   if (earlyError) return { inserted: false, error: earlyError };
 
-  const images: File[] = [];
-  let error: string | null = null;
-  for (const file of input.images) {
-    const prepared = await prepareImageForAttachment(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+  const images: StagedComposerImage[] = [];
+  const errors = new Map<string, string>();
+  for (const { id, file } of input.images) {
+    if (!input.isImageWanted(id)) continue;
+    const prepared = await prepareImageForAttachment(
+      file,
+      PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+    ).catch(() => ({ ok: false, reason: "unreadable" }) as const);
+    if (!input.isImageWanted(id)) continue;
     if (!prepared.ok) {
-      error =
+      errors.set(
+        id,
         prepared.reason === "unreadable"
           ? `'${file.name}' could not be read as an image.`
-          : `'${file.name}' is too large to attach, even after compression.`;
+          : `'${file.name}' is too large to attach, even after compression.`,
+      );
       continue;
     }
-    images.push(prepared.file);
+    inheritComposerImageThumbnail(file, prepared.file);
+    images.push({ id, file: prepared.file });
   }
   if (!input.stillWanted()) return { inserted: false, error: null };
+  const error = [...errors].filter(([id]) => input.isImageWanted(id)).at(-1)?.[1] ?? null;
   if (images.length === 0 && input.files.length === 0) return { inserted: false, error };
 
   const existing = input.readExisting();
-  const batch = uniqueBatch(existing, images, input.files);
+  const batch = uniqueBatch(
+    existing,
+    images.filter(({ id }) => input.isImageWanted(id)),
+    input.files,
+  );
   const limitError = getProviderAttachmentLimitError([
     ...existing,
     ...batch.files,
-    ...batch.images.map((file) => ({
+    ...batch.images.map(({ file }) => ({
       type: "image" as const,
       mimeType: file.type,
       sizeBytes: file.size,

@@ -28,11 +28,23 @@ describe("Cloud probe boundaries", () => {
       ],
       ["The requested URL returned error: 403", "authentication-or-access-denied"],
       ["repository not found", "project-not-found"],
+      [
+        "fatal: remote error: no git access\nThis Overleaf project currently has no git access, either because\nthe project does not exist, or because git access is not enabled\nfor the project.",
+        "project-not-found",
+      ],
+      // Overleaf's words for its rate limit open like the refusal above (found in a live check).
+      [
+        "fatal: remote error: no git access\nRate-limit exceeded. Please wait a while and try again.\n\nIf this is unexpected, please contact us at support@overleaf.com, or\nsee https://www.overleaf.com/learn/how-to/Git_integration for more information.",
+        "rate-limited",
+      ],
+      ["The requested URL returned error: 429", "rate-limited"],
+      ["fatal: remote error: something new", "server-refused"],
       ["SSL certificate problem", "tls"],
       ["Could not resolve host", "dns"],
       ["redirect denied", "redirect"],
       ["Failed to connect", "connection"],
       ["cannot run askpass", "credential-prompt"],
+      ["remote: Something Overleaf has not said before\nfatal: exited", "server-refused"],
       [`Unexpected remote output ${secret}`, "unclassified"],
     ] as const) {
       const diagnostic = classifyProbeGitFailure(
@@ -164,6 +176,25 @@ describe("Cloud probe boundaries", () => {
           }),
         ).toBe("unknown");
       }),
+  );
+  it.effect("accepts a historical tree only from a commit after the recorded parent", () =>
+    Effect.gen(function* () {
+      const check = (afterParent: boolean) =>
+        probeAcceptance({
+          repository: {
+            // History was rewritten: the candidate's tree appears in an unrelated commit.
+            treesSince: () => Effect.succeed([{ commit: "unrelated", tree: "candidate" }]),
+            isAncestor: (input: { ancestor: string; descendant: string }) =>
+              Effect.succeed(afterParent && input.ancestor === "base"),
+          } as unknown as OverleafRepository["Service"],
+          repo: "/unused",
+          before: "base",
+          head: { commit: "new", tree: "different" },
+          candidate: { commit: "lost", tree: "candidate" },
+        });
+      expect(yield* check(false)).toBe("unknown");
+      expect(yield* check(true)).toBe("bounded-history-tree");
+    }),
   );
   it("rehearses publishing, rejection, renames and lost-ack verification with real Git", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-probe-cli-"));

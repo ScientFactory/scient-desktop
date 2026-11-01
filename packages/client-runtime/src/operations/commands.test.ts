@@ -1,7 +1,8 @@
+// SCIENT-FORK:START
 import { PlanId } from "@t3tools/contracts";
 import { mergeThreadBack } from "./commands.ts";
-import { reorderQueuedRun } from "./commands.ts";
 import { promoteQueuedRun } from "./commands.ts";
+// SCIENT-FORK:END
 import {
   CheckpointId,
   CheckpointRef,
@@ -18,19 +19,23 @@ import {
   ThreadId,
   TurnItemId,
   WS_METHODS,
+  // SCIENT-FORK:START
   WsRpcGroup,
+  // SCIENT-FORK:END
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+// SCIENT-FORK:START
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:END
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
@@ -44,15 +49,23 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  // SCIENT-FORK:START
   cancelQueuedRun,
-  resumeThreadQueue,
   editQueuedRun,
   forkThreadFromRun,
+  // SCIENT-FORK:END
   interruptThreadTurn,
   revertThreadCheckpoint,
+  resumeThreadQueue,
   startThreadTurn,
 } from "./commands.ts";
 
+// SCIENT-FORK:START
+const dispatchCommandRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+if (dispatchCommandRpc === undefined) throw new Error("Missing registered dispatch RPC");
+const decodeDispatchCommand = Schema.decodeUnknownEffect(dispatchCommandRpc.payloadSchema);
+
+// SCIENT-FORK:END
 const layerTestCrypto = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
@@ -74,8 +87,11 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
-  readonly advertiseServerResolvedCommandContext?: boolean;
   readonly advertiseThreadStop?: boolean;
+  // SCIENT-FORK:START
+  readonly advertiseQueuedRunStart?: boolean;
+  readonly advertiseThreadQueueExplicitSend?: boolean;
+  // SCIENT-FORK:END
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -123,16 +139,22 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
-          ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
-          ...(input.advertiseServerResolvedCommandContext === false
+          // SCIENT-FORK:START
+          ...(input.advertiseThreadQueueExplicitSend === undefined
             ? {}
-            : { serverResolvedCommandContext: true }),
+            : { threadQueueExplicitSend: input.advertiseThreadQueueExplicitSend }),
+          ...(input.advertiseQueuedRunStart === undefined
+            ? {}
+            : { queuedRunStart: input.advertiseQueuedRunStart }),
+          // SCIENT-FORK:END
+          ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
         },
       },
     } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -147,46 +169,121 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
-  for (const advertiseServerResolvedCommandContext of [true, false]) {
-    it.effect.each(
-      (["auto", "queue", "steer", "restart", "start"] as const).map((dispatchMode) => ({
-        caseTitle: `preserves captured modes through the registered RPC for ${dispatchMode} (server context ${advertiseServerResolvedCommandContext})`,
+  // SCIENT-FORK:START
+  it.effect.each(
+    (["auto", "queue", "steer", "restart", "start"] as const).map((dispatchMode) => ({
+      caseTitle: `preserves captured modes through the registered RPC for ${dispatchMode}`,
+      dispatchMode,
+    })),
+  )("$caseTitle", ({ dispatchMode }) =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      yield* startThreadTurn({
+        commandId: CommandId.make(`captured-modes-${dispatchMode}`),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make(`captured-modes-message-${dispatchMode}`),
+          role: "user",
+          text: "Work within the selected permission and planning modes.",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
         dispatchMode,
-      })),
-    )("$caseTitle", ({ dispatchMode }) =>
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(commands).toHaveLength(1);
+      const transported = yield* decodeDispatchCommand(commands[0]);
+      expect(transported).toMatchObject({
+        type: "message.dispatch",
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+  // SCIENT-FORK:END
+  it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      // SCIENT-FORK:START
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        advertiseQueuedRunStart: true,
+      });
+      // SCIENT-FORK:END
+      const threadId = ThreadId.make("thread-1");
+      yield* resumeThreadQueue({
+        commandId: CommandId.make("send-selected"),
+        threadId,
+        runId: RunId.make("selected"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* resumeThreadQueue({
+        commandId: CommandId.make("resume-queue"),
+        threadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        { type: "queued-run.start", commandId: "send-selected", threadId, runId: "selected" },
+        { type: "queue.resume", commandId: "resume-queue", threadId },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  // SCIENT-FORK:START
+  it.effect.each([undefined, false, true])(
+    "negotiates selected queued starts when the host advertises %s",
+    (advertiseQueuedRunStart) =>
       Effect.gen(function* () {
         const commands: OrchestrationV2Command[] = [];
         const supervisor = yield* makeSupervisor({
           commands,
           projects: [],
-          advertiseServerResolvedCommandContext,
+          ...(advertiseQueuedRunStart === undefined ? {} : { advertiseQueuedRunStart }),
+          advertiseThreadQueueExplicitSend: true,
         });
-        yield* startThreadTurn({
-          commandId: CommandId.make(`captured-modes-${dispatchMode}`),
+        const commandId = CommandId.make("selected-idempotent");
+        const runId = RunId.make("selected");
+        yield* resumeThreadQueue({
+          commandId,
           threadId: v2ThreadId,
-          message: {
-            messageId: MessageId.make(`captured-modes-message-${dispatchMode}`),
-            role: "user",
-            text: "Work within the selected permission and planning modes.",
-            attachments: [],
-          },
-          runtimeMode: "approval-required",
-          interactionMode: "plan",
-          dispatchMode,
+          runId,
         }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-        expect(commands).toHaveLength(1);
-        const rpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
-        if (rpc === undefined) return yield* Effect.die("Missing registered dispatch RPC");
-        const transported = yield* Schema.decodeUnknownEffect(rpc.payloadSchema)(commands[0]);
-        expect(transported).toMatchObject({
-          type: "message.dispatch",
-          runtimeMode: "approval-required",
-          interactionMode: "plan",
-        });
+        assert.deepEqual(commands, [
+          {
+            type: advertiseQueuedRunStart === true ? "queued-run.start" : "queue.resume",
+            commandId,
+            threadId: v2ThreadId,
+            runId,
+          },
+        ]);
       }).pipe(Effect.provide(layerTestCrypto)),
-    );
-  }
+  );
 
+  it.effect.each([undefined, false])(
+    "uses the upstream selected-run command without the legacy Scient capability (%s)",
+    (advertiseThreadQueueExplicitSend) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          ...(advertiseThreadQueueExplicitSend === undefined
+            ? {}
+            : { advertiseThreadQueueExplicitSend }),
+        });
+        const commandId = CommandId.make("send-second-held-run");
+        const runId = RunId.make("second-held-run");
+        yield* resumeThreadQueue({ commandId, threadId: v2ThreadId, runId }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        assert.deepEqual(commands, [
+          { type: "queued-run.start", commandId, threadId: v2ThreadId, runId },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  // SCIENT-FORK:END
   it.effect("preserves caller command ids for idempotent V2 commands", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
@@ -264,11 +361,13 @@ describe("V2 environment commands", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         titleSeed: "Continue here",
+        // SCIENT-FORK:START
         selectedScientSkillNames: ["pdf-authoring"],
         sourceProposedPlan: {
           threadId: ThreadId.make("thread-plan"),
           planId: PlanId.make("plan-1"),
         },
+        // SCIENT-FORK:END
         bootstrap: {
           createThread: {
             projectId: ProjectId.make("project-1"),
@@ -287,10 +386,12 @@ describe("V2 environment commands", () => {
         threadId: v2ThreadId,
         title: "Continue here",
         generateTitle: true,
+        // SCIENT-FORK:START
         initialMessage: {
           selectedScientSkillNames: ["pdf-authoring"],
           sourcePlanRef: { threadId: "thread-plan", planId: "plan-1" },
         },
+        // SCIENT-FORK:END
         workspaceStrategy: {
           type: "existing_worktree",
           worktreePath: "/workspace/project-worktrees/feature",
@@ -333,71 +434,6 @@ describe("V2 environment commands", () => {
         });
       }
       expect(projectionRequests).toEqual([]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("retains projection-shaped delivery for servers without command context support", () =>
-    Effect.gen(function* () {
-      const activeRunId = RunId.make("legacy-active-run");
-      const projection: OrchestrationV2ThreadProjection = {
-        ...v2Projection,
-        runs: [
-          {
-            id: activeRunId,
-            threadId: v2ThreadId,
-            ordinal: 1,
-            providerInstanceId: v2Projection.thread.providerInstanceId,
-            modelSelection: v2Projection.thread.modelSelection,
-            providerThreadId: null,
-            userMessageId: MessageId.make("legacy-active-message"),
-            rootNodeId: null,
-            activeAttemptId: null,
-            status: "running",
-            requestedAt: v2Now,
-            startedAt: v2Now,
-            completedAt: null,
-            checkpointId: null,
-            contextHandoffId: null,
-          },
-        ],
-      };
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({
-        commands,
-        projects: [],
-        projection,
-        projectionRequests,
-        advertiseServerResolvedCommandContext: false,
-      });
-
-      for (const [mode, expectedMode] of [
-        ["auto", { type: "queue_after_active" }],
-        ["queue", { type: "queue_after_active" }],
-        ["steer", { type: "steer_active", targetRunId: activeRunId }],
-        ["restart", { type: "restart_active", targetRunId: activeRunId }],
-      ] as const) {
-        yield* startThreadTurn({
-          commandId: CommandId.make(`legacy-command-${mode}`),
-          threadId: v2ThreadId,
-          message: {
-            messageId: MessageId.make(`legacy-message-${mode}`),
-            role: "user",
-            text: mode,
-            attachments: [],
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          dispatchMode: mode,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-        expect(commands.at(-1)).toMatchObject({
-          type: "message.dispatch",
-          dispatchMode: expectedMode,
-        });
-        expect(commands.at(-1)).not.toHaveProperty("deliveryIntent");
-      }
-      expect(projectionRequests).toEqual([v2ThreadId, v2ThreadId, v2ThreadId, v2ThreadId]);
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
@@ -455,6 +491,7 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  // SCIENT-FORK:START
   it.effect.each([
     "waiting",
     "completed",
@@ -532,11 +569,17 @@ describe("V2 environment commands", () => {
   );
 
   it.effect(
-    "forwards native extraction revision and held-head resume without changing command identity",
+    "forwards native extraction revision and selected queued-run start without changing command identity",
     () =>
+      // SCIENT-FORK:END
       Effect.gen(function* () {
         const commands: OrchestrationV2Command[] = [];
-        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        // SCIENT-FORK:START
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          advertiseQueuedRunStart: true,
+        });
         const provide = Effect.provideService(
           EnvironmentSupervisor.EnvironmentSupervisor,
           supervisor,
@@ -564,8 +607,17 @@ describe("V2 environment commands", () => {
           runId: "held-run",
           expectedUpdatedAt: DateTime.makeUnsafe(revision),
         });
-        expect(commands[1]).toMatchObject({ type: "queue.resume", runId: "held-run" });
-        expect(commands[2]).not.toHaveProperty("runId");
+        expect(commands[1]).toEqual({
+          type: "queued-run.start",
+          commandId: CommandId.make("head-send"),
+          threadId: v2ThreadId,
+          runId: RunId.make("held-run"),
+        });
+        expect(commands[2]).toEqual({
+          type: "queue.resume",
+          commandId: CommandId.make("whole-resume"),
+          threadId: v2ThreadId,
+        });
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 
@@ -591,12 +643,6 @@ describe("V2 environment commands", () => {
           sourceThreadId: ThreadId.make("thread-fork"),
           targetThreadId: v2ThreadId,
           runId: RunId.make("run-2"),
-        }).pipe(provide);
-        yield* reorderQueuedRun({
-          commandId: CommandId.make("reorder"),
-          threadId: v2ThreadId,
-          runId: RunId.make("run-3"),
-          beforeRunId: RunId.make("run-4"),
         }).pipe(provide);
         yield* promoteQueuedRun({
           commandId: CommandId.make("promote"),
@@ -639,7 +685,6 @@ describe("V2 environment commands", () => {
         expect(commands).toMatchObject([
           { type: "thread.fork", sourcePoint: { type: "run", runId: "run-1" } },
           { type: "thread.merge_back", sourcePoint: { type: "run", runId: "run-2" } },
-          { type: "queued-run.reorder", runId: "run-3", beforeRunId: "run-4" },
           {
             type: "queued-message.promote-to-steer",
             queuedRunId: "run-3",
@@ -656,73 +701,11 @@ describe("V2 environment commands", () => {
             attachments: [{ id: "attachment-kept" }],
           },
         ]);
-        expect(commands[5]).not.toHaveProperty("attachments");
-        expect(commands[5]).not.toHaveProperty("context");
-        expect(commands[5]).not.toHaveProperty("selectedScientSkillNames");
+        expect(commands[4]).not.toHaveProperty("attachments");
+        expect(commands[4]).not.toHaveProperty("context");
+        expect(commands[4]).not.toHaveProperty("selectedScientSkillNames");
+        // SCIENT-FORK:END
       }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("validates identified checkpoints locally for older servers", () =>
-    Effect.gen(function* () {
-      const checkpointId = CheckpointId.make("legacy-checkpoint");
-      const scopeId = CheckpointScopeId.make("legacy-checkpoint-scope");
-      for (const status of ["ready", "missing", "error", "stale", null] as const) {
-        const commands: OrchestrationV2Command[] = [];
-        const projectionRequests: ThreadId[] = [];
-        const supervisor = yield* makeSupervisor({
-          commands,
-          projects: [],
-          projectionRequests,
-          advertiseServerResolvedCommandContext: false,
-          projection: {
-            ...v2Projection,
-            checkpoints:
-              status === null
-                ? []
-                : [
-                    {
-                      id: checkpointId,
-                      threadId: v2ThreadId,
-                      scopeId,
-                      runId: null,
-                      nodeId: NodeId.make("legacy-checkpoint-node"),
-                      parentCheckpointId: null,
-                      ordinalWithinScope: 0,
-                      appRunOrdinal: null,
-                      ref: CheckpointRef.make("refs/t3/legacy-checkpoint"),
-                      status,
-                      files: [],
-                      capturedAt: v2Now,
-                    },
-                  ],
-          },
-        });
-        const rollback = revertThreadCheckpoint({
-          commandId: CommandId.make(`legacy-rollback-${status}`),
-          threadId: v2ThreadId,
-          checkpointId,
-          scopeId,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-        if (status === "ready") {
-          yield* rollback;
-          expect(commands).toEqual([
-            {
-              type: "checkpoint.rollback",
-              commandId: "legacy-rollback-ready",
-              threadId: v2ThreadId,
-              checkpointId,
-              scopeId,
-            },
-          ]);
-        } else {
-          const error = yield* rollback.pipe(Effect.flip);
-          expect(error._tag).toBe("OrchestrationV2CheckpointUnavailableError");
-          expect(commands).toEqual([]);
-        }
-        expect(projectionRequests).toEqual([v2ThreadId]);
-      }
-    }).pipe(Effect.provide(layerTestCrypto)),
   );
 
   it.effect(

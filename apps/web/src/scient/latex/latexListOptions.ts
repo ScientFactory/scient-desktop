@@ -38,7 +38,7 @@ export function parseLatexListOptions(source: string) {
 }
 
 export function latexListLabelPresentation(label: string) {
-  const match = /^([(\[]?)\\(arabic|alph|Alph|roman|Roman)\*([)\].:]?)$/u.exec(label);
+  const match = /^([([]?)\\(arabic|alph|Alph|roman|Roman)\*([)\].:]?)$/u.exec(label);
   if (!match) return null;
   const counter = match[2] as keyof typeof listCounters;
   return { style: listCounters[counter], prefix: match[1]!, suffix: match[3]! };

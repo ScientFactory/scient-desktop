@@ -1,19 +1,7 @@
 /**
- * Keeps vendor credentials out of everything that leaves the connector
- * boundary toward an agent or a client.
- *
- * MCP results are JSON. A token-level rewriter walks the JSON text without
- * building objects: every token is copied through byte for byte, except a
- * string (value or key) whose decoded content carries a credential Scient
- * applied, which becomes the string `"[redacted by Scient]"`. A tainted number,
- * or a tainted message id the agent did not send, refuses the document. Strings
- * are checked after JSON unescaping, tolerant percent and form decoding, and
- * base64/base64url decoding at every alignment. Untainted JSON is returned
- * unchanged (numbers keep their exact lexeme), output is always valid JSON,
- * and malformed, too deeply nested or otherwise unverifiable input is refused.
- *
- * SSE streams are parsed by the shared `ConnectorSse` parser and re-rendered
- * event by event; each event's size is bounded by its own raw bytes.
+ * Rewrite credential-bearing decoded JSON strings without changing other bytes/types/IDs; refuse
+ * tainted numbers/unknown IDs or unverifiable input. Check escaped, percent/form, and base64
+ * variants. Bound SSE by raw event bytes so encoded payloads cannot bypass limits.
  */
 import { makeSseParser, type SseEvent, type SseSink } from "./ConnectorSse.ts";
 
@@ -246,11 +234,8 @@ interface JsonToken {
 type TokenAction = "keep" | "redact" | "refuse";
 
 /**
- * Iterative JSON scanner. Calls `visit` for every string and number token and
- * applies its decision; everything else is copied through. Returns the
- * rewritten text (the input itself when nothing changed), or `undefined` when
- * the input is not valid JSON, nests deeper than `MAX_JSON_DEPTH`, or a visit
- * refused it.
+ * Scan JSON iteratively to bound depth without building objects. Preserve unchanged bytes; refuse
+ * malformed/overdeep input or any token visit that cannot be safely rewritten.
  */
 const rewriteJson = (
   text: string,
@@ -396,13 +381,9 @@ export const requestIdToken = (body: string): string => {
 };
 
 /**
- * The redacted rewrite of a JSON document, or `undefined` when it is not
- * valid JSON, nests deeper than `MAX_JSON_DEPTH`, or cannot be redacted
- * without changing a value's type or a message's identity. A tainted string
- * becomes the redaction marker. A tainted number refuses the document (it
- * cannot become a string without changing its type), except a message `id`
- * the agent itself sent in this exchange, which is kept exactly. Untainted
- * input is returned byte for byte.
+ * Never change numeric types or unknown message identity to redact a credential. Preserve only an
+ * ID the agent sent; tainted strings become markers, tainted numbers/other IDs refuse the document.
+ * Untainted input stays byte-identical.
  */
 export const redactJsonText = (
   text: string,
@@ -495,11 +476,8 @@ const renderEvent = (event: SseEvent, context: RedactionContext): string | undef
 };
 
 /**
- * An SSE body re-rendered event by event. Upstream comments are never echoed;
- * they only let Scient send its own keepalive when nothing else was sent for
- * `SSE_KEEPALIVE_INTERVAL_MS`. An event whose data is not verifiable JSON, or
- * whose raw upstream bytes (line terminators included) exceed
- * `MAX_SSE_EVENT_BYTES`, is replaced by the refusal event and the stream ends.
+ * Never echo upstream SSE comments; send only Scient keepalives. Replace unverifiable JSON or
+ * raw-byte-oversized events with refusal and end the stream; count line terminators in the limit.
  */
 export const redactEventStream = (
   body: ReadableStream<Uint8Array>,

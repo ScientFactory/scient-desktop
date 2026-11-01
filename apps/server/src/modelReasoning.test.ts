@@ -208,14 +208,11 @@ describe("verified model capabilities", () => {
     expect(JSON.stringify(rotated)).not.toContain("synthetic-secret");
   });
 
+  // Every reviewed model takes the same catalog lookup; the other rows only
+  // repeated the table's constants.
   it.each([
     ["gpt-6-astra", 1_050_000, 128_000],
-    ["gpt-5.6-luna", 1_050_000, 128_000],
-    ["gpt-4.1", 1_047_576, 32_768],
     ["gpt-5.1", 400_000, 128_000],
-    ["gpt-5.2", 400_000, 128_000],
-    ["gpt-5.4", 1_050_000, 128_000],
-    ["gpt-5.5", 1_050_000, 128_000],
   ])(
     "uses reviewed exact OpenAI capacities for %s with no IO",
     async (modelId, contextWindow, maxOutputTokens) => {

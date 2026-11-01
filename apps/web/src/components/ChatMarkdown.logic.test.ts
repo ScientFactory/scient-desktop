@@ -6,7 +6,6 @@ import { resolveMarkdownFileLinkMeta } from "../markdown-links";
 import {
   canUseMarkdownFileShellActions,
   markdownFileCopyMenuItems,
-  shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./chat/MarkdownFileLink.logic";
 
 describe("canUseMarkdownFileShellActions", () => {
@@ -18,24 +17,6 @@ describe("canUseMarkdownFileShellActions", () => {
     expect(canUseMarkdownFileShellActions(environmentId, "remote-links", true)).toBe(false);
     expect(canUseMarkdownFileShellActions(environmentId, "remote-unavailable", true)).toBe(false);
     expect(canUseMarkdownFileShellActions(null, "local-exec", true)).toBe(false);
-  });
-});
-
-describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
-  it("uses the browser whenever the resolved file policy supplies it", () => {
-    expect(
-      shouldUseMarkdownFileBrowserPrimaryAction({
-        canOpenInBrowser: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("falls back to the file actions when browser preview is unavailable", () => {
-    expect(
-      shouldUseMarkdownFileBrowserPrimaryAction({
-        canOpenInBrowser: false,
-      }),
-    ).toBe(false);
   });
 });
 

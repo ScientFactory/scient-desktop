@@ -1,120 +1,171 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { ProviderDriverKind, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import { useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render as renderUi } from "../../../test/render";
+
+import { render } from "../../../test/render";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import type { ModelEsque } from "./providerIconUtils";
-const favoritesAtom = Atom.make<
-  ReadonlyArray<{
-    provider: ProviderInstanceId;
-    model: string;
-  }>
->([]).pipe(Atom.keepAlive);
-vi.mock(import("~/hooks/useSettings"), async (original) => ({
-  ...(await original()),
-  useEnvironmentModelPreferences: () => ({
-    favorites: useAtomValue(favoritesAtom),
-    providerModelPreferences: {},
-  }),
-  useToggleEnvironmentModelFavorite: () => {
-    const setFavorites = useAtomSet(favoritesAtom);
-    return async (provider: ProviderInstanceId, model: string) => {
-      setFavorites((favorites) =>
-        favorites.filter((favorite) => favorite.provider !== provider || favorite.model !== model),
-      );
-    };
-  },
-}));
-function providerEntry(instanceId: string, driver: string) {
-  const provider: ServerProvider = {
-    instanceId: ProviderInstanceId.make(instanceId),
-    driver: ProviderDriverKind.make(driver),
-    enabled: true,
-    installed: true,
-    version: null,
-    status: "ready",
-    auth: {
-      status: "authenticated",
+
+it("keeps each registry image when adding a model from another ACP agent", async () => {
+  const icons = [
+    "https://cdn.agentclientprotocol.com/registry/icons/picker-explicit.svg",
+    "https://cdn.agentclientprotocol.com/registry/v1/latest/picker-by-id.svg",
+  ];
+  const cache = await caches.open("t3-acp-registry-icons-v1");
+  await using _cachedIcons = {
+    async [Symbol.asyncDispose]() {
+      await Promise.all(icons.map((url) => cache.delete(url)));
     },
-    checkedAt: "2026-08-28T00:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
   };
-  return deriveProviderInstanceEntries([provider])[0]!;
-}
-
-// Returns the trigger's visible text, which is what the user reads before opening the picker.
-async function triggerText(node: ReactNode, inspectMarkup = false) {
-  await using screen = await renderUi(node);
-  return inspectMarkup
-    ? screen.container.innerHTML
-    : (screen.container.querySelector("button")?.textContent ?? "");
-}
-function renderPicker(input: {
-  instanceId: string;
-  driver: string;
-  model: string;
-  options: ReadonlyArray<ModelEsque>;
-  includeEntry?: boolean;
-  triggerLabel?: string;
-  iconOnly?: boolean;
-  inspectMarkup?: boolean;
-}) {
-  const instanceId = ProviderInstanceId.make(input.instanceId);
-  const entry = providerEntry(input.instanceId, input.driver);
-  return triggerText(
-    <ProviderModelPicker
-      environmentId={null}
-      activeInstanceId={instanceId}
-      model={input.model}
-      lockedProvider={null}
-      instanceEntries={input.includeEntry === false ? [] : [entry]}
-      modelOptionsByInstance={new Map([[instanceId, input.options]])}
-      onInstanceModelChange={() => {}}
-      {...(input.triggerLabel
-        ? {
-            triggerLabel: input.triggerLabel,
-          }
-        : {})}
-      {...(input.iconOnly
-        ? {
-            iconOnly: true,
-          }
-        : {})}
-    />,
-    input.inspectMarkup,
-  );
-}
-
-describe("ProviderModelPicker", () => {
-  it("retains the provider icon and accessible model name while voice hides picker details", async () => {
-    const markup = await renderPicker({
-      instanceId: "codex",
-      driver: "codex",
-      model: "gpt-5",
-      iconOnly: true,
-      inspectMarkup: true,
-      options: [
-        {
-          slug: "gpt-5",
-          name: "GPT 5",
-          providerCostLabel: "2x",
-          isUnavailable: true,
-        },
+  for (const [index, url] of icons.entries()) {
+    await cache.put(
+      url,
+      new Response(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${11 + index * 6}" height="10"><path d="M0 0h10v10H0z"/></svg>`,
+        { headers: { "content-type": "image/svg+xml" } },
+      ),
+    );
+  }
+  const entries = deriveProviderInstanceEntries(
+    ["First", "Second"].map((name) => ({
+      instanceId: ProviderInstanceId.make(name.toLowerCase()),
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: `${name} agent`,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        { slug: name.toLowerCase(), name: `${name} model`, isCustom: false, capabilities: {} },
       ],
-    });
-    expect(markup).toContain('aria-label="GPT 5 (Unavailable)"');
-    expect(markup).toContain("relative isolate z-30");
-    const trigger = new DOMParser().parseFromString(markup, "text/html").body;
-    expect(trigger.querySelector("[data-chat-provider-model-picker-label]")).toBeNull();
-    expect(trigger.querySelector("[data-composer-control-chevron]")).toBeNull();
-    expect(markup).not.toContain(">2x<");
-    expect(markup).not.toContain(">Unavailable<");
-  });
+      slashCommands: [],
+      skills: [],
+    })),
+  ).map((entry, index) => ({
+    ...entry,
+    ...(index === 0 ? { acpRegistryIconUrl: icons[0] } : { acpRegistryAgentId: "picker-by-id" }),
+  }));
+  const first = { instanceId: entries[0]!.instanceId, model: "first" };
+  const options = new Map(entries.map((entry) => [entry.instanceId, entry.models]));
+
+  function Picker() {
+    const [selection, setSelection] = useState<ReadonlyArray<ModelSelection>>([first]);
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={first.instanceId}
+        model={first.model}
+        {...(selection.length > 1 ? { selectedModels: selection } : {})}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        onToggleModel={(instanceId, model) => setSelection([...selection, { instanceId, model }])}
+        onInstanceModelChange={(instanceId, model) => setSelection([{ instanceId, model }])}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
+  const imageWidths = () =>
+    Array.from(
+      screen.container.querySelectorAll<HTMLImageElement>("[data-chat-provider-model-picker] img"),
+      (image) => image.naturalWidth,
+    );
+  await vi.waitFor(() => expect(imageWidths()).toEqual([11]));
+  await screen.getByRole("button", { name: "First model", exact: true }).click();
+  await page.getByRole("button", { name: "Second agent", exact: true }).click();
+  await userEvent.keyboard("{Shift>}");
+  try {
+    await page.getByRole("option", { name: /Second model/ }).click();
+  } finally {
+    await userEvent.keyboard("{/Shift}");
+  }
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(imageWidths()).toEqual([11, 17]));
+});
+
+it("keeps a docked picker open after a pick and hands focus to that model's effort", async () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "original", name: "Original model" },
+        { slug: "second", name: "Second model" },
+        { slug: "plain", name: "Plain model" },
+      ],
+    ],
+  ]);
+  // The last level is the selected one; "plain" has no effort to pick.
+  const levels: Record<string, ReadonlyArray<string>> = {
+    original: ["Low", "High"],
+    second: ["Medium"],
+    plain: [],
+  };
+
+  function Picker() {
+    const [model, setModel] = useState("original");
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={instanceId}
+        model={model}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        triggerAriaLabel="Choose model"
+        onInstanceModelChange={(_, selected) => setModel(selected)}
+        effortColumn={(levels[model] ?? []).map((level, index, all) => (
+          <button
+            key={level}
+            type="button"
+            role="radio"
+            aria-checked={index === all.length - 1}
+            data-effort-row
+            data-effort-level
+          >
+            {level}
+          </button>
+        ))}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toHaveFocus();
+  await userEvent.keyboard("{ArrowRight}");
+  await expect.element(page.getByRole("radio", { name: "High" })).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft}");
+  await expect.element(search).toHaveFocus();
+
+  await page.getByRole("option", { name: /Second model/ }).click();
+  await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
+
+  await page.getByRole("option", { name: /Plain model/ }).click();
+  await page.getByRole("option", { name: /Second model/ }).click();
+  await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
 });

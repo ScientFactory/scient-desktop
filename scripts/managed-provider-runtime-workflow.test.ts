@@ -78,12 +78,8 @@ function pathspecMatchesSomething(pathspec: string): boolean {
 }
 
 /**
- * What the given suites load when they run, from their import graph: static
- * imports, re-exports and literal dynamic imports that carry values (a
- * type-only import loads nothing). Relative imports are followed file by file.
- * An import of a workspace package counts as the package's folder, plus the
- * workspace packages it declares as dependencies. Each entry maps to one
- * importer, for the failure message.
+ * Type-only imports load nothing. Follow value imports/re-exports and literal dynamic imports;
+ * workspace package imports include their declared workspace dependency closure.
  */
 function qualificationInputs(roots: ReadonlyArray<string>) {
   const workspacePackages = new Map<
@@ -206,7 +202,7 @@ describe("managed provider runtime update workflow", () => {
       (step: { name: string }) => step.name === "Install official ACP qualification dependencies",
     );
     expect(deps.if).toBe("inputs.provider == 'antigravityAcp'");
-    expect(deps.run).toBe("vp install --frozen-lockfile --filter=t3...");
+    expect(deps.run).toBe("vp install --frozen-lockfile --ignore-scripts --filter=t3...");
     expect(
       steps.find((step: { run?: string }) =>
         step.run?.includes("node apps/server/scripts/qualify-antigravity-acp-catalog.ts"),
@@ -363,7 +359,11 @@ describe("managed provider runtime update workflow", () => {
         (provider) => `[[ "$PROVIDER" == ${provider} ]]`,
       ),
     );
-    // Discovery, artifact qualification and publication: the same for every provider.
+    // Qualification roots do not import the workflow/catalog scripts; pin those separately from
+    // the import-closure coverage below.
+
+    // regression: 6c33a9c183 fix(provider-runtime): authenticate catalog publication (#228)
+    // regression: c30f48f25f fix(providers): complete qualified managed runtime updates and latest repair
     expect(everyProvider).toEqual({
       condition: undefined,
       pathspecs: [
@@ -392,7 +392,14 @@ describe("managed provider runtime update workflow", () => {
 
   it.each([
     ["antigravityAcp", ["apps/server/scripts/qualify-antigravity-acp-catalog.ts"]],
-    ["droid", liveSuites("droid")],
+    [
+      "droid",
+      [
+        ...liveSuites("droid"),
+        "scripts/lib/managed-runtime-live-tests.ts",
+        "apps/server/vite.config.ts",
+      ],
+    ],
     [
       "scient",
       [
@@ -400,7 +407,14 @@ describe("managed provider runtime update workflow", () => {
         "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
       ],
     ],
-    ["pi", liveSuites("pi")],
+    [
+      "pi",
+      [
+        ...liveSuites("pi"),
+        "scripts/lib/managed-runtime-live-tests.ts",
+        "apps/server/vite.config.ts",
+      ],
+    ],
     ["omp", ["apps/server/scripts/qualify-omp-rpc.ts"]],
     ["muse", ["apps/server/scripts/qualify-muse-runtime.ts"]],
   ] as const)(

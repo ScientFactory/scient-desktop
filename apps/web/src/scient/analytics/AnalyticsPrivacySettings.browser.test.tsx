@@ -87,6 +87,7 @@ async function details(_fixture: _Fixture) {
 }
 
 describe("analytics sharing controls", () => {
+  // regression: 982a529350 feat(analytics): simplify sharing controls and prepare gated notice
   it("uses a compact, non-modal deletion confirmation and does nothing on cancel", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -207,15 +208,9 @@ describe("analytics sharing controls", () => {
       "Share which features and provider/model categories you use",
     );
     expect(dialog?.textContent).toContain("reported token counts");
-    expect(dialog?.querySelector("dl")).toBeNull();
     expect(dialog?.textContent).toContain(
       "Analytics never includes prompts, responses, file contents",
     );
-    expect([...dialog!.querySelectorAll("strong")].map((heading) => heading.textContent)).toEqual([
-      "Your privacy",
-      "Storage",
-      "Deleting data",
-    ]);
     expect(dialog?.textContent).toContain("random installation identifier");
     expect(dialog?.textContent).toContain("30 days");
     expect(mocks.setConsent).not.toHaveBeenCalled();

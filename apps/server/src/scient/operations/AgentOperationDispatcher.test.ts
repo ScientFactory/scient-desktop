@@ -71,7 +71,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let calls = 0;
-      for (const id of ["unknown", "sources.remove", "documents.html.build", "browser.click"]) {
+      for (const id of ["unknown", "sources.remove", "documents.html.build", "browser.act"]) {
         const failure = yield* dispatchScientOperation(
           id,
           Effect.sync(() => calls++),

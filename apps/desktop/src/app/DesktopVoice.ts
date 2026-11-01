@@ -453,6 +453,7 @@ export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies
           safeMessage: "Another offline voice model is downloading.",
         });
       }
+      // @effect-diagnostics-next-line abortControllerInEffect:off - Cancel Download aborts this from another request; it is not owned by this fiber.
       const controller = new AbortController();
       downloadController = controller;
       downloadModelId = request.modelId;
@@ -512,10 +513,11 @@ export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies
       }).pipe(Effect.ensuring(clearDownloadState));
     }),
 
-    cancelModelDownload: (request) =>
-      Effect.sync(() => {
+    cancelModelDownload: Effect.fn("DesktopVoice.cancelModelDownload")(function (request) {
+      return Effect.sync(() => {
         if (downloadModelId === request.modelId) downloadController?.abort();
-      }),
+      });
+    }),
 
     selectModel: Effect.fn("DesktopVoice.selectModel")(function* (
       request: VoiceModelOperationRequest,
@@ -608,12 +610,13 @@ export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies
       );
     }),
 
-    cancelTranscription: (request) =>
-      Effect.sync(() => {
+    cancelTranscription: Effect.fn("DesktopVoice.cancelTranscription")(function (request) {
+      return Effect.sync(() => {
         for (const transcription of transcriptions) {
           if (transcription.requestId === request?.requestId) transcription.controller.abort();
         }
-      }),
+      });
+    }),
 
     transcribe: Effect.fn("DesktopVoice.transcribe")(function* (request: VoiceTranscribeRequest) {
       const clip = yield* Effect.try({
@@ -627,6 +630,7 @@ export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies
           safeMessage: "Set up offline voice transcription before using the microphone.",
         });
       }
+      // @effect-diagnostics-next-line abortControllerInEffect:off - Cancel by request id aborts engine work that outlives the calling fiber.
       const entry = { requestId: request.requestId, controller: new AbortController() };
       transcriptions.add(entry);
       const previous = transcriptionTail;

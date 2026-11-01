@@ -184,7 +184,10 @@ export const layer = Layer.effect(
                     } else deferred.push("Native recorded-path ownership is unresolved");
                     nativeOwned = true;
                   }
-                  if (!nativeOwned) yield* fs.remove(path, { force: true });
+                  if (!nativeOwned) {
+                    yield* fs.remove(`${path}.txt`, { force: true });
+                    yield* fs.remove(path, { force: true });
+                  }
                 }
                 if (deferred.length > 0)
                   return yield* new AttachmentRollbackPruneDeferred({
@@ -197,8 +200,8 @@ export const layer = Layer.effect(
       );
     });
     return {
-      execute: (threadId, request) =>
-        execute(threadId, request).pipe(
+      execute: Effect.fn("AttachmentRollbackPruneService.execute")(function (threadId, request) {
+        return execute(threadId, request).pipe(
           Effect.mapError((cause) =>
             isDeferred(cause)
               ? cause
@@ -207,7 +210,8 @@ export const layer = Layer.effect(
                   cause,
                 }),
           ),
-        ),
+        );
+      }),
     };
   }),
 );

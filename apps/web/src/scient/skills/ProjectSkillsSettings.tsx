@@ -1,9 +1,15 @@
-import type { EnvironmentId, ProjectId, ScientSkillInvocationPolicy } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ScientSkillCatalogItem,
+  ScientSkillInvocationPolicy,
+} from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { SettingsRow } from "../../components/settings/settingsLayout";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ManagedSkillCard } from "./ManagedSkillCard";
 import { SkillSettingsRow } from "./SkillSettingsRow";
 import { scientSkillsInventory, setScientSkillProjectPreference } from "./scientSkillsState";
 
@@ -20,10 +26,12 @@ export function ProjectSkillsSettings(props: {
   const setPreference = useAtomCommand(setScientSkillProjectPreference, {
     reportFailure: true,
   });
+  const [selectedSkill, setSelectedSkill] = useState<ScientSkillCatalogItem | null>(null);
   const [pendingName, setPendingName] = useState<string | null>(null);
   const projectSkills = inventory.data?.skills.filter((skill) => skill.scope === "project") ?? [];
 
   const { refresh: refreshInventory } = inventory;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the skills inventory from the server on mount
   useEffect(() => {
     refreshInventory();
   }, [refreshInventory]);
@@ -56,6 +64,14 @@ export function ProjectSkillsSettings(props: {
   }
   return (
     <>
+      {selectedSkill ? (
+        <ManagedSkillCard
+          environmentId={props.environmentId}
+          skill={selectedSkill}
+          projectId={props.projectId}
+          onClose={() => setSelectedSkill(null)}
+        />
+      ) : null}
       {projectSkills.length === 0 && inventory.data.diagnostics.length === 0 ? (
         <SettingsRow
           title="No project skills"
@@ -66,6 +82,7 @@ export function ProjectSkillsSettings(props: {
         <SkillSettingsRow
           key={skill.releaseKey}
           skill={skill}
+          onOpen={() => setSelectedSkill(skill)}
           pending={pendingName === skill.name}
           disabled={pendingName !== null}
           status={skill.path ?? "Project"}

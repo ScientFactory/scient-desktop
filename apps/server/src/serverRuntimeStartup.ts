@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  isListedThreadLineage,
   type ModelSelection,
   type Project,
   ProjectId,
@@ -46,6 +47,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import { getServerOwners } from "./telemetry/Identify.ts";
 import { observeAnalyticsEffect } from "./telemetry/OperationAnalytics.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -191,9 +193,34 @@ export const makeCommandGate = Effect.gen(function* () {
 
 export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
-  // Scient's heartbeat contract has no project or thread counts. Do not query
-  // user state for properties the privacy boundary deliberately discards.
-  yield* analytics.record("server.boot.heartbeat");
+  const projects = yield* ProjectService.ProjectService;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+
+  const { threadCount, projectCount } = yield* Effect.all({
+    projects: projects.snapshot,
+    threadCount: threads.countThreads(),
+  }).pipe(
+    Effect.map(({ projects: projectSnapshot, threadCount }) => ({
+      projectCount: projectSnapshot.projects.length,
+      threadCount,
+    })),
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to gather V2 startup counts for telemetry", {
+        cause,
+      }).pipe(
+        Effect.as({
+          threadCount: 0,
+          projectCount: 0,
+        }),
+      ),
+    ),
+  );
+
+  yield* analytics.record("server.boot.heartbeat", {
+    threadCount,
+    projectCount,
+  });
+  yield* analytics.recordOwners(yield* getServerOwners, "server");
 });
 
 const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
@@ -308,10 +335,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     });
     targets.bootstrapProjectId = project.id;
     targets.bootstrapProjectCreated = created;
-    const shell = yield* threads.getShellSnapshot();
-    const existingThread = shell.threads.find(
-      (thread) =>
-        thread.projectId === project.id && thread.lineage.relationshipToParent !== "subagent",
+    const existingThread = (yield* threads.listActiveShellIndex()).find(
+      (thread) => thread.projectId === project.id && isListedThreadLineage(thread.lineage),
     );
     if (existingThread !== undefined) {
       targets.bootstrapThreadId = existingThread.id;
@@ -387,19 +412,13 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
     : yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
-/**
- * Prints the startup pairing URL to stdout, where `scient` users and the dev runner
- * read it. The URL carries a one-time admin token, so it skips the logger: log
- * records also land in the trace file and any configured OTLP collector.
- */
+/** Prints the one-time admin pairing URL to stdout only; logger records reach trace files and collectors. */
 export const announceStartupPairingUrl = (pairingUrl: string) =>
   Effect.logInfo("Authentication required. Open Scient using the pairing URL.").pipe(
-    // Indented to match the annotation line the pretty logger printed before.
     Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
   );
 
-// No URL here: the browser target carries the pairing token, which
-// announceStartupPairingUrl has already printed to stdout.
+// Pairing tokens belong only in announceStartupPairingUrl's stdout output.
 export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open unavailable", {
   hint: "Open the pairing URL above in your browser.",
 });
@@ -423,9 +442,7 @@ export const maybeOpenBrowser = Effect.fn("serverRuntimeStartup.maybeOpenBrowser
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    // Attributes on the span itself, not annotateSpans: an annotation follows
-    // every fiber forked inside the phase, such as the effect worker, for the
-    // life of the server.
+    // Use span attributes; annotations would follow long-lived forked fibers for the server's lifetime.
     Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 

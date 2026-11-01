@@ -1,7 +1,8 @@
 const PDF_MIN_ZOOM = 0.25;
 const PDF_MAX_ZOOM = 5;
 const PDF_ZOOM_STEP_PERCENT = 5;
-// PDF.js reserves this inset for page-width in our vertical, bordered reader.
+// The width page-width leaves around a page: PDF.js's own allowance, which the LaTeX
+// visual editor matches. The PDF reader passes 0, because its margin is a border.
 export const PDF_FIT_WIDTH_PADDING = 40;
 
 export type PdfSidebarMode = "closed" | "thumbnails" | "outline";
@@ -28,7 +29,11 @@ export function formatPdfZoom(scale: number): string {
 }
 
 /** Both readers measure physical pages in CSS pixels at 100% zoom. */
-export function pdfFitWidthScale(containerWidth: number, pageWidth: number): number | null {
+export function pdfFitWidthScale(
+  containerWidth: number,
+  pageWidth: number,
+  padding = PDF_FIT_WIDTH_PADDING,
+): number | null {
   if (
     !Number.isFinite(containerWidth) ||
     containerWidth <= 0 ||
@@ -36,7 +41,31 @@ export function pdfFitWidthScale(containerWidth: number, pageWidth: number): num
     pageWidth <= 0
   )
     return null;
-  return Math.max(0, containerWidth - PDF_FIT_WIDTH_PADDING) / pageWidth;
+  return Math.max(0, containerWidth - padding) / pageWidth;
+}
+
+/**
+ * PDF.js measures a zoom origin from the container's offsetTop/offsetLeft, which are
+ * relative to its positioned parent, not the window. Inside Scient's panels that put
+ * every zoom's anchor too far right and down, so zooming drifted. This converts a point
+ * on screen into the coordinates PDF.js expects.
+ */
+export function pdfZoomOrigin(
+  viewer: { readonly containerTopLeft: number[] },
+  container: {
+    readonly getBoundingClientRect: () => { readonly left: number; readonly top: number };
+    readonly clientLeft: number;
+    readonly clientTop: number;
+  },
+  clientX: number,
+  clientY: number,
+): [number, number] {
+  const rect = container.getBoundingClientRect();
+  const [top = 0, left = 0] = viewer.containerTopLeft;
+  return [
+    clientX - rect.left - container.clientLeft + left,
+    clientY - rect.top - container.clientTop + top,
+  ];
 }
 
 export function normalizePdfZoom(scale: number): number {

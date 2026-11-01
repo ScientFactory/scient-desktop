@@ -27,7 +27,7 @@ const image = (index: number, bytes = tenMiB) =>
 
 function stage(images: ReadonlyArray<File>, files: ReadonlyArray<ComposerFileAttachment> = []) {
   return stageComposerAttachmentBatch({
-    images,
+    images: images.map((file) => ({ id: file.name, file })),
     files,
     readExisting: () => {
       const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
@@ -44,14 +44,15 @@ function stage(images: ReadonlyArray<File>, files: ReadonlyArray<ComposerFileAtt
       return composerDraftAttachmentFacts(draft).filter((item) => !replacements.has(item.id));
     },
     stillWanted: () => true,
+    isImageWanted: () => true,
     commit: ({ images, files }) => {
       const store = useComposerDraftStore.getState();
       store.addFiles(draftId, [...files]);
       store.addImages(
         draftId,
-        images.map((file) => ({
+        images.map(({ id, file }) => ({
           type: "image",
-          id: file.name,
+          id,
           name: file.name,
           mimeType: file.type,
           sizeBytes: file.size,
@@ -70,6 +71,42 @@ describe("actual composer attachment batch staging", () => {
     useComposerDraftStore.getState().setPrompt(draftId, "Keep this draft");
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it("keeps placeholder identity through conversion and drops cancellations before and during preparation", async () => {
+    const first =
+      deferred<Awaited<ReturnType<typeof imageCompression.prepareImageForAttachment>>>();
+    const source = image(0, new Uint8Array(11 * MiB));
+    const next = image(1);
+    const kept = image(2);
+    const converted = new File(["converted"], "kept.jpg", { type: "image/jpeg" });
+    const prepare = vi
+      .spyOn(imageCompression, "prepareImageForAttachment")
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValue({ ok: true, file: converted, recompressed: true });
+    const wanted = new Set(["first", "next", "kept"]);
+    const commit = vi.fn(() => true);
+    const adding = stageComposerAttachmentBatch({
+      images: [
+        { id: "first", file: source },
+        { id: "next", file: next },
+        { id: "kept", file: kept },
+      ],
+      files: [],
+      readExisting: () => [],
+      stillWanted: () => true,
+      isImageWanted: (id) => wanted.has(id),
+      commit,
+    });
+    wanted.delete("first");
+    wanted.delete("next");
+    first.resolve({ ok: false, reason: "unreadable" });
+    expect(await adding).toEqual({ inserted: true, error: null });
+    expect(prepare.mock.calls.map(([file]) => file)).toEqual([source, kept]);
+    expect(commit).toHaveBeenCalledExactlyOnceWith({
+      images: [{ id: "kept", file: converted }],
+      files: [],
+    });
+  });
 
   it("stages eight 10MiB passthrough files and refuses the ninth without changing the draft", async () => {
     const files = Array.from({ length: 8 }, (_, index) => image(index));

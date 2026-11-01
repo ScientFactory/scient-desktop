@@ -26,6 +26,7 @@ const fileSurfaceSource = NodeFS.readFileSync(
 );
 
 describe("Scient Markdown image asset seam", () => {
+  // regression: c355546040 feat(markdown): add secure image asset insertion
   it("uses one authenticated operate-scoped multipart endpoint", () => {
     expect(contractSource.match(/\/api\/scient\/markdown\/images\/upload/gu)).toHaveLength(1);
     expect(serverSource).toContain("requireEnvironmentScope(AuthOrchestrationOperateScope)");

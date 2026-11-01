@@ -1,11 +1,6 @@
 /**
- * Scient's native skill on/off writers for provider-owned settings files.
- * Each writer edits only the provider's own skill setting, preserving every
- * unrelated byte, and replaces the file atomically through a sibling
- * temporary file. It also holds Claude's skill activation control and the
- * merge of SDK-reported Claude skills with filesystem discovery.
- *
- * @module provider/Drivers/ScientNativeSkills
+ * Edit only the provider-owned skill setting, preserving unrelated bytes and replacing atomically
+ * through a sibling temporary file.
  */
 import * as NodeOS from "node:os";
 
@@ -263,12 +258,8 @@ export function claudeSkillEnabledControl(
 }
 
 /**
- * Combine Claude's authoritative SDK skill list with filesystem metadata.
- *
- * The SDK reports bundled skills that have no stable public filesystem path,
- * while direct discovery identifies the scope of personal and project skills.
- * Filesystem entries therefore override matching SDK entries; unmatched SDK
- * entries are provider-bundled and receive a stable virtual identity.
+ * Filesystem metadata supplies personal/project scope and overrides matching SDK entries. Unmatched
+ * SDK skills may be bundled without stable paths; give them stable virtual identities.
  */
 export function mergeClaudeReportedSkills(
   discoveredSkills: ReadonlyArray<ServerProviderSkill>,

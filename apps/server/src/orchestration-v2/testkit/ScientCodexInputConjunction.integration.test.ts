@@ -1,3 +1,4 @@
+import * as DocumentText from "../../provider/DocumentText.ts";
 import * as Crypto from "effect/Crypto";
 import { vi } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
@@ -875,7 +876,11 @@ const runConjunction = (refusal = false) =>
       }).pipe(Effect.provide(controlLayer.pipe(Layer.provideMerge(runtimeLayer))));
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+          idAllocatorLayer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );

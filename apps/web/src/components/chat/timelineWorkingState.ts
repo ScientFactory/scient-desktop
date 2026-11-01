@@ -4,16 +4,9 @@ import type { ChatMessage, SessionPhase } from "../../types";
 import { promptRunStarting } from "./responseFollow";
 
 /**
- * Whether the timeline shows the thread working. A send turns busy before its
- * prompt is in the list, so a working row shown then would sit above the
- * prompt and jump below it once the prompt arrives. While the send alone makes
- * the thread busy, the row waits for the prompt: the optimistic row, or a
- * newer server user message than the one the dispatch started from.
- *
- * Once the server has admitted the send, the send stops being busy while its
- * run may still be preparing or starting (V2 reports that as connecting, which
- * is not working). The row stays on through that, so it does not drop out
- * and come back when the run starts.
+ * Wait for the optimistic/new server prompt before showing send-only busy state, or the working row
+ * jumps across it. After admission keep it through V2 connecting/preparing until the run starts,
+ * avoiding a busy-row flicker.
  */
 export function resolveTimelineWorking(input: {
   isWorking: boolean;
@@ -37,13 +30,12 @@ export function resolveTimelineWorking(input: {
 }
 
 /**
- * ChatView is busy only because a send is being dispatched: no run, connection,
+ * ChatView is busy only because a send is being dispatched: no run,
  * compaction, bootstrap turn, fork, checkpoint revert or worktree preparation.
  */
 export function isOnlySendBusy(state: {
   isSendBusy: boolean;
   phase: SessionPhase;
-  isConnecting: boolean;
   isCompacting: boolean;
   awaitingBootstrapTurn: boolean;
   isForkingThread: boolean;
@@ -53,7 +45,6 @@ export function isOnlySendBusy(state: {
   return (
     state.isSendBusy &&
     state.phase !== "running" &&
-    !state.isConnecting &&
     !state.isCompacting &&
     !state.awaitingBootstrapTurn &&
     !state.isForkingThread &&

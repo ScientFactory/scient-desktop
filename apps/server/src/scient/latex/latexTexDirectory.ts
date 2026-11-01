@@ -1,41 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The private folder's name is a host random value.
 /**
- * Where Scient keeps the files TeX itself reads and writes: the TinyTeX it
- * installs (`managed`), each build's work directory (`builds`) and drawing
- * previews (`artwork`). Normally that is `latexDir`, in the user's profile.
- *
- * TeX Live on Windows cannot work from a path with letters outside plain
- * ASCII: kpathsea cannot find its own `texmf.cnf` from such a folder (a single
- * "ü" is enough), and `latexmk`, a Perl script, converts every path it is given
- * to the system code page, which turns Hebrew or Cyrillic into "?". Windows'
- * 8.3 short names do not help: kpathsea expands them back to the long name.
- *
- * So on Windows, when `latexDir` is not plain ASCII, those three folders live
- * instead in a folder of this user's own directly under `%ProgramData%`, which
- * is ASCII on every Windows. What only Node and Scient's own helpers read —
- * build evidence, SyncTeX indexes, the record below — stays in `latexDir`.
- * `%ProgramData%` is shared, so no other account may ever reach the folder:
- *
- * - It is made and locked inside the profile `latexDir`, which only this user
- *   can open — inherited access removed, full control for this user, SYSTEM
- *   and Administrators only — and then moved into `%ProgramData%`. A move on
- *   one volume keeps the folder's own access list, so it arrives already
- *   private; no other account could have opened it in between. Where the
- *   profile is on another drive the move fails and nothing changes.
- * - `%ProgramData%` lets accounts delete only what they created, so nobody
- *   else can remove, rename or replace it afterwards.
- * - Its path and its NTFS identity (volume and file ID) are recorded in the
- *   profile `latexDir`. A later start uses it only while that same folder,
- *   not a link, is still there. A folder someone recreated under the same
- *   name after it was deleted has a different identity and is ignored.
- *
- * Everywhere else, and on any Windows whose path is already ASCII, nothing
- * changes. If the private folder cannot be made, or the answer takes longer
- * than server start should wait, `latexDir` stays in use: that is how it was
- * before, and TeX's own error still reaches the user.
- *
- * All of this assumes the state directory is private to the account, as it
- * must be anyway: whoever can write there can already replace the managed TeX.
+ * Windows TeX cannot handle non-ASCII profile paths, even via short names. Move a pre-locked
+ * private folder on the same volume into ProgramData and persist its NTFS identity; never adopt a
+ * replacement/link. Keep Node-only state in profile, and fall back there if bounded setup fails.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -269,12 +236,9 @@ export const resolveLatexTexDirectory = Effect.fn("scient.latex.resolveLatexTexD
       );
     });
 
-    // The work runs on its own fiber and only its answer is waited for. Some
-    // of what it calls cleans up in steps nothing can interrupt — stopping a
-    // hung process, closing a file — and none of that may hold server start.
-    // Whichever settles `decision` first wins. A folder recorded after the
-    // wait ran out is the one the next start uses; until then nothing has
-    // been put in it, so nothing is split between the two.
+    // Do not let uninterruptible cleanup delay server startup. The first decision wins; a folder
+    // recorded after the wait deadline is used only next start, keeping this run's files in one
+    // location.
     const decision = yield* Deferred.make<string>();
     yield* Effect.gen(function* () {
       const directory = (yield* recordedFolder) ?? (yield* makePrivateFolder);

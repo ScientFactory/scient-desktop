@@ -1,129 +1,134 @@
 import {
-  KeepAwakeRequest,
+  KEEP_AWAKE_WORK_PATH,
+  KeepAwakeChoice,
   KeepAwakeState,
-  keepAwakeThreadKey,
-  type KeepAwakeRequest as Request,
-  type KeepAwakeState as State,
+  KeepAwakeWork,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
-import { ElectronApp } from "../../electron/ElectronApp.ts";
-import { ElectronWindow } from "../../electron/ElectronWindow.ts";
-import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
-import { KEEP_AWAKE_CHANNEL } from "../../ipc/channels.ts";
-import * as Controller from "./controller.ts";
-import * as Storage from "./storage.ts";
-import * as Power from "./power.ts";
-import * as Source from "./source.ts";
-import * as Remote from "./remote.ts";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { powerSaveBlocker } from "electron";
 
-export class KeepAwakeError extends Schema.TaggedError<KeepAwakeError>()("KeepAwakeError", {
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
+import { KEEP_AWAKE_CHANNEL } from "../../ipc/channels.ts";
+import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
+import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import { keepsAwake, NO_HOLD, observeWork } from "./keepAwakeHold.ts";
+
+const WINDOWS_NOTICE =
+  "On Windows laptops with Modern Standby, battery power can end this a few minutes after the normal sleep time.";
+
+class KeepAwakePowerError extends Schema.TaggedError<KeepAwakePowerError>()("KeepAwakePowerError", {
   cause: Schema.Defect(),
 }) {}
+
 export class DesktopKeepAwake extends Context.Service<
   DesktopKeepAwake,
   {
-    readonly handle: (request: Request) => Effect.Effect<State, KeepAwakeError>;
+    readonly handle: (choice: KeepAwakeChoice | undefined) => Effect.Effect<KeepAwakeState>;
   }
 >()("@t3tools/desktop/scient/keepAwake/DesktopKeepAwake") {}
 
 export const layer = Layer.effect(
   DesktopKeepAwake,
   Effect.gen(function* () {
-    const controller = yield* Controller.make;
-    const source = yield* Source.KeepAwakeSource;
-    const app = yield* ElectronApp;
-    const refresh = Effect.gen(function* () {
-      const document = yield* controller.document;
-      if (
-        document.settings.mode === "system" &&
-        !document.threads.some((thread) => thread.once || thread.startedAt !== null)
-      )
-        return;
-      yield* source.observe(document).pipe(
-        Effect.flatMap(controller.accept),
-        Effect.catch(() => controller.failed),
+    const settings = yield* DesktopClientSettings.DesktopClientSettings;
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+    const lock = yield* Semaphore.make(1);
+    let hold = NO_HOLD;
+    let appSetting = false;
+    let blocker: number | null = null;
+
+    const readWork = Effect.gen(function* () {
+      const config = yield* (yield* pool.primary).currentConfig;
+      if (Option.isNone(config)) return null;
+      const response = yield* http.execute(
+        HttpClientRequest.get(new URL(KEEP_AWAKE_WORK_PATH, config.value.httpBaseUrl)).pipe(
+          HttpClientRequest.bearerToken(yield* auth.getBearerToken),
+        ),
       );
-    });
-    yield* refresh.pipe(Effect.repeat(Schedule.spaced("15 seconds")), Effect.forkScoped);
-    yield* controller.tick.pipe(Effect.repeat(Schedule.spaced("5 seconds")), Effect.forkScoped);
-    const runStop = Effect.runForkWith(yield* Effect.context<never>());
-    yield* app.on("before-quit", () => {
-      runStop(controller.stop);
-    });
-    yield* Effect.addFinalizer(() => controller.stop);
-    return DesktopKeepAwake.of({
-      handle: Effect.fn("DesktopKeepAwake.handle")(
-        function* (request: Request) {
-          if (request.type === "choose" && request.choice === "once") {
-            const document = yield* controller.document;
-            const proposed = {
-              ...document,
-              threads: [
-                ...document.threads.filter((entry) => entry.key !== request.key),
-                { key: request.key, title: request.title, once: true, startedAt: null },
-              ],
-            };
-            const results = yield* source.observe(proposed);
-            const group = results
-              .flatMap((entry) =>
-                entry.batch.groups.map((group) => ({
-                  environmentId: entry.batch.environmentId,
-                  group,
-                })),
-              )
-              .find(
-                (entry) =>
-                  keepAwakeThreadKey(entry.environmentId, entry.group.threadId) === request.key,
-              )?.group;
-            const root = group?.members.find((member) => member.threadId === group.threadId);
-            if (!root || root.removed)
-              return yield* new KeepAwakeError({
-                cause: "The thread's execution environment is unavailable.",
-              });
-            yield* controller.handle(request, {
-              latestRunId: root.latestRunId,
-              unfinished: group!.members.some((member) => member.unfinished),
-            });
-            yield* controller.accept(results);
-            return yield* controller.handle({ type: "get" });
+      return yield* HttpClientResponse.schemaBodyJson(KeepAwakeWork)(response);
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+
+    const setBlocked = (blocked: boolean) =>
+      Effect.try({
+        try: () => {
+          if (blocked && blocker === null) {
+            blocker = powerSaveBlocker.start("prevent-app-suspension");
+          } else if (!blocked && blocker !== null) {
+            powerSaveBlocker.stop(blocker);
+            blocker = null;
           }
-          const state = yield* controller.handle(request);
-          if (
-            request.type === "configure" &&
-            request.settings.mode === "running" &&
-            state.error === null
-          ) {
-            yield* refresh;
-            return yield* controller.handle({ type: "get" });
-          }
-          return state;
         },
-        Effect.mapError((cause) => new KeepAwakeError({ cause })),
-      ),
+        catch: (cause) => new KeepAwakePowerError({ cause }),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Keep-awake could not change its sleep request.", error),
+        ),
+      );
+
+    const refresh = Effect.gen(function* () {
+      appSetting = yield* settings.get.pipe(
+        Effect.map(Option.exists((saved) => saved.keepComputerAwake)),
+        Effect.orElseSucceed(() => false),
+      );
+      const work = appSetting || hold.chosen.size > 0 ? yield* readWork : null;
+      const now = yield* Clock.currentTimeMillis;
+      hold = observeWork(hold, work, appSetting, now);
+      yield* setBlocked(keepsAwake(hold, now));
+    });
+
+    yield* lock
+      .withPermits(1)(refresh)
+      .pipe(Effect.repeat(Schedule.spaced("15 seconds")), Effect.forkScoped);
+    yield* Effect.addFinalizer(() => setBlocked(false));
+
+    return DesktopKeepAwake.of({
+      handle: Effect.fn("DesktopKeepAwake.handle")(function* (choice) {
+        return yield* lock.withPermits(1)(
+          Effect.gen(function* () {
+            if (choice !== undefined) {
+              const chosen = new Map(hold.chosen);
+              if (choice.enabled) chosen.set(choice.threadId, null);
+              else chosen.delete(choice.threadId);
+              hold = { ...hold, chosen };
+              yield* refresh;
+            }
+            return {
+              appSetting,
+              active: blocker !== null,
+              threads: [...hold.chosen.keys()],
+              notice: environment.platform === "win32" ? WINDOWS_NOTICE : null,
+            };
+          }),
+        );
+      }),
     });
   }),
-).pipe(
-  Layer.provideMerge(Storage.layer),
-  Layer.provideMerge(Power.layer),
-  Layer.provideMerge(Source.layer),
-  Layer.provideMerge(Remote.layer),
 );
 
 export const keepAwake = makeIpcMethod({
   channel: KEEP_AWAKE_CHANNEL,
-  payload: KeepAwakeRequest,
+  payload: Schema.UndefinedOr(KeepAwakeChoice),
   result: KeepAwakeState,
-  handler: Effect.fn("desktop.keepAwake.request")(function* (request, event) {
-    const main = yield* (yield* ElectronWindow).main;
-    if (Option.isNone(main) || main.value.webContents.id !== event?.sender.id)
-      return yield* new KeepAwakeError({
-        cause: "Only the main window can change keep-awake preferences.",
-      });
-    return yield* (yield* DesktopKeepAwake).handle(request);
+  handler: Effect.fn("desktop.keepAwake")(function* (choice) {
+    const service = yield* DesktopKeepAwake;
+    return yield* service.handle(choice);
   }),
 });

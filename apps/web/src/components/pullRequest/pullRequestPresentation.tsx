@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
+  CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
@@ -143,8 +144,6 @@ export function PullRequestStateGlyph({
   const presentation = resolvePullRequestState({ state, isDraft });
   return (
     <Tooltip>
-      {/* The list row is itself a button, so the trigger stays a span: an interactive one would
-          nest a control inside that button and steal the row's click target. */}
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
@@ -209,8 +208,18 @@ const CHECK_STATUS_PRESENTATION = {
   neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
 } as const satisfies Record<
   PullRequestCheckStatus,
-  { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
+  {
+    label: string;
+    Icon: typeof CircleCheckIcon | typeof Spinner | typeof CircleAlertIcon;
+    toneClassName: string;
+  }
 >;
+
+const WARNING_CHECK_PRESENTATION = {
+  label: "Warning",
+  Icon: CircleAlertIcon,
+  toneClassName: "text-amber-600 dark:text-amber-400/90",
+} as const;
 
 function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">): boolean {
   return (
@@ -220,16 +229,29 @@ function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">
   );
 }
 
+export function pullRequestCheckStatusPresentation(
+  check: Pick<PullRequestCheck, "status" | "outcome">,
+) {
+  return check.outcome === "warning"
+    ? WARNING_CHECK_PRESENTATION
+    : CHECK_STATUS_PRESENTATION[check.status];
+}
+
 export function pullRequestCheckStatusLabel(
-  check: Pick<PullRequestCheck, "status" | "url">,
+  check: Pick<PullRequestCheck, "status" | "outcome" | "url">,
 ): string {
+  if (check.outcome === "warning") return WARNING_CHECK_PRESENTATION.label;
   return isWorkflowApprovalCheck(check)
     ? "Awaiting approval"
     : CHECK_STATUS_PRESENTATION[check.status].label;
 }
 
-export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
-  const presentation = CHECK_STATUS_PRESENTATION[status];
+export function PullRequestCheckStatusIcon({
+  check,
+}: {
+  check: Pick<PullRequestCheck, "status" | "outcome">;
+}) {
+  const presentation = pullRequestCheckStatusPresentation(check);
   return (
     <presentation.Icon
       aria-hidden
@@ -249,6 +271,11 @@ const CHECKS_STATE_PRESENTATION = {
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
   },
+  warning: {
+    label: "Some checks finished with warnings",
+    Icon: CircleAlertIcon,
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
+  },
   pending: {
     label: "Some checks haven't completed yet",
     Icon: CircleDotIcon,
@@ -256,7 +283,11 @@ const CHECKS_STATE_PRESENTATION = {
   },
 } as const satisfies Record<
   PullRequestChecksState,
-  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+  {
+    label: string;
+    Icon: typeof CircleCheckIcon | typeof CircleAlertIcon;
+    toneClassName: string;
+  }
 >;
 
 export function pullRequestChecksStatePresentation(state: PullRequestChecksState) {
@@ -267,10 +298,27 @@ export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const statuses = new Set(checks.map((check) => check.status));
-  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
-  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
-  return statuses.has("success") ? "passing" : null;
+  if (
+    checks.some(
+      (check) =>
+        check.outcome !== "warning" && (check.status === "failure" || check.status === "cancelled"),
+    )
+  ) {
+    return "failing";
+  }
+  if (
+    checks.some(
+      (check) =>
+        check.outcome !== "warning" &&
+        (check.status === "pending" || check.status === "action-required"),
+    )
+  ) {
+    return "pending";
+  }
+  if (checks.some((check) => check.outcome === "warning")) return "warning";
+  return checks.some((check) => check.outcome !== "warning" && check.status === "success")
+    ? "passing"
+    : null;
 }
 
 const REVIEW_OUTCOME_PRESENTATION = {
@@ -281,6 +329,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
+    fillClassName: "fill-emerald-500 dark:fill-emerald-400",
     badgeVariant: "success",
   },
   "changes-requested": {
@@ -289,6 +338,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
     staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--destructive)_35%,var(--background))]",
+    fillClassName: "fill-destructive",
     badgeVariant: "error",
   },
   dismissed: {
@@ -298,6 +348,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
+    fillClassName: "fill-muted-foreground",
     badgeVariant: "outline",
   },
 } as const satisfies Record<
@@ -308,6 +359,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     toneClassName: string;
     ringClassName: string;
     staleRingClassName: string;
+    fillClassName: string;
     badgeVariant: "success" | "error" | "outline";
   }
 >;
@@ -316,12 +368,7 @@ export function pullRequestReviewOutcomeToneClassName(outcome: PullRequestReview
   return REVIEW_OUTCOME_PRESENTATION[outcome].toneClassName;
 }
 
-/**
- * A faded verdict is mixed into the background rather than made translucent. The ring is the only
- * separator an avatar carrying one has — the summary drops the opaque `ring-background` where a
- * verdict is drawn — and the stack overlaps by 4px, so an alpha ring would let the neighbour show
- * straight through it and the two faces would merge.
- */
+// Mix rings with the background to prevent avatars showing through their overlap.
 export function pullRequestReviewOutcomeRingClassName(
   outcome: PullRequestReviewOutcome,
   stale = false,
@@ -350,6 +397,28 @@ export function PullRequestReviewOutcomeIcon({
   );
 }
 
+// Ring color alone blends into colorful bot avatars; the glyph gives each verdict a shape.
+export function PullRequestReviewOutcomeAvatarBadge({
+  outcome,
+  stale = false,
+}: {
+  outcome: PullRequestReviewOutcome;
+  stale?: boolean;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <presentation.Icon
+      aria-hidden
+      strokeWidth={3}
+      className={cn(
+        "absolute -right-1 -bottom-1 size-3 text-background",
+        presentation.fillClassName,
+        stale && "opacity-50",
+      )}
+    />
+  );
+}
+
 export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
   return REVIEW_OUTCOME_PRESENTATION[outcome].label;
 }
@@ -364,7 +433,6 @@ export function PullRequestReviewOutcomeBadge({
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
     <Badge size="sm" variant={presentation.badgeVariant} className={className}>
-      {/* Align with surrounding text using the label, rather than the icon's bottom edge. */}
       <span className="inline-flex items-baseline gap-1">
         <presentation.Icon aria-hidden className="size-3 self-center" />
         <span>{presentation.label}</span>
@@ -419,7 +487,6 @@ export function PullRequestActorLabel({
   profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
-  // Let the name supply the group's baseline while the avatar stays vertically centered.
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
       <PullRequestActorAvatar actor={actor} className="self-center" />
@@ -515,14 +582,22 @@ export function PullRequestMetaLine({
 
 export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
-  const actionRequired = checks.filter((check) => check.status === "action-required");
+  const actionRequired = checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "action-required",
+  );
   const workflowApprovalRequired = actionRequired.filter(isWorkflowApprovalCheck).length;
   const otherActionRequired = actionRequired.length - workflowApprovalRequired;
   const failed = checks.filter(
-    (check) => check.status === "failure" || check.status === "cancelled",
+    (check) =>
+      check.outcome !== "warning" && (check.status === "failure" || check.status === "cancelled"),
   ).length;
-  const pending = checks.filter((check) => check.status === "pending").length;
-  const passed = checks.filter((check) => check.status === "success").length;
+  const pending = checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "pending",
+  ).length;
+  const warning = checks.filter((check) => check.outcome === "warning").length;
+  const passed = checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "success",
+  ).length;
   if (failed > 0) return `${failed} of ${checks.length} failing`;
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
     return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
@@ -534,5 +609,6 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
     return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
   }
   if (pending > 0) return `${pending} of ${checks.length} running`;
+  if (warning > 0) return `${warning} warning${warning === 1 ? "" : "s"}`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
 }

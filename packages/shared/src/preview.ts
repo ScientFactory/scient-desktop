@@ -132,7 +132,7 @@ export function isValidSearchUrlTemplate(template: string): boolean {
 
 /**
  * The search URL template for the chosen engine. An unusable custom template
- * falls back to DuckDuckGo so a query typed in the address bar always searches.
+ * falls back to Google so a query typed in the address bar always searches.
  */
 export function resolveSearchUrlTemplate(settings: {
   readonly browserSearchEngine: BrowserSearchEngine;
@@ -142,7 +142,9 @@ export function resolveSearchUrlTemplate(settings: {
     return BROWSER_SEARCH_URL_TEMPLATES[settings.browserSearchEngine];
   }
   const custom = settings.browserCustomSearchUrl.trim();
-  return isValidSearchUrlTemplate(custom) ? custom : BROWSER_SEARCH_URL_TEMPLATES.duckduckgo;
+  // SCIENT-FORK:START — an unusable custom template falls back to Google, Scient's default.
+  return isValidSearchUrlTemplate(custom) ? custom : BROWSER_SEARCH_URL_TEMPLATES.google;
+  // SCIENT-FORK:END
 }
 
 export function resolveAddressBarInput(
@@ -153,9 +155,7 @@ export function resolveAddressBarInput(
   if (URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
   if (!/\s/.test(trimmed)) {
-    // `mailto:x` or `data:...` is an explicit scheme; `example.com:8080` or
-    // `devbox:8080` is a bare host and port. `normalizePreviewUrl` would read
-    // `mailto:alice@example.com` as credentials on a bare host, so reject here.
+    // Reject explicit schemes before URL normalization can misread mailto as bare-host credentials.
     const protocol = previewUrlProtocol(trimmed);
     if (
       protocol !== undefined &&

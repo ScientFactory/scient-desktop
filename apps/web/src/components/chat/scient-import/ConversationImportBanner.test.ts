@@ -22,7 +22,7 @@ const imported: OrchestrationConversationImport = {
 describe("conversation import provenance notice", () => {
   it("continues to disclose unverified origin and omissions after a provider session starts", () => {
     const notice = conversationImportNotice(imported, true);
-    expect(notice.title).toBe("Imported — unverified");
+    expect(notice.title).toBe("Imported (unverified)");
     expect(notice.description).toContain("messages after message 3");
     expect(notice.description).toContain("remains unverified");
     expect(notice.description).not.toContain("Your next message starts");
@@ -65,7 +65,7 @@ describe("conversation import provenance notice", () => {
       }),
     );
     expect(markup).toContain('data-conversation-import-provenance="unverified"');
-    expect(markup).toContain("Imported — unverified");
+    expect(markup).toContain("Imported (unverified)");
     expect(markup).toContain("1 omission");
   });
 });

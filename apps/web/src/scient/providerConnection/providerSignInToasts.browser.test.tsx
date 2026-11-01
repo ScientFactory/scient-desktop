@@ -52,6 +52,7 @@ function titleLines(text: string): number {
   return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
 }
 
+// regression: 84e819ea53 fix(providers): shorten the sign-in failure notification title
 it.each([
   ["blocked", "Antigravity sign-in page blocked"],
   ["failed", "Antigravity sign-in didn’t open"],

@@ -91,6 +91,7 @@ export function LatexLiteralCodeView(props: {
   const host = useRef<HTMLDivElement>(null);
   const [syntax, setSyntax] = useState<{ name: string; language: Language } | null>(null);
   const name = props.presentation?.language.replace(/^\[[^\]]*\]/u, "") ?? "";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the CodeMirror language pack asynchronously, ignoring replies after unmount
   useEffect(() => {
     let active = true;
     const description = LanguageDescription.matchLanguageName(languages, name, false);
@@ -107,6 +108,7 @@ export function LatexLiteralCodeView(props: {
       active = false;
     };
   }, [name]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the live value from the host textarea DOM node when the body prop changes
   useLayoutEffect(() => {
     const field = host.current?.querySelector<HTMLTextAreaElement>("textarea");
     setLive(field?.value ?? props.body);

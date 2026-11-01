@@ -31,7 +31,9 @@ function layerElectronApp(
 ) {
   return Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
+    // SCIENT-FORK:START scient-branding
     name: Effect.succeed("Scient"),
+    // SCIENT-FORK:END scient-branding
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),

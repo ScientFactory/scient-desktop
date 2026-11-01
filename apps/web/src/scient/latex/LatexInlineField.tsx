@@ -66,6 +66,7 @@ export function LatexInlineField(props: {
   onExit: (direction: -1 | 1) => void;
 }) {
   const [fieldJournal] = useState(createLatexFieldJournal);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the draft key and source into the external field journal store
   useLayoutEffect(
     () => fieldJournal.observe(props.draftKey, props.source),
     [fieldJournal, props.draftKey, props.source],
@@ -73,6 +74,7 @@ export function LatexInlineField(props: {
   const current = useRef(props);
   const context = useContext(LatexCommandContext);
   const completionContext = useRef(context);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring props and command context for the imperative editor to read
   useLayoutEffect(() => {
     current.current = props;
     completionContext.current = context;
@@ -254,10 +256,12 @@ export function LatexInlineField(props: {
     onBlur: ({ editor: field, event }) => handleFieldBlur(field, event),
     onUpdate: ({ editor: field }) => handleFieldUpdate(field),
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring the editor and flush callback for imperative handlers to read
   useLayoutEffect(() => {
     innerEditor.current = editor;
     flushCell.current = publishPending;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs editability, aria label, and adopted content into the ProseMirror editor DOM and state
   useLayoutEffect(() => {
     if (!editor) return;
     editor.setEditable(!props.disabled, false);
@@ -326,7 +330,9 @@ export function LatexInlineField(props: {
       journal();
     };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the field to the draft-report listener registry until unmount
   useEffect(() => listenToField(editor, id, reportDraft), [editor, id, reportDraft]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports draft state to the draft context and listens for outside pointerdown on the document until unmount
   useEffect(() => {
     if (!editor) return;
     reportDraft(id, pending.current !== null);

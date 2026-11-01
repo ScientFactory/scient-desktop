@@ -21,7 +21,7 @@ The computer running Scient needs an `ssh` client and network access to the
 target. The remote host needs a compatible Node.js version. Configure an SSH
 key, SSH agent, or host entry in `~/.ssh/config` first when possible.
 
-1. Open **Settings → Connections** and choose **Add environment**.
+1. Open **Settings → Environments** and choose **Add environment**.
 2. Choose **SSH**.
 3. Select a suggested host, or enter its host name, optional user, and optional
    port.
@@ -90,8 +90,16 @@ Endpoint behavior follows the actual address:
 - a non-loopback HTTP endpoint can be used for direct LAN pairing; and
 - `127.0.0.1` is reachable only from the server computer.
 
+For a server you start in a terminal, `scient serve --lan` accepts connections
+from your local network and tailnet, but not from public addresses. A pairing
+code is then all that keeps other devices on those networks out.
+
 Prefer SSH forwarding or a correctly secured private HTTPS endpoint. Do not
 expose an unauthenticated Scient server port to the public internet.
+
+On a computer with the desktop app, you can open the printed `scient://pair`
+app link instead. The desktop app asks you to confirm the server address, then
+adds it.
 
 ### Reach one machine several ways
 
@@ -100,16 +108,19 @@ URL, or SSH. Tailscale shares its `100.64.0.0/10` address range with
 other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
 unless the machine confirms it is on Tailscale. To add a route, choose **Add
 route** in the machine's route list.
-Pairing the same machine again over another address also adds a route instead
-of a second machine. A new route is placed by speed, in that order, and you can
-reorder routes at any time.
+A pairing link for a saved machine is refused when it comes from an address
+that machine does not have yet; add that address with **Add route** instead.
+Pairing again over an address the machine already has still works. A new route
+is placed by speed, in that order, and you can reorder routes at any time.
 
 While connected through a paired address, Scient also learns the machine's
 current LAN and Tailscale addresses and adds them as routes, so pairing once
 is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
-address to be learned. You can reorder a learned route, but not remove it; it
+address to be learned: **Network access** in the desktop app, or
+`scient serve --lan` for a server in a terminal.
+You can reorder a learned route, but not remove it; it
 goes away with the route it was learned through, or when the machine stops
 reporting that address.
 
@@ -120,7 +131,7 @@ later route, Scient checks the earlier ones when your network changes, when you
 return to the app, and every minute, and moves back as soon as one works.
 
 On web and desktop, select the route count under the machine's name in
-**Settings → Connections** to see its routes. Drag a route to change the order,
+**Settings → Environments** to see its routes. Drag a route to change the order,
 or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**.
 
@@ -134,7 +145,7 @@ different permissions.
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
-**Settings → Connections → Load balancing** to automatically choose a machine for
+**Settings → Environments → Load balancing** to automatically choose a machine for
 new threads in projects grouped across connected environments. The section
 appears once two or more machines are switched on.
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
@@ -151,7 +162,7 @@ Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS
 
-When the desktop app detects Tailscale, **Settings → Connections** can show its
+When the desktop app detects Tailscale, **Settings → Sharing & access** can show its
 Tailnet IP, MagicDNS name, and an HTTPS MagicDNS endpoint. Tailscale HTTPS is
 off until you explicitly enable it. Turning it on asks Tailscale Serve to proxy
 private HTTPS traffic to the local Scient backend; turning it off removes that
@@ -180,12 +191,12 @@ address and temporary pairing information needed by a client.
 
 ## Pair a client safely
 
-In **Settings → Connections**, create a time-limited pairing link or code with
+In **Settings → Sharing & access**, create a time-limited pairing link or code with
 only the read and write permissions that client needs. Share it only with the
 intended device, and revoke unused links or sessions from the same page.
 
 Pairing codes and share links are available only in the client that created them,
-while its Connections page remains open. After leaving or reloading that page,
+while its Sharing & access page remains open. After leaving or reloading that page,
 create a new link to share. Other clients can see a link's name, scopes, and expiry,
 and can revoke it if they have access-management permission.
 
@@ -218,8 +229,9 @@ bug report. See [Antigravity](./providers-antigravity.md) for the complete flow.
 
 ## Keep versions aligned
 
-When the remote server version differs from the desktop client, Scient shows
-the appropriate action in the composer and **Settings → Connections**. Use that
+When the remote server version differs from the desktop client, Scient offers
+the appropriate action from the update control at the bottom of the sidebar and
+in **Settings → Environments**. Use that
 exact action or copied command; see [Update Scient](updating.md). Changing the
 package or version can produce an incompatible server.
 
@@ -233,7 +245,7 @@ running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
-Connections** on the host, or on a headless host with `scient auth session list` and
+Sharing & access** on the host, or on a headless host with `scient auth session list` and
 `scient auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
 
@@ -243,7 +255,7 @@ For Antigravity's Google callback on a remote host, see
 ## Use the desktop app only for remote environments
 
 If this computer should only control work running elsewhere, turn off **Local
-environment** in **Settings → Connections**. Scient restarts without a local
+environment** in **Settings → Environments**. Scient restarts without a local
 server: local providers and terminals stop, WSL backends stay off, and other
 devices can no longer connect to this computer. Existing local projects, history,
 and saved connections are kept.
@@ -275,6 +287,15 @@ On a phone, tap the floating preview's corner dot to show its controls, then
 **Pop into separate window** to keep watching in picture-in-picture over other
 apps.
 
+### Local servers
+
+The browser lists a local server once it has a **Preview URL**: set one on the
+project action that starts the server. Scient checks that address and opens it
+as written, including HTTPS addresses and specific paths. It does not send web
+requests to other ports, even ones your terminals and agents opened, because a
+process may use a non-web protocol. To open any other local server, enter its
+URL in the browser.
+
 ### Browser host setup
 
 macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
@@ -295,8 +316,22 @@ any missing libraries and system fonts with apt; pages that load without text
 can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
 reports what it would change.
 
-The browser always runs in Chrome's sandbox. Where you cannot change the host,
-set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
+The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
+as root. If your Scient server runs as root, run it as a nonroot user to keep
+sandboxing enabled. `scient browser setup` does not fix this root restriction.
+
+If you need to run as root, or cannot enable the sandbox on your host, set
+`T3CODE_SERVER_BROWSER_SANDBOX=0` in the **Scient server's environment** and restart
+the server. This disables Chrome's sandbox. For a manual launch:
+
+```sh
+T3CODE_SERVER_BROWSER_SANDBOX=0 npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" scient serve
+```
+
+If you run the server under your own systemd unit, add
+`Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under `[Service]` in its configuration,
+run `sudo systemctl daemon-reload`, then restart that unit. Setting the variable in an
+agent's terminal does not change the environment of an already running Scient server.
 
 ## Connect an outside agent
 
@@ -304,12 +339,55 @@ Claude Code, Codex, ChatGPT and other agents Scient did not start can drive
 threads on an environment through its MCP server. See
 [outside agents](./outside-agents.md) for setup.
 
+## Link another environment
+
+Link two machines, such as your laptop and a VPS, and agents on one can work on
+the other: launch, message, wait on and stop its threads, answer their
+questions, and manage its queues, projects and scheduled tasks.
+
+Linked environments is a beta. Turn it on for both machines in **Settings →
+Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+off on either machine, agents start nothing over a link between them. A task
+already running on the other machine still finishes, and if that machine has it
+off, its result arrives once it is back on.
+
+On the machine you will work from, open **Settings → Environments → Linked environments**,
+choose **Link**, and pick the other machine or enter its address. The list
+holds the machines this app knows. If this
+app is connected to that machine with a session that manages access there, it
+makes the pairing code itself; otherwise paste one from that machine's
+**Settings → Sharing & access**. From a terminal, use
+`scient environment link <address> --pairing-code <code> --access <mode>`.
+
+You can also ask an agent to link a machine by name, such as "delegate this to
+my vps". It shows a card in the thread where you pick the machine the same way
+and the access, then approve.
+
+- The access you pick is the most agents from this machine may do there. An
+  agent also never gets more there than its own mode here.
+- Threads a link starts are marked **From** and this machine's name there.
+- A full-access link works there like that machine's own agents. Below full
+  access, the link's agents can change only threads it started, not that
+  machine's own threads, projects or settings, and they skip its project setup
+  scripts.
+- The link shows up in that machine's **Settings → Sharing & access** like any
+  outside agent. Revoke it there to end it. **Forget** on this machine only
+  removes it here.
+- Links last 30 days. Link again with a new pairing code to renew one.
+
+An agent can also hand a task to a linked machine with `delegate_task`: it runs
+there as an ordinary thread, in the project with the same repository (or the
+one `target.projectId` names), and this thread wakes with its result when it
+ends, as for any delegated task. It keeps following the task across restarts.
+If the other machine revokes the link, or the link is removed here, the task
+fails with that reason.
+
 ## Manage or revoke access
 
 Turn **Local environment** back on in the same place to restore the previous local
 environment.
 
-Removing a saved remote environment from **Settings → Connections** forgets it on
+Removing a saved remote environment from **Settings → Environments** forgets it on
 this device only. Scient hosts no relay, so there is no account-level
 registration left behind to revoke.
 

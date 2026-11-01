@@ -2,8 +2,8 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
-Bun is optional. From the repository root:
+Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
+pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
 
 ```sh
 vp i
@@ -14,6 +14,17 @@ Open the pairing URL printed by the dev runner. The bare origin does not authent
 a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
+
+## Official upstream mirror (optional)
+
+Scient's `origin` remains `ScientFactory/scient-desktop` on GitHub.
+The official T3 repository is the fetch-only `upstream` remote, with push URL
+`DISABLED`. Do not replace either remote with an upstream mirror.
+
+The official project's [GitCafe mirror](https://git.cafe/pingdotgg/t3code)
+can help with read-only upstream research. It does not mirror Scient's issues,
+reviews, CI, or release authority. Use Scient's GitHub repository for those
+operations and follow [AGENTS.md](../../AGENTS.md#git-upstream-and-delivery).
 
 ## Choosing a dev process
 
@@ -54,6 +65,19 @@ This is the dev runner's precedence, not a rule for every server or desktop entr
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
 different preference when needed.
+
+### Replay provider
+
+`vp run dev` registers `Replay (dev)`, a local ACP agent at
+[dev-replay-agent.ts](../../apps/server/scripts/dev-replay-agent.ts). It plays recorded
+ACP transcripts with simulated streaming, so the real adapter, orchestration, and UI run
+without a paid model. Each scenario is a model, and each prompt plays the next recorded turn.
+Bundled servers, including desktop dev, skip it because they have no agent script.
+Dev servers add it back on start, so turn it off in Settings instead of removing it.
+To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
+(`registry_transcript.ndjson`) or a file in [dev-replay](../../apps/server/scripts/dev-replay).
+The agent replays session updates, permission requests, and questions. It drops session setup
+and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 
 ### Sharing and remote debugging
 
@@ -100,6 +124,17 @@ administrative session. See the [remote-access guide](../user/remote-access.md)
 for creating scoped links from an existing authorized session. For remote testing,
 the URL's origin must also be reachable from the tester's device.
 
+### Built remote preview
+
+`vp run dev --share --built` serves a production-size web build from the backend instead of
+running the Vite dev server. It rebuilds on changes but has no HMR; reload after a `built in`
+message. Use it when a tester needs to use the app over a slower connection rather than inspect
+the development bundle.
+
+Until the first build exists, the URL shows a page that reloads by itself.
+The license manifest is not generated in this mode. `--built` requires `--share`
+and the `dev` mode; the tailnet URL and pairing flow stay the same.
+
 ### Reusable dev credential
 
 Use this only on a hostname where you trust every service. Browsers send cookies to all ports
@@ -142,7 +177,26 @@ for the security model.
 
 ## Checks
 
-Run checks for the files and packages you changed:
+`vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
+changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
+of the affected packages and their dependents, and the test files beside the changed files. It also
+runs the checks that read other files: the agent context budget when the server is affected, and
+React Compiler coverage for only the changed web and mobile files. It maps
+files to packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), as CI does. It
+compares against the closest merge base with any remote's `main`, so a fork whose `main` lags
+upstream still compares against upstream, or with a ref you pass. CI still runs the full
+test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
+
+The steps run side by side, as many at once as the machine allows: one per two cores and per 6 GiB
+of available memory. On a large machine a run takes about as long as its slowest step, usually
+knip's exports pass at about 10 s. Pass `--concurrency <n>` or set `CHECK_CHANGED_CONCURRENCY` to
+change the limit (`1` runs the steps one by one). A step that runs past `--timeout <seconds>` or
+`CHECK_CHANGED_TIMEOUT` (default 900) is killed with every process it started and reported as
+`TIMEOUT`, not as a failing check. When the files are exactly those of the last passing run, it prints that
+run's summary instead of running again. Any change to a file, the install, or a generated file runs
+the checks again.
+
+While you iterate, run single checks:
 
 ```sh
 vp test run <files>
@@ -154,12 +208,9 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with tsc-rs, which has Effect diagnostics built in.
-Keep `typescript`, `@effect/tsgo`, and the `effect-tsgo patch` prepare step: editors
-still use them for Effect quick fixes and refactors. Keep `@effect/tsgo` on the
-effect-tsgo version that tsc-rs ports (see the tsc-rs README), or the two disagree
-on rule names.
-Marketing keeps `astro check` for Astro files.
+TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
+`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
+refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
 
 Shared replay-test support uses `*.testkit.ts` modules, keeping it outside product-surface
 brand checks. Preserve recorded inbound protocol frames; synthetic initialization
@@ -185,7 +236,73 @@ revision or working diff and reuse that evidence while the candidate is unchange
 can invalidate a result, rerun the affected check; broad shared-runtime, orchestration, packaging,
 or test-harness changes normally need wider requalification.
 See [ci.yml](../../.github/workflows/ci.yml) for hosted checks.
-The required `Test` check includes applicable native Compute suites. The selector
+
+<!-- SCIENT-FORK:START — hosted CI gate, selection and duration-balanced shards. -->
+
+### CI gate and shards
+
+Branch protection requires `Check` from [CI](../../.github/workflows/ci.yml), plus
+`Documentation` and `Verify upstream provenance` from their separate workflows. `Lint`
+is the formatting/lint lane; `Build and Typecheck` shares one dependency installation.
+`Check` uses `always()`, waits for every CI job (including the qualification receipt),
+and rejects failures, cancellations, missing jobs, and unexplained skips.
+
+Every PR and fresh merge group runs all workspace/package and scripts tests,
+all three web shards (unit and browser), all eight server shards, build, typecheck,
+and lint. Documentation can be a test input, so docs-only PRs run these lanes too.
+Release-note content keeps its additional catalog and rendering qualification;
+it does not suppress the full suites. Test selection never uses an import scan
+or a package subset.
+
+`Changes` uses the immutable event base and tested commit. It retains upstream's
+workspace ownership and production dependency graph for release smoke, plus the
+existing mobile native, Compute and packaging selectors. Their failed self-tests
+block `Check` while unknown outputs still run the native lanes. Rust runs for
+all three crate trees, Rust source files, Cargo manifests/lockfiles, Rust toolchain
+files, and `.cargo` configuration at any depth. Unknown paths and unresolvable
+diffs fail open. Main runs every lane fresh. The unchanged packaging selector
+selects Windows and remote-server packaging for web/server production source;
+test-only edits skip packaging.
+
+The merge queue can reuse a successful same-repository PR run into main only for the exact
+content and comparison base. Schema-3 receipts record which web/server suites actually
+ran; only their reports must be restored before reuse is confirmed. Missing, stale,
+legacy, or partial evidence falls back to ordinary CI. One reporting job per suite
+covers reused qualification; shard names are not required
+contexts. A successful workflow still needs transfer evidence whenever server tests ran.
+
+Server tests use eight sequential-file shards with 10-minute job timeouts. Web keeps
+three shards on standard GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
+Both use longest-file-first allocation with package-relative path tie breaking and
+the lowest shard index on equal load. New files receive the sequencer's fallback
+weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
+exclude them. The shard-one performance suites retain their own measurements.
+
+Regenerate weights from every shard report of a representative successful CI run:
+
+```sh
+# Use a fresh directory and the selected run's attempt number.
+gh run download 40121165937 --repo ScientFactory/scient-desktop \
+  --pattern 'vitest-*-attempt-1' --dir /tmp/scient-shard-reports
+node .github/scripts/shard-weights.mjs --suite server \
+  /tmp/scient-shard-reports/vitest-server-*/*.json
+node .github/scripts/shard-weights.mjs --suite web \
+  /tmp/scient-shard-reports/vitest-web-*/*.json
+node .github/scripts/verify-ci-shards.mjs
+```
+
+The importer normalizes runner roots and takes per-file medians across multiple runs.
+It rejects failed reports, malformed paths, duplicates within a report, and invalid
+durations. Server weights include elapsed gaps between serial file results to capture
+imports/setup; overlapping web projects use individual file durations. Review both
+`apps/{server,web}/src/testUtils/shardWeights.json` files with their source run IDs.
+The verifier loads the actual Vitest configurations, discovers every test specification,
+and checks that the configured partitions cover each exactly once, independent of
+discovery order. Vitest's `list --filesOnly --shard` does not apply the sequencer.
+
+<!-- SCIENT-FORK:END -->
+
+The required `Check` gate includes applicable native Compute suites. The selector
 in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
 
 - Preview-scanner changes and the real-kernel integration test files run the

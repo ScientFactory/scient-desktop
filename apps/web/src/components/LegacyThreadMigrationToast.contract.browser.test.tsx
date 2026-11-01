@@ -1,4 +1,4 @@
-import { render as _fixtureRender, type Screen, act } from "../../test/render";
+import { act } from "../../test/render";
 
 import { expect, it, vi } from "vite-plus/test";
 import type { ServerLifecycleLegacyThreadMigrationPayload } from "@t3tools/contracts";
@@ -7,29 +7,39 @@ const state = vi.hoisted(() => ({
   migration: null as ServerLifecycleLegacyThreadMigrationPayload | null,
   add: vi.fn((_notice: unknown) => "migration-toast"),
   close: vi.fn(),
+  listener: null as ((value: ServerLifecycleLegacyThreadMigrationPayload | null) => void) | null,
+  unsubscribe: vi.fn(),
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.migration }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: {
+    subscribe: (_atom: unknown, listener: typeof state.listener) => {
+      state.listener = listener;
+      listener?.(state.migration);
+      return () => {
+        state.listener = null;
+        state.unsubscribe();
+      };
+    },
+  },
+}));
 vi.mock("../state/server", () => ({ primaryServerLegacyThreadMigrationAtom: {} }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.add, close: state.close } }));
-import { LegacyThreadMigrationToast } from "./LegacyThreadMigrationToast";
+import { startLegacyThreadMigrationToast } from "./LegacyThreadMigrationToast";
 
 async function _setupFixture0(_fixture: _Fixture) {
   state.migration = null;
   vi.clearAllMocks();
 }
 async function _cleanupFixture1(_fixture: _Fixture) {
-  if (_fixture.root0) await act(async () => await _fixture.root0?.unmount());
-  _fixture.root0 = undefined;
+  _fixture.stop?.();
+  _fixture.stop = undefined;
   vi.unstubAllGlobals();
 }
-async function render(_fixture: _Fixture, migration: ServerLifecycleLegacyThreadMigrationPayload) {
-  state.migration = migration;
-  await act(async () => {
-    if (!_fixture.root0)
-      _fixture.root0 = _fixture.stack.use(
-        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
-      );
-    await _fixture.root0.rerender(<LegacyThreadMigrationToast />);
+async function publish(_fixture: _Fixture, migration: ServerLifecycleLegacyThreadMigrationPayload) {
+  await act(() => {
+    state.migration = migration;
+    if (!_fixture.stop) _fixture.stop = startLegacyThreadMigrationToast();
+    else state.listener?.(migration);
   });
 }
 
@@ -38,8 +48,8 @@ it("replaces a running spinner with a persistent failure and clears it after suc
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  await render(_fixture, { status: "running", totalThreadCount: 2 });
-  await render(_fixture, {
+  await publish(_fixture, { status: "running", totalThreadCount: 2 });
+  await publish(_fixture, {
     status: "running",
     failed: true,
     totalThreadCount: 2,
@@ -53,14 +63,14 @@ it("replaces a running spinner with a persistent failure and clears it after suc
       description: expect.stringContaining("1 thread still needs restoration"),
     }),
   );
-  await render(_fixture, {
+  await publish(_fixture, {
     status: "running",
     failed: true,
     totalThreadCount: 2,
     pendingThreadCount: 1,
   });
   expect(state.add).toHaveBeenCalledTimes(2);
-  await render(_fixture, { status: "complete", totalThreadCount: 2, pendingThreadCount: 0 });
+  await publish(_fixture, { status: "complete", totalThreadCount: 2, pendingThreadCount: 0 });
   expect(state.close).toHaveBeenCalledTimes(2);
   expect(state.add).toHaveBeenCalledTimes(2);
 });
@@ -70,7 +80,7 @@ it("shows a replayed failure without a preceding spinner or an invented pending 
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  await render(_fixture, { status: "running", failed: true, totalThreadCount: 3 });
+  await publish(_fixture, { status: "running", failed: true, totalThreadCount: 3 });
   expect(state.add).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "error",
@@ -81,21 +91,22 @@ it("shows a replayed failure without a preceding spinner or an invented pending 
   expect(state.close).not.toHaveBeenCalled();
 });
 
-it("cleans up on unmount and supports older completion payloads without counts", async () => {
+it("cleans up on disposal and supports older completion payloads without counts", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  await render(_fixture, { status: "complete", totalThreadCount: 3 });
+  await publish(_fixture, { status: "complete", totalThreadCount: 3 });
   expect(state.add).not.toHaveBeenCalled();
-  await render(_fixture, {
+  await publish(_fixture, {
     status: "running",
     failed: true,
     totalThreadCount: 3,
     pendingThreadCount: 2,
   });
-  await act(async () => await _fixture.root0?.unmount());
-  _fixture.root0 = undefined;
+  _fixture.stop?.();
+  _fixture.stop = undefined;
+  expect(state.unsubscribe).toHaveBeenCalledOnce();
   expect(state.close).toHaveBeenCalledWith("migration-toast");
 });
 
@@ -105,7 +116,7 @@ function _createFixture() {
   return {
     stack,
     cleanup,
-    root0: undefined! as Screen | undefined,
+    stop: undefined as (() => void) | undefined,
     async [Symbol.asyncDispose]() {
       try {
         await cleanup.disposeAsync();

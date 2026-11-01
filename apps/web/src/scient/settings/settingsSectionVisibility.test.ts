@@ -75,36 +75,60 @@ function visibleEntry(
 }
 
 describe("settings section visibility", () => {
-  it("does not reuse visibility when returning to the same sectioned route", () => {
-    const firstGeneralVisit = { path: "/settings/general" };
-    const firstVisibility = {
-      scope: firstGeneralVisit,
+  it("shows results only on the settled page they were observed on", () => {
+    const generalVisibility = {
+      path: "/settings/general",
       targetIds: new Set(["text-generation"]),
     };
 
     expect(
       getVisibleSettingsSectionIds({
         activePath: "/settings/general",
-        scope: firstGeneralVisit,
-        visibility: firstVisibility,
+        observedPath: "/settings/general",
+        // Matched by path, so any record of this page counts, not one particular object.
+        visibility: { ...generalVisibility },
       }),
     ).toEqual(new Set(["text-generation"]));
     expect(
       getVisibleSettingsSectionIds({
-        activePath: "/settings/providers",
-        scope: null,
-        visibility: firstVisibility,
+        activePath: "/settings/appearance",
+        observedPath: "/settings/general",
+        visibility: generalVisibility,
       }),
     ).toEqual(new Set());
-
-    const secondGeneralVisit = { path: "/settings/general" };
     expect(
       getVisibleSettingsSectionIds({
-        activePath: "/settings/general",
-        scope: secondGeneralVisit,
-        visibility: firstVisibility,
+        activePath: "/settings/appearance",
+        observedPath: "/settings/appearance",
+        visibility: generalVisibility,
       }),
     ).toEqual(new Set());
+    expect(
+      getVisibleSettingsSectionIds({
+        activePath: undefined,
+        observedPath: undefined,
+        visibility: generalVisibility,
+      }),
+    ).toEqual(new Set());
+  });
+
+  it("reports nothing until a section enters view", () => {
+    const harness = createHarness(["one", "two"]);
+    const onChange = vi.fn();
+    observeSettingsSectionVisibility({
+      container: {} as Element,
+      targetIds: ["one", "two"],
+      onChange,
+      environment: harness.environment,
+    });
+    harness.mutate();
+    harness.intersect([visibleEntry(harness.targets.get("one")!, { isIntersecting: false })]);
+
+    expect(harness.observed.size).toBe(2);
+    expect(onChange).not.toHaveBeenCalled();
+
+    harness.intersect([visibleEntry(harness.targets.get("one")!)]);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(["one"]);
   });
 
   it("accumulates visible sections and emits them in sidebar order", () => {
@@ -120,7 +144,7 @@ describe("settings section visibility", () => {
     harness.intersect([visibleEntry(harness.targets.get("two")!)]);
     harness.intersect([visibleEntry(harness.targets.get("one")!)]);
 
-    expect(emissions).toEqual([[], ["two"], ["one", "two"]]);
+    expect(emissions).toEqual([["two"], ["one", "two"]]);
   });
 
   it("treats zero-ratio and non-intersecting entries as hidden", () => {
@@ -139,7 +163,7 @@ describe("settings section visibility", () => {
     harness.intersect([visibleEntry(one, { intersectionRatio: 0 })]);
     harness.intersect([visibleEntry(two, { isIntersecting: false })]);
 
-    expect(emissions).toEqual([[], ["one", "two"], ["two"], []]);
+    expect(emissions).toEqual([["one", "two"], ["two"], []]);
   });
 
   it("resyncs replaced and removed targets without retaining stale visibility", () => {
@@ -212,7 +236,7 @@ describe("settings section visibility", () => {
       environment: harness.environment,
     });
 
-    expect(emissions).toEqual([[]]);
+    expect(emissions).toEqual([]);
     expect(harness.intersectionRoots).toEqual([]);
 
     const root = { name: "mounted-root" } as unknown as Element;
@@ -239,7 +263,6 @@ describe("settings section visibility", () => {
 
     expect(harness.disconnectIntersections).toHaveBeenCalledOnce();
     expect(harness.disconnectMutations).toHaveBeenCalledOnce();
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenLastCalledWith([]);
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

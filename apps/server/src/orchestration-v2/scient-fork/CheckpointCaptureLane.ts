@@ -1,11 +1,6 @@
 /**
- * A run's checkpoint is the workspace as that run left it. Its capture is
- * enqueued with the run's terminal events, ahead of any later run's start on
- * the thread. A capture that fails waits to retry as a pending row, which no
- * longer blocks the thread's lane, so a later run could start first and the
- * retried capture would then record the newer run's files. A provider start
- * therefore also waits for every earlier checkpoint capture on its thread that
- * is still pending.
+ * A failed capture can leave the execution lane while pending retry. Block later provider starts on
+ * every earlier pending capture, or that capture could record a later run's files instead.
  */
 import type * as SqlClient from "effect/sql/SqlClient";
 

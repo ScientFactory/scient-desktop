@@ -17,7 +17,9 @@ type SweepInput = {
 const mocks = vi.hoisted(() => ({
   configsAtom: { atom: "configs" },
   loadedAtom: { atom: "loaded" },
+  omittedAtom: { atom: "omitted" },
   loadedKey: "",
+  omittedKey: "",
   cleanupDays: new Map<string, number | null>(),
   sweep: vi.fn(async (_environmentId: string, _input: unknown): Promise<unknown[]> => []),
   restore: vi.fn(),
@@ -32,10 +34,16 @@ vi.mock("@effect/atom-react", () => ({
             { settings: { threadSectionsDeleteEmptyAfterDays: days } },
           ]),
         )
-      : mocks.loadedKey,
+      : atom === mocks.omittedAtom
+        ? mocks.omittedKey
+        : mocks.loadedKey,
 }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: mocks.configsAtom }));
-vi.mock("./loadedEnvironments", () => ({ loadedThreadEnvironmentsKeyAtom: mocks.loadedAtom }));
+vi.mock("./loadedEnvironments", () => ({
+  loadedThreadEnvironmentsKeyAtom: mocks.loadedAtom,
+  omittedSectionsKeyAtom: mocks.omittedAtom,
+  UNKNOWN_OMITTED_SECTIONS: "*",
+}));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: mocks.toast } }));
 vi.mock("./catalog", () => ({
   useThreadSectionCatalogs: () => ({
@@ -61,6 +69,7 @@ async function _setupFixture0(_fixture: _Fixture) {
 
   vi.clearAllMocks();
   mocks.loadedKey = "";
+  mocks.omittedKey = "";
   mocks.cleanupDays = new Map([
     ["primary", 1],
     ["remote", 3],
@@ -137,6 +146,25 @@ it("invalidates queued sweeps and stops deleting as soon as a thread list ceases
   expect(queued.isCurrent?.()).toBe(false);
   await act(() => vi.advanceTimersByTimeAsync(10 * 60_000));
   expect(sweeps(true)).toHaveLength(1);
+});
+
+it("counts sections holding threads the shell left out, and never judges unnamed ones", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  mocks.omittedKey = "primary\t*\nremote\tarchive";
+  mocks.loadedKey = "primary\nremote";
+  await act(async () => await _fixture.root0.rerender(<Probe _fixture={_fixture} />));
+  await act(() => vi.advanceTimersByTimeAsync(60_000));
+  const judged = sweeps(true);
+  expect(judged.map((call) => call.environmentId)).toEqual(["remote"]);
+  expect(judged[0]!.occupancy).toEqual(
+    new Map([
+      ["archive", new Set(["remote"])],
+      ["runs", new Set(["remote"])],
+    ]),
+  );
 });
 
 it("offers Undo that restores the removed sections on their environment", async () => {

@@ -40,11 +40,8 @@ function referenceStore(editor: Editor): ReferenceStore {
 const unsubscribed = () => () => {};
 
 /**
- * A view's numbering, read from the references and its own position. Unlike
- * `useEditorState`, it is not recomputed on every transaction: ordinary typing
- * and loading only move positions, which leaves every number unchanged. It is
- * recomputed when references are counted again or the view renders. Values
- * must be plain data.
+ * Typing/loading moves positions without changing reference counts. Avoid recomputing numbering on
+ * every transaction; update on recount/render and expose only plain data.
  */
 export function useLatexReferenceState<T>(
   editor: Editor | null,

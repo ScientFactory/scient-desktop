@@ -31,28 +31,8 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../../config.ts";
 
 /**
- * The filesystem as the authority on what a compute session did.
- *
- * A session is a live conversation with a process that can die, and a process
- * that dies takes its memory with it. This module is what remains: it knows
- * nothing about kernels, queues, or generations, and answers only what was
- * submitted, what came back, and how it ended.
- *
- * Layout, under `<stateDir>/compute/sessions/<projectId>/<sessionId>/`:
- *
- *     session.json                     the session record, atomically replaced
- *     journal.ndjson                   what happened, in order, append-only
- *     output.ndjson                    output belonging to no execution
- *     outputs/<hex>.<ext>              output resources, content-addressed
- *     executions/<executionId>/
- *         request.json                 written once, never rewritten
- *         result.json                  atomically replaced as it progresses
- *         output.ndjson                this execution's output, append-only
- *         outputs/<hex>.<ext>          its output resources, content-addressed
- *
- * Splitting a request from its result is what makes recovery honest rather than
- * a guess: a request with no result is an execution that was in flight when the
- * server stopped, and nothing else produces that shape.
+ * Separate immutable requests from replaceable results: request without result proves in-flight
+ * work at server death. Durable filesystem records, not vanished runtime memory, decide recovery.
  */
 
 const SessionJson = Schema.fromJsonString(ComputeSessionRecord);
@@ -73,24 +53,16 @@ const decodeJournalEntry = Schema.decodeUnknownOption(JournalJson);
 const encodeJournalEntry = Schema.encodeEffect(JournalJson);
 
 /**
- * The largest image one output may store.
- *
- * A figure is a few hundred kilobytes; anything approaching this is a runtime
- * misbehaving or a user rendering a raster of an entire dataset. Refusing is
- * better than filling a disk, and the refusal is recorded as a system output so
- * the transcript says the figure was dropped rather than silently omitting it.
+ * Refuse oversized images before they fill disk, but record a system output so readers see the loss
+ * rather than an apparently complete transcript.
  */
 export const MAXIMUM_COMPUTE_OUTPUT_IMAGE_BYTES = 32 * 1024 * 1024;
 
 const CONTENT_HASH_PATTERN = /^sha256:([0-9a-f]{64})$/u;
 
 /**
- * Rejects anything that is not a single, ordinary path segment.
- *
- * `ComputeSessionId` and `ComputeExecutionId` are bounded non-empty strings and
- * nothing more, so nothing in the type stops `../../etc`. Both are used as
- * directory names, and a session identifier may be chosen by a caller for
- * idempotency, so this is checked here rather than assumed of callers.
+ * IDs are only bounded strings and may be caller-chosen for idempotency. Validate single ordinary
+ * path segments here; their types do not exclude traversal.
  */
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
@@ -522,15 +494,9 @@ const make = Effect.gen(function* () {
       if (!(yield* fs.exists(filePath).pipe(mapStoreError("exists", filePath)))) {
         yield* Effect.scoped(
           Effect.gen(function* () {
-            // A temporary directory of its own, the way every other atomic write
-            // in this server does it, rather than a name derived from the target.
-            // Resource writes deliberately do not take the write lease -- a
-            // multi-megabyte copy has no business blocking a journal append --
-            // so two of them can be in flight at once, and two writers storing
-            // the same figure would otherwise derive the same temporary name and
-            // the second's rename would look for a file the first had already
-            // moved. The scope also takes the directory away again when a write
-            // fails, instead of leaving a partial resource beside a real one.
+            // Resource copies intentionally bypass the journal write lease. Give each write a
+            // private temporary directory so concurrent identical figures cannot race the same
+            // rename; scope cleanup must remove failed partial copies.
             const temporaryDirectory = yield* fs
               .makeTempDirectoryScoped({ directory, prefix: `${fileName}.` })
               .pipe(mapStoreError(input.operation, directory));
@@ -611,13 +577,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Every session of a project that can still be read.
-   *
-   * Unlike `loadSession`, one unreadable record is skipped rather than fatal.
-   * Enumeration is how a client learns a project has sessions at all, and a
-   * single torn or future-versioned file must not blank the whole list; the
-   * file is left untouched so a later version can still read it, and the
-   * warning is what an operator needs to find it.
+   * Skip and warn on unreadable session records without deleting them. One torn/future-version file
+   * must not hide every session or prevent a later version from recovering it.
    */
   const loadSessions = Effect.fn("LocalComputeStore.loadSessions")(function* (
     projectId: ComputeProjectId,
@@ -886,11 +847,8 @@ const make = Effect.gen(function* () {
       mediaType: metadata.mediaType,
       contentHash: metadata.contentHash,
       byteLength: metadata.byteLength,
-      // The HTTP asset layer compares whole milliseconds from Effect's
-      // FileSystem stat. Node's Date#getTime() rounds, while the Effect
-      // adapter truncates sub-millisecond filesystem precision; use the
-      // same normalized value here so an unchanged output is not rejected
-      // as changed merely because its mtime fell on a fractional millisecond.
+      // Match Effect FileSystem's truncated whole-millisecond mtime, not Node Date's rounding, or
+      // unchanged output can fail revision checks on fractional milliseconds.
       revision: { size: info.size, mtimeMs: Math.trunc(info.mtimeMs) },
     } satisfies ResolvedComputeOutputResource;
   });
@@ -939,19 +897,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Reclaims a finished session's bulky data and keeps its history.
-   *
-   * Output lines and image files go; the session record, its journal, and every
-   * execution request and result stay. A scientist looking at last month's work
-   * should still see what they ran and how it ended, and should be told the
-   * figures are gone rather than shown a session that appears never to have
-   * produced any.
-   *
-   * Nothing in the server calls this yet, deliberately: *which* sessions to trim
-   * and after how long is a retention policy the foundation document defers, and
-   * picking a schedule here would be deciding it by accident. What is settled is
-   * that reclaiming space must not erase history, which is what this does and
-   * what its test holds it to.
+   * Reclaim output bytes while preserving session/journal/request/result history and an explicit
+   * unavailable-figures state. Do not schedule trimming here: retention timing requires a separate
+   * policy decision.
    */
   const removeDisposableSessionData = (record: ComputeSessionRecord, removedAt: string) =>
     writeLock.withPermits(1)(

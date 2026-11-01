@@ -10,10 +10,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Electron from "electron";
+// SCIENT-FORK:START — Scient Accounts: allow only fixed password-store app targets.
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { openAccountStore } from "../scient/accounts/openStore.ts";
+// SCIENT-FORK:END
 
-// Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`,
-// `zed://ssh/<host>/<path>`, `jetbrains://gateway/ssh/environment?h=…`) must
-// reach the OS handler; every other non-web scheme stays blocked.
+// Remote editor deep links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
@@ -64,10 +66,14 @@ export class ElectronShell extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = ElectronShell.of({
-  openExternal: (rawUrl) =>
-    Option.match(parseSafeExternalUrl(rawUrl), {
+  // SCIENT-FORK:START — Scient Accounts: keep fixed app targets behind the existing external-link bridge.
+  openExternal: Effect.fn("ElectronShell.openExternal")(function* (rawUrl) {
+    const platform = yield* HostProcess.Platform;
+    const store = openAccountStore(rawUrl, platform);
+    if (store) return yield* Effect.promise(() => store);
+    return yield* Option.match(parseSafeExternalUrl(rawUrl), {
       onNone: () => Effect.succeed(false),
       onSome: (externalUrl) =>
         Effect.promise(() =>
@@ -76,18 +82,22 @@ export const make = ElectronShell.of({
             () => false,
           ),
         ),
-    }),
-  openSystemSettings: (pane) =>
-    Effect.promise(() =>
+    });
+  }),
+  // SCIENT-FORK:END
+  openSystemSettings: Effect.fn("ElectronShell.openSystemSettings")(function (pane) {
+    return Effect.promise(() =>
       Electron.shell.openExternal(MAC_PERMISSION_SETTINGS_URLS[pane]).then(
         () => true,
         () => false,
       ),
-    ),
-  copyText: (text) =>
-    Effect.promise(() => Electron.clipboard.writeText(text).catch(() => undefined)),
-  copyPng: (png) =>
-    Effect.promise(() => {
+    );
+  }),
+  copyText: Effect.fn("ElectronShell.copyText")(function (text) {
+    return Effect.promise(() => Electron.clipboard.writeText(text).catch(() => undefined));
+  }),
+  copyPng: Effect.fn("ElectronShell.copyPng")(function (png) {
+    return Effect.promise(() => {
       const image = Electron.nativeImage.createFromBuffer(Buffer.from(png));
       if (image.isEmpty()) return Promise.resolve(false);
       return Electron.clipboard
@@ -100,7 +110,8 @@ export const make = ElectronShell.of({
           () => true,
           () => false,
         );
-    }),
+    });
+  }),
 });
 
 export const layer = Layer.succeed(ElectronShell, make);

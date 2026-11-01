@@ -10,13 +10,13 @@ describe("Scient file surface seams", () => {
       "utf8",
     );
     expect(source).not.toContain("ScientFileAuxiliarySurface");
-    expect(source).toContain("ScientComputeFileSurface");
     expect(source.match(/<ScientComputeFileSurface/gu)).toHaveLength(1);
     expect(source.match(/useWorkspaceFileRefresh\(/gu)).toHaveLength(1);
     expect(source).not.toMatch(/-batch|AnalysisRunFilePanel/iu);
     expect(source).not.toContain("matlabOneShotVisible");
   });
 
+  // regression: 979fd8a9e1 feat(compute): consolidate owned fresh and MATLAB batch execution
   it("places batch in the same Results surface without another execution panel", () => {
     const auxiliary = NodeFS.readFileSync(
       new URL("../compute/ScientComputeFileSurface.tsx", import.meta.url),
@@ -27,6 +27,7 @@ describe("Scient file surface seams", () => {
     expect(auxiliary).not.toContain("AnalysisRunFilePanel");
   });
 
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("keeps Python execution controls in the Scient-owned file surface", () => {
     const surface = NodeFS.readFileSync(
       new URL("../compute/ScientComputeFileSurface.tsx", import.meta.url),

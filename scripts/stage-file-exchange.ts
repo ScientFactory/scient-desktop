@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Standalone host compiler invocation, no server runtime.
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -41,6 +42,8 @@ if (probe && !argumentsByName.has("--destination"))
     "Qualification probes require an explicit isolated --destination; never replace the default production helper.",
   );
 await NodeFSP.mkdir(destination, { recursive: true });
+for (const legacy of ["scient-file-exchange", "provenance.json"])
+  await NodeFSP.rm(NodePath.join(destination, legacy), { force: true });
 const scratch = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), "scient-publication-compile-"),
 );
@@ -96,7 +99,7 @@ try {
   }
   await NodeFSP.writeFile(
     NodePath.join(destination, "publication-artifact.json"),
-    `${JSON.stringify({ protocol: 1, platform, arch, probe, executable: NodePath.basename(executable) })}\n`,
+    `${JSON.stringify({ protocol: 1, platform, arch, probe, executable: NodePath.basename(executable), sha256: publicationDigest(await NodeFSP.readFile(executable)) })}\n`,
   );
 } finally {
   await NodeFSP.rm(scratch, { recursive: true, force: true });

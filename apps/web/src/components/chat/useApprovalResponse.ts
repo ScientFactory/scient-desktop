@@ -25,7 +25,11 @@ export function useApprovalResponse({
 }) {
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const inFlight = useRef(new Set<string>());
-  return async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
+  return async (
+    requestId: RuntimeRequestId,
+    decision: ProviderApprovalDecision,
+    feedback?: string,
+  ) => {
     if (
       threadId === null ||
       approvals.find((approval) => approval.requestId === requestId)?.responseCapability !== "live"
@@ -41,7 +45,10 @@ export function useApprovalResponse({
     };
     let result;
     try {
-      result = await respond({ environmentId, input: { threadId, requestId, decision } });
+      result = await respond({
+        environmentId,
+        input: { threadId, requestId, decision, ...(feedback === undefined ? {} : { feedback }) },
+      });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
         onResponseError(requestId, "Approval could not be sent. Try again.");
     } catch (error) {

@@ -70,3 +70,20 @@ it("does nothing where storage is blocked", () => {
     }, "sections"),
   ).not.toThrow();
 });
+
+it("preserves Status history while migrating only the legacy section history", () => {
+  const statusKey = "scient:sidebar:placement-order:status";
+  const status = JSON.stringify({ groups: [group("__status__")] });
+  const mixedStorage = memoryStorage({ [statusKey]: status });
+  migrateLegacyPlacement(() => mixedStorage, "sections");
+  expect(mixedStorage.getItem(statusKey)).toBe(status);
+  expect(mixedStorage.getItem(NEW_KEY)).toBeNull();
+
+  mixedStorage.setItem(OLD_KEY, JSON.stringify({ groups: [group("research")] }));
+  migrateLegacyPlacement(() => mixedStorage, "sections");
+  expect(mixedStorage.getItem(statusKey)).toBe(status);
+  expect(mixedStorage.getItem(OLD_KEY)).toBeNull();
+  expect(JSON.parse(mixedStorage.getItem(NEW_KEY)!)).toEqual({
+    groups: [group(sectionGroupId({ environmentId: "laptop", sectionId: "research" }))],
+  });
+});

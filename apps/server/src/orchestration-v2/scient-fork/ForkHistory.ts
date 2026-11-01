@@ -1,19 +1,8 @@
 import { turnItemMetadataSql } from "./ContextHistorySql.ts";
 /**
- * A fork's inherited history: a frozen, ordered list of the items it shows
- * from the conversations it was forked from.
- *
- * SCIENT-OWNED. A fork does not copy history. When it is accepted, the
- * planner's retained prefix is written here as one row per item, naming the
- * conversation that stores the item (`scient_fork_history`). Membership and
- * order are therefore fixed at fork time: a later rollback, deletion or new
- * turn of the original never changes what the fork shows. Rows point at the
- * item's owner, so a fork of a fork lists its parent's rows directly and every
- * read goes one level deep. Items that were still in flight at the cut, and
- * plans, are copied into the fork instead; their rows point at those copies.
- *
- * Inherited items are presented exactly like the copies they replace:
- * provider and run references cleared, `inheritedFrom` naming the original.
+ * Freeze membership and order at acceptance so source rollback, deletion, or new turns cannot
+ * change the fork. Point directly to item owners for one-level reads; copy in-flight items and
+ * plans. Clear inherited provider/run references while preserving original identity.
  */
 import {
   TurnItemId,
@@ -322,11 +311,8 @@ export const hasForkHistory = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
   `.pipe(Effect.map((rows) => rows.length > 0));
 
 /**
- * The fork's own rows from its boundary on (its copies come before it), up to
- * `anchorItemId` when given, with their turn starts and user turns; undefined
- * without a boundary. Counts the
- * rows `readCanonicalProjection` keeps, by the same rules, so a window of
- * this many rows ends at the boundary.
+ * Count by readCanonicalProjection's rules so a window of this many rows ends at the fork boundary;
+ * copied rows before the boundary do not count.
  */
 export const readForkLocalExtent = (
   sql: SqlClient.SqlClient,
@@ -411,13 +397,9 @@ export const readForkCopyIds = (
       `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.source_item_id))));
 
 /**
- * The run of history positions a window shows, by the projection store's
- * window rule (`readCanonicalProjection`) applied to the whole conversation:
- * the history, then the fork's own rows that `following` describes. The
- * window holds rows at or before the anchor, from the oldest of the last
- * `userTurnLimit + 2` user turns among the last `maxRawTurns + 2` turn starts,
- * or the last `rowLimit` rows when no user turn is in range. Reads only the
- * history's turn starts, never its items.
+ * Apply the canonical projection window rule to history plus the fork's own rows. Read only history
+ * turn starts, never its items, to select the oldest retained user/turn boundary or the row-limit
+ * fallback.
  */
 export const readForkHistoryWindow = Effect.fn("ForkHistory.readWindow")(function* (
   sql: SqlClient.SqlClient,

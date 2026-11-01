@@ -1,4 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
 import {
@@ -7,10 +7,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
-  DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
-  type PreviewViewportSetting,
   type ScopedThreadRef,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   PREVIEW_ZOOM_LEVELS,
@@ -18,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import {
   normalizePreviewUrl,
+  isPreviewUrlNormalizationError,
   resolveAddressBarInput,
   previewPdfAssetUrl,
   resolveSearchUrlTemplate,
@@ -28,7 +27,6 @@ import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
   recordVisitForThread,
   removeUrlForThread,
-  setTitleForThreadUrl,
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
@@ -66,10 +64,7 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
-import {
-  commitBrowserViewportChange,
-  subscribeBrowserViewportChange,
-} from "~/browser/browserViewportActions";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
@@ -79,7 +74,6 @@ import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
-import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { useBrowserPdfExportOwner } from "~/scient/documentExport/browserPdfExportOwner";
@@ -97,9 +91,20 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+// SCIENT-FORK:START — keep PDF export actions in their Scient owner.
 import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a browser tab can open in a new window from its menu.
+import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
+// SCIENT-FORK:END
 import { observeResize } from "~/lib/observeResize";
+// SCIENT-FORK:START — Scient Accounts: browser profile switcher.
+import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient: Google, apps and shortcuts on an empty tab.
+import { BrowserHome } from "~/scient/browser/BrowserHome";
+import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
+// SCIENT-FORK:END
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -152,14 +157,13 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
-  const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [pickActive, setPickActive] = useState(false);
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
     Boolean(onSendAnnotation);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
-  const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
@@ -171,25 +175,14 @@ export function PreviewView({
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
-  const environmentHostname = environmentHttpBaseUrl
-    ? new URL(environmentHttpBaseUrl).hostname
-    : null;
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
-  const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   const tabId = requestedTabId ?? previewState.activeTabId;
   const runtimeTabId = tabId
@@ -207,10 +200,11 @@ export function PreviewView({
   const serverOwnsRendering = snapshot?.runtime === "server";
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const [serverAspectRatioLocked, setServerAspectRatioLocked] = useState(false);
-  const serverBodyRef = useRef<HTMLDivElement | null>(null);
   const [serverToolbarWidth, setServerToolbarWidth] = useState(0);
   const serverToolbarShown =
     snapshot?.runtime === "server" && (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT)._tag !== "fill";
+  const serverBodyRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the server preview body sizes the viewport toolbar
   useEffect(() => {
     const element = serverBodyRef.current;
     if (!element || !serverToolbarShown) return;
@@ -221,7 +215,9 @@ export function PreviewView({
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
   const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
-  const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
+  // A desktop page that mounted before its tab went headless leaves its stale state here.
+  const desktopOverlay =
+    tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const pdfExportOwner = useBrowserPdfExportOwner(
     threadRef.environmentId,
     snapshot,
@@ -244,30 +240,23 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // Passing the snapshot's raw `undefined` through would reach the IPC layer
-  // as "every profile".
-  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
+  // IPC interprets undefined profile ids as all profiles.
+  const activeProfileId = snapshot?.profileId ?? browserDefaults.profileId;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
-  const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
-  const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
-  const latestHistoryUrl = recentHistoryEntries[0]?.url;
-  // Keyed on the ids rather than threadRef, which is recreated on every update.
-  const { environmentId: threadEnvironmentId, threadId } = threadRef;
-  useEffect(() => {
-    if (!navUrl || !navTitle || !latestHistoryUrl) return;
-    setTitleForThreadUrl(
-      scopeThreadRef(threadEnvironmentId, threadId),
-      navUrl,
-      navTitle,
-      environmentHostname,
-    );
-  }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadEnvironmentId, threadId]);
+  // SCIENT-FORK:START — Scient: shortcuts count what people open, never in an incognito tab.
+  const incognito =
+    browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
+    "incognito";
+  const countSiteVisit = (visited: string) => {
+    if (!incognito) recordSiteVisit(visited);
+  };
+  // SCIENT-FORK:END
 
-  const navigateToResolvedUrl = async (resolvedUrl: string) => {
+  const navigateToResolvedUrl = async (resolvedUrl: string, profileId?: string) => {
     if (isServerTab && serverSurfaceRef.current) {
       if (serverInputDisabled) return false;
       serverSurfaceRef.current.navigate(resolvedUrl);
@@ -279,7 +268,12 @@ export function PreviewView({
       rememberPreviewUrl(threadRef, resolvedUrl);
       return true;
     }
-    const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
+    const result = await openPreviewSession({
+      openPreview: open,
+      threadRef,
+      url: resolvedUrl,
+      ...(profileId ? { profileId } : {}),
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       if (error instanceof BrowserSettingsReadError) {
@@ -293,25 +287,47 @@ export function PreviewView({
     return result._tag === "Success";
   };
 
-  const handleSubmitUrl = async (next: string) => {
+  const handleSubmitUrl = async (next: string, profileId?: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
-      if (await navigateToResolvedUrl(resolved)) {
+      if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, resolved);
+        countSiteVisit(resolved);
       }
-    } catch {}
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not open this address",
+        description: isPreviewUrlNormalizationError(error)
+          ? "Enter an http or https URL."
+          : error instanceof Error
+            ? error.message
+            : "An error occurred.",
+      });
+    }
   };
 
-  const handleOpenServerUrl = async (next: string) => {
+  const handleOpenServerUrl = async (next: string, profileId?: string) => {
     try {
       const resolved =
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved)) {
+      if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, next);
+        countSiteVisit(next);
       }
-    } catch {}
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not open this address",
+        description: isPreviewUrlNormalizationError(error)
+          ? "Enter an http or https URL."
+          : error instanceof Error
+            ? error.message
+            : "An error occurred.",
+      });
+    }
   };
 
   const handleRefresh = () => {
@@ -367,37 +383,16 @@ export function PreviewView({
     else if (previewBridge && runtimeTabId) void previewBridge.resetZoom(runtimeTabId);
   };
 
-  const handleViewportChange = async (nextViewport: PreviewViewportSetting) => {
-    if (!tabId) return;
-    const result = await resize({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId: threadRef.threadId,
-        tabId,
-        viewport: nextViewport,
-      },
-    });
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Unable to resize browser viewport",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-      throw error;
-    }
-    updatePreviewServerSnapshot(threadRef, result.value);
-  };
-
   const handleToggleDeviceToolbar = () => {
-    if (!runtimeTabId) return;
+    if (!runtimeTabId || !tabId) return;
+    const target = { threadRef, tabId, runtimeTabId };
     if (viewport._tag !== "fill") {
-      void commitBrowserViewportChange(runtimeTabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      void commitBrowserViewportChange(target, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
       return;
     }
 
     void commitBrowserViewportChange(
-      runtimeTabId,
+      target,
       browserResponsiveViewportForToggle({
         defaults: browserDefaults,
         panelRect,
@@ -405,14 +400,6 @@ export function PreviewView({
       }),
     ).catch(() => undefined);
   };
-
-  const onViewportChange = useEffectEvent(handleViewportChange);
-  useEffect(() => {
-    if (!runtimeTabId) return;
-    return subscribeBrowserViewportChange(runtimeTabId, (nextViewport) =>
-      onViewportChange(nextViewport),
-    );
-  }, [runtimeTabId]);
 
   const handleBack = () => {
     if (isServerTab) serverSurfaceRef.current?.history(-1);
@@ -779,9 +766,7 @@ export function PreviewView({
       void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       return;
     }
-    // Snapshot whatever the user was focused on (typically the chat composer
-    // textarea or the chrome-row pick button) BEFORE main steals focus into the
-    // guest webContents.
+    // Capture app focus before main moves it into guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
     const pickRequest = { cancelled: false };
@@ -792,7 +777,7 @@ export function PreviewView({
       const isCurrentPick = pickActiveRef.current === pickRequest;
       if (isCurrentPick) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        setPickActive(false);
       }
       if (
         (isCurrentPick || submitted) &&
@@ -805,10 +790,9 @@ export function PreviewView({
         } catch {}
       }
     };
-    // A failed pick is dropped silently; finishPick still releases the picker.
     const bridge = previewBridge;
     void settlePromise(async () => {
-      await bridge.setAnnotationSendEnabled?.(
+      await bridge.setAnnotationSendEnabled(
         runtimeTabId,
         Boolean(onSendAnnotation) &&
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
@@ -816,20 +800,15 @@ export function PreviewView({
       if (pickRequest.cancelled) return;
       const result = await bridge.pickElement(runtimeTabId);
       if (!result || pickRequest.cancelled) return;
-      // Nothing that happens after this point (a second picker click, a tab
-      // change, unmount) may discard it, so the pick stops being cancellable
-      // here rather than in finishPick.
+      // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
       if (pickActiveRef.current === pickRequest) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        setPickActive(false);
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      // The structured annotation is still sendable when its optional crop
-      // stalls or fails, so tell the user what they lost and keep going
-      // instead of holding the composer for an attachment that never lands.
-      // The stored copy drops the screenshot on failure, otherwise the prompt
-      // would tell the agent a crop is attached when none was sent.
+      // Send annotations even if the optional crop fails or stalls; drop failed screenshots so prompts cannot
+      // claim an attachment.
       const capture = capturePreviewAnnotationScreenshot(picked);
       const cropDropped = screenshotFailed || capture.status === "failed";
       const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
@@ -868,13 +847,15 @@ export function PreviewView({
     }).then(finishPick);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the preview bridge whether an element pick may send annotations
   useEffect(() => {
     if (!pickActive || !previewBridge || !runtimeTabId) return;
     void previewBridge
-      .setAnnotationSendEnabled?.(runtimeTabId, canSendAnnotation)
+      .setAnnotationSendEnabled(runtimeTabId, canSendAnnotation)
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-progress element pick on the preview bridge when the tab changes or on unmount
   useEffect(() => {
     return () => {
       if (!pickActiveRef.current) return;
@@ -883,12 +864,11 @@ export function PreviewView({
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
-      if (isMountedRef.current) setPickActive(false);
+      setPickActive(false);
     };
   }, [runtimeTabId]);
 
-  // Subscribe only while visible; `toggle-panel` is owned by ChatView's
-  // URL-aware handler regardless of whether the panel is currently mounted.
+  // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
   const onPreviewAction = useEffectEvent(
     (action: Parameters<Parameters<typeof subscribePreviewAction>[0]>[0]) => {
       switch (action) {
@@ -896,7 +876,7 @@ export function PreviewView({
           handleRefresh();
           return;
         case "focus-url":
-          setFocusUrlNonce((value) => (value ?? 0) + 1);
+          urlInputRef.current?.focus();
           return;
         case "zoom-in":
           handleZoomIn();
@@ -912,6 +892,7 @@ export function PreviewView({
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction((action) => onPreviewAction(action));
@@ -923,13 +904,25 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
+        // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
+        accountsTab={
+          !isServerTab && runtimeTabId
+            ? {
+                environmentId: threadRef.environmentId,
+                threadRef,
+                tabId: runtimeTabId,
+                profileId: activeProfileId,
+              }
+            : undefined
+        }
+        // SCIENT-FORK:END
         url={url}
         loading={loading || serverStreamPending}
         canGoBack={canGoBack && !serverInputDisabled}
         canGoForward={canGoForward && !serverInputDisabled}
         refreshDisabled={refreshDisabled || serverInputDisabled}
         inputDisabled={serverInputDisabled}
-        focusUrlNonce={focusUrlNonce}
+        urlInputRef={urlInputRef}
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}
@@ -949,59 +942,75 @@ export function PreviewView({
         pickActive={pickActive}
         pickDisabled={!tabId || isUnreachable}
         pickDisabledReason={
-          isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
+          isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
         }
         leadingActions={
-          activeProfileId !== browserDefaults.profileId ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
-            </Tooltip>
-          ) : null
+          // SCIENT-FORK:START — Scient Accounts: profile switcher replaces the profile-name badge.
+          <ProfileSwitcher
+            threadRef={threadRef}
+            url={url}
+            activeProfileId={activeProfileId}
+            onOpenInProfile={(profileId) =>
+              void openPreviewSession({
+                openPreview: open,
+                threadRef,
+                ...(url ? { url } : {}),
+                viewport,
+                profileId,
+              }).then((result) => {
+                if (result._tag === "Success")
+                  useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
+              })
+            }
+          />
+          // SCIENT-FORK:END
         }
         trailingActions={
           moreMenuActions ? (
-            <>
-              {previewBridge && tabId ? (
-                <ScientPreviewExportActions
-                  disabled={
-                    pdfExportOwner === null ||
-                    isUnreachable ||
-                    loading ||
-                    (isServerTab && clientPdfUrl !== null)
-                  }
-                  pageUrl={url}
-                  tabId={tabId}
-                  runtimeTabId={runtimeTabId}
-                  threadRef={threadRef}
-                />
-              ) : null}
-              <PreviewMoreMenu
-                enabled={
-                  runtimeTabId !== null &&
-                  (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
-                }
-                actions={moreMenuActions}
-                {...(moveTarget
-                  ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                  : {})}
-                profileName={activeProfileName}
-                zoomFactor={
-                  serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
-                }
-                colorScheme={
-                  serverOwnsRendering
-                    ? (snapshot?.colorScheme ?? "system")
-                    : (desktopOverlay?.colorScheme ?? "system")
-                }
-                deviceToolbarVisible={viewport._tag !== "fill"}
-                onToggleDeviceToolbar={handleToggleDeviceToolbar}
-                nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
-              />
-            </>
+            // SCIENT-FORK:START — place Open in new window and PDF export in the preview menu.
+            <PreviewMoreMenu
+              extraItems={
+                previewBridge && tabId ? (
+                  <>
+                    <PanelTabNewWindowItem label="Open in new Scient window" plain />
+                    <ScientPreviewExportActions
+                      disabled={
+                        pdfExportOwner === null ||
+                        isUnreachable ||
+                        loading ||
+                        (isServerTab && clientPdfUrl !== null)
+                      }
+                      pageUrl={url}
+                      tabId={tabId}
+                      runtimeTabId={runtimeTabId}
+                      threadRef={threadRef}
+                    />
+                  </>
+                ) : null
+              }
+              enabled={
+                runtimeTabId !== null &&
+                (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
+              }
+              actions={moreMenuActions}
+              {...(moveTarget
+                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                : {})}
+              profileName={activeProfileName}
+              zoomFactor={
+                serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
+              }
+              colorScheme={
+                serverOwnsRendering
+                  ? (snapshot?.colorScheme ?? "system")
+                  : (desktopOverlay?.colorScheme ?? "system")
+              }
+              deviceToolbarVisible={viewport._tag !== "fill"}
+              onToggleDeviceToolbar={handleToggleDeviceToolbar}
+              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+            />
           ) : null
+          // SCIENT-FORK:END
         }
       />
 
@@ -1015,7 +1024,12 @@ export function PreviewView({
                   width={serverToolbarWidth}
                   aspectRatio={serverAspectRatioLocked ? viewport.width / viewport.height : null}
                   onAspectRatioChange={(ratio) => setServerAspectRatioLocked(ratio !== null)}
-                  onChange={(setting) => commitBrowserViewportChange(runtimeTabId, setting)}
+                  onChange={(setting) =>
+                    commitBrowserViewportChange(
+                      { threadRef, tabId: snapshot.tabId, runtimeTabId },
+                      setting,
+                    )
+                  }
                 />
               </div>
             ) : null}
@@ -1071,6 +1085,16 @@ export function PreviewView({
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+            // SCIENT-FORK:START — Scient: these links open in the profile the toolbar shows.
+            home={
+              <BrowserHome
+                threadRef={threadRef}
+                profileId={activeProfileId}
+                onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
+                onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
+              />
+            }
+            // SCIENT-FORK:END
           />
         ) : null}
         {snapshot && desktopOverlay ? (

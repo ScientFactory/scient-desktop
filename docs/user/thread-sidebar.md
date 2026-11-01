@@ -31,10 +31,10 @@ turn, not by when the server noticed it was inactive.
 
 Scient keeps ordinary work attached to a project. Development scratch conversations use the candidate-owned isolated scratch workspace; they do not restore the retired Quick Chat workspace.
 
-Change these rules in **Settings > General**. The change is written to every connected environment
+Change these rules in **Settings > Threads**. The change is written to every connected environment
 whose server supports shared settings. An environment that is offline or needs a server update
 keeps its old value and does not appear in mismatch warnings. When a connected environment whose
-server supports shared settings holds a different value, **Settings > General** shows a warning
+server supports shared settings holds a different value, **Settings > Threads** shows a warning
 that names it. Choose **Apply to all** to write your current values to the environments named in
 the warning. The same applies to the new-thread workspace mode and the source control writing
 style.
@@ -44,64 +44,28 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+On mobile, **New thread** starts in the current thread's project, or else in the
+last project you opened or chose on that device. If neither is available, the
+project picker opens. Turn off **Settings → General → Use last project** to
+choose a project every time.
+
 ## Keep the computer awake
 
-In the desktop app, **Settings > General > Behavior > Keep computer awake** is a
-toggle, off by default. It requests protection against automatic system sleep
-while local threads can continue working. The screen can still turn off.
-The preference belongs to this desktop profile, across projects.
+In the desktop app, **Settings > General > Keep computer awake** stops this computer
+sleeping while its threads work. It's off by default. To cover one thread without
+the setting, right-click it and choose **Keep computer awake until done**. That
+choice ends by itself about a minute after the thread and its subagents finish, and
+it covers the thread's next run if nothing is running yet.
 
-Right-click a thread and open **Keep computer awake**:
+Work means a run or a background command, including one the agent left running, such
+as a dev server, so stop those to let the computer sleep. The computer can sleep while
+a thread waits for an approval, an answer or a secret, watches a pull request, or waits
+for a usage limit to reset. A run that has lost its provider session stops counting.
 
-- **Use app setting** follows the desktop default.
-- **Until work finishes** protects one batch, including queued additions,
-  steered messages, linked subagents, compaction, and result saving. Selecting
-  it on an idle thread arms the next batch without keeping an idle computer
-  awake. After the whole batch finishes or is cancelled and result saving ends,
-  fresh updates confirm completion and the checkmark quietly returns to
-  **Use app setting**. Messages sent after that reset follow the app setting.
-
-A held queue, approval, unanswered question, or secret request allows sleep when
-no other related work can continue. Passive PR watches and future usage-limit
-resets also allow sleep. The temporary choice stays selected for resumption.
-These local waits pause while the computer sleeps; Scient does not wake the
-computer for a future reset. Persistent background commands, such as a dev
-server, do not alone prevent sleep. The global toggle protects local execution;
-select **Until work finishes** explicitly to protect a remote connection. This
-cannot change the remote computer's power settings. Remote connections use the
-current connection catalog. SSH and Scient Connect observations reuse the open
-window's authenticated connection, including relay proof signing. If that window
-or connection closes, their protection expires without fresh observations;
-local execution and direct bearer connections remain observed by the desktop.
-
-Status text under the toggle and in the existing thread menu distinguishes a
-requested keep-awake state from paused or unavailable protection. A failed
-preference save keeps an error visible and disables protection until a save
-succeeds, including when the failed change was turning protection off.
-
-The server supplies work observations independently of the visible history.
-The desktop main process maintains local and direct bearer observations, so
-closing a window on macOS does not end their protection while the app and backend
-remain running.
-Quitting the app releases its native request.
-
-There is no maximum session duration and no configurable timeout. Protection
-expires after 120 seconds without fresh execution observations. Repeated saved
-"running" status alone cannot renew an operation with a missing or unverifiable
-owner and no progress for 120 seconds. The temporary choice remains selected, and recovered
-execution or new progress can restore protection. Silent connected operations
-have no duration limit. A connected deadlock cannot always be distinguished
-from legitimate silent execution. If an older server does not support work
-observations, status reports the connection failure and stale protection expires.
-
-Operating-system policy can override the request. On Windows Modern Standby
-laptops on battery, system/execution requests can end five minutes after the
-normal sleep timeout. Scient displays the limitation on Windows and does not
-keep the display on, change power plans, or change lid-close settings. Closing
-a lid configured to sleep, choosing Sleep, and critical-power handling can
-still pause local work. "Requested" describes Scient's native request; it is
-not a guarantee that the operating system will honor it. macOS and Linux native
-behavior also depends on system power policy and desktop-service availability.
+The screen can still turn off, and closing the lid or choosing Sleep still puts the
+computer to sleep. Windows laptops with Modern Standby can end the request on battery a
+few minutes after the normal sleep time. Threads on another computer keep running while
+this one sleeps, so they aren't covered, and neither are threads in a WSL backend yet.
 
 ## Pin and reorder threads
 
@@ -164,8 +128,8 @@ after the drop.
 
 New threads appear above the active threads you have arranged. Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
-position until you move it again. In Status view, thread activity does not change the order. Sections view can
-automatically place active threads as described below. The settled shelf
+position until you move it again. Automatic placement can bring active threads near the top without changing this saved
+manual order, as described below. The settled shelf
 continues to use the finished-work order described above.
 
 If dragging is unavailable for one environment, update the Scient server running in that
@@ -176,14 +140,23 @@ To generate a fresh title from the conversation, open a thread's context menu an
 **Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
 
+To change how titles are written, add **Thread title instructions** in **Settings → Threads →
+Text generation**, under Advanced, such as a length limit or an identifier to put first. They apply to new and
+regenerated titles. Select a project to give it its own instructions. An empty project value
+disables extra instructions for that project; clearing its override restores the environment value.
+Older Scient apps cannot see project title instructions, so changing or resetting the project's
+other settings there keeps them.
+
 Agents connected through Scient can use the same server-owned metadata workflow to rename a thread,
 regenerate its title, or link and unlink a pull request. These changes appear on web, desktop, and
 mobile without requiring the originating browser to remain open.
 
 ## Keep active threads near the top
 
-In **Sections** view, **Settings → General → Organization → Keep active threads near the top**
-is on by default. It applies separately inside every section, including General.
+**Settings → General → Organization → Keep active threads near the top** is on by default.
+One switch controls both the default Pinned and Active sidebar and Sections view. It applies
+to the unpinned inbox in the default sidebar, and separately inside each section, including General.
+An existing off preference stays off.
 Working, Monitoring, unread Done, approval or input requests, failed sessions, and
 unread Woke threads share one upper group. There is no priority between those states:
 a thread joining the group goes below its existing members, above ordinary inactive
@@ -195,8 +168,8 @@ read. Three seconds after you leave, an inactive thread moves to the first inact
 position, below the upper group. Reopening it restarts that delay; new work cancels
 it. Other newly inactive threads can subsequently land above it.
 
-You can still drag threads within or between sections, and move whole sections. A
-drop keeps the place you choose, with one limit: active work always gets the top back.
+You can still drag threads within the inbox, within or between sections, and move whole
+sections. A drop keeps the place you choose, with one limit: active work always gets the top back.
 
 | You drag                                     | It stays there                                                                      |
 | -------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -220,7 +193,12 @@ active threads in saved order, then follows subsequent transitions. The switch a
 automatic positions belong to this client; section membership and manual order remain
 shared through the server. Refresh preserves local positions, and revalidates current
 status before moving threads. Filtering projects or collapsing a section never counts
-as reading or removes a thread from its remembered position.
+as reading or removes a thread from its remembered position. The two views remember their
+automatic positions separately.
+
+When **Working section (beta)** is on, the default sidebar uses that feature's own ordering
+instead. Automatic placement still works in Sections view. Search results keep their search order;
+the mobile app keeps its existing behavior.
 
 ## Start a new thread
 
@@ -245,7 +223,13 @@ Scient creates one internal scratch project per machine and a separate plain fol
 each conversation under its data directory. Files, Sources, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
-conversation and its files into another project is not yet supported.
+conversation and its files into another existing project is not yet supported.
+
+When the work grows into something real, pick **Turn into project** from the
+thread's menu. The thread's folder becomes a project where it is, so nothing
+moves and the agent keeps working in the same place. Other threads in that folder
+move with it. Rename the project in its settings, and use **Initialize Git** to
+get branch and diff controls.
 
 The option is available on a connected machine whose configured scratch location is outside
 Git. Git does not need to be installed: the server verifies its own scratch folders through
@@ -336,20 +320,38 @@ confirmation brings the section and its threads back. If **Section** is missing 
 menu, update the Scient server running that thread's environment. The mobile app does not show
 sections yet; it keeps its usual layout.
 
-## Fold working threads (beta)
+## Fold working threads
 
-Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
-Thread behavior → Working section** on iOS and Android, to move threads that are working or
-monitoring into a collapsed **Working** section below the active list. A thread returns to the top
-of the active list when it finishes, fails, or needs an approval or answer. The Working section
-lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
-device keeps its own choice.
+Threads that are working or waiting on work they will resume from move into a collapsed
+**Working** section below the active list.
+That includes subagents, watched pull requests, and background commands or monitors the agent
+says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
+there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
+answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
+the pinned section.
+
+This is off by default. Turn it on with **Settings → General → Working section** on web and desktop,
+or **Settings → General → Working section** on iOS and Android. Each device keeps its own
+choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
 This belongs to the default Pinned and Active layout. Turn off **Group by section** to use it;
 the Sections view replaces that layout and never folds threads into a shelf.
+
+### Group threads by project (beta)
+
+Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
+threads in a folder for each project. Pinned projects come first. A project with no active
+threads has no folder unless it is pinned or you pick it in the project filter. An archived
+project's folder comes last and shows only while it has active threads. Click a folder to open or
+close it. A closed folder shows how many threads it holds, and a dot when one of them
+needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
+Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
+cannot drag threads, and the Working section is off. Each device keeps its own choice.
+Folders replace the default Pinned and Active layout; with **Group by section** on, the Sections
+view shows instead.
 
 ## Settle finished work
 
@@ -381,9 +383,9 @@ Press `Escape` while dragging to cancel.
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.
-Work in progress, pending questions or approvals, and live background work
-prevent automatic settlement. An open pull request does not prevent inactivity
-settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
+Work in progress, pending questions or approvals, and background work the agent
+is waiting on prevent automatic settlement. An open pull request does not prevent inactivity
+settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
@@ -393,7 +395,7 @@ choose **Auto-settle behavior**, and pick **Disabled**. The current option is ch
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
-Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
+Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
 top to change only its rules, or **All environments** to update connected environments together.
 Mixed values show where the selected environments disagree. Mobile applies these
@@ -417,6 +419,17 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Find threads
+
+On web and desktop, press `Cmd/Ctrl+K` to open the command palette and search threads across
+connected environments by title, branch, pull request, or project. Threads you open often or
+recently rank higher, and for three weeks the thread you last picked for a query ranks higher when
+you type that query again. Threads whose messages contain all your words appear below, under **In
+messages**, and open at the matching message. Message search needs at least one word of three or
+more letters, or two for Chinese, Japanese, and Korean. On mobile, the thread list search also
+lists message matches and opens them at the matching message; on an iPad with a keyboard, `Cmd+K`
+opens the same palette.
+
 ## Environment icons
 
 When you are connected to more than one environment, every thread that lives somewhere other than
@@ -425,12 +438,12 @@ VM, a desktop, a laptop, a Mac mini, or a Mac Studio. In the hosted web app and 
 where every environment is remote, each row wears its machine so you can tell them apart at a
 glance. The same icon appears wherever an environment is named: the thread tooltip, the command
 palette, the "Run on" picker, the pull request server filter, the provider settings device tabs,
-and the environment lists under **Settings → Connections**. On mobile it appears in the thread
+and the environment lists under **Settings → Environments**. On mobile it appears in the thread
 lists, the archive, the new-task environment picker, and the Environments and storage settings.
 
 Servers pick the icon themselves from the hardware they run on. A Mac reports its model, a Linux
 machine reports its chassis type and whether it is a virtual machine, and anything without a usable
-signal shows a generic server. To override it, open **Settings → Connections** and choose an icon
+signal shows a generic server. To override it, open **Settings → Sharing & access** and choose an icon
 for that environment; **Automatic** goes back to what the server detected. The choice is stored on
 that server, so every device that connects to it sees the same icon.
 
@@ -470,9 +483,8 @@ Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
 When the provider reports a reset time, choose **Resume at reset** to schedule a
-continuation. You can cancel it from the thread. Enable **Auto-resume limited
-threads** in **Settings → General** on web and desktop, or **Settings → Thread
-behavior** on mobile, to schedule limit stops by default.
+continuation. You can cancel it from the thread. Enable **Resume after
+usage limits** in **Settings → Threads** to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Stopping the thread, sending a new message,
 archiving, or settling it prevents a pending continuation from starting.
@@ -480,13 +492,16 @@ archiving, or settling it prevents a pending continuation from starting.
 Choose **Snooze until reset** to hide the thread until its allowance returns.
 Snooze and auto-resume are independent: snooze alone wakes the thread without
 sending a message; enabling both wakes and continues it. **Wake now** cancels
-the snooze. Enable **Snooze limited threads** in thread behavior settings to
+the snooze. Enable **Snooze until limits reset** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
 ## Tool details
 
 On web and desktop, use **Agents** to follow work delegated to subagents.
+On mobile, open a subagent from its conversation card or **Agents**. On iOS
+layouts with an inspector, its thread opens beside the parent. Maximize it to
+fill the screen; close the full-screen view to return to the parent and inspector.
 Stop on a thread also stops the subagents it delegated to.
 
 Subagent threads started by the agent can't take messages; message the parent
@@ -508,7 +523,49 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
+On web and desktop, the thread details card lists the web servers that the
+thread's terminals or its Claude agent started, with their ports. A server the
+agent started stays listed after the agent's turn ends.
+Select a server to open it in the browser panel. **Stop** ends the server's job
+and keeps the agent, the terminal, and Scient running. Stop needs terminal
+access to the environment and is not available on Windows.
+
+To choose what the thread details card shows, right-click the card or open
+**Settings → Appearance → Thread details**. Hidden rows keep their keyboard
+shortcuts, such as Open in editor and project scripts. **Reset to default** brings
+back the standard rows.
+
+## Side chats
+
+A side chat lets you ask a question about a thread without adding to it. It starts
+with what the thread knows, and the thread keeps working while you ask.
+
+On web and desktop, start a message with `/side` or `/btw`, then your question.
+You can also open a new tab in the right panel with **+** and choose **Side chat**.
+The side chat opens as a tab there, with its own composer. Side chats do not show
+in the sidebar. Find one again under **Side chats** in thread details.
+
+A side chat works in the same folder as the thread. Its first reply asks before it
+edits files or runs commands. After that, it uses the permission mode you choose
+in its composer.
+
+To use what you learned, choose **Bring back**. The thread gets the side chat with
+your next message there. Bring back is available while the thread is idle.
+
+Closing a side chat you never sent a message in deletes it. To delete one you used,
+choose **Delete** at the top of the side chat. Deleting a thread also deletes its
+side chats.
+
+On mobile, a thread lists its side chats above the composer. Tap one to open it and
+answer its questions.
+
 ## Snooze until later
+
+To change the choices in the snooze menu, open **Settings → Threads → Snooze options**.
+Each option is a duration, such as 3 hours, or a time on a day, such as 9:00 PM
+tomorrow. A weekday means the next one after today. Menus list the options soonest
+first and hide a today option after its time passes. Saved with **All environments**
+selected, the options apply to every connected environment, and the mobile app uses them too.
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
 local time zone, or a duration in minutes, hours, or days. Durations start when

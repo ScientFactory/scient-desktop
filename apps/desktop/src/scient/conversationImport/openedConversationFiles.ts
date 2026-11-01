@@ -1,41 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- opened files are inspected and streamed from disk in the main process.
 // @effect-diagnostics globalTimers:off -- a taken file's expiry is an unref'd main-process timer outside any Effect fiber.
 /**
- * `.scic` files the operating system opens with Scient: a double-click or
- * Open With (macOS `open-file`), a launch argument (Windows and Linux), or an
- * argument handed to the running instance (`second-instance`).
- *
- * The main process keeps each file's path to itself and gives the renderer an
- * opaque token, its name, and its size. The renderer admits the upload on its
- * server, then asks the main process to stream the file to the signed upload
- * URL, which must be the import upload route. Each upload is one attempt, named
- * by the renderer; cancelling it stops only that attempt, so a new destination
- * or a retry can send the file again. Releasing the file (the import dialog
- * closed) forgets the token. The same preview then opens as for a file picked
- * in the app.
- *
- * An upload sends the file that was opened, never whatever later sits at its
- * path. Registration records the file's identity (device, file number, size,
- * modification time). Each attempt opens the path once, before any approval
- * prompt, checks that descriptor against the identity, checks it again after
- * the prompt, and streams exactly the registered size from it, refusing a
- * file that changed (`file-changed`). A file replaced at its path during the
- * prompt is never read: the attempt holds the original. The open is
- * non-blocking where supported, so a FIFO put at the path cannot stall it.
- * The descriptor is closed when the attempt ends, including by cancel (even
- * one that arrives while the open is pending), release, or expiry, which a
- * timer per taken file enforces with no renderer activity. On
- * Windows the identity is the volume serial number and file index Node
- * reports; where a file system reports no file index, only size and
- * modification time are compared, so a replacement with the same size and
- * time there is not detected before the prompt, but the open descriptor still
- * keeps the original bytes.
- *
- * macOS delivers the `open-file` of a launch (a double-click while Scient is
- * closed) before startup has built its services, so `captureConversationFileOpens`
- * listens from module load and holds paths until `installConversationFileOpening`
- * takes them; files that arrive before a window exists then wait until the
- * renderer takes them.
+ * Register early for macOS pre-startup opens. Keep paths main-only; expose tokens and upload only
+ * to the signed import route. Hold/recheck one descriptor across approval and stream registered
+ * bytes; retire it on cancel/release/expiry. Without Windows file index, same-size/time replacement
+ * before open remains undetectable.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

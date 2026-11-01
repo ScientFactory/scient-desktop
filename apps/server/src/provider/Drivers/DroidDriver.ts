@@ -313,15 +313,15 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
       serverConfig.cwd,
       sensitiveEnvironmentValues,
     ).pipe(
-      Effect.flatMap((result) =>
-        canDiscoverDroidSkills(result.snapshot)
-          ? discoverSkillsForCwd(serverConfig.cwd, [], result.sessionId).pipe(
-              Effect.map((skills) => ({
-                ...result,
-                snapshot: { ...result.snapshot, skills },
-              })),
-            )
-          : Effect.succeed(result),
+      Effect.filterOrElse(
+        (result) => !canDiscoverDroidSkills(result.snapshot),
+        (result) =>
+          discoverSkillsForCwd(serverConfig.cwd, [], result.sessionId).pipe(
+            Effect.map((skills) => ({
+              ...result,
+              snapshot: { ...result.snapshot, skills },
+            })),
+          ),
       ),
       Effect.map(({ snapshot: checkedSnapshot, accountCapabilities }) =>
         stampIdentity(checkedSnapshot, accountCapabilities),
@@ -439,14 +439,13 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
       snapshotForCwd: (cwd) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
-          : snapshot.getSnapshot.pipe(
-              Effect.flatMap((machineSnapshot) =>
-                canDiscoverDroidSkills(machineSnapshot)
-                  ? discoverSkillsForCwd(cwd, machineSnapshot.skills).pipe(
-                      Effect.map((skills) => ({ ...machineSnapshot, skills })),
-                    )
-                  : Effect.succeed(machineSnapshot),
-              ),
+          : Effect.filterOrElse(
+              snapshot.getSnapshot,
+              (machineSnapshot): boolean => !canDiscoverDroidSkills(machineSnapshot),
+              (machineSnapshot: ServerProvider) =>
+                discoverSkillsForCwd(cwd, machineSnapshot.skills).pipe(
+                  Effect.map((skills) => ({ ...machineSnapshot, skills })),
+                ),
             ),
       orchestrationAdapter,
       textGeneration,

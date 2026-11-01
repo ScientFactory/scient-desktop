@@ -146,12 +146,26 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle" },
+  { key: "f6", command: "workspace.focusNext" },
+  { key: "shift+f6", command: "workspace.focusPrevious" },
+  // Some browsers keep plain F6 for their own toolbars; mod+F6 reaches the page in all of them.
+  { key: "mod+f6", command: "workspace.focusNext" },
+  { key: "mod+shift+f6", command: "workspace.focusPrevious" },
   { key: "mod+[", command: "navigation.back", when: "!terminalFocus" },
   { key: "mod+]", command: "navigation.forward", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+alt+b", command: "rightPanel.toggle" },
   { key: "mod+shift+b", command: "threadPanel.toggle", when: "!terminalFocus" },
   { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
+  // SCIENT-FORK:START — a new tab also opens a closed panel; Ctrl+Tab moves between
+  // tabs. Only the tab bar knows the panel is open, so these rely on the handler.
+  { key: "mod+t", command: "rightPanel.new", when: "!rightPanelOpen && !terminalFocus" },
+  { key: "ctrl+tab", command: "rightPanel.nextTab" },
+  { key: "ctrl+shift+tab", command: "rightPanel.previousTab" },
+  { key: "mod+shift+d", command: "rightPanel.duplicateTab", when: "!terminalFocus" },
+  // The project's file list beside any tab.
+  { key: "mod+alt+e", command: "rightPanel.toggleFiles", when: "!terminalFocus" },
+  // SCIENT-FORK:END
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },

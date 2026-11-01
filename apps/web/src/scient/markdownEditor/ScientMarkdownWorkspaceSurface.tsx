@@ -11,6 +11,7 @@ import {
 
 import { readLocalApi } from "~/localApi";
 import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
+import { editorCompositions } from "../editorFlush/editorComposition";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
@@ -106,6 +107,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfaceProps) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bindingsRef = useRef(props);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps bindingsRef holding the latest props for imperative callbacks
   useLayoutEffect(() => {
     bindingsRef.current = props;
   });
@@ -130,6 +132,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   const shortcutHost = useRef<HTMLDivElement>(null);
   const activeViewRef = useRef(false);
   const composingRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the mounted view in activeViewRef for persistence callbacks
   useLayoutEffect(() => {
     activeViewRef.current = true;
     return () => {
@@ -257,10 +260,12 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
         onUserSourceChange: onUserSourceChange,
       }),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps controllerRef pointing at the current editor controller
   useLayoutEffect(() => {
     controllerRef.current = controller;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers an external-projection handler on the persistence lease until unmount
   useLayoutEffect(
     () =>
       props.persistence.registerExternalProjection((update) => {
@@ -277,6 +282,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   );
 
   // An in-place rename waits while an input method is composing here.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this document as a rename participant until unmount
   useEffect(
     () =>
       registerRenameParticipant(documentIdentity(props.persistence), {
@@ -284,9 +290,21 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
       }),
     [controller, props.persistence],
   );
+  // A folder flush names this file while an input method is composing here.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this editor's composition state with the editorCompositions registry until unmount
+  useEffect(
+    () =>
+      editorCompositions.register(
+        () => props.persistence.target,
+        () => composingRef.current || controller.view?.composing === true,
+      ),
+    [controller, props.persistence],
+  );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the aria label onto the editor controller's DOM surface
   useEffect(() => controller.setAriaLabel(props.ariaLabel), [controller, props.ariaLabel]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the editor controller's appearance presentation when the resolved theme changes
   useEffect(() => {
     if (previousThemeRef.current !== props.resolvedTheme) {
       previousThemeRef.current = props.resolvedTheme;
@@ -294,6 +312,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
     }
   }, [controller, props.resolvedTheme]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the editor controller's external presentation when the workspace resource index changes
   useEffect(() => {
     if (previousWorkspaceResourceIndexKeyRef.current !== props.workspaceResourceIndexKey) {
       previousWorkspaceResourceIndexKeyRef.current = props.workspaceResourceIndexKey;
@@ -301,6 +320,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
     }
   }, [controller, props.workspaceResourceIndexKey]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the persistence lease and releases the pending-input claim on cleanup
   useLayoutEffect(() => {
     const synchronize = () => {
       const lease = props.persistence;
@@ -334,6 +354,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
     );
     controller.synchronizePersistence(snapshot);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the persistence lease's pending-input snapshot in step with the editor controller
   useEffect(
     () =>
       synchronizeEditorPersistence(
@@ -352,6 +373,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
     controllerRef.current = null;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this surface with the DOM shortcut host and detaches on unmount
   useEffect(() => {
     const host = shortcutHost.current;
     return host

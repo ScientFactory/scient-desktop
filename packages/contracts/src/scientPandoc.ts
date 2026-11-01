@@ -10,12 +10,8 @@ import {
 } from "./scientConversationExport.ts";
 
 /**
- * The managed Pandoc tool behind Word export, from a client's point of view.
- *
- * Scient never uses a Pandoc found on the computer: Word export runs only the
- * pinned release Scient downloads into its own state on first use. Clients
- * poll {@link ScientPandocToolStatus} while an install runs, and offer the
- * install from Settings and from Export ▸ Word.
+ * Word export may use only the pinned managed Pandoc, never a machine/PATH installation. Poll
+ * installation status and expose setup without substituting another binary.
  */
 
 /** `downloading` is the only phase that carries progress. */

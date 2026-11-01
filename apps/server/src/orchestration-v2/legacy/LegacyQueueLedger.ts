@@ -75,11 +75,9 @@ export const writeQueue = Effect.fn("ScientQueue.write")(function* (
     revision: document.revision + 1,
   }).pipe(Effect.mapError((cause) => new QueueError({ message: String(cause) })));
   if (new TextEncoder().encode(serialized).byteLength > SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD) {
-    return yield* Effect.fail(
-      new QueueError({
-        message: "The queue is full. Remove an image or another queued message first.",
-      }),
-    );
+    return yield* new QueueError({
+      message: "The queue is full. Remove an image or another queued message first.",
+    });
   }
   const attachmentBytes = document.items.reduce(
     (total, item) =>
@@ -98,7 +96,7 @@ export const writeQueue = Effect.fn("ScientQueue.write")(function* (
       message: "The queue is full. Remove an attachment or another queued message first.",
     });
   if (document.items.length > SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD) {
-    return yield* Effect.fail(new QueueError({ message: "The queue already holds 20 messages." }));
+    return yield* new QueueError({ message: "The queue already holds 20 messages." });
   }
   yield* sql`INSERT INTO scient_thread_queue (thread_id, document, revision) VALUES (${threadId}, ${serialized}, ${document.revision + 1})
     ON CONFLICT(thread_id) DO UPDATE SET document = excluded.document, revision = excluded.revision`;

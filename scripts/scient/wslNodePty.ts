@@ -36,14 +36,9 @@ export class WslNodePtyManifestReadError extends Schema.TaggedError<WslNodePtyMa
 export const resolveWslPrebuildArch = (arch: BuildArch): "x64" | "arm64" | undefined =>
   arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : undefined;
 
-// Stage the prebuilt Linux node-pty binary into the packaged app so the WSL
-// backend never compiles on the user's machine. node-pty publishes no Linux
-// prebuilt and the WSL Linux Node can't load the Windows/Electron binary, so the
-// Linux CI job builds pty.node and hands it here. We drop it into the staged
-// node-pty's prebuilds/linux-<arch>/ with a t3code marker the WSL preflight
-// checks (arch + node-pty version; the binary is N-API, hence ABI-stable across
-// Node versions). A missing prebuild is a warning, not an error, so local and
-// non-Windows builds still succeed — they just won't ship a working WSL backend.
+// WSL Linux Node cannot load the Windows/Electron node-pty binary, and upstream ships no Linux
+// prebuilt. Stage CI's N-API binary with arch/version marker to avoid user-side compilation.
+// Missing prebuilds only warn for local/non-Windows builds, but then WSL is unusable.
 export const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
   readonly stageAppDir: string;
   readonly arch: BuildArch;

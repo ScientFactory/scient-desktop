@@ -115,6 +115,7 @@ function ScientReleaseNotesDialog({
   }
 
   const focusRequest = { open, selected, view };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the dialog title via requestAnimationFrame when the view changes
   useEffect(() => {
     if (!focusRequest.open) return;
     // Re-focus when navigating between releases or the history view.
@@ -266,6 +267,15 @@ function ScientReleaseDetail({ release }: { readonly release: ScientReleaseNote 
   );
 }
 
+function releaseParagraphs(description: string) {
+  const occurrences = new Map<string, number>();
+  return description.split(/\n\n+/u).map((text) => {
+    const occurrence = occurrences.get(text) ?? 0;
+    occurrences.set(text, occurrence + 1);
+    return { text, key: JSON.stringify([text, occurrence]) };
+  });
+}
+
 function ScientReleaseParagraphs({
   highlights,
   alsoIncluded,
@@ -280,12 +290,9 @@ function ScientReleaseParagraphs({
           <li className="min-w-0 pl-0.5" key={highlight.id}>
             <div className="min-w-0">
               <p className="text-sm font-semibold leading-5 text-foreground">{highlight.title}</p>
-              {highlight.description.split(/\n\n+/u).map((paragraph, index) => (
-                <p
-                  key={`${highlight.id}-${index}`}
-                  className="mt-1 text-[13px] leading-relaxed text-muted-foreground"
-                >
-                  {paragraph}
+              {releaseParagraphs(highlight.description).map(({ text, key }) => (
+                <p key={key} className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                  {text}
                 </p>
               ))}
             </div>

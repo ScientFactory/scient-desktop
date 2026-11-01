@@ -1,13 +1,7 @@
 /**
- * Runs the system Git for the Overleaf connection under a closed contract:
- * an absolute executable, an environment built from scratch (no inherited
- * home, configuration, credential helper, hooks, or proxy settings), a fixed
- * neutral commit identity, a wall-clock limit, an output byte limit, and a
- * process-group kill when the run is interrupted, times out, or overruns.
- *
- * The Overleaf token reaches Git only through a per-command askpass file that
- * is removed with the command's scratch directory. It never appears in
- * arguments, URLs, the environment, logs, or errors.
+ * Run absolute Git with a fresh environment, neutral identity, bounded output/time, and owned-group
+ * cleanup; inherit no hooks/config/credentials/proxies. Hand tokens only through per-command
+ * askpass files removed with scratch, never args/URLs/env/logs/errors.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- Native child streams need an error listener before stdin writes.
 import * as NodeChildProcess from "node:child_process";
@@ -20,11 +14,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+
+import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
+import { makeGitScratch } from "./OverleafGitScratch.ts";
 
 const DEFAULT_TIMEOUT: Duration.Input = "2 minutes";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const STDERR_MAX_BYTES = 256 * 1024;
+/** macOS's `xcrun` launcher for the developer tools' Git, never run itself. */
+const MACOS_GIT_LAUNCHER = "/usr/bin/git";
+const XCODE_SELECT = "/usr/bin/xcode-select";
 
 /** `git merge-tree --write-tree -z` reports conflicts as structured records from this version on. */
 export const MINIMUM_GIT_VERSION = [2, 39] as const;
@@ -60,6 +61,22 @@ const isOverleafGitError = Schema.is(OverleafGitError);
 const fail = (reason: OverleafGitFailureReason, detail = "", exitCode: number | null = null) =>
   new OverleafGitError({ reason, detail, exitCode });
 
+/**
+ * Overleaf's answer to too many Git requests. It comes before anything is sent, and it
+ * opens with the words of a refused project ("no git access"), so check it first.
+ */
+export const isRateLimited = (error: unknown): boolean =>
+  isOverleafGitError(error) && /rate.?limit exceeded|returned error: 429\b/iu.test(error.detail);
+
+/**
+ * Waits out that limit for what a person asked for. Overleaf allows about 40 requests a
+ * minute and answers again within 30 s (measured 2026-10-31). Background checks skip this.
+ */
+export const waitOutRateLimit = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.retry({ while: isRateLimited, schedule: Schedule.spaced("10 seconds"), times: 4 }),
+  );
+
 export interface OverleafGitExecuteInput {
   readonly cwd: string;
   readonly args: ReadonlyArray<string>;
@@ -84,15 +101,15 @@ export interface OverleafGitAvailability {
   readonly version: string;
 }
 
-export function posixAskpassScript(): string {
+function posixAskpassScript(): string {
   return '#!/bin/sh\ncase "$1" in *Username*) printf \'%s\' git ;; *) exec /bin/cat "$SCIENT_OVERLEAF_TOKEN_FILE" ;; esac\n';
 }
 
-export function windowsAskpassPowerShellScript(): string {
+function windowsAskpassPowerShellScript(): string {
   return "param([string]$Prompt)\nif ($Prompt -match 'Username') { [Console]::Out.Write('git') } else { [Console]::Out.Write([IO.File]::ReadAllText($env:SCIENT_OVERLEAF_TOKEN_FILE)) }\n";
 }
 
-export function windowsAskpassLauncher(powershell: string, scriptPath: string): string {
+function windowsAskpassLauncher(powershell: string, scriptPath: string): string {
   return `@echo off\r\n"${powershell}" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}" %*\r\n`;
 }
 
@@ -146,6 +163,7 @@ export function buildOverleafGitEnvironment(input: {
     ["http.followRedirects", "false"],
     ["core.fileMode", "false"],
     ["core.autocrlf", "false"],
+    ["core.longpaths", "true"],
     ["core.excludesFile", input.globalExcludes],
     ["core.attributesFile", input.globalExcludes],
     ["gc.auto", "0"],
@@ -230,8 +248,8 @@ interface SpawnInput {
 }
 
 /**
- * One Git run. Interruption kills the process group before this effect
- * completes, so no Git outlives the fiber that started it.
+ * Cancellation kills the owned process group (Windows: taskkill /T /F).
+ * Server death can leave Git running; journaled send attempts stay unknown.
  */
 const spawnGit = Effect.fnUntraced(function* (input: SpawnInput) {
   let stopAndWait: (() => Promise<void>) | undefined;
@@ -354,6 +372,7 @@ const spawnGit = Effect.fnUntraced(function* (input: SpawnInput) {
 export interface OverleafGitExecutorOptions {
   /** Private directory for per-command scratch space; created on demand. */
   readonly runtimeRoot: string;
+  readonly publicationHelper?: string | undefined;
   /** Tests only. */
   readonly allowLocalProtocols?: boolean;
 }
@@ -382,39 +401,78 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   const exists = (candidate: string) =>
     fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
 
-  const locate = Effect.gen(function* () {
-    const delimiter = windows ? ";" : ":";
-    const extensions = windows
-      ? pathParts(hostEnvironment.PATHEXT ?? ".COM;.EXE;.BAT;.CMD", ";")
-      : [""];
-    const candidates = pathParts(hostEnvironment.PATH ?? hostEnvironment.Path, delimiter).flatMap(
-      (directory) =>
-        extensions.map((extension) => path.join(directory, `git${extension.toLowerCase()}`)),
+  /** The real Git of the selected developer tools on macOS, or null. Never the
+   * `/usr/bin/git` launcher: it runs `xcrun` per call and, with each command's
+   * fresh `HOME`, rewrites a shared database or opens an installer dialog. */
+  const developerGit = Effect.gen(function* () {
+    const selected = yield* Effect.promise(
+      () =>
+        new Promise<string | null>((resolve) =>
+          NodeChildProcess.execFile(
+            XCODE_SELECT,
+            ["-p"],
+            { env: { PATH: "/usr/bin:/bin" }, timeout: 10_000, windowsHide: true },
+            (error, stdout) => resolve(error === null ? stdout.trim() : null),
+          ),
+        ),
     );
+    for (const developer of [
+      ...(selected !== null && path.isAbsolute(selected) ? [selected] : []),
+      "/Library/Developer/CommandLineTools",
+      "/Applications/Xcode.app/Contents/Developer",
+    ]) {
+      const candidate = path.join(developer, "usr", "bin", "git");
+      if (candidate !== MACOS_GIT_LAUNCHER && (yield* exists(candidate))) return candidate;
+    }
+    return null;
+  });
+
+  const candidates = Effect.gen(function* () {
+    const directories = pathParts(
+      hostEnvironment.PATH ?? hostEnvironment.Path,
+      windows ? ";" : ":",
+    );
+    const found = directories.map((directory) => path.join(directory, windows ? "git.exe" : "git"));
     if (windows) {
-      candidates.push(
+      found.push(
         path.join(systemDrive, "Program Files", "Git", "cmd", "git.exe"),
         path.join(systemDrive, "Program Files", "Git", "bin", "git.exe"),
       );
     } else {
-      candidates.push("/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git");
+      found.push(MACOS_GIT_LAUNCHER, "/usr/local/bin/git");
+      if (platform === "darwin") found.push("/opt/homebrew/bin/git");
     }
-    for (const candidate of candidates) {
+    const resolved: string[] = [];
+    for (const candidate of found) {
       if (!path.isAbsolute(candidate) || !(yield* exists(candidate))) continue;
-      // macOS ships /usr/bin/git as a stub that opens an installer dialog when
-      // the developer tools are absent. Never run that stub.
-      if (platform === "darwin" && candidate === "/usr/bin/git") {
-        const installed =
-          (yield* exists("/Library/Developer/CommandLineTools/usr/bin/git")) ||
-          (yield* exists("/Applications/Xcode.app/Contents/Developer/usr/bin/git"));
-        if (!installed) continue;
-      }
-      return path.resolve(candidate);
+      const executable =
+        platform === "darwin" && path.resolve(candidate) === MACOS_GIT_LAUNCHER
+          ? yield* developerGit
+          : path.resolve(candidate);
+      if (executable === null || resolved.includes(executable)) continue;
+      const stat = yield* fs.stat(executable).pipe(Effect.option);
+      if (stat._tag === "Some" && stat.value.type === "File") resolved.push(executable);
     }
-    return yield* fail("git-not-found", "No Git executable was found.");
+    return resolved;
   });
 
+  const scratchReady = yield* Effect.tryPromise(async () => {
+    const helper = windows
+      ? (options.publicationHelper ?? (await resolveNativeFilePublicationHelperPath()))
+      : undefined;
+    return makeGitScratch(options.runtimeRoot, windows, helper);
+  }).pipe(
+    Effect.mapError((cause) =>
+      fail(
+        "runtime-failed",
+        cause instanceof Error ? cause.message : "Could not prepare private Git scratch space.",
+      ),
+    ),
+    Effect.result,
+  );
+
   const runIn = Effect.fnUntraced(function* (executable: string, input: OverleafGitExecuteInput) {
+    const scratchRoot = yield* Effect.fromResult(scratchReady);
     const gitDirectory = path.dirname(executable);
     const gitRoot =
       windows && ["cmd", "bin"].includes(path.basename(gitDirectory).toLowerCase())
@@ -422,11 +480,10 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         : gitDirectory;
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        yield* fs.makeDirectory(options.runtimeRoot, { recursive: true });
         const scratch = yield* Effect.acquireRelease(
-          fs.makeTempDirectory({ directory: options.runtimeRoot, prefix: "git-" }),
+          Effect.tryPromise(() => scratchRoot.create()),
           (directory) =>
-            fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignoreCause()),
+            Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
         );
         const home = path.join(scratch, "home");
         const temp = path.join(scratch, "tmp");
@@ -520,21 +577,28 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
       : probe.pipe(Effect.tap((found) => Effect.sync(() => (known = found)))),
   );
   const probe: Effect.Effect<OverleafGitAvailability, OverleafGitError> = Effect.gen(function* () {
-    const executable = yield* locate;
-    const result = yield* runIn(executable, {
-      cwd: options.runtimeRoot,
-      args: ["--version"],
-      timeout: "20 seconds",
-    });
-    const version = new TextDecoder().decode(result.stdout).trim();
-    const parsed = parseGitVersion(version);
-    if (parsed === null || !isSupportedGitVersion(parsed)) {
-      return yield* fail(
-        "git-too-old",
-        `Found "${version}"; Overleaf sync needs Git ${MINIMUM_GIT_VERSION.join(".")} or newer.`,
-      );
+    yield* Effect.fromResult(scratchReady);
+    let tooOld: OverleafGitError | undefined;
+    for (const executable of yield* candidates) {
+      const result = yield* runIn(executable, {
+        cwd: options.runtimeRoot,
+        args: ["--version"],
+        timeout: "20 seconds",
+      }).pipe(Effect.option);
+      if (result._tag === "None") continue;
+      const version = new TextDecoder().decode(result.value.stdout).trim();
+      const parsed = parseGitVersion(version);
+      if (parsed === null) continue;
+      if (!isSupportedGitVersion(parsed)) {
+        tooOld = fail(
+          "git-too-old",
+          `Overleaf sync needs Git ${MINIMUM_GIT_VERSION.join(".")} or newer.`,
+        );
+        continue;
+      }
+      return { executable, version } satisfies OverleafGitAvailability;
     }
-    return { executable, version } satisfies OverleafGitAvailability;
+    return yield* tooOld ?? fail("git-not-found", "No working Git executable was found.");
   });
 
   const execute: OverleafGitExecutor["Service"]["execute"] = Effect.fn(
@@ -547,7 +611,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   return OverleafGitExecutor.of({ availability, execute });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = (options: OverleafGitExecutorOptions) =>
   Layer.effect(OverleafGitExecutor, make(options));
 

@@ -11,17 +11,9 @@ import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";
 type RemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 /**
- * Scient's two Markdown profiles.
- *
- * - `document`: authored Markdown. A single line break joins lines.
- * - `chat`: chat's message text, where single line breaks are kept.
- *
- * Both share CommonMark with GitHub tables, task lists, and alerts;
- * `$…$`/`$$…$$` math; fenced code; and Mermaid fences. Chat's own renderer
- * lists the same plugins in the same order, with chat-only directives between
- * the shared grammar and the line-break plugin (see `scientMarkdownProfiles`
- * parity test). The document page parses both bundle profiles as `document`
- * because a chat bundle already writes its hard breaks explicitly.
+ * Document Markdown joins single line breaks; chat preserves them. Keep shared grammar/plugin order
+ * aligned with chat's parity test. Document pages parse both profiles as document because chat
+ * bundles already encode hard breaks explicitly.
  */
 export type ScientMarkdownProfile = "document" | "chat";
 

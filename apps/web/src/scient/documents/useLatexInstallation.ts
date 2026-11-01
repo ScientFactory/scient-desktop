@@ -82,6 +82,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
     );
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the LaTeX installation over the environment connection, voiding stale replies when the environment changes or on unmount
   useEffect(() => {
     void read(false);
     return () => {
@@ -95,6 +96,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
   }, [read]);
 
   const active = isActiveLatexInstall(report?.managedInstall ?? null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the installation status over the environment connection on a timer while an install is active
   useEffect(() => {
     if (!isActiveLatexInstall(report?.managedInstall ?? null) || error !== null) return;
     const timer = setTimeout(() => void read(false), LATEX_INSTALL_POLL_MS);

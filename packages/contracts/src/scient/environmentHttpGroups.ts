@@ -1,8 +1,9 @@
 import {
-  KEEP_AWAKE_OBSERVE_PATH,
-  KeepAwakeObserveRequest,
-  KeepAwakeWorkBatch,
-} from "../scientKeepAwake.ts";
+  ScientPdfEditSaveRequest,
+  ScientPdfEditSaveResult,
+  ScientPdfEditError,
+} from "../scientPdfEdits.ts";
+import { KEEP_AWAKE_WORK_PATH, KeepAwakeWork } from "../scientKeepAwake.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -134,6 +135,35 @@ import {
   ScientConversationImportUpload,
 } from "../scientConversationImport.ts";
 
+import {
+  ScientOverleafCancelResult,
+  ScientOverleafConnectRequest,
+  ScientOverleafConnectionList,
+  ScientOverleafConnectionRequest,
+  ScientOverleafDisconnectRequest,
+  ScientOverleafDiffRequest,
+  ScientOverleafDiffResult,
+  ScientOverleafKeptCopies,
+  ScientOverleafManageResult,
+  ScientOverleafOperationError,
+  ScientOverleafPreviewRequest,
+  ScientOverleafPreviewResult,
+  ScientOverleafRecoverResult,
+  ScientOverleafRelinkRequest,
+  ScientOverleafRestoreRequest,
+  ScientOverleafRestoreResult,
+  ScientOverleafSaveTokenRequest,
+  ScientOverleafRemoteState,
+  ScientOverleafStatus,
+  ScientOverleafSyncRequest,
+  ScientOverleafSyncResult,
+  ScientOverleafTokenStatus,
+  ScientOverleafUndoableSends,
+  ScientOverleafUndoRequest,
+  ScientOverleafUndoResult,
+  ScientOverleafWorkspaceRequest,
+} from "../scientOverleaf.ts";
+
 /** Scient reasons inside environmentHttp's EnvironmentInternalErrorReason, in wire order. */
 export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "orchestration_dispatch_failed",
@@ -151,6 +181,7 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_conversation_export_failed",
   "scient_conversation_import_failed",
   "scient_word_export_failed",
+  "scient_overleaf_operation_failed",
 ] as const;
 
 export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
@@ -494,6 +525,15 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  class EnvironmentScientPdfHttpApi extends HttpApiGroup.make("scientPdf").add(
+    HttpApiEndpoint.post("save", "/api/scient/pdf/save", {
+      headers: OptionalBearerHeaders,
+      payload: ScientPdfEditSaveRequest,
+      success: ScientPdfEditSaveResult,
+      error: [EnvironmentHttpCommonError, ScientPdfEditError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
   class EnvironmentScientMarkdownHttpApi extends HttpApiGroup.make("scientMarkdown").add(
     HttpApiEndpoint.post("imageUpload", "/api/scient/markdown/images/upload", {
       headers: OptionalBearerHeaders,
@@ -716,24 +756,174 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  // Scient keep-awake group: which of this computer's threads need it awake.
   class EnvironmentScientKeepAwakeHttpApi extends HttpApiGroup.make("scientKeepAwake").add(
-    HttpApiEndpoint.post("observe", KEEP_AWAKE_OBSERVE_PATH, {
+    HttpApiEndpoint.get("work", KEEP_AWAKE_WORK_PATH, {
       headers: OptionalBearerHeaders,
-      payload: KeepAwakeObserveRequest,
-      success: KeepAwakeWorkBatch,
+      success: KeepAwakeWork,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
+
+  // Scient Overleaf sync group: the token, connections and manual sync. Reads
+  // need the read scope; anything that writes the folder, Overleaf or the token
+  // needs operate scope (enforced by the handlers).
+  class EnvironmentScientOverleafHttpApi extends HttpApiGroup.make("scientOverleaf")
+    .add(
+      HttpApiEndpoint.post("tokenStatus", "/api/scient/overleaf/v1/token/status", {
+        headers: OptionalBearerHeaders,
+        success: ScientOverleafTokenStatus,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("saveToken", "/api/scient/overleaf/v1/token/save", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafSaveTokenRequest,
+        success: ScientOverleafTokenStatus,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("removeToken", "/api/scient/overleaf/v1/token/remove", {
+        headers: OptionalBearerHeaders,
+        success: ScientOverleafTokenStatus,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("list", "/api/scient/overleaf/v1/connections", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafWorkspaceRequest,
+        success: ScientOverleafConnectionList,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("connect", "/api/scient/overleaf/v1/connect", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectRequest,
+        success: ScientOverleafManageResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("status", "/api/scient/overleaf/v1/status", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafStatus,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("diff", "/api/scient/overleaf/v1/diff", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafDiffRequest,
+        success: ScientOverleafDiffResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("preview", "/api/scient/overleaf/v1/preview", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafPreviewRequest,
+        success: ScientOverleafPreviewResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("sync", "/api/scient/overleaf/v1/sync", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafSyncRequest,
+        success: ScientOverleafSyncResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("recover", "/api/scient/overleaf/v1/recover", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafRecoverResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("keptCopies", "/api/scient/overleaf/v1/kept-copies", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafKeptCopies,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("restoreKept", "/api/scient/overleaf/v1/kept-copies/restore", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafRestoreRequest,
+        success: ScientOverleafRestoreResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("undoableSends", "/api/scient/overleaf/v1/undo/sends", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafUndoableSends,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("undo", "/api/scient/overleaf/v1/undo", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafUndoRequest,
+        success: ScientOverleafUndoResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("disconnect", "/api/scient/overleaf/v1/disconnect", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafDisconnectRequest,
+        success: ScientOverleafManageResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("cancel", "/api/scient/overleaf/v1/cancel", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafCancelResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("remoteState", "/api/scient/overleaf/v1/remote-state", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafRemoteState,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("relink", "/api/scient/overleaf/v1/relink", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafRelinkRequest,
+        success: ScientOverleafManageResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
+
   return {
     EnvironmentScientKeepAwakeHttpApi,
     EnvironmentScientProjectHttpApi,
     EnvironmentScientSourcesHttpApi,
     EnvironmentScientLatexHttpApi,
     EnvironmentScientMarkdownHttpApi,
+    EnvironmentScientPdfHttpApi,
     EnvironmentScientAnalyticsHttpApi,
     EnvironmentScientThreadQueueHttpApi,
     EnvironmentScientConversationExportHttpApi,
     EnvironmentScientConversationImportHttpApi,
     EnvironmentScientWordExportHttpApi,
+    EnvironmentScientOverleafHttpApi,
   };
 }

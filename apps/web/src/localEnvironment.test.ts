@@ -14,14 +14,11 @@ describe("launch-stable local environment mode", () => {
     expect(getLocalEnvironmentEnabled).toHaveBeenCalledOnce();
   });
 
-  it.each([undefined, {}])(
-    "retains the browser/older bridge fallback: %s",
-    async (desktopBridge) => {
-      vi.stubGlobal("window", { desktopBridge });
-      const { isLocalEnvironmentDisabled } = await import("./localEnvironment");
-      expect(isLocalEnvironmentDisabled()).toBe(false);
-    },
-  );
+  it("retains a local environment in the browser", async () => {
+    vi.stubGlobal("window", { desktopBridge: undefined });
+    const { isLocalEnvironmentDisabled } = await import("./localEnvironment");
+    expect(isLocalEnvironmentDisabled()).toBe(false);
+  });
 
   it("reads again for a new renderer window", async () => {
     const { isLocalEnvironmentDisabled } = await import("./localEnvironment");

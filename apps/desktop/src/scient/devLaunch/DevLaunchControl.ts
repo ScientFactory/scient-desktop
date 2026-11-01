@@ -6,14 +6,12 @@ import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 
 /**
- * The standing development app's controller (scripts/dev-app/) starts each
- * launch with a control address and a one-launch token. It asks this channel
- * whether the main window finished the renderer-ready handshake, brings the
- * window forward, or quits through the normal before-quit shutdown. Launches
- * without both variables (packaged apps, plain `pnpm dev:desktop`) never open it.
+ * Open the dev-control channel only with both a controller address and one-launch token.
+ * Ordinary/packaged launches lack that authority; quit through normal before-quit shutdown.
  */
 const DEV_LAUNCH_CONTROL_ENV = "SCIENT_DEV_LAUNCH_CONTROL";
 const DEV_LAUNCH_TOKEN_ENV = "SCIENT_DEV_LAUNCH_TOKEN";
@@ -124,11 +122,13 @@ export async function startDevLaunchControlServer(input: {
   };
 }
 
-let rendererReady = false;
+const readyRendererIds = new Set<number>();
 
-/** Called beside DesktopAppActivation.setRendererReady for the main window. */
-export function noteDevLaunchRendererReady(ready: boolean): void {
-  rendererReady = ready;
+/** Called beside DesktopAppActivation.setRendererReady for each app window. */
+export function noteDevLaunchRendererReady(ready: boolean, senderId: number | undefined): void {
+  if (senderId === undefined) return;
+  if (ready) readyRendererIds.add(senderId);
+  else readyRendererIds.delete(senderId);
 }
 
 export const start = Effect.gen(function* () {
@@ -136,12 +136,20 @@ export const start = Effect.gen(function* () {
   if (config === null) return;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const electronApp = yield* ElectronApp.ElectronApp;
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const context = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
+  // A closed window's renderer never reports not ready; only live app windows count.
+  const isRendererReady = () =>
+    runSync(electronWindow.appWindows).some((window) =>
+      readyRendererIds.has(window.webContents.id),
+    );
   yield* Effect.acquireRelease(
     Effect.tryPromise(() =>
       startDevLaunchControlServer({
         config,
-        isReady: () => rendererReady,
+        isReady: isRendererReady,
         activate: () => void runPromise(desktopWindow.activate.pipe(Effect.ignoreCause)),
         quit: () => void runPromise(electronApp.quit),
       }),

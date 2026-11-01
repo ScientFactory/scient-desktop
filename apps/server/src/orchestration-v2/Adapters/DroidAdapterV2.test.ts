@@ -42,7 +42,7 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import {
   droidCustomModelId,
   makeDroidCustomModelsRuntimeFactory,
@@ -114,6 +114,8 @@ const harness = Effect.fnUntraced(function* (
     readonly idleMillis?: number;
     readonly blockPromptWrite?: boolean;
     readonly liveClock?: boolean;
+    /** Replaces the 5 s wait for Droid's report of a written setting. */
+    readonly settleTimeout?: Duration.Input;
     readonly blockModelWrite?: boolean;
     readonly slowToolLogging?: boolean;
     readonly environment?: Record<string, string>;
@@ -138,7 +140,12 @@ const harness = Effect.fnUntraced(function* (
   const binary = writeFakeCli({
     directory: config.stateDir,
     name: "droid",
-    source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
+    source: [
+      'import { appendFileSync } from "node:fs";',
+      'import { pathToFileURL } from "node:url";',
+      `appendFileSync(${JSON.stringify(argvLogPath)}, process.argv.slice(2).join("\\t") + "\\n");`,
+      `await import(pathToFileURL(${JSON.stringify(mockAgentPath)}).href);`,
+    ].join("\n"),
   });
   const scenarioId = yield* crypto.randomUUIDv4();
   const controlPath = NodePath.join(config.stateDir, `activity-control-${scenarioId}`);
@@ -207,6 +214,11 @@ const harness = Effect.fnUntraced(function* (
     makeRuntime: (input) =>
       (scenario?.makeRuntime ?? makeDroidAcpRuntime)({
         ...input,
+        // Teardown sleeps this whole grace after SIGTERM (1 s by default).
+        processGroupTerminationGrace: "100 millis",
+        ...(scenario?.settleTimeout === undefined
+          ? {}
+          : { configOptionSettleTimeout: scenario.settleTimeout }),
         onTermination: (error) =>
           (input.onTermination?.(error) ?? Effect.void).pipe(
             Effect.andThen(Deferred.succeed(nativeTerminated, undefined)),
@@ -301,9 +313,14 @@ const harness = Effect.fnUntraced(function* (
   };
   const recorded: ProviderAdapter.ProviderAdapterV2Event[] = [];
   const queue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  // Every recorded event, for waits that subscribe before reading `recorded`.
+  const recordedEvents = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
     Stream.runForEach((event) =>
-      Effect.sync(() => recorded.push(event)).pipe(Effect.andThen(Queue.offer(queue, event))),
+      Effect.sync(() => recorded.push(event)).pipe(
+        Effect.andThen(Queue.offer(queue, event)),
+        Effect.andThen(PubSub.publish(recordedEvents, event)),
+      ),
     ),
     Effect.forkScoped,
   );
@@ -390,6 +407,7 @@ const harness = Effect.fnUntraced(function* (
     terminal,
     requests,
     recorded,
+    recordedEvents,
     approval,
     runtime,
     readLog: scripted?.readLog,
@@ -581,9 +599,14 @@ const untilRecorded = (
   h: Effect.Success<ReturnType<typeof harness>>,
   predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
 ) =>
-  Effect.gen(function* () {
-    while (!h.recorded.some(predicate)) yield* livePause();
-  });
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Subscribe first: an event recorded after the check still arrives.
+      const events = yield* PubSub.subscribe(h.recordedEvents);
+      if (h.recorded.some(predicate)) return;
+      while (!predicate(yield* PubSub.take(events)));
+    }),
+  );
 const terminals = (h: Effect.Success<ReturnType<typeof harness>>) =>
   h.recorded.filter((event) => event.type === "turn.terminal");
 const announced = (event: ProviderAdapter.ProviderAdapterV2Event) =>
@@ -743,20 +766,6 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
   );
   it.effect.each(
     [
-      {
-        name: "nested Task",
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId: "task",
-          title: "Task",
-          kind: "other",
-          status: "pending",
-          rawInput: { subagent_type: "worker" },
-        },
-        quiet: "11 minutes",
-        failAfter: "50 minutes",
-        window: "60m",
-      },
       {
         name: "Task named only by title",
         update: {
@@ -1086,7 +1095,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       response,
       expected,
     })),
-  )("$caseTitle", ({ name, response, expected }) =>
+  )("$caseTitle", ({ name: _name, response, expected }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* harness(false, false, false, undefined, {
@@ -2291,6 +2300,7 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
       Effect.gen(function* () {
         const h = yield* harness(false, false, false, undefined, {
           liveClock: true,
+          settleTimeout: "500 millis",
           body: `
         unreported = message => message.params.value === "droid-other";
         function onPrompt(message) {reply(message, {stopReason: "end_turn"});}

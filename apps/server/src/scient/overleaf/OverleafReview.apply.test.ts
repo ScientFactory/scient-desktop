@@ -102,8 +102,10 @@ const review = Effect.fnUntraced(function* (
       managedPaths: connection.managedPaths,
       localOnlyPaths: [],
       selectedAdditions: input.select ?? [],
+      sendLocalOnly: [],
       requestedPaths: [],
       stagingPaths: [],
+      atCheckoutTop: false,
     }),
   );
   if (captured._tag !== "captured") return yield* Effect.die(captured.refusal.reason);
@@ -112,11 +114,11 @@ const review = Effect.fnUntraced(function* (
     connection,
     inventory: captured.inventory,
     remote: { commit: remoteCommit, tree: remoteTree },
-    selectedAdditions: input.select ?? [],
     collisionPaths: [],
     choices: input.choices ?? new Map(),
     interrupted: [],
-    markerPaths: [],
+    markers: [],
+    releaseMarked: [],
     epochs: { checkout: 1, credential: 1 },
     scratch: NodePath.join(input.root, "scratch"),
   }).pipe(Effect.provideService(OverleafRepository.OverleafRepository, repos));

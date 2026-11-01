@@ -316,7 +316,7 @@ it.live(
                 }),
             ),
         );
-        const allocator = yield* IdAllocatorV2;
+        yield* IdAllocatorV2;
         const runtime = yield* Effect.service(OpenCodeRuntime.OpenCodeRuntime).pipe(
           Effect.provide(
             Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({

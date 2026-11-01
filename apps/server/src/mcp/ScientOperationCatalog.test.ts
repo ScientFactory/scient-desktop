@@ -54,7 +54,9 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
   const available = scientOperationCatalog
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
-  expect(available).toHaveLength(12);
+  // 3 document builds, 8 Overleaf tools (no grant of their own) and 9 Sources tools.
+  expect(available).toHaveLength(20);
+  expect(available.filter((operation) => operation.family === "overleaf")).toHaveLength(8);
   expect(available.filter((operation) => operation.family === "sources")).toHaveLength(9);
   expect(available.some((operation) => operation.family === "browser")).toBe(false);
   for (const operation of scientOperationCatalog.list().filter((op) => op.family === "sources")) {
@@ -107,10 +109,7 @@ it("rejects ambiguous IDs, duplicate transport names and tools without operation
 it("keeps new native browser actions behind the captured Preview grant", () => {
   for (const [tool, id] of [
     ["preview_dialog", "browser.dialog"],
-    ["preview_hover", "browser.hover"],
-    ["preview_select", "browser.select"],
-    ["preview_drag", "browser.drag"],
-    ["preview_upload", "browser.upload"],
+    ["preview_act", "browser.act"],
   ]) {
     const operation = scientOperationCatalog.forTool(tool!)!;
     expect(operation.id).toBe(id);

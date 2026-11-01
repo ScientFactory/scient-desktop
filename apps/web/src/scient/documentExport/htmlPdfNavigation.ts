@@ -31,7 +31,7 @@ export async function navigateLinkedHtmlPdfSource(input: {
       expectedServerEpoch: input.lease.serverEpoch,
       expectedSourceUrl: input.lease.pageUrl,
       authorizedUrl: input.authorizedUrl,
-      ...(readServerBrowserDocumentControl(input.runtimeTabId) ?? {}),
+      ...readServerBrowserDocumentControl(input.runtimeTabId),
     },
   });
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);

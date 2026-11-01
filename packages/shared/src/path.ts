@@ -6,6 +6,15 @@ export function isUncPath(value: string): boolean {
   return value.startsWith("\\\\");
 }
 
+/**
+ * Windows treats `/` and `\` alike, so any two leading separators name a UNC
+ * or device path. Touching one makes Windows sign in to that host with the
+ * user's NTLM credentials, so agent-authored paths must not reach one.
+ */
+export function isNetworkPath(value: string): boolean {
+  return /^[\\/]{2}/.test(value);
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
@@ -22,10 +31,7 @@ export function isExplicitRelativePath(value: string): boolean {
 }
 
 function isRootPath(value: string): boolean {
-  // The drive separator is required: a bare `C:` is not the drive root (it
-  // means "current directory on C:"), and treating it as already-canonical
-  // would leave it as `C:` while `C:\` and `C:/` normalize to the drive root,
-  // so the same location would fail project identity/dedup comparisons.
+  // Bare C: means the current directory on C, not its root; require the drive separator.
   return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]$/.test(value);
 }
 
@@ -89,17 +95,9 @@ const UNC_ROOT_PATTERN = /^\\\\[^\\/]+[\\/][^\\/]+/;
 const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?=[\\/])/;
 
 /**
- * Resolves `.` and `..` segments in an absolute host path without climbing
- * above its root, keeping the path's own separator style:
- *
- * - `C:\` and `C:/` drive paths and `\\host\share` UNC paths are Windows
- *   paths, where both separators divide segments;
- * - `/` paths are POSIX paths, where only `/` divides segments and a
- *   backslash is an ordinary filename character.
- *
- * A path starting with exactly `//` is ambiguous (a POSIX path, or a Windows
- * UNC share written with forward slashes) and a relative path has no base
- * here, so both are returned unchanged.
+ * Normalize absolute host paths without climbing above the root; preserve their separator style.
+ * Windows drive/UNC paths accept both separators; POSIX paths treat backslash as a filename character.
+ * Exactly // is ambiguous, and relative paths lack a base, so leave both unchanged.
  */
 export function collapseAbsoluteFilePath(path: string): string {
   const source = stripSlashPrefixedWindowsDrive(path);
@@ -167,7 +165,15 @@ export function workspaceRelativeFilePath(
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  return normalizedPath.slice(normalizedRoot.length + 1);
+  const relativePath = normalizedPath.slice(normalizedRoot.length + 1);
+  // `/repo/../x` starts with the root but escapes it; the server rejects that as a workspace path.
+  let depth = 0;
+  for (const segment of relativePath.split("/")) {
+    if (segment === "..") depth -= 1;
+    else if (segment.length > 0 && segment !== ".") depth += 1;
+    if (depth < 0) return null;
+  }
+  return relativePath;
 }
 
 export function isAbsolutePath(value: string): boolean {

@@ -70,6 +70,7 @@ export function SourcePdfPreview(props: {
     requestKey,
     request,
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the attachment preview URL from the server, ignoring stale completions
   useEffect(() => {
     let current = true;
     const attempt = authorizationAttempt.current;

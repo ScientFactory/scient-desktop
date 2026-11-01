@@ -69,6 +69,13 @@ function removeOwnedAttachmentFiles(
     if (attachmentId === null || parseThreadSegmentFromAttachmentId(attachmentId) !== segment) {
       continue;
     }
+    const sidecar = entries.find(
+      (candidate) => candidate.name === `${entry.name}.txt` && candidate.isFile(),
+    );
+    if (sidecar !== undefined) {
+      const sidecarError = removeFile(NodePath.join(directory, sidecar.name));
+      if (sidecarError !== null) return sidecarError;
+    }
     const error = removeFile(NodePath.join(directory, entry.name));
     if (error !== null) return error;
   }

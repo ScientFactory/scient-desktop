@@ -44,22 +44,26 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
-  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetNpmRelease]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateProvider]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
@@ -68,7 +72,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptHandoffSubscribe]: AuthProvidersManageScope,
-  [WS_METHODS.codexAuthCallbackSubscribe]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthRespond]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthCancel]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthLogout]: AuthProvidersManageScope,
@@ -95,7 +98,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
-  [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksList]: AuthAccessReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
 
   [WS_METHODS.serverSaveCustomModel]: AuthSettingsWriteScope,
@@ -103,14 +106,60 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverTestCustomModel]: AuthSettingsWriteScope,
   [WS_METHODS.skillsList]: AuthOrchestrationReadScope,
   [WS_METHODS.skillsReadDocument]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:START — external skill documents require read access.
+  [WS_METHODS.providerSkillsReadDocument]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:END
   [WS_METHODS.skillsSetProjectPreference]: AuthSettingsWriteScope,
   [WS_METHODS.skillsSetUserActivation]: AuthSettingsWriteScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,
+  // SCIENT-FORK:START — Scient Accounts: declare read and settings-write permissions.
+  [WS_METHODS.accountsSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsSubscribeChanges]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsTest]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsCheck]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSignInSeen]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsGoogleSessionsSeen]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionEnded]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetCodeSources]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsLinkKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPaperForSource]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPlainKeys]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsKeepPlainKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsUnlinkKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsHandoffCancel]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsHandoffShow]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsApprovalRespond]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPasswordStore]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsOnePasswordConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsOnePasswordDisconnect]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsImportPasswords]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsFillValues]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMatchSignIn]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileChoose]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.
   [WS_METHODS.extensionsList]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsSubscribeChanges]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverSearch]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverCatalog]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsBrandIcon]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsProviderStoreSearch]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:START — plugin keys obey destination environment permissions.
+  [WS_METHODS.extensionsPluginKeys]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsPluginKeyBind]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginKeyUnbind]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
+  [WS_METHODS.extensionsPluginContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsSkillDocument]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsProviderStoreEntry]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverEntry]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDeliveryReceipt]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsConnectorAdd]: AuthSettingsWriteScope,
@@ -138,8 +187,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
-  // Load-balancing new threads reads host load; that is part of operating
-  // threads, not of inspecting diagnostics.
+  // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
@@ -149,9 +197,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
   [WS_METHODS.voiceCorrectTranscript]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
-  [WS_METHODS.serverReportHostPowerState]: AuthEnvironmentMaintainScope,
-  [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
-  [WS_METHODS.scheduledTasksList]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
@@ -161,6 +206,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRouting]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRoutingIdentity]: AuthOrchestrationReadScope,
@@ -181,6 +227,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlAppAccess]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlStarred]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListIgnoredFiles]: AuthFilesystemReadScope,
@@ -256,12 +304,19 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeResourceTelemetry]: AuthDiagnosticsReadScope,
   [WS_METHODS.documentsHostConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.documentsHostRespond]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:START — a window answers editor flushes only if it can save files.
+  [WS_METHODS.editorsFlushConnect]: AuthFilesystemWriteScope,
+  [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
+  [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
+  [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthFilesystemReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
+  [WS_METHODS.reviewGetBranchCommits]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
   [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
@@ -270,25 +325,23 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
   [WS_METHODS.terminalResize]: AuthTerminalOperateScope,
   [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
-  [WS_METHODS.terminalRestart]: AuthTerminalOperateScope,
   [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
-  [WS_METHODS.subscribeTerminalEvents]: AuthTerminalReadScope,
   [WS_METHODS.subscribeTerminalMetadata]: AuthTerminalReadScope,
   [WS_METHODS.previewOpen]: AuthPreviewOperateScope,
-  [WS_METHODS.previewNavigate]: AuthPreviewOperateScope,
   [WS_METHODS.previewResize]: AuthPreviewOperateScope,
   [WS_METHODS.previewAdjust]: AuthPreviewOperateScope,
-  [WS_METHODS.previewRefresh]: AuthPreviewOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
   [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportProfiles]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportStatus]: AuthPreviewOperateScope,
+  [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceConfigure]: AuthSettingsWriteScope,
   [WS_METHODS.deviceTestHost]: AuthSettingsWriteScope,
   [WS_METHODS.deviceEasAccount]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceSimlockIdentity]: AuthSettingsWriteScope,
   [WS_METHODS.deviceList]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceOpen]: AuthOrchestrationOperateScope,
   [WS_METHODS.deviceClose]: AuthOrchestrationOperateScope,
@@ -299,7 +352,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
-  [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
@@ -323,21 +375,20 @@ const SettingsUpdate = Schema.Struct({
   patch: ServerSettingsPatch,
   providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
 });
-
-const decodeSettingsUpdate = Schema.decodeUnknownSync(SettingsUpdate);
-const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
+// Middleware receives the payload already decoded, so it is checked against the decoded shape.
+const decodeSettingsUpdate = Schema.decodeUnknownSync(Schema.toType(SettingsUpdate));
 
 const requiredScopesForSettingsUpdate = (payload: unknown) => {
   const input = decodeSettingsUpdate(payload);
   const scopes = requiredScopesForServerSettingsPatch(input.patch);
   if (input.providerInstanceMutation === undefined) return scopes;
-  // An atomic provider mutation carries an empty patch unless it also changes settings.
   return Object.values(input.patch).every((value) => value === undefined)
     ? [AuthProvidersManageScope]
     : [...new Set([...scopes, AuthProvidersManageScope])];
 };
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 const requiredScopesForRpcCall = (
   method: string,

@@ -312,11 +312,7 @@ export class OpenCodeReplayController {
     }
   }
 
-  /**
-   * Like {@link untilEventsDelivered}, but also waits for recorded responses to
-   * be taken: over HTTP a request can start while an earlier one's answer is
-   * still in flight, and must not be matched against that answer.
-   */
+  /** Waits for events and responses to be consumed so concurrent HTTP requests cannot match earlier answers. */
   async untilInboundDelivered(): Promise<void> {
     while (true) {
       this.throwFailure();
@@ -492,24 +488,10 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
-        loadInventoryFromCli: () =>
-          Effect.fail(
-            new OpenCodeRuntime.OpenCodeRuntimeError({
-              operation: "loadInventoryFromCli",
-              detail: "OpenCode replay does not load inventory.",
-            }),
-          ),
         loadOpenCodeSkills: () =>
           Effect.fail(
             new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadOpenCodeSkills",
-              detail: "OpenCode replay does not load skills.",
-            }),
-          ),
-        loadSkillsFromCli: () =>
-          Effect.fail(
-            new OpenCodeRuntime.OpenCodeRuntimeError({
-              operation: "loadSkillsFromCli",
               detail: "OpenCode replay does not load skills.",
             }),
           ),
@@ -519,21 +501,23 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
 }
 
 function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
+  // SCIENT-FORK:START opencode replay registry uses the Scient runtime guidance and instructions
   const OpenCodeAdapterV2Driver = makeOpenCodeAdapterV2Driver({
     runtimeGuidance: buildOpenCodeRuntimeGuidance,
     orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
     runtimeInstructions: buildScientRuntimeInstructions,
     mapTurnStartError: mapOpenCodeTurnStartError,
   });
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [OpenCodeAdapterV2Driver],
-    configMap: {
-      [OPENCODE_DEFAULT_INSTANCE_ID]: {
-        driver: OPENCODE_PROVIDER,
-        config: { serverUrl: "replay://opencode" },
-      },
-    },
-  }).pipe(
+  // SCIENT-FORK:END
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    OpenCodeAdapterV2Driver.create({
+      instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
+      environment: [],
+      displayName: undefined,
+      enabled: true,
+      config: { ...OpenCodeAdapterV2Driver.defaultConfig(), serverUrl: "replay://opencode" },
+    }).pipe(Effect.map((adapter) => [adapter])),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerOpenCodeReplayRuntime(transcript),

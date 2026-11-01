@@ -1,19 +1,6 @@
 /**
- * The portable conversation file (`.scic`), shared by its writer and reader.
- *
- * A `.scic` is a ZIP whose first entry, `mimetype`, is stored uncompressed and
- * holds exactly `SCIC_MEDIA_TYPE`, followed by:
- *
- *   manifest.json       ScicManifest: format, version, exporter, export ID and
- *                       time, source thread, content digest, the entry list
- *                       (path, media type, size, SHA-256), included and
- *                       unavailable resources, and export warnings
- *   conversation.json   ConversationSnapshotV1 — the only import authority
- *   conversation.md     the readable copy (Scient conversation Markdown v1)
- *   attachments/<sha256>-<safe-name>
- *
- * Every entry except `mimetype` and `manifest.json` is declared in the
- * manifest; nothing else may be present. See
+ * conversation.json is the sole import authority. Store mimetype uncompressed as the first ZIP
+ * entry; declare every other entry except manifest.json in the manifest and reject extras. See
  * docs/internals/scient-conversation-export.md.
  */
 import {

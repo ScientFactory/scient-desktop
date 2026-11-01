@@ -1,13 +1,7 @@
 /**
- * Optional host qualification for Cursor's no-browser login transport.
- *
- * The probe uses an isolated account home, waits only for Cursor to emit its
- * official HTTPS authorization URL, and then cancels. It never opens a browser
- * or submits credentials.
- *
- * Enable with:
- * T3_CURSOR_LOGIN_PROBE=I_ACCEPT_NO_BROWSER_LOGIN_PROBE
- * T3_CURSOR_LOGIN_PROBE_BINARY=/path/to/cursor-agent
+ * Opt in with T3_CURSOR_LOGIN_PROBE=I_ACCEPT_NO_BROWSER_LOGIN_PROBE and its binary setting. Use an
+ * isolated home, observe only the official HTTPS URL, then cancel without opening a browser or
+ * submitting credentials.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- Gated host qualification owns a temporary account home.
 import * as NodeFSP from "node:fs/promises";

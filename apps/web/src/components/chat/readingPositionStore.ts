@@ -2,11 +2,8 @@ import { RunAttemptId, RunId } from "@t3tools/contracts";
 import type { RememberedTimelinePosition } from "./timelineScrollAnchoring";
 
 /**
- * Scient keeps reading positions across renderer reloads: upstream's
- * in-memory map (timelineScrollAnchoring.ts) is loaded from and written to
- * session storage here. Only identifiers and layout metadata are persisted,
- * never message text. Session storage survives renderer reloads and remains
- * isolated per window/environment.
+ * Persist only reading IDs/layout metadata, never message text. Session storage survives renderer
+ * reloads while isolating windows/environments.
  */
 const POSITION_STORAGE_KEY = "scient:timeline-reading-position:v1";
 let positionsLoaded = false;

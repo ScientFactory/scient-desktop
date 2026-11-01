@@ -1,12 +1,8 @@
 export type DesktopUpdateChannelPolicy = "stable-only" | "user-selectable";
 
 /**
- * Scient Desktop's product label plus its production and development runtime identity.
- *
- * Keep this small, explicit, and separate from T3's internal package names.
- * Production uses the canonical Scient install identity. Development and data
- * storage retain their established `scient-next` compatibility values: a
- * repository rename must never relocate or silently reset existing user data.
+ * Keep development/data scient-next identities compatible. Repository/product renames must never
+ * relocate or reset existing user state; internal T3 package names remain separate.
  */
 export const SCIENT_DESKTOP_IDENTITY = {
   baseName: "Scient",
@@ -33,13 +29,9 @@ export const SCIENT_DESKTOP_IDENTITY = {
   cloudEnabled: false,
   autoUpdateEnabled: true,
   // SCIENT-FORK:START — Upstream T3 added two project-creation capabilities in
-  // `5cc99e1c23`: threads without a project (#13612) and projects created from
-  // just a name (#14527). Scratch threads are approved: they retain a real
-  // owning project and each runs in its own plain folder. Create-from-name
-  // stays off beside Scient's existing "Create & Add". See UPSTREAM.md.
-  // The server advertises the matching `ServerConfig` root
-  // only when its flag is set, and every client gates on that field, so one
-  // server-side switch keeps the UI, the RPCs, and the folders honest.
+  // Scratch retains an owning project and a private plain folder; create-from-name stays disabled.
+  // Advertise capability only through ServerConfig when its server flag is set so clients and RPCs
+  // share one gate. See UPSTREAM.md.
   projectlessThreadsEnabled: true,
   createProjectFromNameEnabled: false,
   // SCIENT-FORK:END

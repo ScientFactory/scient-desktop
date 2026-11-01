@@ -47,3 +47,20 @@ export function normalizeModelMetricLabel(model: string | null | undefined): str
   }
   return "other";
 }
+
+// SCIENT-FORK:START — instance identifiers are user-chosen, not public metric dimensions.
+const PUBLIC_PROVIDER_METRIC_LABELS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "droid",
+  "cursor",
+  "grok",
+  "opencode",
+  "pi",
+]);
+
+export function normalizeProviderMetricLabel(provider: string): string {
+  return PUBLIC_PROVIDER_METRIC_LABELS.has(provider) ? provider : "other";
+}
+// SCIENT-FORK:END

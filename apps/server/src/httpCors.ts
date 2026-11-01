@@ -1,4 +1,4 @@
-import { ORCHESTRATION_PROTOCOL_HEADER, THREAD_SNAPSHOT_FORMAT_HEADER } from "@t3tools/contracts";
+import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 // SCIENT-FORK:START desktop-renderer-identity
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 // SCIENT-FORK:END desktop-renderer-identity
@@ -12,7 +12,6 @@ export const browserApiCorsAllowedHeaders = [
   "dpop",
   "range",
   ORCHESTRATION_PROTOCOL_HEADER,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
 ] as const;
 // SCIENT-FORK:START desktop-renderer-identity
 export const DESKTOP_RENDERER_ORIGINS = [

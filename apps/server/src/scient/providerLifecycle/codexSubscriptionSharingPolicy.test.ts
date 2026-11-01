@@ -1,3 +1,6 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import { rejectCodexSubscriptionSharing } from "./codexSubscriptionSharingPolicy.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CodexSettings,
@@ -5,13 +8,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import {
-  newlyRequestedCodexSubscriptionSharing,
-  rejectCodexSubscriptionSharing,
-} from "./codexSubscriptionSharingPolicy.ts";
+import { newlyRequestedCodexSubscriptionSharing } from "./codexSubscriptionSharingPolicy.ts";
 
 describe("deferred Codex subscription sharing", () => {
   const id = ProviderInstanceId.make("personal");
@@ -63,6 +61,8 @@ describe("deferred Codex subscription sharing", () => {
       newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, DEFAULT_SERVER_SETTINGS),
     ).toBeUndefined();
   });
+
+  // regression: e434651620 merge(upstream): align T3 through 468ade3049
   it.effect.each(
     [
       "import",

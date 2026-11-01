@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { hiddenToastActionProps, stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { watchEnvironmentProviders } from "./environmentUpdateWatch";
@@ -23,14 +23,9 @@ import {
   startedManagedRuntimeUpdate,
   type ManagedRuntimeUpdateRun,
   type ManagedRuntimeUpdateTarget,
+  type ProviderEnvironment,
 } from "./ManagedRuntimeUpdateNotification.logic";
 import { useStartProviderRuntimeAction } from "./useProviderLifecycleController";
-
-export interface ProviderEnvironment {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly providers: ReadonlyArray<ServerProvider>;
-}
 
 /** Providers of every connected machine; Scient manages runtimes wherever it reaches a server. */
 export function connectedProviderEnvironments(
@@ -172,7 +167,6 @@ function reportManagedRuntimeUpdates(
           title: view.title,
           description: view.description,
           timeout: 0,
-          actionProps: hiddenToastActionProps,
           data: { hideCopyButton: true },
         });
       } else {
@@ -209,7 +203,6 @@ function reportManagedRuntimeUpdates(
         title: view.title,
         description: view.description,
         timeout: 0,
-        actionProps: hiddenToastActionProps,
         data: {
           hideCopyButton: true,
           ...(view.dismissAfterVisibleMs !== undefined

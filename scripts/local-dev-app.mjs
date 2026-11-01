@@ -25,6 +25,7 @@ import {
   takeClaimedColdHandoff,
   writeApprovedHandoff,
 } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
+import { packageManagerInvocation } from "./dev-app/host.mjs";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
@@ -922,6 +923,11 @@ async function runApp() {
   shareDevelopmentVoiceRuntime({ root: paths.root });
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];
+  const pnpmInvocation = packageManagerInvocation(
+    pnpmExecPath || "pnpm",
+    devDesktopArgs,
+    process.execPath,
+  );
   const stableProfileRoot = process.env.SCIENT_NEXT_PROFILE_ROOT;
   if (paths.role === "stable" && !stableProfileRoot) {
     throw new Error("The stable dev app starts through its controller: pnpm dev:app:stable start.");
@@ -952,15 +958,11 @@ async function runApp() {
           ],
           { cwd: paths.root, env: childEnv, stdio: "inherit" },
         )
-      : NodeChildProcess.spawn(
-          pnpmExecPath ? process.execPath : "pnpm",
-          pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
-          {
-            cwd: paths.root,
-            env: childEnv,
-            stdio: "inherit",
-          },
-        );
+      : NodeChildProcess.spawn(pnpmInvocation.command, pnpmInvocation.args, {
+          cwd: paths.root,
+          env: childEnv,
+          stdio: "inherit",
+        });
 
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => {
@@ -1235,10 +1237,12 @@ function uninstallApp() {
 }
 
 async function main() {
-  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
-  if (nodeMajor !== 24) {
+  const requiredNodeVersion = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(repoRoot, "package.json"), "utf8"),
+  ).engines.node;
+  if (process.versions.node !== requiredNodeVersion) {
     throw new Error(
-      `Scient development requires Node 24; received ${process.version}. Activate the repository's Node 24 runtime and retry.`,
+      `Scient development requires Node ${requiredNodeVersion}; received ${process.version}. Activate the repository's declared runtime and retry.`,
     );
   }
   const [command, ...rawFlags] = process.argv.slice(2);

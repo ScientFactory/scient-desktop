@@ -64,6 +64,7 @@ export function VegaLiteChartDialog({
   const [activeAction, setActiveAction] = useState<DialogAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the action-message timer on unmount
   useEffect(
     () => () => {
       if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);
@@ -71,6 +72,7 @@ export function VegaLiteChartDialog({
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets dialog state each time the dialog opens
   useEffect(() => {
     if (open && !previousOpenRef.current) {
       setStatus("loading");

@@ -183,6 +183,7 @@ const runSetup = (host: {
 const aptGet = (commands: ReadonlyArray<ReadonlyArray<string>>) =>
   commands.filter(([name]) => name === "apt-get");
 
+// regression: 03a2b1acc6 fix(cli): browser setup installs missing fonts (#17570)
 it.effect("setup without root does not report a host without fonts as ready", () =>
   Effect.gen(function* () {
     const { commands, output } = yield* runSetup({ root: false });
@@ -195,6 +196,7 @@ it.effect("setup without root does not report a host without fonts as ready", ()
   }),
 );
 
+// regression: 03a2b1acc6 fix(cli): browser setup installs missing fonts (#17570)
 it.effect("setup as root installs missing libraries and fonts after one package refresh", () =>
   Effect.gen(function* () {
     const { commands, output } = yield* runSetup({ root: true, missingLibrary: true });

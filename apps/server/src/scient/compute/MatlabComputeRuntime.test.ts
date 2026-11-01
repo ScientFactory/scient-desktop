@@ -92,6 +92,7 @@ const matlabInstallation = Effect.gen(function* () {
 });
 
 describe("MATLAB compute bridge location", () => {
+  // regression: 908a782aac fix(compute): use physical paths for packaged runtimes
   it.each(["app.asar", "server.asar"])("uses the physical MATLAB bridge beside %s", (archive) => {
     expect(
       matlabBridgePathCandidates(NodePath.join("/installed", archive, "apps/server/dist")),

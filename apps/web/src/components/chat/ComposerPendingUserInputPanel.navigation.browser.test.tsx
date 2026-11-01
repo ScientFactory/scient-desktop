@@ -6,8 +6,10 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -72,58 +74,53 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
   } satisfies OrchestrationV2ThreadProjection;
 }
 
-function PendingRequestsProbe({
-  _fixture,
-  environmentId,
-  projection,
-  loading = false,
-}: {
+interface ProbeProps {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
-} & { _fixture: _Fixture }) {
+}
+
+function useProbeRequests({ environmentId, projection, loading = false }: ProbeProps) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
-  const state = usePendingThreadRequests({
+  return usePendingThreadRequests({
     environmentId,
     activeThreadId: projection.thread.id,
-    activeThread: projection.thread,
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
     composerDraftTarget: { environmentId, threadId: projection.thread.id },
     setComposerDraftPrompt: () => {},
     promptRef,
     composerRef,
+    // SCIENT-FORK:START — request errors stay on their request (useRequestResponseErrors), not the thread.
+    // SCIENT-FORK:END
   });
+}
+
+let requests: ReturnType<typeof usePendingThreadRequests>;
+
+function PendingRequestsProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
   useLayoutEffect(() => {
-    _fixture.publishRequests(state);
+    requests = state;
   });
   return null;
 }
 
 it("retains answers, selections and question position after leaving chat, including while the projection reloads", async () => {
-  await using _fixture = _createFixture();
-
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("remount-environment");
   const projection = questionProjection(threadRef.threadId);
   const probe = (loading = false) => (
-    <PendingRequestsProbe
-      _fixture={_fixture}
-      environmentId={environmentId}
-      projection={projection}
-      loading={loading}
-    />
+    <PendingRequestsProbe environmentId={environmentId} projection={projection} loading={loading} />
   );
   await using screen = await render(probe());
   await act(() =>
-    _fixture.requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Keep my text"),
+    requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Keep my text"),
   );
-  await act(() => _fixture.requests.onAdvanceActivePendingUserInput());
-  await act(() =>
-    _fixture.requests.onSelectActivePendingUserInputOption("question-1", "Incremental"),
-  );
-  await act(() => _fixture.requests.onAdvanceActivePendingUserInput());
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  await act(() => requests.onSelectActivePendingUserInputOption("question-1", "Incremental"));
+  await act(() => requests.onAdvanceActivePendingUserInput());
   const expected = {
     activePendingQuestionIndex: 2,
     activePendingDraftAnswers: {
@@ -131,23 +128,55 @@ it("retains answers, selections and question position after leaving chat, includ
       "question-1": { selectedOptionValues: ["Incremental"] },
     },
   };
-  expect(_fixture.requests).toMatchObject(expected);
+  expect(requests).toMatchObject(expected);
 
   // New thread and Settings both unmount the chat that owns this hook.
   await screen.rerender(null);
   await screen.rerender(probe());
-  expect(_fixture.requests).toMatchObject(expected);
+  expect(requests).toMatchObject(expected);
 
   await screen.rerender(null);
   await screen.rerender(probe(true));
-  expect(_fixture.requests.activePendingUserInput).toBeNull();
+  expect(requests.activePendingUserInput).toBeNull();
   await screen.rerender(probe());
-  expect(_fixture.requests).toMatchObject(expected);
+  expect(requests).toMatchObject(expected);
+});
+
+function QuestionPositionProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
+  return (
+    <>
+      <output>Question {state.activePendingQuestionIndex + 1}</output>
+      <button
+        type="button"
+        onClick={() => state.onSelectActivePendingUserInputOption("question-0", "Incremental")}
+      >
+        Choose Incremental
+      </button>
+      <button type="button" onClick={() => state.onAdvanceActivePendingUserInput()}>
+        Submit
+      </button>
+    </>
+  );
+}
+
+it("stays on an unanswered question when the composer submits", async () => {
+  await using screen = await render(
+    <QuestionPositionProbe
+      environmentId={EnvironmentId.make("unanswered-environment")}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+  const submit = screen.getByRole("button", { name: "Submit" });
+  await userEvent.click(submit);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 1");
+
+  await userEvent.click(screen.getByRole("button", { name: "Choose Incremental" }));
+  await userEvent.click(submit);
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 2");
 });
 
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
-  await using _fixture = _createFixture();
-
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
   const projection = questionProjection(threadRef.threadId);
@@ -158,18 +187,19 @@ it("isolates drafts by environment, thread and request and discards only resolve
     { environmentId, projection: questionProjection(threadRef.threadId, ["second", "first"]) },
   ];
   await using screen = await render(null);
-  const show = (scope: Omit<ComponentProps<typeof PendingRequestsProbe>, "_fixture">) =>
-    screen.rerender(<PendingRequestsProbe _fixture={_fixture} {...scope} />);
+  const show = (scope: ComponentProps<typeof PendingRequestsProbe>) =>
+    screen.rerender(<PendingRequestsProbe {...scope} />);
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
-    expect(_fixture.requests.activePendingQuestionIndex).toBe(0);
-    expect(_fixture.requests.activePendingDraftAnswers["question-0"]?.customAnswer).toBeUndefined();
+    expect(requests.activePendingQuestionIndex).toBe(0);
+    expect(requests.activePendingDraftAnswers["question-0"]?.customAnswer).toBeUndefined();
     await act(() =>
-      _fixture.requests.onChangeActivePendingUserInputCustomAnswer("question-0", `Answer ${index}`),
+      requests.onChangeActivePendingUserInputCustomAnswer("question-0", `Answer ${index}`),
     );
-    await act(() => _fixture.requests.onAdvanceActivePendingUserInput());
+    await act(() => requests.onAdvanceActivePendingUserInput());
   }
 
+  // "first" was answered on another device.
   await show({
     environmentId,
     projection: {
@@ -181,31 +211,18 @@ it("isolates drafts by environment, thread and request and discards only resolve
       ),
     },
   });
-  expect(_fixture.requests.activePendingUserInput?.requestId).toBe("second");
+  expect(requests.activePendingUserInput?.requestId).toBe("second");
+  await act(() =>
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadRef.threadId,
+    )([RuntimeRequestId.make("second")]),
+  );
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
-    expect(_fixture.requests.activePendingQuestionIndex).toBe(index === 0 ? 0 : 1);
-    expect(_fixture.requests.activePendingDraftAnswers["question-0"]?.customAnswer).toBe(
+    expect(requests.activePendingQuestionIndex).toBe(index === 0 ? 0 : 1);
+    expect(requests.activePendingDraftAnswers["question-0"]?.customAnswer).toBe(
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
 });
-
-function _createFixture() {
-  let _published_requests = undefined! as ReturnType<typeof usePendingThreadRequests>;
-
-  const stack = new AsyncDisposableStack();
-  return {
-    get requests() {
-      return _published_requests;
-    },
-    publishRequests(next: typeof _published_requests) {
-      _published_requests = next;
-    },
-    stack,
-    async [Symbol.asyncDispose]() {
-      await stack.disposeAsync();
-    },
-  };
-}
-type _Fixture = ReturnType<typeof _createFixture>;

@@ -63,24 +63,37 @@ export const workspaceResolverForTest = (
     });
   return WorkspaceBindingResolver.of({
     resolveWorkspaceRoot,
-    assertCurrentWorkspaceScope: (scope) =>
-      resolveWorkspaceRoot(scope.workspaceRoot).pipe(
-        Effect.flatMap((current) =>
-          current.binding.bindingId === scope.bindingId &&
-          current.binding.authorityGeneration === scope.authorityGeneration &&
-          current.scopeRevision === scope.scopeRevision
-            ? Effect.succeed(current.binding)
-            : Effect.fail(
-                new WorkspaceBindingResolutionError({
-                  operation: "test-assert",
-                  kind: "stale-authority",
-                }),
-              ),
-        ),
-      ),
-    resolveThread: () => Effect.die("Thread authority is not part of this unit-test fixture."),
-    resolveTrustedChild: () => Effect.die("unused"),
-    assertCurrentThreadScope: () => Effect.die("unused"),
-    diagnosticsForThread: () => Effect.die("unused"),
+    assertCurrentWorkspaceScope: Effect.fn("WorkspaceBindingResolver.assertCurrentWorkspaceScope")(
+      function (scope) {
+        return resolveWorkspaceRoot(scope.workspaceRoot).pipe(
+          Effect.flatMap((current) =>
+            current.binding.bindingId === scope.bindingId &&
+            current.binding.authorityGeneration === scope.authorityGeneration &&
+            current.scopeRevision === scope.scopeRevision
+              ? Effect.succeed(current.binding)
+              : Effect.fail(
+                  new WorkspaceBindingResolutionError({
+                    operation: "test-assert",
+                    kind: "stale-authority",
+                  }),
+                ),
+          ),
+        );
+      },
+    ),
+    resolveThread: Effect.fn("WorkspaceBindingResolver.resolveThread")(function () {
+      return Effect.die("Thread authority is not part of this unit-test fixture.");
+    }),
+    resolveTrustedChild: Effect.fn("WorkspaceBindingResolver.resolveTrustedChild")(function () {
+      return Effect.die("unused");
+    }),
+    assertCurrentThreadScope: Effect.fn("WorkspaceBindingResolver.assertCurrentThreadScope")(
+      function () {
+        return Effect.die("unused");
+      },
+    ),
+    diagnosticsForThread: Effect.fn("WorkspaceBindingResolver.diagnosticsForThread")(function () {
+      return Effect.die("unused");
+    }),
   });
 };

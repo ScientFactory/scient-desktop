@@ -72,6 +72,7 @@ export function LatexTextField({
   ...props
 }: Props) {
   const [journal] = useState(createLatexFieldJournal);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the draft key and value into the external field journal store
   useLayoutEffect(() => journal.observe(draftKey, value), [journal, draftKey, value]);
   const [draft, setDraft] = useState(() => restoredLatexFieldDraft(draftKey, value));
   const previousValue = useRef(value);
@@ -80,11 +81,14 @@ export function LatexTextField({
   const [publication] = useState(() => createEditorBackgroundTask(180));
   const cancelJournal = useRef<(() => void) | null>(null);
   const publish = useRef(onValueChange);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the publish callback for deferred publication to call
   useLayoutEffect(() => {
     publish.current = onValueChange;
   }, [onValueChange]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the deferred publication task on unmount
   useEffect(() => () => publication.cancel(), [publication]);
   const owner = useRef({ key: draftKey, value });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the owning draft key and value for deferred publication to read
   useLayoutEffect(() => {
     owner.current = { key: draftKey, value };
   }, [draftKey, value]);
@@ -106,6 +110,7 @@ export function LatexTextField({
     if (commitOn === "idle") publication.schedule(publishPending);
   };
   const field = useRef<HTMLTextAreaElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs the text selection session on the textarea DOM node until unmount
   useEffect(() => {
     const element = field.current;
     if (!element?.closest(".scient-latex-visual-document")) return;
@@ -113,6 +118,7 @@ export function LatexTextField({
   }, []);
   const id = useId();
   const { reportDraft, undo, commit } = useContext(LatexDraftContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for replace-field-draft events on the textarea DOM node until unmount
   useEffect(() => {
     const element = field.current;
     const replace = (event: Event) => {
@@ -132,6 +138,7 @@ export function LatexTextField({
     element?.addEventListener("scient-latex-replace-field-draft", replace);
     return () => element?.removeEventListener("scient-latex-replace-field-draft", replace);
   }, [draftKey, id, journal, publication, reportDraft]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists pending input to the journal on pagehide and checkpoint window events until unmount
   useEffect(() => {
     const persist = () => {
       cancelJournal.current?.();
@@ -152,10 +159,13 @@ export function LatexTextField({
       persist();
     };
   }, [journal]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports draft state to the draft context registry
   useLayoutEffect(() => {
     reportDraft(id, pending.current !== null || composing.current);
   }, [id, reportDraft]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears this field draft report from the draft context registry on unmount
   useEffect(() => () => reportDraft(id, false), [id, reportDraft]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the textarea DOM value and draft with externally changed values, retaining the caret
   useLayoutEffect(() => {
     if (
       pending.current !== null &&

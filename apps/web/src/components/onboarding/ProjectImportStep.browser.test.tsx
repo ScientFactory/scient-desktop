@@ -91,7 +91,7 @@ async function _setupFixture0(_fixture: _Fixture) {
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.container, router: false }),
   );
-  _fixture.cleanup.use(fakeTimers());
+  _fixture.stack.use(fakeTimers());
   vi.setSystemTime(new Date("2026-10-20T12:00:00.000Z"));
 }
 async function _cleanupFixture1(_fixture: _Fixture) {

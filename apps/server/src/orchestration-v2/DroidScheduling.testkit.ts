@@ -17,6 +17,7 @@ import {
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -129,6 +130,8 @@ export const withDroid = <A, E, R>(
     importHistory?: boolean;
     holdTeardown?: boolean;
     receiptName?: string;
+    /** Replaces the 5 s wait for Droid's report of a written setting. */
+    settleTimeout?: Duration.Input;
   } = {},
 ) =>
   Effect.scoped(
@@ -204,6 +207,11 @@ export const withDroid = <A, E, R>(
         makeRuntime: (input) =>
           makeDroidAcpRuntime({
             ...input,
+            // Teardown sleeps this whole grace after SIGTERM (1 s by default).
+            processGroupTerminationGrace: "100 millis",
+            ...(options.settleTimeout === undefined
+              ? {}
+              : { configOptionSettleTimeout: options.settleTimeout }),
             requestLogger: (event) =>
               Effect.sync(() => {
                 requests.push(event);

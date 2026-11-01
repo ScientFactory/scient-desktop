@@ -104,11 +104,9 @@ function occupiedByHeldDraft(key: string, incoming: Draft): boolean {
 }
 
 /**
- * Keep this window's checkpoints from replacing a stored record that is being
- * offered to the user from its slot. The hold belongs to the record, not to
- * the editor that offered it: it lasts for every editor of the document until
- * the record leaves the slot (applied, discarded, parked, or cleared because
- * its source was saved) or another window replaces it.
+ * Hold belongs to the offered stored record across all editors, not its presenting view. Prevent
+ * checkpoints overwriting it until applied/discarded/parked/saved-clear or replacement by another
+ * window.
  */
 export function holdPersistedVisualDraft(key: string, draft: Draft): void {
   held.set(key, draft);

@@ -51,7 +51,6 @@ type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.documentsHostConnect
-  | typeof WS_METHODS.codexAuthCallbackSubscribe
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeShell
@@ -64,7 +63,6 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.scheduledTasksSubscribe
   | typeof WS_METHODS.serverGetStorageCleanupReport
   | typeof WS_METHODS.serverGetDatabaseStorage
-  | typeof WS_METHODS.subscribeTerminalEvents
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
@@ -75,6 +73,12 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDocumentBindingChanges
   // SCIENT-FORK:START — Scient Extensions change stream.
   | typeof WS_METHODS.extensionsSubscribeChanges
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts change stream.
+  | typeof WS_METHODS.accountsSubscribeChanges
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — the server's editor flush requests to each window.
+  | typeof WS_METHODS.editorsFlushConnect
   // SCIENT-FORK:END
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges

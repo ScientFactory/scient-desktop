@@ -245,6 +245,8 @@ export class DocumentPersistenceCoordinator<
   private reconciliationCount = 0;
   private reconciliationDeferred = false;
   private missingCreationHold = false;
+  /** What the last failed read threw. Only another read can clear this failure. */
+  private readFailure: unknown = null;
   private readonly externalUpdateHolds = new Set<object>();
   private externalUpdatesGeneration = 0;
 
@@ -398,6 +400,12 @@ export class DocumentPersistenceCoordinator<
 
   noteFreshnessHint(_reason?: string): void {
     if (this.disposed) return;
+    // A file that couldn't be read may be back, so this does what Try again does.
+    // A failed save stays as it is: only the person can decide about that one.
+    if (this.snapshot.error !== null && this.snapshot.error === this.readFailure) {
+      void this.refresh();
+      return;
+    }
     this.requestedGeneration += 1;
     this.drive();
   }
@@ -1175,6 +1183,7 @@ export class DocumentPersistenceCoordinator<
           this.retryCount = 0;
           this.update({ error: null });
         } else {
+          this.readFailure = error;
           this.handleFailure(error, kind);
         }
       }

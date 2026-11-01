@@ -140,11 +140,11 @@ it.live.each(
       const text = scenario === "composed-frame-overflow" ? "u".repeat(10_000) : "/model";
       assert.isTrue(
         Result.isSuccess(
-          validateProviderCurrentInput({
+          yield* validateProviderCurrentInput({
             text,
             attachments,
             attachmentsDir: config.attachmentsDir,
-          }),
+          }).pipe(Effect.result),
         ),
         "The fixture must pass complete-current-input validation before native preflight",
       );

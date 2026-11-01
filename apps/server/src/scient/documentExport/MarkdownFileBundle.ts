@@ -29,11 +29,8 @@ import {
 } from "./verifiedWorkspaceRead.ts";
 
 /**
- * Turns a saved project Markdown file into a document bundle: the file's
- * bytes at a verified revision, with every workspace image it shows copied in
- * as an asset and its destination rewritten to `scient-asset:<id>`. The file
- * and its images are read once; nothing later reads the workspace again
- * except the currentness check before publication.
+ * Freeze saved bytes and images once at the verified revision. Later rendering must use bundle
+ * assets rather than reopen workspace files; only publication currentness may reread the workspace.
  */
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
@@ -83,14 +80,9 @@ export interface ResolvedMarkdownFile {
 }
 
 /**
- * Reads a project Markdown file that must stay inside `workspaceRoot`,
- * symlinks included. The revision matches the editor's saved-file revision.
- *
- * Where the open file cannot be bound to the project (Windows), the file is
- * read by path with the same byte cap and accepted only when its bytes are
- * `expectedRevision`, the revision the editor saved: a file swapped in during
- * the read has other bytes and is refused. Without an expected revision
- * there is nothing to check the bytes against, so such a read is refused.
+ * Where platform descriptors cannot bind project containment, accept bounded path-read bytes only
+ * against the editor's expected revision. Without that revision refuse; mismatched replacement
+ * bytes cannot be exported.
  */
 export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProjectMarkdownFile")(
   function* (workspaceRoot: string, requestedPath: string, expectedRevision?: string) {

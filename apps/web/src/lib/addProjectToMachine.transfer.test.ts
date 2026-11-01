@@ -36,6 +36,7 @@ import {
   addProjectToMachine,
   COPYABLE_FILE_MAX_BYTES,
   dismissProjectFileCopy,
+  isDefaultCopiedFile,
   type AddProjectToMachineInput,
 } from "./addProjectToMachine";
 
@@ -122,6 +123,15 @@ async function expectRefused(input: AddProjectToMachineInput, message: string) {
 }
 
 describe("ignored-file transfer preflight", () => {
+  // Ignored files can hold credentials, so none is preselected for a cross-machine copy.
+  it("requires explicit selection for every cross-machine file copy", () => {
+    expect(
+      [".env", "apps/web/.env.local", ".envrc", ".dev.vars", "README.md"].filter(
+        isDefaultCopiedFile,
+      ),
+    ).toEqual([]);
+  });
+
   it.each([
     ["non-NUL Latin-1", new Uint8Array([0x63, 0x61, 0x66, 0xe9])],
     ["incomplete equal-byte-count UTF-8", new Uint8Array([0xf0, 0x90, 0x80])],

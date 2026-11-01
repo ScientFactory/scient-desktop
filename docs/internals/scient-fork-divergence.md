@@ -424,40 +424,15 @@ instances. These owners do not replace native session lifetime or caller authori
 These are mounts into the existing public contracts and composition graph, not parallel private
 transport schemas. Preserve public encoding, endpoint registration and current error semantics.
 
-#### Keep-awake observations and desktop ownership
+#### Keep-awake
 
-Keep-awake policy belongs to `apps/server/src/scient/keepAwake/` and
-`apps/desktop/src/scient/keepAwake/`; its contracts live in
-`packages/contracts/src/scientKeepAwake.ts`. The authenticated Scient HTTP group
-returns work facts from canonical shells, pending execution metadata, and the
-checkpoint outbox. It never reconstructs work from the bounded transcript RPC
-or extends the core projection schema. Unchanged canonical reads are cached;
-live ownership is checked on each observation. Parent-held input blocks native
-children, and terminal children do not become synthetic unresolved work.
-
-`ProviderSessionManager.ts` has a marked read-only inspection mount into
-`ownership.ts` and shares its existing managed turn wrapper with compaction.
-`EffectWorker.ts` has a marked cancellation-safe execution counter mount;
-metadata-only title generation is excluded. These hooks are required service
-members, with explicit synthetic implementations in test stubs.
-
-`environmentHttp.ts` mounts the Scient HTTP contract; `ScientServerLayers.ts`
-provides its service. The desktop main process uses its backend pool and the encrypted connection
-catalog. Direct bearer observations survive renderer closure. SSH and relay
-observations use a fixed read-only observer in the renderer's existing connection
-runtime, preserving tunnel routing, token refresh, and DPoP key ownership without
-copying credentials. This path requires an open window and fails closed when
-unavailable; local observation remains independent of renderer lifetime. Its atomic async
-preferences preserve the existing `keep-awake.json` location and format.
-Electron power calls stay in the feature adapter, app shutdown uses `ElectronApp`,
-and preload uses the shared channel constant. Native request start/stop is logged.
-
-Marked mounts in `main.ts`, `DesktopIpcHandlers.ts`, `preload.ts`, `__root.tsx`,
-`SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx`, and
-`threadActionMenu.logic.ts` compose Scient-owned controls and menu policy.
-The renderer neither polls transcripts nor reports execution truth. Preserve the
-one settings toggle, two thread choices, explicit remote override, passive-wait
-policy, and OS limitations when realigning these mounts with upstream.
+The server answers which threads are working (`apps/server/src/scient/keepAwake/`), from the
+thread shells and `isLive`, with no upstream changes. The desktop process polls its primary backend
+and owns the one sleep request (`apps/desktop/src/scient/keepAwake/`), so closing a window doesn't
+end it. The setting is the client setting `keepComputerAwake`; "until done" choices stay in memory,
+because quitting ends the work they cover. Upstream files only carry marked mounts: the HTTP group,
+the client setting, `main.ts`, `DesktopIpcHandlers.ts`, `preload.ts`, `channels.ts`,
+`SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx` and `threadActionMenu.logic.ts`.
 
 #### Web and desktop surfaces
 
@@ -468,7 +443,7 @@ not a requirement to relocate the whole host.
 | Host surface                                                    | Current extracted owners                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ChatView.tsx`                                                  | `fork/chatViewFork.tsx`, `chat/` request-error/agent-panel/token-limit/revert diagnostics, `rightPanel/`, `skills/useEffectiveActiveProviderSkills.ts`, `compute/useComputeOwnedSurfaces.ts` and `chatComputeFigureFollower.tsx`, `fileSurfaces/useChatSurfaceSaveGuards.ts`                                                                                                                                                                                                                                                                                                                                                        |
-| Composer/session queue mounts                                   | `threadQueue/` submission, extracted-intent send, edit session, native edit item, optimistic presentation (including projection-user acknowledgement IDs) and strip; `sessionLogic/providerOptions.ts` and `skills/` policies                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Composer/session queue mounts                                   | `threadQueue/` submission, extracted-intent send, edit session, native edit item, optimistic presentation, the queue control's Scient parts (`useScientQueueParts.tsx`) and the pre-native recovery notice; `sessionLogic/providerOptions.ts` and `skills/` policies                                                                                                                                                                                                                                                                                                                                                                |
 | `ChatView.tsx` / `chat/MessagesTimeline.tsx` reading and follow | Scient-only files inside upstream's `components/chat/`, not under `scient/`: `readerScrollPolicy.ts`, `readerScrolling.ts`, `readingPositionStore.ts`, `responseFollow.ts`, `useBoundedAnswerFollow.ts`, `liveFollowOffset.ts`, `useTimelineEndControl.ts`, `unreadTimelineMessages.ts`; `timelineScrollAnchoring.ts` keeps upstream's in-memory map with marked storage calls; ChatView's reader navigation stays in marked regions (shared refs with upstream's anchor callbacks)                                                                                                                                                 |
 | Chat streaming and motion                                       | `components/chat/useStreamingBlockEntrance.ts`, `liveActivity.tsx`, `workingRowExit.ts`, `ThinkingRowFade.tsx`, `timelineWorkingState.ts`, `timelineEntranceMotion.ts`; `presentation/scient-live-activity.css` and `scient-streamed-reveal.css` (one marked import in `index.css`); mounted in `ChatMarkdown.tsx`, `MessagesTimeline.tsx` and `ChatView.tsx`; Stop through `chat/useStopGeneration.ts`                                                                                                                                                                                                                             |
 | `chat/MessagesTimeline.tsx` / `.logic.ts` timeline rows         | `threadTimeline/keptAnswers.ts` (rule in `@scientfactory/conversation/answer-visibility`; earlier real answers of a settled turn stay visible, the terminal-message rule is unchanged) and `postHandoffSetup.ts`; `fork/forkTimelineMarkers.ts`, `ForkMarkerSeparator.tsx`, `historicalTimelineTurns.ts`, `forkCheckpointMessages.ts`; `presentation/traceIconSet.tsx` and `traceIcons.ts` (consulted before upstream's `WorkEntryIcon` switch), `compactPathLabel.ts`, `TracePathLabel.tsx`, `ScientTraceSymbol.tsx`, `subagentRowGroups.ts`, `AgentSpawnRow.tsx`; `components/chat/liveActivity.tsx`, `unreadTimelineMessages.ts` |
@@ -491,15 +466,6 @@ Default-browser, cloud, and mobile publication holds remain independent. Sidebar
 compose through the existing `scient/desktopUpdate/updateReadyNotice.tsx` singleton; exact service
 versions require current owned GitHub artifact availability from `serverReleaseAvailability.ts`,
 while the backend retains update permission, preflight, and installation authority.
-
-Mobile's generic `lib/markdownDocument.ts` retains its parser, HTML transform and
-entity decoder. A paired, module-level mount binds those existing tools to
-[`ScientMarkdownProjection.ts`](../../apps/mobile/src/native/ScientMarkdownProjection.ts),
-which owns canonical file/mention sources, native link occurrence mapping and
-entity projection. The existing `nativeMarkdownProjection` import remains the
-consumer surface. `native/EnrichedMarkdownText.tsx` supplies that projection to
-the native renderer; the reviewed Enriched dependency patch owns platform
-selection and clipboard handling. Stored message text remains authoritative.
 
 The map is source ownership evidence only. It does not replace public-codec, SQL/rollback, provider
 lifetime, packaging or manual UI acceptance evidence, and it does not turn source-text seam guards
@@ -578,7 +544,7 @@ installed-build, hosted CI or real-provider acceptance.
 
 The retained app prefix can include reasoning and tool facts even when portable provider delivery
 cannot replay them. Historical callbacks and approvals never become active execution. The recovery
-pointer names `scient_thread_read` and omitted item identities. Native session parity is an optional
+pointer names `scient_thread_inspect` and omitted item identities. Native session parity is an optional
 proved strategy, not a promise made by a textual handoff.
 
 ### Running-turn forks
@@ -637,53 +603,22 @@ outcome retains that identity and the unsent draft; retry reads the durable comm
 provisioning status. Once the server is ready, retry resumes only client handoff/navigation.
 Closing the dialog cannot cancel committed server work or let its completion steal navigation.
 
-## Omitted-history recovery: `scient_thread_read`
+## Omitted-history recovery
 
-A fork's first provider turn receives a bounded transcript, so older messages
-can be omitted. The Scient MCP tool `scient_thread_read` lets the model read them
-back from native V2 projections. Its shipped input fields, defaults and paging
-semantics are preserved. It keeps the narrow `threads:read` grant and performs
-no delegated-result acknowledgment. Orchestration's `scient_thread_inspect`
-requires the separate `orchestration` grant: it includes run metadata, can read
-explicitly user-attached context threads, and acknowledges a direct child's
-terminal result when the complete result is read. Both tools are registered
-under distinct names and retain honest side-effect annotations.
+A fork's first provider turn receives a bounded transcript, so older items can be omitted. Recovery
+pointers name `scient_thread_inspect`, upstream's `t3_thread_read` under Scient's tool prefix; it
+pages the timeline (`view:"activity"`, `afterPosition`, `itemId`, `textOffset`). Every MCP-injected
+provider session receives the `orchestration` grant it requires. It acknowledges a direct child's
+terminal result when the complete result is read, so it is not pre-approved in Claude's read-only
+sandbox.
 
-- Input: `threadId` (required), `view` (`messages` default, or `activity`),
-  `afterPosition` (exclusive), `limit` (1–100, default 50), `itemId`,
-  `textOffset`, `maxCharsPerItem` (1–50,000, default 20,000), and `runLimit`.
-  `runLimit` is accepted for input compatibility and ignored by this reader;
-  `scient_thread_inspect` supplies run history.
-- Output: a V2-compatible subset. `thread` includes identity, project, title,
-  V2-vocabulary `status`, model, modes, fork parent, `itemCount`, and archive
-  state. `items` carry `position`, `itemId`, `type`, `status`, `title`,
-  `activityKind`, `messageId`, `turnId`, windowed `text`, `textTruncated`,
-  `nextTextOffset`, and timestamps. The page also returns `nextPosition` and
-  `hasMore`. There is no `recentRuns` field.
-- Timeline: messages of every role, proposed plans, and tool/activity items
-  are paged through `ProjectionStoreV2.getTimelinePage`.
-  Direct item lookup and paging do not inherit the UI's 500-activity limit.
-  Internal fork hydration explicitly requests full retained activity history;
-  ordinary UI reads remain bounded. Native projection positions preserve local
-  and inherited timeline order in both views. The `messages` view returns user
-  messages, assistant messages, and proposed plans. The `activity` view also
-  returns reasoning, system messages, and activities. An activity is rendered
-  as its kind and summary followed by its payload. `maxCharsPerItem` bounds
-  the returned text window; `textOffset` can reach the full stored payload.
-- Paging follows V2: `nextPosition` is the last returned position and is null
-  only when the page is empty, and `hasMore` tells whether to continue. The
-  `itemId` option ignores `view` and `afterPosition`. `textOffset` applies only
-  with `itemId`. Offsets count UTF-16 code units.
-- Authority: the `threads:read` session grant is issued to every
-  MCP-injected provider session. The calling thread comes from the host-issued
-  invocation. It may read itself or a non-deleted thread, including an archived
-  one, in the same project. Other projects fail with `thread_outside_project`.
-  A projectless thread can read only itself. A fork reads its shared history
-  even after the origin is deleted. Explicitly user-attached context
-  from other projects is available only through orchestration inspection.
-  Historical imports may lazily materialize the projection before reading it;
-  reading never acknowledges delegated-child completion or starts work, so the
-  tool is annotated read-only.
+Upstream's reader shows a handoff item's short label, not its saved summary. Scient keeps one
+narrow tool for that gap: `scient_handoff_summary_read({threadId, contextHandoffId, textOffset})`
+returns 20,000-character pages of a retained summary with `nextTextOffset` (null at the end).
+History delivery names it, with both IDs, when a summary is too large to include. It needs only the
+`threads:read` grant, reads the caller or a non-deleted thread in the caller's project, never
+acknowledges or starts work, and is annotated read-only. The former general `scient_thread_read`
+history reader is retired; its name is not a callable alias.
 
 ## Safety and bounded compromises
 
@@ -705,7 +640,7 @@ under distinct names and retain honest side-effect annotations.
 - Retained files are shared, and kept while any conversation that shows them remains, so
   deletion or cleanup of the origin cannot invalidate the fork.
 - Portable handoffs keep whole items within a model-window-derived budget and
-  account for encoded delivery wrappers; omitted items stay readable through `scient_thread_read`.
+  account for encoded delivery wrappers; omitted items stay readable through `scient_thread_inspect`.
 - Provider acceptance cannot be made globally exactly-once without provider
   idempotency. Scient therefore re-delivers uncertain context on a fresh
   native thread. The prior runtime may have accepted work before the connection failed;

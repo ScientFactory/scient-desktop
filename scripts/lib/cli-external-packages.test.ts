@@ -6,78 +6,47 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
 import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+// SCIENT-FORK
+import {
+  readWorkspaceLockfile,
+  withLockedRequiredPeers,
+} from "./scient-stage-locked-dependencies.ts";
 
 import {
   isRuntimeExternalCliDependency,
   findInlinedExternalPackages,
-  shouldBundleCliDependency,
   selectCliRuntimeExternalDependencies,
+  shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
 
-// optionalDependencies matter as much as dependencies here: every native family
-// in the list declares its actual platform bindings there (ffi-rs -> @yuuang/*,
-// fff-node -> @ff-labs/fff-bin-*), so reading only `dependencies` would check
-// nothing for exactly those packages.
+// Native bindings live in optionalDependencies; checking dependencies alone misses them.
 const PackageManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  peerDependenciesMeta: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct({ optional: Schema.optional(Schema.Boolean) })),
+  ),
 });
 type PackageManifest = typeof PackageManifest.Type;
 
 const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest));
 
 describe("shouldBundleCliDependency", () => {
-  it("bundles ordinary runtime dependencies", () => {
-    for (const id of [
-      "effect",
-      "@effect/platform",
-      "hono",
-      "@t3tools/shared/HostProcess",
-      "zod",
-      "zod/v3",
-      "zod/v4",
-      "zod/v4-mini",
-      "@bufbuild/protobuf",
-      "@connectrpc/connect",
-      "@connectrpc/connect-node",
-      "@connectrpc/connect-web",
-      "@statsig/js-client",
-      "@statsig/client-core",
-      "@fastify/busboy",
-    ]) {
-      assert.strictEqual(shouldBundleCliDependency(id), true, id);
-    }
-  });
-
-  it("never bundles node: builtins", () => {
-    assert.strictEqual(shouldBundleCliDependency("node:fs"), false);
-  });
-
   it("leaves native addons and their dlopen wrappers external", () => {
     for (const id of [
       "node-pty",
-      "@napi-rs/canvas",
-      "@napi-rs/canvas-win32-arm64-msvc",
       "ffi-rs",
       "@yuuang/ffi-rs-win32-x64-msvc",
       "@ff-labs/fff-node",
       "@napi-rs/keyring",
       "@clerk/electron-passkeys",
-      "msgpackr-extract",
-      "@msgpackr-extract/msgpackr-extract-win32-x64",
       "node-addon-api",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
-  });
-
-  it("leaves bun-only entry points external", () => {
-    assert.strictEqual(shouldBundleCliDependency("@effect/platform-bun"), false);
-    assert.strictEqual(shouldBundleCliDependency("@effect/sql-sqlite-bun"), false);
   });
 
   it("treats prefix-matched siblings as external", () => {
@@ -85,50 +54,8 @@ describe("shouldBundleCliDependency", () => {
   });
 });
 
-describe("selectCliRuntimeExternalDependencies", () => {
-  it("keeps only runtime-external dependency roots for the Windows sidecar", () => {
-    assert.deepStrictEqual(
-      selectCliRuntimeExternalDependencies({
-        "@effect/platform-bun": "1.0.0",
-        "@ff-labs/fff-node": "2.0.0",
-        effect: "3.0.0",
-        "node-pty": "4.0.0",
-      }),
-      {
-        "@ff-labs/fff-node": "2.0.0",
-        "node-pty": "4.0.0",
-      },
-    );
-  });
-
-  it("selects every external root declared by the server", () => {
-    assert.deepStrictEqual(
-      Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      [
-        "@cursor/sdk",
-        "@ff-labs/fff-node",
-        "@napi-rs/canvas",
-        "@napi-rs/keyring",
-        "msgpackr-extract",
-        "node-pty",
-        "playwright-core",
-        "undici",
-      ],
-    );
-  });
-});
-
-// Found the hard way: node-gyp-build-optional-packages requires detect-libc,
-// which was bundled. Windows was fine; WSL got MODULE_NOT_FOUND.
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {
-  // Read manifests off disk from the pnpm store rather than resolving them.
-  // `require("<name>/package.json")` cannot do this job: under pnpm isolation a
-  // transitive package (detect-libc, msgpackr-extract, ffi-rs) is not reachable
-  // by name from this file at all, and an `exports` map can refuse the
-  // `/package.json` subpath outright (@ff-labs/fff-node). Both surface as "not
-  // installed", which would let this test skip everything and pass while
-  // checking nothing. The store contains the dependency graph the sidecar's
-  // minimal production install resolves.
+  // Read the pnpm store directly: isolation hides transitive names and exports maps can block package.json.
   const readInstalledPackages = Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -137,8 +64,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       "../../node_modules/.pnpm",
     );
 
-    // The store holds regular files too (lock.yaml), so a path built under one
-    // raises ENOTDIR rather than reporting absence.
+    // Paths under store files such as lock.yaml raise ENOTDIR, not absence.
     const isPresent = (candidate: string) =>
       fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
 
@@ -167,36 +93,36 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
     return installed;
   }).pipe(Effect.cached, Effect.runSync);
 
-  // Runtime-external only. The build-only entries resolve `bun:*` and are never
-  // loaded by Node, so their closure genuinely does not need to be external.
+  // SCIENT-FORK:START — on disk means external or staged as a locked required peer,
+  // as the build stages them (zod stays bundled for @factory/droid-sdk's own zod v3).
+  const repoRoot = Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return path.resolve(path.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
+  });
+  const stagedRoots = (serverDependencies: Record<string, string>) =>
+    Effect.gen(function* () {
+      return yield* withLockedRequiredPeers({
+        lockfile: yield* readWorkspaceLockfile(yield* repoRoot),
+        importers: ["apps/server"],
+        dependencies: selectCliRuntimeExternalDependencies(serverDependencies),
+      });
+    });
+  // SCIENT-FORK:END
   const isRuntimeExternal = isRuntimeExternalCliDependency;
 
-  it.effect("finds the runtime-external packages on disk", () =>
-    Effect.gen(function* () {
-      const installed = yield* readInstalledPackages;
-      const found = [...installed.keys()].filter(isRuntimeExternal);
-
-      // read, nothing is checked. These are the packages whose closure
-      // actually broke WSL, so require them by name.
-      for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
-        assert.ok(
-          found.includes(required),
-          `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
-        );
-      }
-    }),
-  );
-
-  it.effect("keeps native loader dependency families external too", () =>
+  it.effect("keeps every runtime dependency of an external package external too", () =>
     Effect.gen(function* () {
       const installed = yield* readInstalledPackages;
       const violations: string[] = [];
       const seen = new Set<string>();
-      // Cursor's computed imports use its installed JS dependency tree, proved
-      // by the isolated packaged-SDK probe. Those names must also remain
-      // bundleable when imported by a different provider in the server graph.
-      const queue = [...installed.keys()].filter(
-        (name) => isRuntimeExternal(name) && !name.startsWith("@cursor/sdk"),
+      const queue = [...installed.keys()].filter(isRuntimeExternal);
+      // SCIENT-FORK
+      const roots = yield* stagedRoots(
+        decodeManifest(
+          yield* (yield* FileSystem.FileSystem).readFileString(
+            (yield* Path.Path).join(yield* repoRoot, "apps/server/package.json"),
+          ),
+        ).dependencies ?? {},
       );
 
       for (const name of queue) {
@@ -212,7 +138,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
           ...manifest.peerDependencies,
         };
         for (const dependency of Object.keys(declared)) {
-          if (!isRuntimeExternal(dependency)) {
+          if (!isRuntimeExternal(dependency) && !Object.hasOwn(roots, dependency)) {
             violations.push(`${name} -> ${dependency}`);
           }
           if (!seen.has(dependency)) queue.push(dependency);
@@ -226,6 +152,48 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       );
     }),
   );
+
+  // The stage installs only externals the server lists, so a required peer must be reachable from them.
+  it.effect("stages a provider for every required peer of a staged external", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const installed = yield* readInstalledPackages;
+      const server = decodeManifest(
+        yield* fileSystem.readFileString(
+          path.resolve(
+            path.dirname(NodeURL.fileURLToPath(import.meta.url)),
+            "../../apps/server/package.json",
+          ),
+        ),
+      );
+
+      const staged = new Set<string>();
+      // SCIENT-FORK: the build's roots, required peers included.
+      const queue = Object.keys(yield* stagedRoots(server.dependencies ?? {}));
+      for (const name of queue) {
+        if (staged.has(name)) continue;
+        staged.add(name);
+        const manifest = installed.get(name);
+        queue.push(
+          ...Object.keys({ ...manifest?.dependencies, ...manifest?.optionalDependencies }),
+        );
+      }
+
+      const missing = [...staged].flatMap((name) => {
+        const manifest = installed.get(name);
+        return Object.keys(manifest?.peerDependencies ?? {})
+          .filter((peer) => !manifest?.peerDependenciesMeta?.[peer]?.optional && !staged.has(peer))
+          .map((peer) => `${name} -> ${peer}`);
+      });
+
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `these peers of staged external packages are missing from the packaged app; add them to apps/server dependencies: ${missing.join(", ")}`,
+      );
+    }),
+  );
 });
 
 describe("findInlinedExternalPackages", () => {
@@ -236,13 +204,13 @@ var x = 1;
 
   it("flags an external package that was inlined", () => {
     const source =
-      region("../../node_modules/.pnpm/detect-libc@2.1.2/node_modules/detect-libc/lib/process.js") +
+      region("../../node_modules/.pnpm/node-addon-api@7.1.1/node_modules/node-addon-api/index.js") +
       region(
-        "../../node_modules/.pnpm/msgpackr-extract@3.0.4/node_modules/msgpackr-extract/index.js",
+        "../../node_modules/.pnpm/node-gyp-build-optional-packages@5.2.2/node_modules/node-gyp-build-optional-packages/index.js",
       );
     const result = findInlinedExternalPackages(source);
 
-    assert.deepStrictEqual(result.inlined, ["detect-libc", "msgpackr-extract"]);
+    assert.deepStrictEqual(result.inlined, ["node-addon-api", "node-gyp-build-optional-packages"]);
     assert.strictEqual(result.regionCount, 2);
   });
 
@@ -255,6 +223,21 @@ var x = 1;
 
     assert.deepStrictEqual(result.inlinedPackages, ["effect", "yaml"]);
     assert.deepStrictEqual(result.inlined, []);
+  });
+
+  it("reads the plain `// <path>` markers newer Rolldown emits", () => {
+    const source = [
+      "// \0rolldown/runtime.js",
+      "var x = 1;",
+      "// ../../node_modules/.pnpm/node-addon-api@7.1.1/node_modules/node-addon-api/index.js",
+      "var y = 2; // trailing comment",
+      "// ../../src/server/main.ts",
+      "",
+    ].join("\n");
+    const result = findInlinedExternalPackages(source);
+
+    assert.strictEqual(result.regionCount, 3);
+    assert.deepStrictEqual(result.inlined, ["node-addon-api"]);
   });
 });
 

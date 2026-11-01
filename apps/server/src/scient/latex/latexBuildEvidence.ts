@@ -1,35 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Input identity is a host SHA-256 digest.
 /**
- * What a published PDF was built from, and whether that is still true.
- *
- * A build request carries only a workspace root and a path, so nothing in the
- * request says which revision of the sources it means. Without that, a PDF
- * published once keeps its `current` binding for as long as the binding
- * survives — across restarts, across an agent rewriting the root document,
- * across an editor outside Scient changing an `\input`ed chapter — and the
- * viewer keeps calling it built. This module is the missing half: after a
- * successful publish the service records the identity of every file the compile
- * actually read, and before reporting that PDF as current again it checks that
- * identity still holds.
- *
- * Identity is content, not timestamps. A dependency is a workspace-relative
- * path, the SHA-256 of its bytes, and its byte length; a file the run read that
- * is no longer there keeps its place in the list under `MISSING_FILE_DIGEST`,
- * because "the chapter was deleted" is a change, not an absence of one. Two
- * shapes get a marker instead of a digest: a missing file and one that exists
- * but could not be read (`UNVERIFIED_FILE_DIGEST`). Large dependencies are
- * streamed through SHA-256 like every other input: size alone is not identity,
- * and an image or data file can be rewritten in place without changing length.
- * `OVERSIZE_FILE_DIGEST` remains readable only to migrate evidence written by
- * the earlier size-only implementation.
- *
- * The probe is built to be run on every poll, which is the constraint that
- * shapes it: one `stat` per dependency, and a content hash only where the size
- * or the modification time says something might have moved. `LatexEvidenceMark`
- * is that memory — the size and mtime last *verified* to match the recorded
- * digest — so an editor that rewrites a file with identical bytes (a formatter,
- * a checkout, a save with no edit) costs one hash and then stops costing
- * anything, instead of rebuilding the document on every touch.
+ * Current PDF evidence binds dependency content hashes/lengths, not timestamps; distinguish missing
+ * from unreadable and stream large hashes. Stat shortcuts use only last verified marks to avoid
+ * rebuilds on identical rewrites. Legacy size-only markers remain migration inputs, not fresh
+ * identity.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -46,18 +20,9 @@ export const MISSING_FILE_DIGEST = "missing";
 /** Legacy marker read from evidence written before large inputs were hashed. */
 const OVERSIZE_FILE_DIGEST = "oversize";
 /**
- * Recorded for a dependency that is *there* and could not be read anyway.
- *
- * A file locked by another writer, an antivirus scanner holding it open, a
- * OneDrive placeholder mid-sync: on Windows these surface as `EBUSY` or
- * `EACCES` from the same call that reports a genuinely deleted file, and
- * conflating the two is how a transient lock became an unbounded rebuild loop.
- * Recording "absent" for a file that exists makes the very next poll see it
- * present, call that a change, and rebuild — into the same lock, recording
- * absent again, forever. This marker says the opposite of `missing`: nothing
- * is known about this file. A probe leaves it alone while it is still
- * unreadable, then requests one rebuild as soon as the file can be inspected so
- * the replacement evidence contains a real identity.
+ * Unreadable is not missing: Windows locks/scanners can return EBUSY/EACCES for present files. Keep
+ * unknown evidence unchanged until readable, then request one rebuild; alternating false
+ * absence/presence would create an unbounded compile loop.
  */
 export const UNVERIFIED_FILE_DIGEST = "unverified";
 /** The same ceiling the recorder manifest applies, enforced again here. */
@@ -219,13 +184,8 @@ interface StatSnapshot {
 }
 
 /**
- * The three answers a filesystem read can give, kept apart on purpose.
- *
- * `absent` is a fact about the world — the file is not there — and it is
- * evidence. `unreadable` is a fact about this attempt only: the file may be
- * identical to what was recorded and simply unavailable for the millisecond
- * this call ran. Collapsing the second into the first is what turns an
- * antivirus scan into a compile loop, so nothing here ever does.
+ * Absence is durable evidence; unreadability describes only this attempt. Never collapse them, or a
+ * transient scanner/file lock can create repeated rebuilds.
  */
 type ReadOutcome<A> =
   | { readonly _tag: "ok"; readonly value: A }
@@ -280,11 +240,8 @@ const digestOf = Effect.fn("latexBuildEvidence.digestOf")(function* (absolutePat
 });
 
 /**
- * The dependency list this lane will stand behind. The root document is always
- * in it — it is the one file whose change nothing else could reveal — and a
- * list that overflows the cap collapses to the root alone rather than to its
- * first 256 entries, so `truncated` always means "narrower than the truth" and
- * never "silently partial".
+ * Always include the root dependency. On overflow, keep root alone and mark truncated rather than
+ * silently retaining an arbitrary partial prefix.
  */
 function boundedDependencies(input: {
   readonly rootRelativePath: string;
@@ -297,14 +254,9 @@ function boundedDependencies(input: {
 }
 
 /**
- * Reads the identity of every dependency, once, after a successful publish.
- *
- * The race this accepts and does not close: the compile read these files
- * moments ago, and a save landing between the engine's exit and this read is
- * recorded as what the PDF was built from when it was not. The cost of that is
- * one missed rebuild of one document, which the next save corrects; the cost of
- * closing it — hashing every input before and after the compile and rejecting a
- * mismatch — is paid by every build of every document forever.
+ * Accepted race: a save after engine exit but before evidence read can be recorded as build input
+ * despite missing the PDF. The next save corrects that missed rebuild; closing it would require
+ * pre/post hashes on every compile.
  */
 export const collectLatexBuildEvidence = Effect.fn("latexBuildEvidence.collectLatexBuildEvidence")(
   function* (input: {
@@ -370,17 +322,9 @@ export const collectLatexBuildEvidence = Effect.fn("latexBuildEvidence.collectLa
 );
 
 /**
- * Whether two evidence records describe the same document identity — same
- * dependency list, same digests, same lengths. Recording time is deliberately
- * not compared: the question is whether anything the PDF was built from has
- * moved, and when the measurement was taken is not part of that.
- *
- * This is what makes a probe disagreement terminate. `probeLatexEvidence` is a
- * fast path built out of `stat` shortcuts, and a fast path can be wrong in
- * ways a full re-read is not; before a disagreement is allowed to cost a
- * compile, the caller re-collects and asks this. Equal means the probe was
- * mistaken and there is nothing to rebuild, which bounds any probe-versus-
- * collect disagreement at one rebuild instead of one per poll.
+ * Compare dependency paths/digests/lengths, not recording time. Recollect before rebuilding after a
+ * stat-probe disagreement; equal content means no compile, bounding shortcut disagreements instead
+ * of rebuilding every poll.
  */
 export function latexEvidenceMatches(a: LatexBuildEvidence, b: LatexBuildEvidence): boolean {
   if (a.rootRelativePath !== b.rootRelativePath) return false;
@@ -407,12 +351,8 @@ export interface LatexEvidenceProbe {
 }
 
 /**
- * Whether the recorded evidence still describes what is on disk.
- *
- * Cheap by construction and by ordering: one `stat` per dependency, a size
- * difference decides on its own, and the content hash is read only when size
- * and mtime together leave the question open. The first disagreement ends the
- * probe — the answer is already known and every further read is waste.
+ * Use one stat per dependency and hash only when metadata cannot settle identity. Stop at the first
+ * disagreement because further reads cannot change the verdict.
  */
 export const probeLatexEvidence = Effect.fn("latexBuildEvidence.probeLatexEvidence")(
   function* (input: {
@@ -473,12 +413,9 @@ export const probeLatexEvidence = Effect.fn("latexBuildEvidence.probeLatexEviden
         mark.mtimeMs === info.value.mtimeMs
       )
         continue;
-      // Size held but the timestamp moved, or nothing is remembered about this
-      // file yet (the first probe after a restart). Only the bytes can answer,
-      // and an mtime that moved without them is not a reason to rebuild.
-      // Old evidence knew only the size of a large file. An unchanged in-memory
-      // mark is sufficient until the first restart; after that, or after any
-      // timestamp movement, rebuild once and replace the marker with a digest.
+      // An mtime change alone does not justify rebuild; verify bytes. Legacy size-only evidence
+      // needs replacement with a digest after restart or timestamp movement, while an unchanged
+      // live verified mark can avoid that one migration rebuild.
       if (dependency.sha256 === OVERSIZE_FILE_DIGEST) return verdict(dependency.path);
       const digest = yield* digestOf(absolutePath);
       // Same rule as the `stat` above: only an answer decides. A read that

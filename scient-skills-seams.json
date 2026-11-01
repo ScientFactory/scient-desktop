@@ -8,7 +8,6 @@
     "packages/scient-skills"
   ],
   "ownedFiles": [
-    "apps/mobile/src/state/scientSkills.ts",
     "apps/server/src/mcp/ScientMcpInvocation.ts",
     "apps/server/src/mcp/ScientOperationCatalog.ts",
     "apps/server/src/provider/ScientAwareness.ts",
@@ -20,8 +19,8 @@
     "apps/server/src/scient/operations/AgentInvocationContext.ts",
     "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
     "apps/server/src/scient/threadQueue/Ledger.ts",
-    "apps/web/src/routes/settings.skills_.external.tsx",
-    "apps/web/src/routes/settings.skills.tsx",
+    "apps/web/src/routes/_chat.settings.skills_.external.tsx",
+    "apps/web/src/routes/_chat.settings.skills.tsx",
     "apps/web/src/scient/rightPanel/ScientRightPanelContent.tsx",
     "apps/web/src/scient/threadQueue/composerSnapshot.ts",
     "packages/client-runtime/src/work-log/scientMcpToolPresentation.test.ts",
@@ -33,7 +32,11 @@
     "packages/contracts/src/scient/skillRpcs.ts",
     "apps/server/src/scient/ScientServerLayers.ts",
     "packages/contracts/src/scient/orchestrationV2Schemas.ts",
-    "scripts/scient-alignment-checks.json"
+    "scripts/scient-alignment-checks.json",
+    "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts",
+    "apps/server/src/provider/Drivers/ClaudeSkills.scient.test.ts",
+    "apps/server/src/provider/scient/ScientAgentSkills.ts",
+    "apps/server/src/provider/scient/ScientAgentSkills.test.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",
@@ -45,19 +48,14 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
+    {
       "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
       "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
-    },
-    {
-      "path": "apps/mobile/src/lib/projectThreadStartTurn.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Preserve explicit Scient skill selection when starting a mobile project thread."
-    },
-    {
-      "path": "apps/mobile/src/state/use-thread-outbox-drain.ts",
-      "anchor": "buildExistingThreadOutboxStartTurnInput",
-      "purpose": "Deliver the captured mobile outbox payload through the shared selected-skill and dispatch helper (thread-outbox-start-turn.test.ts)."
     },
     {
       "path": "apps/web/src/proposedPlan.ts",
@@ -73,26 +71,6 @@
       "path": "packages/shared/src/composerInlineTokens.ts",
       "anchor": "collectSelectedScientSkillNames",
       "purpose": "Extract real skill tokens while excluding context-chip labels from explicit skill selection."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/composerSlashSkillSearch.ts",
-      "anchor": "isGlobalProviderSkill",
-      "purpose": "Keep project-native skills out of the mobile global skill picker."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/ThreadComposer.tsx",
-      "anchor": "mergeEffectiveProviderSkills",
-      "purpose": "Merge the exact current thread project skill inventory into mobile composer selection."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
-      "anchor": "scientSkillsInventory",
-      "purpose": "Keep mobile thread rendering aware of its contextual Scient skill inventory."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/new-task-flow-provider.tsx",
-      "anchor": "scientSkillsInventory",
-      "purpose": "Merge project skills into the mobile new-task composer before a thread exists."
     },
     {
       "path": "apps/server/package.json",
@@ -168,6 +146,21 @@
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "useEffectiveActiveProviderSkills",
       "purpose": "Present active Scient skills in messages without replacing provider-native inventory."
+    },
+    {
+      "path": "apps/web/src/components/chat/useComposerSend.ts",
+      "anchor": "collectSelectedScientSkillNames",
+      "purpose": "Capture explicit composer skill tokens and carry their selection through native turn admission and queue submission."
+    },
+    {
+      "path": "apps/web/src/components/chat/useMultipleModelSend.ts",
+      "anchor": "selectedScientSkillNames,",
+      "purpose": "Carry the captured explicit skill selection into each native multiple-model turn."
+    },
+    {
+      "path": "apps/web/src/components/chat/useProposedPlanSend.ts",
+      "anchor": "selectedScientSkillNames,",
+      "purpose": "Carry explicit plan-feedback skill selections into native turn admission; implementing an assistant plan in a new thread selects no skills."
     },
     {
       "path": "apps/web/src/components/chat/ChatComposer.tsx",
@@ -270,11 +263,6 @@
       "purpose": "Summarize collapsed groups of Scient's own tools by family (scientMcpToolPresentation.test.ts)."
     },
     {
-      "path": "apps/mobile/src/state/use-thread-composer-state.ts",
-      "anchor": "collectSelectedScientSkillNames",
-      "purpose": "Capture exact composer skill tokens in the persisted mobile outbox snapshot; qualify via thread-outbox-start-turn.test.ts."
-    },
-    {
       "path": "apps/server/src/orchestration-v2/ThreadLaunchService.ts",
       "anchor": "input.initialMessage.selectedScientSkillNames",
       "purpose": "Carry captured initial skill selection into native bootstrap admission; qualify via ThreadLaunchService.test.ts and SelectedScientSkillNames.test.ts."
@@ -305,11 +293,6 @@
       "path": "apps/web/src/scient/presentation/traceIcons.ts",
       "anchor": "isScientSkillTool",
       "purpose": "Give Scient skill tool rows the skill trace icon in the conversation timeline (traceIcons.test.ts)."
-    },
-    {
-      "path": "apps/mobile/src/state/thread-outbox-start-turn.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."
     },
     {
       "path": "packages/contracts/src/legacy/orchestrationEvent.ts",
@@ -385,6 +368,16 @@
       "path": "apps/server/src/scient/extensions/plugins/ScientPluginManifest.ts",
       "anchor": "isStrictSemver",
       "purpose": "Apply the skill release loader's exact SemVer rule to plugin versions (ScientPluginManifest.test.ts)."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/DiscoverPages.tsx",
+      "anchor": "<ScientSkillsLibrary",
+      "purpose": "List Scient's skill library under Extensions ▸ Discover ▸ Skills."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/InstalledPage.tsx",
+      "anchor": "<ScientSkillsLibrary",
+      "purpose": "List turned-on Scient skills, every agent's skills and project skills under Extensions ▸ Installed ▸ Skills."
     }
   ]
 }

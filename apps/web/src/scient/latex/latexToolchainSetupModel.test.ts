@@ -66,7 +66,7 @@ describe("latexSetupCardModel", () => {
       }),
     );
     expect(downloading.kind).toBe("installing");
-    expect(downloading.body).toBe("Downloading TinyTeX — 35 MB of 70 MB.");
+    expect(downloading.body).toBe("Downloading TinyTeX: 35 MB of 70 MB.");
     expect(downloading.progressPercent).toBe(43);
     expect(downloading.actionLabel).toBeNull();
 

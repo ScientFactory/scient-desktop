@@ -111,11 +111,9 @@ export const reduceOmpTurn = (state: OmpTurnState, signal: OmpTurnSignal): OmpTu
         return { state };
       }
       if (!signal.agentInvoked && !state.sawAgent) return settle(state, "terminal", "local");
-      // OMP reports a prompt after its run ends, so a reported prompt with no
-      // run of its own never ran (an abort that won the race, a preflight
-      // denial), and the reported status decides it. If the previous turn's
-      // unfinished run ended meanwhile, the prompt may have been queued into
-      // it and its answer dropped with that run's frames: uncertain.
+      // A reported prompt with no own run did not run unless it may have joined the previous
+      // unfinished run. If that run ended meanwhile and its frames were discarded, report
+      // uncertainty instead of inferring no execution.
       if (signal.reported === true && !state.sawAgent) {
         return state.staleRunEnded === true
           ? settle(state, "unknown", "unknown")

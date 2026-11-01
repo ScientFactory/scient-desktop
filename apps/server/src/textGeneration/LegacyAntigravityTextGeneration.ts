@@ -175,7 +175,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           "Antigravity did not return the requested structured output.",
         );
       }
-      return yield* Schema.decodeUnknownEffect(outputSchema)(result.structuredOutput).pipe(
+      return yield* Schema.decodeEffect(outputSchema)(result.structuredOutput).pipe(
         Effect.mapError((cause) =>
           generationError(operation, "Antigravity returned invalid structured output.", cause),
         ),
@@ -281,12 +281,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 
   const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
     Effect.fn("AntigravityTextGeneration.generateThreadTitle")(function* (input) {
-      const { prompt, outputSchema } = buildThreadTitlePrompt({
-        message: input.message,
-        previousTitle: input.previousTitle,
-        linkedContext: input.linkedContext,
-        attachments: input.attachments,
-      });
+      const { prompt, outputSchema } = buildThreadTitlePrompt(input);
       const generated = yield* runAntigravityJson({
         operation: "generateThreadTitle",
         cwd: input.cwd,

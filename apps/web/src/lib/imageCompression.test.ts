@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  createComposerImageThumbnail,
   compressImageForStash,
   compressImageToByteLimit,
+  createComposerImageThumbnail,
+  inheritComposerImageThumbnail,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
+  readComposerImageThumbnail,
 } from "./imageCompression";
 
 import type { SnapShotSource } from "@t3tools/contracts";
@@ -139,6 +141,7 @@ afterEach(() => {
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
 });
 
+// SCIENT-FORK:START
 describe("composer image thumbnails", () => {
   it.each([
     [3840, 2160, 796, 448],
@@ -196,6 +199,7 @@ describe("composer image thumbnails", () => {
   );
 });
 
+// SCIENT-FORK:END
 describe("compressImageForStash", () => {
   it("keeps the exact data URL budget boundary and original bytes", async () => {
     const original = makeFile(3);
@@ -299,6 +303,30 @@ describe("compressImageForStash", () => {
     expect(result).toEqual({ ok: false, reason: "too-large" });
     expect(bitmapSpy).not.toHaveBeenCalled();
   });
+});
+
+describe("composer image thumbnails", () => {
+  // SCIENT-FORK:START
+  it.each(["square", "snapshot"] as const)(
+    "inherits the %s thumbnail without decoding again",
+    async (mode) => {
+      stubCanvasPipeline(() => 3);
+      const source = makeFile(3);
+      const compressed = makeFile(2, "image/webp");
+      const sourceThumbnail = await createComposerImageThumbnail(source, mode);
+      expect(sourceThumbnail).toMatch(/^data:image\/png;base64,/);
+
+      inheritComposerImageThumbnail(source, compressed);
+
+      expect(readComposerImageThumbnail(compressed, mode)).toBe(sourceThumbnail);
+      expect(await createComposerImageThumbnail(compressed, mode)).toBe(sourceThumbnail);
+      expect(
+        readComposerImageThumbnail(compressed, mode === "square" ? "snapshot" : "square"),
+      ).toBeUndefined();
+      expect(createImageBitmap).toHaveBeenCalledTimes(1);
+    },
+  );
+  // SCIENT-FORK:END
 });
 
 describe("HEIC attachment preparation", () => {

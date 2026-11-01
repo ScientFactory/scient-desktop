@@ -1,11 +1,7 @@
 /**
- * SCIENT-OWNED rule for Send on a queued message.
- *
- * Send on any queued message starts it now and resumes the rest of the queue
- * after it. The server's `queue.resume` handler refuses by this rule and stays
- * the authority. The web strip and the mobile queue sheet offer Send by the
- * same rule, so an offered Send is one the server accepts. Clients fail open:
- * they hide Send only when their own data proves the refusal.
+ * The server remains Send authority. Clients hide it only when local evidence proves refusal;
+ * shared rules keep offered controls aligned while incomplete client state fails open to the server
+ * decision.
  */
 import type {
   OrchestrationV2Run,
@@ -82,11 +78,8 @@ export function queuedRunSendRefusal(
 }
 
 /**
- * The usage-limit refusal as a client may apply it. A windowed thread snapshot
- * can omit a newer session whose error supersedes the limit, so the snapshot
- * alone cannot prove the limit. The thread shell's error class is computed by
- * the server from every bound session. The client refuses only when both agree,
- * and otherwise offers the control and lets the server decide.
+ * Windowed snapshots can miss a newer session superseding a usage limit. Refuse only when snapshot
+ * and server-computed shell agree; otherwise offer Send and let server authority decide.
  */
 export function isQueueUsageLimitProven(
   projection: QueueUsageLimitProjection,

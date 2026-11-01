@@ -110,7 +110,7 @@ describe("Scient analytics background runtime", () => {
       await import(${JSON.stringify(new URL("./worker-entry.ts", import.meta.url).href)});
     `)}`,
     );
-    const runtime = createAnalyticsRuntime(options({ workerUrl }));
+    const runtime = createAnalyticsRuntime(options({ workerUrl, controlTimeoutMs: 100 }));
     try {
       await expect(runtime.setConsent("essential")).rejects.toThrow("not acknowledged");
       expect(runtime.enabled).toBe(false);

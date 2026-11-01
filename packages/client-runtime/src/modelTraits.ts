@@ -4,15 +4,12 @@ import type {
   ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
-
-export const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 export const REASONING_SELECT_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
   ...REASONING_EFFORT_OPTION_IDS,
@@ -51,10 +48,24 @@ export function getDescriptorStringValue(
   return typeof value === "string" ? value : null;
 }
 
+// Prompt-injected levels such as Ultrathink still work when typed, but pickers do not offer them.
 export function selectableProviderOptionChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {
-  return descriptor.options;
+  return descriptor.options.filter(
+    (option) => !descriptor.promptInjectedValues?.includes(option.id),
+  );
+}
+
+/**
+ * All the picker reads from the prompt while rendering. Passing this instead of
+ * the prompt keeps the picker from re-rendering on every keystroke.
+ */
+export type PromptUltrathink = "none" | "prefix" | "body";
+
+export function readPromptUltrathink(prompt: string): PromptUltrathink {
+  if (!isClaudeUltrathinkPrompt(prompt)) return "none";
+  return isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, "")) ? "body" : "prefix";
 }
 
 export function getPromptControlledTraits(
@@ -64,12 +75,12 @@ export function getPromptControlledTraits(
 ) {
   const primarySelectDescriptor =
     descriptors.find((descriptor) => descriptor.type === "select") ?? null;
-  const ultrathinkPromptControlled =
-    allowPromptInjectedEffort &&
-    (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
-    isClaudeUltrathinkPrompt(prompt);
-  const ultrathinkInBodyText =
-    ultrathinkPromptControlled && isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
+  const promptUltrathink =
+    allowPromptInjectedEffort && (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0
+      ? readPromptUltrathink(prompt)
+      : "none";
+  const ultrathinkPromptControlled = promptUltrathink !== "none";
+  const ultrathinkInBodyText = promptUltrathink === "body";
   return { primarySelectDescriptor, ultrathinkPromptControlled, ultrathinkInBodyText };
 }
 
@@ -81,15 +92,7 @@ export function getTraitSelectChange(
   prompt: string,
   value: string,
 ) {
-  if (!value) return null;
-  if (descriptor.promptInjectedValues?.includes(value)) {
-    return {
-      prompt:
-        prompt.trim().length === 0
-          ? ULTRATHINK_PROMPT_PREFIX
-          : applyClaudePromptEffortPrefix(prompt, "ultrathink"),
-    };
-  }
+  if (!value || descriptor.promptInjectedValues?.includes(value)) return null;
   const isPrimary = descriptor.id === selected.primarySelectDescriptor?.id;
   if (isPrimary && selected.ultrathinkInBodyText) return null;
   return {
@@ -110,7 +113,13 @@ export function buildTraitsTriggerDisplay(input: {
   ultrathinkPromptControlled: boolean;
   modelSelection?: ModelSelection | null;
   reportedModelSelection?: ModelSelection | null | undefined;
-}): { label: string } {
+}): {
+  label: string;
+  /** "Fast" or "Ultrafast" when a speed option is on. */
+  speedLabel: string | null;
+  /** Labels other than reasoning and speed, such as context window or thinking. */
+  otherLabels: ReadonlyArray<string>;
+} {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
@@ -167,8 +176,9 @@ export function buildTraitsTriggerDisplay(input: {
     }
   }
 
+  const otherLabels = labels.filter((_, index) => index !== reasoningLabelIndex);
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel };
+    return { label: fastModeFallbackLabel, speedLabel, otherLabels };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
@@ -177,5 +187,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · ") };
+  return { label: labels.join(" · "), speedLabel, otherLabels };
 }

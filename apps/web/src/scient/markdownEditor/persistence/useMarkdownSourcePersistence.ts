@@ -15,6 +15,7 @@ export function useMarkdownSourcePersistence(persistence: MarkdownPersistenceLea
   const appliedVersion = useRef<number | null>(null);
   const active = useRef(false);
   const [, rejectStaleProjection] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state in the active ref so stale projections are rejected after unmount
   useLayoutEffect(() => {
     active.current = true;
     return () => {

@@ -28,9 +28,10 @@ function ScientChatImageTile(props: {
           onClick={() => props.onExpand(props.image.id)}
           type="button"
         >
+          {/* Isolate the thumbnail raster from nearby activity repaints in Chromium. */}
           <img
             alt={props.image.name}
-            className="block h-auto max-h-[320px] w-full object-contain"
+            className="block h-auto max-h-[320px] w-full transform-gpu object-contain"
             crossOrigin="anonymous"
             decoding="async"
             loading="lazy"

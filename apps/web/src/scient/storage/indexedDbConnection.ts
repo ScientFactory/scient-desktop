@@ -1,11 +1,6 @@
 /**
- * One cached IndexedDB connection that is replaced once the browser closes it.
- *
- * The browser may close a connection at any time: another window upgrading or
- * deleting the database (`versionchange`), or Chromium force-closing storage
- * after a backend failure (`close`). A cached connection that outlives that
- * makes every later transaction fail with "The database connection is closing"
- * until the window reloads, so it is forgotten and reopened instead.
+ * Browsers can close IndexedDB on versionchange or backend failure. Forget and reopen closed cached
+ * connections so later transactions do not fail until reload.
  */
 export function createIndexedDbConnection(options: {
   readonly name: string;

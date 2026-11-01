@@ -2,6 +2,9 @@ import type { T3McpToolDefinition } from "./t3McpToolPresentation.ts";
 
 /** Summary groups for Scient's own tools in a collapsed work log. */
 export type ScientMcpToolSummaryAction =
+  // SCIENT-FORK:START — Scient Accounts: group account operations in the work log.
+  | "scient-accounts"
+  // SCIENT-FORK:END
   | "scient-skills"
   | "scient-sources"
   | "scient-documents"
@@ -9,7 +12,7 @@ export type ScientMcpToolSummaryAction =
 
 function tool(
   labels: T3McpToolDefinition["labels"],
-  summaryAction: ScientMcpToolSummaryAction,
+  summaryAction: T3McpToolDefinition["summaryAction"],
 ): T3McpToolDefinition {
   return { displayName: `${labels[0]} ${labels[3]}`, labels, icon: "scient", summaryAction };
 }
@@ -20,6 +23,32 @@ function tool(
  * the shared resolver's canonical `t3_` prefix; agents call them `scient_*`.
  */
 export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
+  // SCIENT-FORK:START — Scient Accounts: name account tools without exposing values.
+  t3_accounts_list: tool(["List", "Listing", "Listed", "accounts"], "scient-accounts"),
+  t3_account_sign_in: tool(
+    ["Sign in", "Signing in", "Signed in", "to an account"],
+    "scient-accounts",
+  ),
+  t3_account_credentials: tool(
+    ["Prepare", "Preparing", "Prepared", "account credentials"],
+    "scient-accounts",
+  ),
+  t3_account_request: tool(
+    ["Request", "Requesting", "Requested", "with an account"],
+    "scient-accounts",
+  ),
+  t3_account_find_profile: tool(
+    ["Find", "Finding", "Found", "a browser profile for a page"],
+    "scient-accounts",
+  ),
+  t3_account_browser_session: tool(
+    ["Prepare", "Preparing", "Prepared", "a browser session"],
+    "scient-accounts",
+  ),
+  t3_account_fill: tool(["Fill", "Filling", "Filled", "a saved field"], "scient-accounts"),
+  t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
+  t3_paper_get: tool(["Get", "Getting", "Got", "a paper's PDF"], "scient-accounts"),
+  // SCIENT-FORK:END
   t3_skills_list: tool(["Check", "Checking", "Checked", "available skills"], "scient-skills"),
   // A completed load reads "Used Latex Authoring", the wording skill loads already use.
   t3_skill_load: tool(["Load", "Loading", "Used", "a skill"], "scient-skills"),
@@ -48,6 +77,10 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_compute_inventory: tool(
     ["Check", "Checking", "Checked", "compute runtimes"],
     "scient-compute",
+  ),
+  t3_handoff_summary_read: tool(
+    ["Read", "Reading", "Read", "a saved handoff summary"],
+    "thread-read",
   ),
 };
 
@@ -82,6 +115,10 @@ export function scientMcpToolSummaryLabel(
   times: string,
 ): string {
   switch (action) {
+    // SCIENT-FORK:START — Scient Accounts: summarize grouped account calls.
+    case "scient-accounts":
+      return phrase("Used", "use", `accounts ${times}`);
+    // SCIENT-FORK:END
     case "scient-skills":
       return phrase("Used", "use", `skills ${times}`);
     case "scient-sources":

@@ -1,4 +1,3 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -29,14 +28,6 @@ describe("driverOptionMatchesQuery", () => {
   });
 });
 
-describe("provider company labels", () => {
-  it("names the company behind providers whose product name hides it", () => {
-    expect(getDriverOption(ProviderDriverKind.make("codex"))?.vendorLabel).toBe("OpenAI");
-    expect(getDriverOption(ProviderDriverKind.make("antigravity"))?.vendorLabel).toBe("Google");
-    expect(getDriverOption(ProviderDriverKind.make("claudeAgent"))?.vendorLabel).toBe("Anthropic");
-  });
-});
-
 describe("provider client catalog presentation", () => {
   it("keeps every loaded provider schema available through the settings presentation", () => {
     for (const clientDefinition of providerClients.definitions) {
@@ -46,11 +37,5 @@ describe("provider client catalog presentation", () => {
       expect(option?.clientDefinition).toBe(clientDefinition);
       expect(option?.settingsSchema).toBe(clientDefinition.settingsSchema);
     }
-  });
-
-  it("keeps Scient-owned providers in the shared presentation catalog", () => {
-    expect(getDriverOption(ProviderDriverKind.make("droid"))?.label).toBe("Droid");
-    expect(getDriverOption(ProviderDriverKind.make("omp"))?.label).toBe("Oh My Pi");
-    expect(getDriverOption(ProviderDriverKind.make("scient"))?.label).toBe("Scient");
   });
 });

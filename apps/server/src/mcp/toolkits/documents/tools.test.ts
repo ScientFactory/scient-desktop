@@ -1,6 +1,11 @@
 import { expect, it } from "@effect/vitest";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
+import { advertisedJsonSchema } from "../../advertisedJsonSchema.ts";
+import { ScientSkillReadResourceTool } from "../skills/tools.ts";
+import { ScientSourcesToolkit } from "../sources/tools.ts";
 import { ScientLatexBuildTool, ScientPdfBuildTool } from "./tools.ts";
 
 it("keeps the public PDF build contract narrow and evidence-bearing", () => {
@@ -29,8 +34,6 @@ it("keeps the public PDF build contract narrow and evidence-bearing", () => {
   expect(failure).toContain("partial-publication");
   expect(failure).toContain("publishedSource");
   expect(failure).toContain("outputPath");
-  expect(ScientPdfBuildTool.description).toContain("isolated Chromium renderer");
-  expect(ScientPdfBuildTool.description).toContain("does not visually review");
 });
 
 it("keeps the public LaTeX build contract narrow, paced, and evidence-bearing", () => {
@@ -57,10 +60,35 @@ it("keeps the public LaTeX build contract narrow, paced, and evidence-bearing", 
   expect(failure).toContain("toolchain-unavailable");
   expect(failure).toContain("partial-publication");
   expect(failure).toContain("publishedSource");
-  expect(ScientLatexBuildTool.description).toContain("available qualified toolchain");
-  expect(ScientLatexBuildTool.description).toContain(
-    "LaTeX Source/Split/PDF surface in Split mode",
+  expect(ScientLatexBuildTool.description).toContain("retryAfterMs");
+});
+
+it("advertises Scient tool inputs without the trimmed-string regex but still rejects blank or untrimmed values", () => {
+  const advertised = JSON.stringify([
+    advertisedJsonSchema(ScientPdfBuildTool),
+    advertisedJsonSchema(ScientLatexBuildTool),
+    advertisedJsonSchema(ScientSourcesToolkit.tools.scient_sources_get),
+    advertisedJsonSchema(ScientSourcesToolkit.tools.scient_sources_update),
+    advertisedJsonSchema(ScientSkillReadResourceTool),
+  ]);
+  expect(advertised).not.toContain(String.raw`^\\S[\\s\\S]*\\S$`);
+  expect(advertised).toContain('"minLength":1');
+
+  const decodePdf = Schema.decodeUnknownExit(ScientPdfBuildTool.parametersSchema);
+  expect(Exit.isSuccess(decodePdf({ sourcePath: "doc.html", outputPath: "doc.pdf" }))).toBe(true);
+  const untrimmed = decodePdf({ sourcePath: " doc.html", outputPath: "doc.pdf" });
+  expect(Exit.isFailure(untrimmed) && String(untrimmed.cause)).toContain(
+    "a string with no leading or trailing whitespace",
   );
-  expect(ScientLatexBuildTool.description).toContain("Long builds return a paced in-progress");
-  expect(ScientLatexBuildTool.description).toContain("does not visually review");
+  expect(Exit.isFailure(decodePdf({ sourcePath: "", outputPath: "doc.pdf" }))).toBe(true);
+
+  const decodeSource = Schema.decodeUnknownExit(
+    ScientSourcesToolkit.tools.scient_sources_get.parametersSchema,
+  );
+  expect(Exit.isFailure(decodeSource({ sourceId: "" }))).toBe(true);
+  expect(Exit.isFailure(decodeSource({ sourceId: "  " }))).toBe(true);
+  expect(Exit.isFailure(decodeSource({ sourceId: "source-1 " }))).toBe(true);
+  const decodeResource = Schema.decodeUnknownExit(ScientSkillReadResourceTool.parametersSchema);
+  expect(Exit.isFailure(decodeResource({ name: "skill", path: " notes.md" }))).toBe(true);
+  expect(Exit.isFailure(decodeResource({ name: " skill", path: "notes.md" }))).toBe(true);
 });

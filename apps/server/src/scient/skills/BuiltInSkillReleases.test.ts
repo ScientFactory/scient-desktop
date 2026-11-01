@@ -11,7 +11,7 @@ import {
 import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
 
 describe("Scient built-in skill releases", () => {
-  it("embeds the six reviewed releases with explicit product-owned defaults", () => {
+  it("embeds the seven reviewed releases with explicit product-owned defaults", () => {
     expect(BUILT_IN_SKILL_RELEASES).toMatchObject([
       {
         id: "scient.workspace-readiness-review",
@@ -50,7 +50,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.pdf-authoring",
-        version: "0.3.0",
+        version: "0.3.1",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 40,
@@ -61,7 +61,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.html-pdf-authoring",
-        version: "0.3.0",
+        version: "0.3.1",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 50,
@@ -72,10 +72,21 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.latex-authoring",
-        version: "0.3.0",
+        version: "0.3.1",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 60,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
+      {
+        id: "scient.overleaf-sync",
+        version: "0.1.0",
+        category: "Document creation",
+        categoryDescription: "Create polished documents and reliable final outputs.",
+        displayOrder: 70,
         supportedScopes: ["user"],
         defaultInvocationPolicy: "automatic",
         origin: "scient",
@@ -90,6 +101,7 @@ describe("Scient built-in skill releases", () => {
       "scient.pdf-authoring": true,
       "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,
+      "scient.overleaf-sync": true,
     });
   });
 
@@ -183,7 +195,7 @@ describe("Scient built-in skill releases", () => {
     expect(latexAuthoring.instructions).toContain("This skill grants no tools or authority");
     for (const authoringSkill of [pdfAuthoring, htmlPdfAuthoring, latexAuthoring]) {
       expect(authoringSkill.instructions).toContain("Scient chat");
-      expect(authoringSkill.instructions).toContain("clickable project-relative Markdown link");
+      expect(authoringSkill.instructions).toContain("clickable Markdown link");
     }
   });
 });

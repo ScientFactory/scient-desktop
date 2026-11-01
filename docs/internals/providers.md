@@ -645,6 +645,18 @@ reassembly, and imports no Scient orchestration types. The adapter's
 retains shutdown confirmation before releasing its session lock. This is distinct from logical
 turn settlement and does not establish universal physical-reader release.
 
+The shared adapter projects assistant usage and model capacity into the context meter and
+refreshes `get_session_stats` on settlement. Its reported cost includes the agent's billed
+cache refreshes; a billed `cache_warming_end` refreshes that total without adding usage twice.
+Scient leaves cache warming at the agent's default. Optional observations and unsupported
+statistics commands degrade without preventing ordinary turns on older agents.
+`/compact` uses the native compact command and shared compaction item. Notices, persistence
+errors, extension notifications, retry progress and fallback models use shared notice/error
+items; process loss includes the observed exit code and a bounded, redacted stderr tail.
+Native todo phases project to the shared read-only todo list. Select dialogs accept offered
+labels, editor dialogs retain their initial text, and the existing dialog text shows timeouts;
+the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No only.
+
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
   `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can
@@ -722,7 +734,13 @@ turn settlement and does not establish universal physical-reader release.
   requests, and subagent outcomes retain their independent reporting.
 - At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
   18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
-  that unknown command without an id, so the filter is not sent there.
+  that unknown command without an id, so the filter is not sent there. The same command requests
+  `messageUpdates: "delta"`: streaming `message_update` frames then carry only the increment, not the
+  whole message twice per token. Full snapshots grow quadratically with a long reply or tool call
+  and, once the host falls behind, fill an unbounded temporary spool file in the agent; one session
+  wrote 99 GB. Releases without the projection ignore the option and leave it out of the echo. The
+  runtime reads only the message id and role, `delta`, `contentIndex`, and block-end content from
+  these frames.
 - Model-discovery failures stay in redacted server diagnostics rather than the conversation
   timeline. Text turns can continue without the catalog. Image attachments retry discovery when
   support is unconfirmed, and report an actionable error if support remains unknown or the model

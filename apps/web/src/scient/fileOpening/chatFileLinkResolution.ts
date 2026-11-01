@@ -54,11 +54,8 @@ export function isHomeRelativeLink(path: string): boolean {
 }
 
 /**
- * How to ask the environment about a workspace locator, as opposed to an
- * authored link. A locator names one location under the workspace, and a
- * folder really named `~` gives it the same `~/` spelling an authored
- * home-relative link has. Asked by that spelling it could be answered with a
- * file from the home folder, so such a locator is asked by its host path.
+ * A workspace folder literally named ~ collides with authored home-relative syntax. Ask about that
+ * locator by host path so the environment cannot resolve it into the user's home.
  */
 export function workspaceLocatorAskPath(
   locator: string,
@@ -82,15 +79,8 @@ export function clientPlacedLinkPath(linkPath: string, workspaceRoot: string | u
 }
 
 /**
- * What a click on a chat link does with the environment's answer.
- *
- * - `as-written`: the link's own location is the file (it exists, or fails for
- *   a real reason that opening it will show), or the environment could not be
- *   asked.
- * - `resolved`: nothing exists at the link's location and one workspace file
- *   is what it meant; open that file and say so.
- * - `missing`: nothing exists there and there is no single answer; open the
- *   link as written so the file panel explains and offers the choices.
+ * Only replace a missing authored location when exactly one workspace candidate exists. Otherwise
+ * open as written so real errors or ambiguous choices remain visible.
  */
 export type ChatFileOpenPlan =
   | { readonly kind: "as-written" }
@@ -114,16 +104,9 @@ export function chatFileOpenPlan(
 }
 
 /**
- * The path a link opens at when it opens as written. Ordinarily that is the
- * client's own spelling. A home-relative link has no spelling the client can
- * trust, so it opens where the environment says the link's location is: the
- * file it found there, or the location it checked and found empty. That
- * location stays a workspace path when it is inside the workspace, so the
- * file stays editable.
- *
- * `clientPath` is the client's own placement of the link, used when the
- * environment could not be asked or predates home-folder expansion (it then
- * reports the unexpanded `~` under the workspace for a missing file).
+ * Only the owning environment can place home-relative links. Keep resolved locations
+ * workspace-relative when possible for editing; fall back to client spelling when the environment
+ * is unavailable or lacks home expansion.
  */
 export function linkOpenLocation(input: {
   readonly resolution: EnvironmentFileLinkResolution | null;

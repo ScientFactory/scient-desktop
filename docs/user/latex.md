@@ -9,8 +9,9 @@ change it, and drag the divider to resize either side.
 
 ## Start a document
 
-Choose **Documents** in the side panel, or under **+**, then **LaTeX** (or
-**Markdown**). A new `untitled.tex` opens straight in Visual, set up from your
+Open a new tab in the side panel with **+**, then choose **LaTeX** (or
+**Markdown**) from the format button on the **Document** card. **New** in the
+Files bar does the same in the selected folder. A new `untitled.tex` opens straight in Visual, set up from your
 default template, with the cursor in the title. Nothing else needs filling in:
 type the title and keep writing. Once the title is saved and you move on, the
 file takes its name from it once, for example `spectral-bounds.tex`; later
@@ -995,6 +996,13 @@ Source and the left side of Split use the same file editor as other source files
 in Scient. Edit the `.tex` file directly there. Its contents are shared with
 Visual; selecting another view does not create another document. In Split with
 PDF selected, double-click a source line to locate it in the compiled PDF.
+
+## Overleaf
+
+A LaTeX document in a folder linked to Overleaf shows an **Overleaf** chip next to **Saved**:
+**Sync now** brings collaborators' changes in and sends yours. While the file has Overleaf
+conflict marks, the build status reads **This file has N Overleaf conflicts to settle** instead of
+a failed build. See [Overleaf](overleaf.md).
 
 ## Build and review
 

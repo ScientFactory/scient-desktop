@@ -108,13 +108,9 @@ describe("buildLatexInvocation", () => {
   });
 
   it("forces latexmk to reprocess a target it has already failed on", () => {
-    // `latexmk` records in the work directory's `.fdb_latexmk` both that the
-    // last run failed and which files it could not find, at the paths it
-    // looked in. Installing the package puts the file somewhere else entirely,
-    // so nothing `latexmk` watches has changed: without `-g` the retry reports
-    // "Nothing to do", never runs the engine, and exits non-zero with only its
-    // own prose — a document that was just given its package looking exactly
-    // like one that still has not got it.
+    // Package installation changes paths outside latexmk's remembered missing-file watch set.
+    // Require -g so the retry actually runs the engine instead of reporting Nothing to do and
+    // repeating failure.
     const forced = buildLatexInvocation({
       toolchain: { kind: "latexmk", executable: "latexmk", version: "4.88" },
       rootFileName: "main.tex",

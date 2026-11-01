@@ -1,10 +1,14 @@
+// SCIENT-FORK:START
 import { SourceControlDiscoveryResult } from "@t3tools/contracts";
 import { buildAddProjectRemoteSourceReadiness } from "./projects.ts";
 import { sortAddProjectProviderSources } from "./projects.ts";
+// SCIENT-FORK:END
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+// SCIENT-FORK:START
 import * as Option from "effect/Option";
+// SCIENT-FORK:END
 
 import {
   findExistingAddProject,
@@ -50,6 +54,7 @@ describe("add project shared logic", () => {
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
+    // SCIENT-FORK:START
     expect(
       getDefaultCloneUrl({
         provider: SourceControlProviderKind.make("gitcafe"),
@@ -57,6 +62,7 @@ describe("add project shared logic", () => {
         sshUrl: "git@gitcafe.com:owner/repo.git",
       }),
     ).toBe("https://gitcafe.com/owner/repo.git");
+    // SCIENT-FORK:END
   });
 
   it("derives the clone folder name from any pasted clone URL", () => {
@@ -79,6 +85,7 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("https://github.com/acme/123")).toBe("123");
     expect(getCloneDirectoryName("git@github.com:acme/123.git")).toBe("123");
   });
+  // SCIENT-FORK:START
 
   it.each(["github", "gitcafe"] as const)("marks authenticated %s as ready", (providerKind) => {
     const discovery: SourceControlDiscoveryResult = {
@@ -150,6 +157,7 @@ describe("add project shared logic", () => {
       });
     }
   });
+  // SCIENT-FORK:END
 
   it("finds existing projects by normalized path in the target environment", () => {
     const env = EnvironmentId.make("env");

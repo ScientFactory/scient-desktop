@@ -82,14 +82,9 @@ const SCIENT_AGENT_ROOT_ENV = "SCIENT_AGENT_ROOT";
 const SCIENT_AGENT_ENV_PREFIX = "SCIENT_AGENT_";
 
 /**
- * The environment of every Scient Agent child process: the provider-neutral
- * agent environment, with the agent's whole config root assigned to `root`.
- * This server owns the agent's own variables, so only the root is set: an
- * inherited `SCIENT_*` name never reaches an agent (`agentProcessEnvironment`),
- * and a `SCIENT_AGENT_*` variable set on the instance is dropped here. The
- * agent applies the same rule to `.env` files outside the root. Oh My Pi's own
- * variables pass through untouched: Scient Agent ignores them, and a stock
- * `omp` started from the agent's shell keeps the user's own setup.
+ * Scient Agent owns its config root: drop inherited/instance SCIENT_AGENT variables except the
+ * assigned root. Preserve OMP variables so stock omp launched by the agent's shell retains the
+ * user's configuration.
  */
 export const scientAgentProcessEnvironment = (input: {
   readonly baseEnv?: NodeJS.ProcessEnv;

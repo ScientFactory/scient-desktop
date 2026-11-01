@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 // Native and issued-token evidence uses digests, never bearer values.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous wire observation records digests without exposing bearer tokens.
 import * as NodeCrypto from "node:crypto";
@@ -871,7 +872,14 @@ const runConjunction = () =>
           "The complete owned current input precedes exactly one selected-skill block",
         );
       }).pipe(Effect.provide(runtimeLayer));
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+          idAllocatorLayer,
+        ),
+      ),
+    ),
   );
 
 it.live(

@@ -1,10 +1,7 @@
 /**
- * Dispatches provider-native plugin and MCP server actions to the provider
- * that owns them. Each action is admitted against the latest provider
- * snapshot, then validated, dispatched, and verified through one instance
- * generation's own seam, so a rebuilt, disabled, or removed instance is never
- * changed on its successor's behalf. Scient never predicts the outcome.
- * See docs/internals/scient-extensions.md.
+ * Admit, mutate, and verify through the same live instance generation. Rebuilt/disabled/removed
+ * instances cannot authorize changes to successors; report provider evidence rather than predicting
+ * success.
  */
 import {
   ExtensionsError,
@@ -127,14 +124,38 @@ export function makeProviderPluginManagement(
   ) {
     const { provider, actions } = yield* admit(input.instanceId);
     const providerName = provider.displayName ?? "This provider";
-    if (!listedPlugins(provider, input.cwd)?.some((candidate) => candidate.id === pluginId)) {
-      return yield* failure("not-found", "This provider plugin is no longer installed.");
-    }
     if (!actions) {
       return yield* failure(
         "unsupported",
         `${providerName} does not let Scient uninstall plugins.`,
       );
+    }
+
+    let admission = provider;
+    if (input.cwd !== undefined && listedPlugins(provider, input.cwd) === undefined) {
+      yield* untilRetired(
+        actions,
+        "reading the workspace inventory",
+        providerRegistry.refreshWorkspaceSnapshot({
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+          awaitNativeInventory: true,
+        }),
+      );
+      const current = yield* admit(input.instanceId);
+      if (current.actions !== actions || (yield* actions.isRetired)) {
+        return yield* retiredDuring("reading the workspace inventory");
+      }
+      admission = current.provider;
+      if (listedPlugins(admission, input.cwd) === undefined) {
+        return yield* failure(
+          "state-unavailable",
+          "Scient could not read this workspace's plugin inventory, so nothing was changed.",
+        );
+      }
+    }
+    if (!listedPlugins(admission, input.cwd)?.some((candidate) => candidate.id === pluginId)) {
+      return yield* failure("not-found", "This provider plugin is no longer installed.");
     }
 
     // Validate against the generation that will act, not the published snapshot.
@@ -203,6 +224,159 @@ export function makeProviderPluginManagement(
       inventory: { cwd: input.cwd, plugins: remaining.plugins, sequence: remaining.sequence },
     });
     return { providers };
+  });
+
+  const setEnabled = Effect.fn("ProviderPluginManagement.setEnabled")(function* (
+    input: ProviderPluginActionInput,
+    pluginId: string,
+    enabled: boolean,
+  ) {
+    const { actions } = yield* admit(input.instanceId);
+    if (!actions?.setEnabled)
+      return yield* failure(
+        "unsupported",
+        "This agent cannot change plugin enablement from Scient.",
+      );
+    const current = yield* untilRetired(
+      actions,
+      "checking the plugin",
+      actions.listPlugins({ cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() => failure("state-unavailable", "Could not list the agent's plugins.")),
+    );
+    if (!current.plugins.some((plugin) => plugin.id === pluginId && plugin.canSetEnabled))
+      return yield* failure("unsupported", "This plugin cannot be switched from Scient.");
+    yield* untilRetired(
+      actions,
+      "changing the plugin",
+      actions.setEnabled({ pluginId, enabled, cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() => failure("provider-rejected", "The agent did not confirm the change.")),
+    );
+    const listing = yield* untilRetired(
+      actions,
+      "verifying the plugin",
+      actions.listPlugins({ cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "The change was sent, but could not be verified."),
+      ),
+    );
+    if (listing.plugins.find((plugin) => plugin.id === pluginId)?.enabled !== enabled)
+      return yield* failure(
+        "provider-rejected",
+        "The agent still reports a different plugin state.",
+      );
+    return {
+      providers: yield* providerRegistry.recordProviderNativeInventory({
+        instanceId: input.instanceId,
+        reportedBy: actions,
+        inventory: { cwd: input.cwd, ...listing },
+      }),
+    };
+  });
+
+  const install = Effect.fn("ProviderPluginManagement.install")(function* (
+    input: ProviderPluginActionInput,
+    entryId: string,
+  ) {
+    const { actions } = yield* admit(input.instanceId);
+    if (!actions?.store)
+      return yield* failure("unsupported", "This agent cannot install plugins from Scient.");
+    if (
+      input.action.type === "install" &&
+      input.action.sourceInstanceId &&
+      input.action.sourceInstanceId !== input.instanceId
+    ) {
+      const source = yield* admit(input.action.sourceInstanceId);
+      if (!source.actions?.store?.marketplaceSource || !actions.store.ensureMarketplace)
+        return yield* failure("unsupported", "This agent cannot install from that marketplace.");
+      const sourceEntry = yield* untilRetired(
+        source.actions,
+        "reading the shared plugin",
+        source.actions.store.entry(entryId),
+      ).pipe(
+        Effect.mapError(() => failure("state-unavailable", "Could not read the source plugin.")),
+      );
+      if (sourceEntry.kind !== "shared")
+        return yield* failure(
+          "unsupported",
+          "Only shared plugins can be installed by another agent.",
+        );
+      const uri = yield* untilRetired(
+        source.actions,
+        "reading the marketplace",
+        source.actions.store.marketplaceSource(entryId),
+      ).pipe(
+        Effect.mapError(() =>
+          failure("state-unavailable", "Could not read the source marketplace."),
+        ),
+      );
+      yield* untilRetired(
+        actions,
+        "adding the marketplace",
+        actions.store.ensureMarketplace({ name: sourceEntry.marketplace, source: uri }),
+      ).pipe(
+        Effect.mapError(() =>
+          failure(
+            "provider-rejected",
+            "Claude Code could not confirm this marketplace. Refresh to check.",
+          ),
+        ),
+      );
+      if (yield* source.actions.isRetired)
+        return yield* retiredDuring("checking the source marketplace");
+    }
+    const entry = yield* untilRetired(
+      actions,
+      "checking the plugin",
+      actions.store.entry(entryId),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "Could not read the plugin before installing."),
+      ),
+    );
+    if (entry.disabledReason) return yield* failure("unsupported", entry.disabledReason);
+    const installed = yield* untilRetired(
+      actions,
+      "installing the plugin",
+      actions.store.install(entryId),
+    ).pipe(
+      Effect.mapError((cause) =>
+        isExtensionsError(cause) ? cause : failure("provider-rejected", cause.message),
+      ),
+    );
+    const verified = yield* untilRetired(
+      actions,
+      "verifying the installation",
+      actions.store.entry(entryId),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "The installation was sent, but could not be verified."),
+      ),
+    );
+    if (!verified.installed)
+      return yield* failure(
+        "provider-rejected",
+        "The agent does not list this plugin as installed.",
+      );
+    const listing = yield* untilRetired(
+      actions,
+      "reading installed plugins",
+      actions.listPlugins({ cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "Installed, but could not refresh the agent’s inventory."),
+      ),
+    );
+    return {
+      ...(installed ? installed : {}),
+      providers: yield* providerRegistry.recordProviderNativeInventory({
+        instanceId: input.instanceId,
+        reportedBy: actions,
+        inventory: { cwd: input.cwd, ...listing },
+      }),
+    };
   });
 
   const reserveProcessSlot = Ref.modify(processSlotsRef, (used) =>
@@ -378,6 +552,64 @@ export function makeProviderPluginManagement(
   return {
     act: (input) => {
       switch (input.action.type) {
+        case "install":
+          return writePermit.withPermits(1)(install(input, input.action.entryId));
+        case "add-official-store":
+          return writePermit.withPermits(1)(
+            Effect.gen(function* () {
+              const { actions } = yield* admit(input.instanceId);
+              if (!actions?.store?.addOfficialStore)
+                return yield* failure("unsupported", "This agent cannot add that store.");
+              yield* untilRetired(
+                actions,
+                "adding the store",
+                actions.store.addOfficialStore(),
+              ).pipe(
+                Effect.mapError(() =>
+                  failure("provider-rejected", "The store could not be added. Refresh to check."),
+                ),
+              );
+              const page = yield* untilRetired(
+                actions,
+                "verifying the store",
+                actions.store.search({ limit: 1 }),
+              ).pipe(
+                Effect.mapError(() =>
+                  failure("state-unavailable", "Could not verify the new store."),
+                ),
+              );
+              if (page.canAddOfficialStore)
+                return yield* failure(
+                  "provider-rejected",
+                  "The agent does not list the store yet.",
+                );
+              return { providers: yield* providerRegistry.getProviders };
+            }),
+          );
+        case "refresh-inventory":
+          return Effect.gen(function* () {
+            const { actions } = yield* admit(input.instanceId);
+            if (actions?.refreshInventory)
+              yield* untilRetired(
+                actions,
+                "refreshing extensions",
+                actions.refreshInventory({
+                  force: true,
+                  connectionsOnly:
+                    input.action.type === "refresh-inventory" &&
+                    input.action.connectionsOnly === true,
+                }),
+              ).pipe(
+                Effect.mapError(() =>
+                  failure("state-unavailable", "Could not refresh this agent's extensions."),
+                ),
+              );
+            return { providers: yield* providerRegistry.getProviders };
+          });
+        case "set-enabled":
+          return writePermit.withPermits(1)(
+            setEnabled(input, input.action.pluginId, input.action.enabled),
+          );
         case "uninstall":
           return writePermit.withPermits(1)(uninstall(input, input.action.pluginId));
         case "mcp-sign-in":

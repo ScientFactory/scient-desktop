@@ -1,18 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Plugin bundle storage is a Node filesystem boundary, like skill releases.
 /**
- * Declarative Scient plugin bundles: install from a directory on the server
- * host, snapshot every byte once, keep an immutable content-addressed copy,
- * contribute add-on skill releases and never-signed-in connectors, and remove
- * everything again. Nothing from a bundle is executed.
- *
- * Connector authority has two layers. The set of connectors owned by enabled,
- * verified plugins is published to `PluginConnectorEligibility` after every
- * commit, and the connector runtime denies any other plugin-sourced connector
- * at delivery and grant time. Ownership (connector id + declared URL) is also
- * reconciled against the connector runtime at startup and before every change:
- * orphans are removed and connectors of a disabled or unverified plugin are
- * disabled, so durable state converges after a crash or failed write.
- * See docs/internals/scient-extensions.md.
+ * Never execute bundle content. Publish enabled/verified ownership for grant-time checks, and
+ * reconcile declared URLs at startup/before changes so crashes or failed writes cannot retain
+ * orphan authority. Disabled/unverified ownership must revoke delivery independently of durable
+ * connector writes.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -21,6 +12,7 @@ import * as NodePath from "node:path";
 import {
   loadEmbeddedSkillRelease,
   skillOriginKey,
+  skillReleaseKey,
   SKILL_DOCUMENT_FILE,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
@@ -691,11 +683,8 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
               } satisfies InstalledPlugin,
             ].sort((left, right) => compareStrings(left.record.pluginId, right.record.pluginId));
 
-          // Keep owned connectors whose declared URL is unchanged (and their
-          // sign-in); add new ones and retire dropped ones before the record
-          // commits, so success never leaves a connector the manifest dropped.
-          // That needs a complete connector inventory: from a degraded one, a
-          // missing connector would look dropped and its ownership would be lost.
+          // Reconcile against a complete connector inventory before committing removals. A degraded
+          // listing can make a retained connector appear dropped and erase its ownership/sign-in.
           const owned = previous?.record.connectors ?? [];
           const wanted = manifest.contributes.connectors ?? [];
           const liveIds = yield* authoritativeConnectorIds;
@@ -721,11 +710,9 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
             (definition) => !retainedUrls.has(normalizedUrl(definition.url)),
           );
 
-          // Size the complete candidate before anything is created or retired,
-          // with the longest possible id standing in for each connector to add.
-          // Only the other plugins are pruned as commit will prune them: the
-          // placeholders are not live yet and must be counted, and retained
-          // connectors were just confirmed live.
+          // Size the full candidate before creating/retiring anything. Count longest-ID
+          // placeholders because they are not live yet; prune only other plugins as the eventual
+          // commit will.
           yield* encodeWithinBudget(
             candidateState(pruneOwnership(others, liveIds), [
               ...retained,
@@ -939,6 +926,45 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
   );
 
   return ScientPluginRegistry.of({
+    contents: Effect.fn("ScientPluginRegistry.contents")((pluginId: string) =>
+      Ref.get(state).pipe(
+        Effect.map((current) => {
+          const plugin = current.plugins.find((item) => item.record.pluginId === pluginId);
+          return {
+            apps: [],
+            mcpServers: [],
+            skills: (plugin?.bundle?.releases ?? []).slice(0, 200).map((release) => ({
+              id: skillReleaseKey(release),
+              releaseKey: skillReleaseKey(release),
+              name: release.name,
+              description: release.description,
+              documentAvailable: true,
+              enabled: plugin?.record.enabled === true,
+            })),
+            commands: [],
+            agents: [],
+          };
+        }),
+      ),
+    ),
+    skillDocument: Effect.fn("ScientPluginRegistry.skillDocument")(
+      (pluginId: string, skillId: string) =>
+        Ref.get(state).pipe(
+          Effect.flatMap((current) => {
+            const release = current.plugins
+              .find((item) => item.record.pluginId === pluginId)
+              ?.bundle?.releases.find((item) => skillReleaseKey(item) === skillId);
+            return release
+              ? Effect.succeed({ instructions: release.instructions })
+              : Effect.fail(
+                  new ExtensionsError({
+                    reason: "not-found",
+                    message: "This skill is no longer in the plugin.",
+                  }),
+                );
+          }),
+        ),
+    ),
     list,
     install,
     remove,

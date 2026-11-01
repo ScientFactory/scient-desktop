@@ -1,9 +1,9 @@
+import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type {
   EnvironmentId,
   ForkOptions,
   MessageId,
-  OrchestrationV2ProjectedTurnItem,
   RunId,
   ScopedThreadRef,
   ThreadId,
@@ -120,6 +120,7 @@ export function useChatViewForkCommand(input: {
               prompt: forkCommandTarget.message.text,
               attachments: forkCommandTarget.message.attachments ?? [],
             };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prepares the fork over the environment connection when the fork dialog opens on a source
   useEffect(() => {
     if (forkDialogOpen && forkSource) void prepareFork(forkSource);
   }, [forkDialogOpen, forkSource, prepareFork]);
@@ -150,6 +151,7 @@ export function useClearForkCommandOnThreadChange(
   activeThreadId: ThreadId | null,
   activeThreadEnvironmentId: EnvironmentId | null,
 ): void {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the fork command target when the active thread changes away from it
   useEffect(() => {
     setForkCommandTarget((current) =>
       current &&
@@ -163,6 +165,7 @@ export function useClearForkCommandOnThreadChange(
 /** The composer's fork command: the running turn while it works, else the latest answer. */
 export function createForkConversationCommand(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly readTimelineEntries?: () => ReadonlyArray<TimelineEntry>;
   readonly activeLatestRun: TimelineLatestRun | null;
   readonly activeRunningTurnId: RunId | null;
   readonly activeThreadId: ThreadId | null;
@@ -177,13 +180,14 @@ export function createForkConversationCommand(input: {
     activeThreadEnvironmentId,
     setForkCommandTarget,
   } = input;
-  const latestCompletedAssistantMessageId = findLatestCompletedAssistantMessageId({
-    timelineEntries,
-    latestRun: activeLatestRun,
-    runningRunId: activeRunningTurnId,
-  });
   return (options?: { readonly preserveComposerDraft?: boolean }) => {
     if (!activeThreadId || !activeThreadEnvironmentId) return;
+    const latestCompletedAssistantMessageId = findLatestCompletedAssistantMessageId({
+      timelineEntries: input.readTimelineEntries?.() ?? timelineEntries,
+      latestRun: activeLatestRun,
+      runningRunId: activeRunningTurnId,
+    });
+
     // While the agent works, a fork carries its work in progress.
     if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
       setForkCommandTarget({
@@ -209,11 +213,12 @@ export function createForkConversationCommand(input: {
 export function deriveForkTimelineBaseline(input: {
   readonly turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   readonly activeThread: Thread | null | undefined;
-  readonly serverVisibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly serverVisibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>;
   readonly isGitRepo: boolean;
   readonly forkDialogOpen: boolean;
   readonly forkCommandTarget: ForkCommandTarget | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly readTimelineEntries?: () => ReadonlyArray<TimelineEntry>;
 }) {
   const {
     turnDiffSummaries,
@@ -252,7 +257,7 @@ export function deriveForkTimelineBaseline(input: {
         ? target.messageId
         : target?.kind === "user-message"
           ? findPrecedingCompletedAssistantMessageId({
-              timelineEntries,
+              timelineEntries: input.readTimelineEntries?.() ?? timelineEntries,
               sourceUserMessageId: target.messageId,
             })
           : null;
@@ -294,6 +299,8 @@ export function forkWorktreeAvailabilityFromOptions(
 export function createForkMessageCommands(input: {
   readonly activeThreadId: ThreadId | null;
   readonly activeThreadEnvironmentId: EnvironmentId | null;
+  readonly activeRunningTurnId: RunId | null;
+  readonly readTimelineEntries: () => ReadonlyArray<TimelineEntry>;
   readonly setForkCommandTarget: SetForkCommandTarget;
 }) {
   const { activeThreadId, activeThreadEnvironmentId, setForkCommandTarget } = input;
@@ -318,7 +325,31 @@ export function createForkMessageCommands(input: {
       source: "this-message",
     });
   };
-  return { onForkAssistantMessage, onForkUserMessage };
+  const onForkFromRun = async (source: { sourceThreadId: ThreadId; runId: RunId }) => {
+    if (!activeThreadId || !activeThreadEnvironmentId || source.sourceThreadId !== activeThreadId)
+      return;
+    if (source.runId === input.activeRunningTurnId) {
+      setForkCommandTarget({
+        threadId: activeThreadId,
+        environmentId: activeThreadEnvironmentId,
+        kind: "running-turn",
+        runId: source.runId,
+        source: "running-turn",
+      });
+      return;
+    }
+    const answer = input
+      .readTimelineEntries()
+      .findLast(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          entry.message.runId === source.runId &&
+          !entry.message.streaming,
+      );
+    if (answer?.kind === "message") onForkAssistantMessage(answer.message.id);
+  };
+  return { onForkAssistantMessage, onForkUserMessage, onForkFromRun };
 }
 
 /** The chat's fork dialog for the target the fork command opened. */
@@ -416,11 +447,9 @@ export function ScientChatForkDialog(input: {
 }
 
 /**
- * A fork normally applies its PDF positions when it is created. If they are
- * still waiting (for example the app reloaded before the fork's folder was
- * known), hold that fork's panel until they are applied, because a PDF reader
- * records its own position as soon as it opens. Other threads, and later
- * folder changes, never hide or remount the panel.
+ * Hold only the fork's panel until deferred PDF positions apply: opening a reader records its own
+ * position immediately and could overwrite them. Other threads/later folder changes must not
+ * remount the panel.
  */
 export function useForkPdfContinuityPending(
   activeThreadRef: ScopedThreadRef | null,
@@ -430,6 +459,7 @@ export function useForkPdfContinuityPending(
     subscribeForkPdfContinuity,
     () => activeThreadRef !== null && hasPendingForkPdfContinuity(activeThreadRef),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores fork PDF continuity over the environment connection once the destination workspace root is known
   useLayoutEffect(() => {
     if (!activeThreadRef || !forkPdfContinuityPending || activeWorkspaceRoot === undefined) return;
     restoreForkPdfContinuity({
@@ -441,13 +471,9 @@ export function useForkPdfContinuityPending(
   return forkPdfContinuityPending;
 }
 
-/** Another thread's held rows: never shown under a landing fork. */
-const NO_HELD_TIMELINE = { threadKey: null, entries: [] as never[] };
-
 /**
- * A fork opened from the fork dialog lands hidden (forkLanding.ts). While it
- * stays the open thread, another thread's held timeline never stands in for
- * its own, even once the landing has timed out. Other threads are untouched.
+ * Remembers a fork landing through its timeout so it reveals once, until the
+ * user leaves that route.
  */
 export function useForkLanding(routeThreadKey: string) {
   const pending = useSyncExternalStore(
@@ -465,8 +491,6 @@ export function useForkLanding(routeThreadKey: string) {
   return {
     pending,
     landed,
-    /** Passed as the switch timeline's `lastReady` so nothing is held. */
-    heldTimeline: landed ? NO_HELD_TIMELINE : undefined,
   };
 }
 
@@ -492,6 +516,7 @@ export function useForkLandingReveal(input: {
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
   const ready = landing.pending && isForkLandingReady({ ...readiness, positionedThreadKey });
   const { threadKey } = input;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles the fork-landing registry entry once the landing reports ready
   useLayoutEffect(() => {
     if (ready) settleForkLanding(threadKey);
   }, [ready, threadKey]);

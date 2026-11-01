@@ -14,7 +14,7 @@ const highlighterBarrier = vi.hoisted(() => ({
 vi.mock("~/lib/syntaxHighlighting", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/lib/syntaxHighlighting")>();
   return {
-    ...actual,
+    PREFERRED_HIGHLIGHTER: actual.PREFERRED_HIGHLIGHTER,
     getSyntaxHighlighterPromise(language: string) {
       const ready = highlighterBarrier.ready;
       if (!ready) return actual.getSyntaxHighlighterPromise(language);
@@ -44,7 +44,11 @@ function setupHighlighterReadiness() {
   highlighterBarrier.promises.clear();
   highlighterBarrier.requested.mockClear();
   return {
-    release: () => ready.resolve(),
+    async release() {
+      ready.resolve();
+      // Opening the gate is not completion of a cold WASM/grammar load.
+      await Promise.all(highlighterBarrier.promises.values());
+    },
     [Symbol.dispose]() {
       ready.resolve();
       highlighterBarrier.ready = null;
@@ -72,7 +76,7 @@ it("holds a loading block's code unseen but readable, for screen readers and Cop
   expect(placeholder?.closest("[aria-hidden]")).toBeNull();
   expect(host.querySelector(".chat-markdown-shiki")).toBeNull();
   await act(() => readiness.release());
-  await expect.poll(() => host.querySelector(".invisible")).toBeNull();
+  expect(host.querySelector(".invisible")).toBeNull();
   const highlighted = host.querySelector(".chat-markdown-shiki")!;
   expect(highlighted.querySelector("code")?.textContent?.trimEnd()).toBe(code.trimEnd());
   expect(highlighted.querySelector('code span[style*="color"]')).not.toBeNull();

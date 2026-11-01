@@ -19,6 +19,12 @@ import type { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.t
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { isAutomaticCompletionRun } from "../../orchestration-v2/QueuedRunOrder.ts";
 
+/** A run stopped to start a queued command lets that command and the queue behind it proceed. */
+const QUEUED_COMMAND_STOP_REASONS: ReadonlySet<string> = new Set([
+  "Stopped to apply /goal",
+  "Skipped compaction to send a queued message",
+]);
+
 /** Bind the native terminal reaction once; reads and writes stay lazy under the caller's lock. */
 export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
   projectionStore,
@@ -56,7 +62,7 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       {
         messageRoles: ["user", "system"],
         turnItemRunIds: [terminal.id],
-        turnItemTypes: ["error"],
+        turnItemTypes: ["error", "run_interrupt_request"],
       },
     );
     const run = projection.runs.find((candidate) => candidate.id === terminal.id);
@@ -66,8 +72,18 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       run.activeAttemptId !== terminal.activeAttemptId
     )
       return;
+    const stoppedForQueuedCommand =
+      run.status === "interrupted" &&
+      projection.turnItems.some(
+        (item) =>
+          item.type === "run_interrupt_request" &&
+          item.runId === run.id &&
+          item.message !== undefined &&
+          QUEUED_COMMAND_STOP_REASONS.has(item.message),
+      );
     const queued = projection.runs.filter(
       (candidate) =>
+        !stoppedForQueuedCommand &&
         candidate.status === "queued" &&
         candidate.queueHeld !== true &&
         !isAutomaticCompletionRun(projection, candidate),
@@ -82,6 +98,7 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       const queuedIds = new Set(queued.map((candidate) => candidate.id));
       const admissionSequences = new Map<RunId, number>();
       const releaseReceipts = new Map<CommandId, number>();
+      const heldRuns = new Set<RunId>();
       yield* Stream.concat(
         eventStore.read({ threadId, eventType: "run.created", throughSequence }),
         eventStore.read({ threadId, eventType: "run.updated", throughSequence }),
@@ -108,7 +125,17 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
               );
               return;
             }
-            if (payload.queueHeld !== false || entry.commandId == null) return;
+            if (payload.queueHeld === true) heldRuns.add(payload.id);
+            if (payload.queueHeld !== false) return;
+            if (entry.commandId == null) {
+              // Only the release of unattended messages after a completed run has no command.
+              if (heldRuns.delete(payload.id))
+                queueBoundaries.set(
+                  payload.id,
+                  Math.max(queueBoundaries.get(payload.id) ?? 0, entry.sequence),
+                );
+              return;
+            }
             let released = releaseReceipts.get(entry.commandId);
             if (released === undefined) {
               const receipt = yield* commandReceipts.getByCommandId(entry.commandId);
@@ -116,9 +143,10 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
                 Option.isSome(receipt) &&
                 receipt.value.status === "accepted" &&
                 receipt.value.threadId === threadId &&
-                // Send and Resume release with queue.resume; a direct user
-                // message releases the held queue in its own message.dispatch.
+                // Send and Resume release with queue.resume or queued-run.start; a
+                // direct user message releases the held queue in its own message.dispatch.
                 (receipt.value.commandType === "queue.resume" ||
+                  receipt.value.commandType === "queued-run.start" ||
                   receipt.value.commandType === "message.dispatch")
                   ? receipt.value.resultSequence
                   : 0;

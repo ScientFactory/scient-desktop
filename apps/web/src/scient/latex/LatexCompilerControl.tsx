@@ -67,7 +67,7 @@ export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
             >
               <span>
                 {choice.name}
-                {availability ? ` — ${availability}` : ""}
+                {availability ? ` (${availability})` : ""}
               </span>
             </DockCommandRadioItem>
           );

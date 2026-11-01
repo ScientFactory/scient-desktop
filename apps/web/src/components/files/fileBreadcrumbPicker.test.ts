@@ -122,7 +122,7 @@ describe("file breadcrumb picker listing", () => {
       state: "ready",
       entries: [],
       incomplete: true,
-      message: "No listed entries—workspace listing is incomplete.",
+      message: "No listed entries. Workspace listing is incomplete.",
     });
   });
 

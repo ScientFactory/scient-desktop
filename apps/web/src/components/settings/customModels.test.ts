@@ -75,7 +75,7 @@ describe("model connection presentation", () => {
     expect(
       modelConnectionStatus(provider, { ...available, state: "needs_setup", reason: "credential" }),
     ).toBe(MISSING_KEY_STATUS);
-    expect(MISSING_KEY_STATUS).toBe("Saved key missing — re-enter it");
+    expect(MISSING_KEY_STATUS).toBe("Saved key missing. Re-enter it");
   });
   it("distinguishes installation, disabled, authentication and probe failures", () => {
     expect(modelConnectionStatus({ ...provider, enabled: false }, available)).toBe("Disabled");
@@ -102,6 +102,35 @@ describe("model connection presentation", () => {
     };
     expect(customModelPresetId(saved)).toBe("spacexai");
     expect(saved.protocol).toBe("openai-completions");
+  });
+
+  it("classifies connections by exact endpoint and compatible protocol, never their display name", () => {
+    const connection = {
+      id: "shared",
+      name: "Shared endpoint",
+      baseUrl: "https://example.test/v1",
+      protocol: "openai-completions" as const,
+      credentialId: null,
+      models: [],
+    };
+    expect(customModelPresetId({ ...connection, baseUrl: "https://api.x.ai/v1" })).toBe("spacexai");
+    expect(customModelPresetId({ ...connection, name: "OpenAI" })).toBe("custom");
+    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/v1/" })).toBe(
+      "openai",
+    );
+    expect(
+      customModelPresetId({
+        ...connection,
+        baseUrl: "https://api.openai.com/v1",
+        protocol: "anthropic-messages",
+      }),
+    ).toBe("custom");
+    expect(
+      customModelPresetId({ ...connection, baseUrl: "https://api.openai.com.attacker.test/v1" }),
+    ).toBe("custom");
+    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/other" })).toBe(
+      "custom",
+    );
   });
 });
 
@@ -258,10 +287,10 @@ describe("custom model agents", () => {
 
 describe("model availability hint", () => {
   it("points to the model ID only for agents that list models by it", () => {
-    expect(modelUnavailableHint("pi")).toBe(" — check the model ID and limits in Edit");
-    expect(modelUnavailableHint("omp")).toBe(" — check the model ID and limits in Edit");
+    expect(modelUnavailableHint("pi")).toBe(". Check the model ID and limits in Edit");
+    expect(modelUnavailableHint("omp")).toBe(". Check the model ID and limits in Edit");
     // Droid lists every model Scient gives it; an absent one means its list is out of date.
-    expect(modelUnavailableHint("droid")).toBe(" — use Check again to refresh Droid's list");
+    expect(modelUnavailableHint("droid")).toBe(". Use Check again to refresh Droid's list");
   });
 });
 

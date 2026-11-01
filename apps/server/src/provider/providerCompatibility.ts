@@ -61,13 +61,8 @@ export type ProviderCompatibilityPolicy = typeof ProviderCompatibilityPolicy.Typ
 const FIRST_SCIENT_RELEASE_VERSION = "0.6.0";
 const DEVELOPMENT_BUILD_VERSION = `${Number.MAX_SAFE_INTEGER}.0.0`;
 
-/**
- * The version a policy's `t3CodeRange` is matched against. Installed releases
- * fetch the manifest from `main`, so policies that follow code on `main` must be
- * scoped to the next Scient release. Release builds are stamped with their Scient
- * version; unstamped development builds keep upstream's 0.0.x version but run
- * `main`'s code, so they match as newer than every release.
- */
+/** Installed builds fetch main's manifest, so new policies target the next Scient release.
+ * Stamped releases use their Scient version; unstamped development builds sort above releases. */
 function compatibilityBuildVersion(buildVersion: string): string {
   return compareSemverVersions(buildVersion, FIRST_SCIENT_RELEASE_VERSION) < 0
     ? DEVELOPMENT_BUILD_VERSION
@@ -86,9 +81,7 @@ export function resolveProviderCompatibility(
   );
   if (!policy) return undefined;
   const unprefixed = version?.replace(/^v/, "");
-  // Cursor appends a build hash to its date; Google's ACP runtime uses a release prefix;
-  // Muse appends a release revision. Strip only these driver-specific forms, keeping
-  // semver prereleases unknown.
+  // Strip Cursor build hashes, Google ACP release prefixes and Muse revisions; leave semver prereleases unknown.
   const stable =
     driver === "cursor"
       ? unprefixed?.replace(/^(\d{4}\.\d{2}\.\d{2})-[a-f0-9]+$/, "$1")

@@ -33,10 +33,8 @@ const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
-// HTTP(S) requests to these ports are blocked by the Fetch standard before a
-// browser reaches the network. Keep the complete list here so explicit or
-// future wider offsets cannot produce a URL that curl accepts but browsers
-// reject. https://fetch.spec.whatwg.org/#port-blocking
+// Browsers block these ports before networking even when curl accepts them.
+// https://fetch.spec.whatwg.org/#port-blocking
 const FETCH_BAD_PORTS = new Set([
   0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
   103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
@@ -44,17 +42,12 @@ const FETCH_BAD_PORTS = new Set([
   995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
   6669, 6679, 6697, 10080,
 ]);
-// Dev servers bind loopback, so loopback is the only interface whose
-// availability decides whether we can use a port.
+// Dev binds loopback; other interfaces cannot establish port availability.
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "::1"] as const;
-// A pruned migrate-dev-db copy is tens of MB; some worktrees hold a full copy
-// of the live database instead.
+// Migration prunes after copying, so large sources also need an automatic-seeding limit.
 const LARGE_DEV_DATABASE_BYTES = 500 * 1024 * 1024;
 
-/**
- * Loopback and the wildcards qualify; a specific interface (e.g. a LAN IP) does
- * not — the OS binds only that address and the proxy target goes dark.
- */
+/** Only loopback and wildcard binds keep the loopback proxy target reachable. */
 export function isProxiableBindHost(host: string): boolean {
   const normalized = host.trim();
   return (
@@ -87,11 +80,18 @@ const MODE_ARGS = {
   "dev:desktop": ["run", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "dev"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
+// `--built`: the web package rebuilds into apps/web/dist and the backend serves
+// it, so no Vite dev server runs.
+const BUILT_DEV_ARGS = [
+  "run",
+  "--filter=@t3tools/web",
+  "--filter=t3",
+  "--parallel",
+  "dev:built",
+] as const;
+
 type DevMode = keyof typeof MODE_ARGS;
-/**
- * `role` matters because only the backend honours `--host`/`T3CODE_HOST`; the
- * web port is always loopback.
- */
+// Only backend ports honor --host/T3CODE_HOST; web ports stay loopback.
 type PortAvailabilityCheck<R = never> = (
   port: number,
   role?: "server" | "web",
@@ -187,6 +187,17 @@ export class DevRunnerHostNotProxiableError extends Schema.TaggedError<DevRunner
   }
 }
 
+export class DevRunnerBuiltNeedsShareError extends Schema.TaggedError<DevRunnerBuiltNeedsShareError>()(
+  "DevRunnerBuiltNeedsShareError",
+  {
+    mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
+  },
+) {
+  override get message(): string {
+    return `--built only works with \`dev --share\` (got ${this.mode}${this.mode === "dev" ? " without --share" : ""}): the backend serves the built client on the tailnet URL.`;
+  }
+}
+
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.String(name).pipe(
     Config.option,
@@ -264,6 +275,12 @@ const resolveBaseDir = Effect.fn("dev-runner.resolveBaseDir")(function* (
   const path = yield* Path.Path;
   const configured = baseDir?.trim();
 
+  if (configured === "~") {
+    return yield* HostProcess.HomeDirectory;
+  }
+  if (configured?.startsWith("~/") || configured?.startsWith("~\\")) {
+    return path.join(yield* HostProcess.HomeDirectory, configured.slice(2));
+  }
   if (configured) {
     return path.resolve(configured);
   }
@@ -333,21 +350,19 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     "scratch",
   );
 
-  // A dev-runner server is never launcher-managed. When the shell that runs
-  // this script was itself spawned by the machine's managed t3 service (an
-  // agent working inside T3 Code), these leak through and the child server
-  // fails startup with "The service launcher started a different t3 version"
-  // (serviceLauncherClient.ts resolveStartup).
+  // Managed T3 service shells leak launcher variables that make dev servers fail version checks.
+  // Dev-runner servers are never launcher-managed (serviceLauncherClient.ts resolveStartup).
   delete output.T3_SERVICE_LAUNCHER_CONTEXT;
   delete output.T3_BOOT_SERVICE_UNIT;
 
+  // Each worktree has its own state, so a dev server would count as a new
+  // install of the developer's real accounts. Set it explicitly to opt in.
+  output.T3CODE_TELEMETRY_ENABLED = baseEnv.T3CODE_TELEMETRY_ENABLED ?? "false";
+
   if (!isDesktopMode) {
     output.T3CODE_PORT = String(serverPort);
-    // HOST is Vite's own bind address, and the desktop branch below is the
-    // only place we set it. An inherited one (an exported HOST, a container,
-    // a `HOST=0.0.0.0 npm start` habit) would otherwise reach Vite and pin
-    // its HMR socket to that address — see the `explicitHost` gate in
-    // apps/web/vite.config.ts.
+    // An inherited HOST pins Vite's HMR socket via explicitHost in apps/web/vite.config.ts.
+    // Only desktop mode should set it.
     delete output.HOST;
     if (mode === "dev" || mode === "dev:web") {
       // Browser dev is single-origin: everything (including /ws) is proxied
@@ -611,7 +626,7 @@ const runRepoScript = Effect.fn("dev-runner.runRepoScript")(function* (
 });
 
 /**
- * First start can explicitly seed an empty database from the live install
+ * First start can explicitly seed an empty database from a small live database
  * and warms the web dependency cache. Each step checks for its own output, so
  * later starts skip it.
  */
@@ -647,17 +662,25 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
     if (
       input.seed &&
       !(yield* exists(path.join(stateDir, "statev2.sqlite"))) &&
-      !(yield* exists(path.join(stateDir, "state.sqlite"))) &&
-      (yield* exists(source))
+      !(yield* exists(path.join(stateDir, "state.sqlite")))
     ) {
-      yield* Effect.logInfo(
-        `[dev-runner] seeding ${input.worktreeHome} from ${source} (read-only). --no-seed or T3CODE_DEV_SEED=0 skips this.`,
-      );
-      yield* runRepoScript(
-        "apps/server/scripts/migrate-dev-db.ts",
-        ["--base-dir", input.worktreeHome, "--development-state", "--source", source],
-        input.env,
-      );
+      const info = yield* fs.stat(source).pipe(Effect.option);
+      if (Option.isSome(info)) {
+        if (Number(info.value.size) > LARGE_DEV_DATABASE_BYTES) {
+          yield* Effect.logWarning(
+            `[dev-runner] ${source} exceeds 500 MiB; skipping automatic database seeding and starting with an empty database. Run \`vp run migrate-dev-db\` manually with dev stopped if needed; it may use substantial disk space before pruning.`,
+          );
+        } else {
+          yield* Effect.logInfo(
+            `[dev-runner] seeding ${input.worktreeHome} from ${source} (read-only). --no-seed or T3CODE_DEV_SEED=0 skips this.`,
+          );
+          yield* runRepoScript(
+            "apps/server/scripts/migrate-dev-db.ts",
+            ["--base-dir", input.worktreeHome, "--development-state", "--source", source],
+            input.env,
+          );
+        }
+      }
     }
   }
 
@@ -682,6 +705,7 @@ interface DevRunnerCliInput {
   readonly dryRun: boolean;
   readonly share: boolean;
   readonly seed?: boolean | undefined;
+  readonly built: boolean;
   readonly runArgs: ReadonlyArray<string>;
 }
 
@@ -706,6 +730,10 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     return yield* new DevRunnerHostNotProxiableError({ mode: input.mode, host: input.host });
   }
 
+  if (input.built && (input.mode !== "dev" || !input.share)) {
+    return yield* new DevRunnerBuiltNeedsShareError({ mode: input.mode });
+  }
+
   const worktreePath = yield* resolveGitWorktreePath(yield* HostProcess.WorkingDirectory);
 
   const { offset, source } = yield* resolveOffset({
@@ -726,11 +754,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   const path = yield* Path.Path;
   // SCIENT-FORK:START — candidate isolation also bounds first-start seeding.
   const worktreeHome = worktreePath ? path.join(worktreePath, ".scient-next") : undefined;
-  // A dev server started inside a worktree defaults to that worktree's own
-  // (gitignored) `.scient-next`; an ambient T3CODE_HOME is never consulted.
-  // Trim before choosing: `--home-dir ""` is not a selection, and treating it
-  // as one would skip the worktree default and land on the shared home —
-  // exactly the outcome this precedence exists to prevent.
+  // Worktrees default to their own .scient-next, ahead of ambient T3CODE_HOME.
+  // Trim empty --home-dir values so they cannot bypass isolation and fall into the shared home.
   const resolvedT3Home = (input.t3Home?.trim() || undefined) ?? worktreeHome;
   // SCIENT-FORK:END
   const env = yield* createDevRunnerEnv({
@@ -765,6 +790,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   }
 
   const sharedWebPort = BASE_WEB_PORT + webOffset;
+  let built = false;
   if (input.share) {
     if (input.mode === "dev:server") {
       yield* Effect.logInfo("[dev-runner] --share has no effect for dev:server (no web server).");
@@ -777,18 +803,39 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
       // process (and reboots), so the cleanup has to be registered atomically
       // with creating it. An interrupt landing in between would otherwise
       // leave a mapping pointing at a port nothing is listening on.
-      const shared = yield* Effect.acquireRelease(shareDevServer({ webPort: sharedWebPort }), () =>
-        unshareDevServer(sharedWebPort).pipe(
-          Effect.flatMap((result) =>
-            result.cleared
-              ? Effect.void
-              : Effect.logWarning(
-                  `[dev-runner] could not remove the tailnet mapping for port ${String(sharedWebPort)}${
-                    result.explanation ? `: ${result.explanation}` : ""
-                  }. Remove it with \`tailscale serve --https=${String(sharedWebPort)} off\`.`,
-                ),
+      const shared = yield* Effect.acquireRelease(
+        shareDevServer({
+          webPort: sharedWebPort,
+          // A wildcard answers IPv4 loopback; localhost must retain the backend's
+          // DNS choice, which can be IPv6-only.
+          ...(input.built
+            ? {
+                localTarget: {
+                  port: Number(env.T3CODE_PORT),
+                  // SCIENT-FORK:START built-share-bind-host
+                  host:
+                    input.host?.trim().toLowerCase() === "localhost"
+                      ? "localhost"
+                      : ["::1", "[::1]"].includes(input.host?.trim() ?? "")
+                        ? "[::1]"
+                        : "127.0.0.1",
+                  // SCIENT-FORK:END built-share-bind-host
+                },
+              }
+            : {}),
+        }),
+        () =>
+          unshareDevServer(sharedWebPort).pipe(
+            Effect.flatMap((result) =>
+              result.cleared
+                ? Effect.void
+                : Effect.logWarning(
+                    `[dev-runner] could not remove the tailnet mapping for port ${String(sharedWebPort)}${
+                      result.explanation ? `: ${result.explanation}` : ""
+                    }. Remove it with \`tailscale serve --https=${String(sharedWebPort)} off\`.`,
+                  ),
+            ),
           ),
-        ),
       ).pipe(
         Effect.tapError((error: DevShareError) =>
           Effect.logWarning(
@@ -814,14 +861,21 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         if (input.devUrl === undefined) {
           env.VITE_DEV_SERVER_URL = shared.url;
         }
-        // A shared origin serves a remote browser, where unbundled dev's
-        // per-module requests each pay a tailnet round trip — a cold module
-        // graph takes minutes to first paint. Bundled dev collapses that to a
-        // few chunk requests.
-        if (env.T3CODE_BUNDLED_DEV === undefined) {
+        if (input.built) {
+          built = true;
+          env.T3CODE_BUILT_DEV = "1";
+        } else if (env.T3CODE_BUNDLED_DEV === undefined) {
+          // A shared origin serves a remote browser, where unbundled dev's
+          // per-module requests each pay a tailnet round trip — a cold module
+          // graph takes minutes to first paint. Bundled dev collapses that to a
+          // few chunk requests.
           env.T3CODE_BUNDLED_DEV = "1";
         }
         yield* Effect.logInfo(`[dev-runner] shared on tailnet: ${shared.url}`);
+      } else if (input.built) {
+        yield* Effect.logWarning(
+          "[dev-runner] --built needs the tailnet share; running the Vite dev server instead.",
+        );
       }
     }
   }
@@ -836,7 +890,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     env,
   });
 
-  const args = [...MODE_ARGS[input.mode], ...input.runArgs];
+  const args = [...(built ? BUILT_DEV_ARGS : MODE_ARGS[input.mode]), ...input.runArgs];
   const spawnCommand = yield* resolveSpawnCommand("vp", args, { env });
   const processContext = {
     mode: input.mode,
@@ -940,9 +994,15 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   seed: Flag.Boolean("seed").pipe(
     Flag.withDescription(
-      "Seed an empty worktree database from ~/.t3 on first start (read-only, via migrate-dev-db). Off by default; use --seed or T3CODE_DEV_SEED=1 only with explicit permission to copy that profile.",
+      "Seed an empty worktree database from ~/.t3 on first start (read-only, via migrate-dev-db) if the source is at most 500 MiB. Off by default; use --seed or T3CODE_DEV_SEED=1 only with explicit permission to copy that profile.",
     ),
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_DEV_SEED")),
+  ),
+  built: Flag.Boolean("built").pipe(
+    Flag.withDescription(
+      "With --share: serve a production web build from the backend instead of the Vite dev server. Rebuilds on change, no HMR, much smaller remote loads.",
+    ),
+    Flag.withDefault(false),
   ),
   runArgs: Argument.String("run-arg").pipe(
     Argument.withDescription("Additional Vite+ run args (pass after `--`)."),

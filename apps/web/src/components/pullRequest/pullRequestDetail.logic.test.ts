@@ -19,6 +19,8 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
+  buildExplainPullRequestHandoff,
+  buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
   buildPullRequestReferenceContext,
   buildFixFindingHandoff,
@@ -52,7 +54,18 @@ import {
   resolveBaseFreshness,
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
+  classifyPullRequestChecks,
+  describePullRequestChecks,
+  groupPullRequestChecks,
+  readableFailure,
 } from "./pullRequestDetail.logic";
+import {
+  pullRequestCheckStatusLabel,
+  pullRequestCheckStatusPresentation,
+  pullRequestChecksState,
+  pullRequestChecksStatePresentation,
+  summarizePullRequestChecks,
+} from "./pullRequestPresentation";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
@@ -83,7 +96,7 @@ describe("pull request checkout commands", () => {
       remoteName: "origin",
       remoteUrl: "git@github.com:acme/web.git",
     },
-    provider,
+    provider: SourceControlProviderKind.make(provider),
   });
 
   it("uses a matching enterprise identity and rejects an explicit host mismatch", () => {
@@ -108,8 +121,9 @@ describe("pull request checkout commands", () => {
 
 const TIMELINE_SOURCE: Pick<
   PullRequestDetailView,
-  "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
+  "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
 > = {
+  provider: SourceControlProviderKind.make("github"),
   createdAt: "2026-07-01T00:00:00Z",
   author: { login: "octocat", name: null, avatarUrl: null },
   commits: [
@@ -200,6 +214,69 @@ describe("pull request primary control", () => {
         autoMergeEnabled: undefined,
       }),
     ).toBe("merge");
+  });
+});
+describe("pull request warning checks", () => {
+  const warning: PullRequestCheck = {
+    name: "lint",
+    status: "neutral",
+    outcome: "warning",
+    description: null,
+    url: null,
+  };
+  const success: PullRequestCheck = {
+    name: "build",
+    status: "success",
+    description: null,
+    url: null,
+  };
+
+  it("keeps terminal warnings distinct from passing and failed checks", () => {
+    const neutral: PullRequestCheck = {
+      name: "neutral",
+      status: "neutral",
+      description: null,
+      url: null,
+    };
+    const skipped: PullRequestCheck = {
+      name: "skipped",
+      status: "skipped",
+      description: null,
+      url: null,
+    };
+    expect(classifyPullRequestChecks([warning, success])).toBe("warning");
+    expect(describePullRequestChecks([warning, success])).toBe("1 warning");
+    expect(groupPullRequestChecks([warning, success, neutral, skipped])).toEqual({
+      attention: [warning],
+      running: [],
+      completed: [success, neutral, skipped],
+    });
+    expect(pullRequestCheckStatusLabel(warning)).toBe("Warning");
+    expect(pullRequestCheckStatusPresentation(warning)).toMatchObject({
+      label: "Warning",
+      toneClassName: "text-amber-600 dark:text-amber-400/90",
+    });
+    expect(pullRequestCheckStatusPresentation(neutral).label).toBe("Neutral");
+    expect(pullRequestChecksState([warning, success])).toBe("warning");
+    expect(pullRequestChecksStatePresentation("warning").label).toBe(
+      "Some checks finished with warnings",
+    );
+    expect(summarizePullRequestChecks([warning, success])).toBe("1 warning");
+  });
+
+  it("treats warning outcomes as terminal before checking their status", () => {
+    for (const status of ["pending", "failure"] as const) {
+      const warning = { ...success, status, outcome: "warning" as const };
+      expect(classifyPullRequestChecks([warning])).toBe("warning");
+      expect(describePullRequestChecks([warning])).toBe("1 warning");
+      expect(groupPullRequestChecks([warning])).toEqual({
+        attention: [warning],
+        running: [],
+        completed: [],
+      });
+      expect(pullRequestChecksState([warning])).toBe("warning");
+      expect(summarizePullRequestChecks([warning])).toBe("1 warning");
+    }
   });
 });
 
@@ -339,6 +416,19 @@ describe("pull request timeline", () => {
     });
     expect(events[0]?.id).toBe("merged");
     expect(events.some((event) => event.id === "closed")).toBe(false);
+  });
+
+  it("names the change request in its host's own term", () => {
+    const titles = (provider: string) =>
+      buildPullRequestTimeline({
+        ...TIMELINE_SOURCE,
+        provider: SourceControlProviderKind.make(provider),
+        closedAt: "2026-07-04T00:00:00Z",
+      })
+        .filter((event) => event.kind === "opened" || event.kind === "closed")
+        .map((event) => event.title);
+    expect(titles("github")).toEqual(["Pull request closed", "opened this pull request"]);
+    expect(titles("gitlab")).toEqual(["Merge request closed", "opened this merge request"]);
   });
 
   it("groups conversation sections without crossing commits or PR updates", () => {
@@ -543,6 +633,28 @@ describe("review thread conversations", () => {
     );
   });
 
+  it("keeps bot review verdicts when bot comments are hidden", () => {
+    const review = (id: string, reviewState: string) => ({
+      ...comment(id, 9),
+      author: bot,
+      kind: "review" as const,
+      reviewState,
+    });
+    const items = pullRequestConversationItems(
+      [
+        review("approved", "APPROVED"),
+        review("changes", "CHANGES_REQUESTED"),
+        review("commented", "COMMENTED"),
+      ],
+      [],
+    );
+    expect(
+      filterPullRequestConversationItems(items, { bots: false, resolved: false }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["approved", "changes"]);
+  });
+
   it("distinguishes unloaded replies from complete threads, even when the host only supplies a cursor", () => {
     const timeline = (reviewThread: PullRequestReviewThread) =>
       buildPullRequestTimeline({
@@ -649,6 +761,40 @@ describe("fix findings handoff", () => {
     expect(texts).not.toContain("reviewer: finding 0");
     expect(handoff.prompt).toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
+  });
+  it.each(["neutral", "pending", "failure"] as const)(
+    "does not turn a %s warning outcome into a failing-check handoff",
+    (status) => {
+      const genuine = buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        checks: [failingCheck],
+      });
+      expect(genuine.prompt).toContain(failingCheck.name);
+      const withWarning = buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        checks: [
+          failingCheck,
+          { ...failingCheck, name: "advisory-warning", status, outcome: "warning" },
+        ],
+      });
+      expect(withWarning).toEqual(genuine);
+    },
+  );
+
+  it("names a GitLab merge request as one", () => {
+    const handoff = buildFixFindingsHandoff({
+      ...base,
+      title: "Add the page",
+      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+      reviewThreads: [],
+      checks: [],
+    });
+    expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
+    expect(handoff.prompt).toContain("The MR branch is `feat/page`");
+    expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
+    expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
   });
 });
 
@@ -838,6 +984,23 @@ describe("asking about a change rather than working on it", () => {
     ]);
     expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
     expect(handoff.reviewComments[1]?.text).toBe("");
+  });
+
+  it("explains a GitLab merge request in its own term", () => {
+    const handoff = buildExplainPullRequestHandoff({
+      ...base,
+      title: "Add the page",
+      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+    });
+    expect(handoff.prompt).toBe("Explain this merge request.");
+    expect(handoff.reviewComments[0]?.text).toContain("The merge request is #42");
+    expect(handoff.reviewComments[0]?.text).not.toContain("pull request");
+    expect(
+      buildResolveConflictsPrompt({
+        ...base,
+        url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+      }),
+    ).toMatch(/^MR #42 /u);
   });
 });
 
@@ -1263,7 +1426,6 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(1))).toBeNull();
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(2))?.number).toBe(2);
     expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(21))?.number).toBe(21);
-    // Twenty snapshots plus the list of their keys.
     expect(storage.size()).toBe(21);
   });
 
@@ -1442,4 +1604,19 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+describe("readableFailure", () => {
+  it("replaces a host tool's bare failure with the hint, for every host", () => {
+    for (const message of [
+      "GitHub CLI failed.",
+      "Azure DevOps API failed",
+      "Forgejo command failed",
+    ]) {
+      expect(readableFailure(new Error(message), "Try again.")).toBe("Try again.");
+    }
+    expect(readableFailure(new Error("Branch is protected."), "Try again.")).toBe(
+      "Branch is protected.",
+    );
+  });
 });

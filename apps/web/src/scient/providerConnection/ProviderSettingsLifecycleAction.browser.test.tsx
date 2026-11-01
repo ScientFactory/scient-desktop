@@ -225,18 +225,6 @@ describe.each(SURFACES)("%s runtime progress", (surface) => {
     await commands.start.mock.results[0]!.value;
     await renderSurface(_fixture, surface, operation({}));
     await expect.element(page.getByLabelText("Download progress 42%")).toBeVisible();
-    const busy = _fixture.host!.querySelector<HTMLButtonElement>(
-      'button[aria-label="Installing Codex"]',
-    )!;
-    const loader = busy.querySelector("svg")!;
-    const percent = busy.querySelector<HTMLElement>('[aria-label="Download progress 42%"]')!;
-    expect(percent.className).toContain("text-muted-foreground");
-    expect(parseFloat(getComputedStyle(percent).fontSize)).toBeLessThan(
-      parseFloat(getComputedStyle(busy).fontSize),
-    );
-    expect(getComputedStyle(loader).animationName).not.toBe("none");
-    const initialRotation = getComputedStyle(loader).transform;
-    await expect.poll(() => getComputedStyle(loader).transform).not.toBe(initialRotation);
     await page.getByRole("button", { name: "Installing Codex", exact: true }).click();
     await expect.element(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Close details" }).click();
@@ -277,31 +265,17 @@ describe.each(SURFACES)("%s runtime progress", (surface) => {
   });
 });
 
-it.each([1280, 390])(
-  "keeps the shortened onboarding description and list compact at %spx",
-  async (width) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
+// regression: 29da09f8c3 fix(providers): retain setup progress outside management dialogs
+it("keeps onboarding within a narrow window with Skip reachable", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
 
-    await page.viewport(width, 800);
-    await renderSurface(_fixture, "onboarding", snapshot());
-    const description = _fixture.host!.querySelector("header p")!;
-    const heading = _fixture.host!.querySelector("header h1")!;
-    const content = heading.closest("header")!.parentElement!.parentElement!;
-    const list = _fixture.host!.querySelector<HTMLElement>('[aria-label="AI providers"]')!;
-    expect(description.textContent).toBe(
-      "Use a ChatGPT, Claude, or Google subscription you already have.",
-    );
-    expect(getComputedStyle(list).marginTop).toBe("12px");
-    expect(getComputedStyle(heading).fontSize).toBe(width >= 640 ? "24px" : "22px");
-    expect(getComputedStyle(description).marginTop).toBe("4px");
-    expect(getComputedStyle(content).marginTop).toBe("8px");
-    expect(list.getBoundingClientRect().top - description.getBoundingClientRect().bottom).toBe(12);
-    expect(_fixture.host!.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
-    await expect.element(page.getByRole("button", { name: "Skip", exact: true })).toBeVisible();
-  },
-);
+  await page.viewport(390, 800);
+  await renderSurface(_fixture, "onboarding", snapshot());
+  expect(_fixture.host!.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
+  await expect.element(page.getByRole("button", { name: "Skip", exact: true })).toBeVisible();
+});
 
 describe("row sign-in", () => {
   function signedOut(
@@ -352,43 +326,42 @@ describe("row sign-in", () => {
     });
   }
 
-  it.each([
-    ["antigravity", "antigravity_google"],
-    ["cursor", "cursor_browser"],
-    ["codex", "codex_browser"],
-  ] as const)("starts %s sign-in with one click", async (driver, method) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
+  // oneClickSignInMethod has two outcomes: exactly one browser method starts it
+  // from the row; anything else opens the setup view.
+  it.each([["codex", "codex_browser"]] as const)(
+    "starts %s sign-in with one click",
+    async (driver, method) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
 
-    const onManage = vi.fn();
-    const provider = signedOut(driver, [method]);
-    commands.connect.mockResolvedValue(
-      signedOut(driver, [method], waiting({ method, authorizationUrlKind: "primary" })),
-    );
-    await renderRow(_fixture, provider, onManage);
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect.poll(() => commands.connect.mock.calls).toEqual([[method]]);
-    await commands.connect.mock.results[0]!.value;
-    expect(onManage).not.toHaveBeenCalled();
-  });
+      const onManage = vi.fn();
+      const provider = signedOut(driver, [method]);
+      commands.connect.mockResolvedValue(
+        signedOut(driver, [method], waiting({ method, authorizationUrlKind: "primary" })),
+      );
+      await renderRow(_fixture, provider, onManage);
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      await expect.poll(() => commands.connect.mock.calls).toEqual([[method]]);
+      await commands.connect.mock.results[0]!.value;
+      expect(onManage).not.toHaveBeenCalled();
+    },
+  );
 
-  it.each([
-    ["claudeAgent", ["claude_subscription", "claude_console"]],
-    ["grok", ["grok_account", "grok_device_code"]],
-    ["droid", ["droid_device_pairing"]],
-    ["antigravity", ["antigravity_credentials"]],
-  ] as const)("opens the setup view for %s instead", async (driver, methods) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
+  it.each([["claudeAgent", ["claude_subscription", "claude_console"]]] as const)(
+    "opens the setup view for %s instead",
+    async (driver, methods) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
 
-    const onManage = vi.fn();
-    await renderRow(_fixture, signedOut(driver, methods), onManage);
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    expect(onManage).toHaveBeenCalledTimes(1);
-    expect(commands.connect).not.toHaveBeenCalled();
-  });
+      const onManage = vi.fn();
+      await renderRow(_fixture, signedOut(driver, methods), onManage);
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      expect(onManage).toHaveBeenCalledTimes(1);
+      expect(commands.connect).not.toHaveBeenCalled();
+    },
+  );
 
   it("also opens the setup view on another device, for pasting the return URL", async () => {
     await using _fixture = _createFixture();

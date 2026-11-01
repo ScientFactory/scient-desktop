@@ -102,11 +102,8 @@ export class DocumentPageTracker {
   }
 
   /**
-   * Fetches a captured asset once more and checks it against the digest the
-   * capture recorded, once per asset however often it is shown. The check is
-   * tracked, so readiness waits for it. An asset that was not served (missing,
-   * refused, or blocked) or does not match is fatal: the page is not the
-   * capture it claims to be.
+   * Readiness must await a fresh digest check once per captured asset. Missing, refused, blocked,
+   * or mismatched bytes are fatal because the page would no longer represent its capture.
    */
   checkCapturedAsset(
     asset: { readonly id: string; readonly fileName: string; readonly sha256?: string | undefined },

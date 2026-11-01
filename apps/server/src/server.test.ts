@@ -1,11 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off
+import * as DocumentText from "./provider/DocumentText.ts";
+// SCIENT-FORK:START — Scient Accounts: isolate account storage and key handling in server tests.
+import * as AccountsTestkit from "./scient/accounts/Accounts.testkit.ts";
+// SCIENT-FORK:END
+// @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-
 import { VcsExecutableUnavailableError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
 import {
@@ -40,13 +43,10 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2HttpThreadBoundedSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2TurnItem,
   OrchestrationV2SubagentJson,
   OrchestrationV2TurnItemJson,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
   OrchestrationV2ThreadHistoryPage,
   TerminalNotRunningError,
   TextGenerationError,
@@ -129,90 +129,14 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
-
 import {
   nativeFilePublicationCapabilities,
   resolveNativeFilePublicationHelperPath,
 } from "./scient/workspace/NativeFilePublication.ts";
-// SCIENT-FORK:START — ignored-file RPC races exercise the shipped native boundary.
 import {
   filePublicationTestHelper,
   nativePublicationHost,
 } from "./scient/workspace/fileExchange.testkit.ts";
-const ignoredReadHelper = await filePublicationTestHelper();
-const ignoredReadNative = await nativePublicationHost();
-// SCIENT-FORK:END
-
-const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
-const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
-const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
-const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
-// Retained history exists only where the resolved helper grants native publication authority.
-const nativePublicationServer = await (async () => {
-  const helper = await resolveNativeFilePublicationHelperPath();
-  if (helper === undefined) return false;
-  const capabilities = await nativeFilePublicationCapabilities(helper);
-  return (
-    capabilities.strictCurrentRoot &&
-    capabilities.publicationLease &&
-    capabilities.sharedPublicationLease &&
-    capabilities.exclusiveMove &&
-    capabilities.exclusiveLink
-  );
-})();
-const SUCCESSFUL_GIT_EXECUTION = {
-  exitCode: ChildProcessSpawner.ExitCode(0),
-  stdout: "",
-  stderr: "",
-  stdoutTruncated: false,
-  stderrTruncated: false,
-};
-const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadBoundedSnapshot)),
-);
-const decodeLegacyThreadBoundedSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
-);
-const encodeTurnItemJson = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
-const decodeQueueOperationError = Schema.decodeUnknownEffect(ScientThreadQueueOperationError);
-const decodeQueueSnapshot = Schema.decodeUnknownEffect(ScientThreadQueueSnapshot);
-const decodeSnapshotWireAssertions = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      snapshotFormat: Schema.optionalKey(Schema.String),
-      projection: Schema.Struct({
-        turnItems: Schema.Array(Schema.Unknown),
-        visibleTurnItems: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
-      }),
-    }),
-  ),
-);
-const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
-);
-const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
-);
-const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-
-// The server-router suite exercises the inherited cloud protocol directly.
-// Opt this test file into the otherwise-disabled D4 routes and restore the
-// caller's environment when the file completes; this test-only switch does
-// not make public cloud configuration appear in the route builder.
-const previousScientNextCloudRouteTest = process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
-const previousNodeEnv = process.env.NODE_ENV;
-beforeAll(() => {
-  process.env.NODE_ENV = "test";
-  process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = "true";
-});
-afterAll(() => {
-  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-  else process.env.NODE_ENV = previousNodeEnv;
-  if (previousScientNextCloudRouteTest === undefined)
-    delete process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
-  else process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = previousScientNextCloudRouteTest;
-});
-
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import type { DroidAcpRuntime } from "./provider/acp/DroidAcpSupport.ts";
@@ -220,9 +144,7 @@ import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
 import { makeDroidTextGeneration } from "./textGeneration/DroidTextGeneration.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
-// SCIENT-FORK:START — the real extensions owners, as the server composes them.
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
-// SCIENT-FORK:END
 import {
   coalesceProviderStatusUpdates,
   resolveAvailableEditorsForConfig,
@@ -251,6 +173,7 @@ import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ThreadSearchV2 from "./orchestration-v2/ThreadSearch.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
@@ -263,6 +186,11 @@ import {
   threadCreated as transferV2ThreadCreated,
   turnEvents as transferV2TurnEvents,
   THREAD_ID as transferV2ThreadId,
+  LONG_TURN_THREAD_ID as TRANSFER_V2_LONG_TURN_THREAD_ID,
+  longTurnThreadBatches as transferV2LongTurnThreadBatches,
+  shellFleetEvents as transferV2ShellFleetEvents,
+  SHELL_IDLE_SUBAGENTS as TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
+  SHELL_SETTLED_THREADS as TRANSFER_V2_SHELL_SETTLED_THREADS,
 } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -318,17 +246,18 @@ import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as TriageService from "./triage/TriageService.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
-import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
@@ -351,7 +280,6 @@ import * as Data from "effect/Data";
 import { registerAnalysisRpcTests } from "./scient/analysis/AnalysisRpcServerTests.ts";
 import { registerComputeRpcTests } from "./scient/compute/ComputeRpcServerTests.ts";
 import { registerMarkdownTransportTests } from "./scient/markdown/MarkdownTransportServerTests.ts";
-
 import {
   measureHttpGet,
   attributeSnapshotTransfer,
@@ -364,6 +292,7 @@ import {
   awaitSubscriptionSynchronized,
   collectQueueUntil,
   expectedMeasuredAssistantText,
+  isMeasuredTransferShellUpdate,
   commitMeasuredTransferTurn,
   seedTransferBudgetHistory,
   subscribeShellItems,
@@ -380,6 +309,74 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { DEFAULT_SIGNAL_EXPORT, layerOtlpSerialization } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+
+// @effect-diagnostics nodeBuiltinImport:off
+
+// SCIENT-FORK:START — ignored-file RPC races exercise the shipped native boundary.
+const ignoredReadHelper = await filePublicationTestHelper();
+const ignoredReadNative = await nativePublicationHost();
+// SCIENT-FORK:END
+
+const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
+const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
+const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+// Retained history exists only where the resolved helper grants native publication authority.
+const nativePublicationServer = await (async () => {
+  const helper = await resolveNativeFilePublicationHelperPath();
+  if (helper === undefined) return false;
+  const capabilities = await nativeFilePublicationCapabilities(helper);
+  return (
+    capabilities.strictCurrentRoot &&
+    capabilities.publicationLease &&
+    capabilities.sharedPublicationLease &&
+    capabilities.exclusiveMove &&
+    capabilities.exclusiveLink
+  );
+})();
+const SUCCESSFUL_GIT_EXECUTION = {
+  exitCode: ChildProcessSpawner.ExitCode(0),
+  stdout: "",
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+};
+const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
+);
+const decodeLegacyThreadBoundedSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
+);
+const decodeQueueOperationError = Schema.decodeUnknownEffect(ScientThreadQueueOperationError);
+const decodeQueueSnapshot = Schema.decodeUnknownEffect(ScientThreadQueueSnapshot);
+const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
+);
+const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
+);
+const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+// The server-router suite exercises the inherited cloud protocol directly.
+// Opt this test file into the otherwise-disabled D4 routes and restore the
+// caller's environment when the file completes; this test-only switch does
+// not make public cloud configuration appear in the route builder.
+const previousScientNextCloudRouteTest = process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
+const previousNodeEnv = process.env.NODE_ENV;
+beforeAll(() => {
+  process.env.NODE_ENV = "test";
+  process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = "true";
+});
+afterAll(() => {
+  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnv;
+  if (previousScientNextCloudRouteTest === undefined)
+    delete process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
+  else process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = previousScientNextCloudRouteTest;
+});
+
+// SCIENT-FORK:START — the real extensions owners, as the server composes them.
+// SCIENT-FORK:END
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -717,13 +714,13 @@ const buildAppUnderTest = (options?: {
     };
     const layerConfig = ServerConfig.layer(config);
     const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
-      capabilities: {
-        kind: "git",
-        supportsWorktrees: true,
-        supportsBookmarks: false,
-        supportsAtomicSnapshot: false,
-        supportsPushDefaultRemote: true,
-        ignoreClassifier: "native",
+      checkpoints: {
+        captureCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        hasCheckpointRef: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        restoreCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        diffCheckpoints: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        listAuthoredPaths: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        deleteCheckpointRefs: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
       },
       execute: () =>
         Effect.succeed({
@@ -1072,7 +1069,9 @@ const buildAppUnderTest = (options?: {
                 Effect.succeed(
                   makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
                 ),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
               getVoiceTranscriptCorrectionForInstance: () =>
                 // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
@@ -1224,10 +1223,8 @@ const buildAppUnderTest = (options?: {
           Layer.mergeAll(
             Layer.mock(PreviewManager.PreviewManager)({
               open: () => Effect.die("PreviewManager not stubbed in this test"),
-              navigate: () => Effect.die("PreviewManager not stubbed in this test"),
               resize: () => Effect.die("PreviewManager not stubbed in this test"),
               reportStatus: () => Effect.void,
-              refresh: () => Effect.void,
               close: () => Effect.void,
               list: () => Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
               events: Stream.empty,
@@ -1241,6 +1238,7 @@ const buildAppUnderTest = (options?: {
               retain: Effect.void,
               registerTerminalProcesses: () => Effect.void,
               unregisterTerminal: () => Effect.void,
+              trackAgent: () => () => undefined,
             }),
           ),
         ),
@@ -1251,10 +1249,10 @@ const buildAppUnderTest = (options?: {
               drain: Effect.void,
               requestSync: () => Effect.void,
             }),
+            Layer.mock(SourceControlSignIn.SourceControlSignIn)({}),
+            Layer.mock(TriageService.TriageService)({}),
           ),
         ),
-      )
-      .pipe(
         Layer.provide(
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
             getTurnDiff: () =>
@@ -1277,11 +1275,20 @@ const buildAppUnderTest = (options?: {
       );
 
     const appLayer = servedRoutesLayer
+      // Own pipe: one pipe takes at most 20 steps.
       .pipe(
+        // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
+        Layer.provide(AccountsTestkit.layer),
+        // SCIENT-FORK:END
+        // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
+        Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
+      )
+      .pipe(
+        Layer.provide(DocumentText.layer),
         Layer.provide(CloudLink.layer),
         Layer.provide(
           Layer.mock(ConnectReachability.ConnectReachability)({
-            latest: Effect.succeed(Option.none()),
+            latest: Effect.succeedNone,
           }),
         ),
         Layer.provide(DirectEndpoints.layer),
@@ -1324,7 +1331,6 @@ const buildAppUnderTest = (options?: {
           Layer.mock(BackgroundPolicy.BackgroundPolicy)({
             reportClientActivity: () => Effect.void,
             removeRpcClient: () => Effect.void,
-            reportHostPowerState: () => Effect.void,
             snapshot: Effect.succeed({
               hostPower: {
                 source: "unknown",
@@ -1344,30 +1350,6 @@ const buildAppUnderTest = (options?: {
               shouldRunOpportunisticWork: false,
               updatedAt: TEST_EPOCH,
             }),
-            streamChanges: Stream.empty,
-            subscribe: Effect.succeed({
-              latest: {
-                hostPower: {
-                  source: "unknown",
-                  idle: "unknown",
-                  idleSeconds: null,
-                  locked: "unknown",
-                  suspended: false,
-                  onBattery: "unknown",
-                  lowPowerMode: "unknown",
-                  thermalState: "unknown",
-                  stale: true,
-                  updatedAt: TEST_EPOCH,
-                },
-                leases: [],
-                activeForegroundLeaseCount: 0,
-                activeScopeKeys: [],
-                shouldRunOpportunisticWork: false,
-                updatedAt: TEST_EPOCH,
-              },
-              changes: Stream.empty,
-            }),
-            hasDemand: () => Effect.succeed(false),
             shouldRunScopeWork: () => Effect.succeed(false),
             shouldRunOpportunisticWork: Effect.succeed(false),
           }),
@@ -1435,7 +1417,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(
           Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
             get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
-            getExisting: Effect.succeed(Option.none()),
+            getExisting: Effect.succeedNone,
             hasCredential: Effect.succeed(false),
             clear: Effect.void,
             ...options?.layers?.cloudCliTokenManager,
@@ -1465,13 +1447,9 @@ const buildAppUnderTest = (options?: {
         Layer.provideMerge(makeAuthTestLayer()),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
-      )
-      .pipe(
         // Reuse the same fixture owners for dependencies introduced by later layers.
         Layer.provide(gitVcsDriverLayer),
         Layer.provide(serverSettingsLayer),
-      )
-      .pipe(
         // Honour an injected client so relay-route tests can stub the upstream
         // response instead of reaching the network. Without this the option is
         // silently ignored and the cloud seam tests exercise the real client.
@@ -1480,13 +1458,8 @@ const buildAppUnderTest = (options?: {
             ? FetchHttpClient.layer
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
-        Layer.provide(
-          GitHubRest.layerWithDependencies.pipe(
-            Layer.provide(ServerSourceControlHost.layer),
-            Layer.provide(VcsDriverRegistry.layer),
-            Layer.provideMerge(VcsProcess.layer),
-          ),
-        ),
+        // Hosts are read through each driver's own services; no route test reads host media.
+        Layer.provide(Layer.succeed(SourceControlBuiltInDrivers.SourceControlDrivers, [])),
         Layer.provide(gitVcsDriverLayer),
         Layer.provide(serverSettingsLayer),
         Layer.provide(ThreadCommandExecutor.layer),
@@ -1570,11 +1543,7 @@ const withWsRpcClient = <A, E, R, E2 = never, R2 = never>(
   onMessage?: (message: string) => void,
 ) =>
   makeWsRpcClient.pipe(
-    Effect.flatMap((client) =>
-      Effect.gen(function* () {
-        return yield* f(client);
-      }),
-    ),
+    Effect.flatMap((client) => Effect.suspend<A, E | E2, R | R2>(() => f(client))),
     Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage)),
   );
 
@@ -1977,7 +1946,6 @@ const assertBrowserApiCorsPreflightHeaders = (
     "dpop",
     "range",
     "traceparent",
-    THREAD_SNAPSHOT_FORMAT_HEADER,
     ORCHESTRATION_PROTOCOL_HEADER,
   ]);
 };
@@ -2004,6 +1972,34 @@ const getWsServerUrl = (
       baseUrl,
       yield* getAuthenticatedSessionCookieHeader(options?.credential),
     );
+  });
+
+// The access inventory is served only by the WebSocket subscription's first snapshot.
+const readAuthAccessSnapshot = (
+  session: { readonly cookie: string } | { readonly bearer: string },
+) =>
+  Effect.gen(function* () {
+    const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+    let wsUrl: string;
+    if ("cookie" in session) {
+      wsUrl = appendSessionCookieToWsUrl(baseWsUrl, session.cookie);
+    } else {
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${session.bearer}` },
+      });
+      assert.equal(ticketResponse.status, 200);
+      const { ticket } = (yield* ticketResponse.json) as { readonly ticket: string };
+      wsUrl = `${baseWsUrl}&wsTicket=${encodeURIComponent(ticket)}`;
+    }
+    const event = yield* Effect.scoped(
+      withWsRpcClient(wsUrl, (client) =>
+        client.subscribeAuthAccess({}).pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
+      ),
+    );
+    if (event.type !== "snapshot") {
+      return yield* Effect.die(`Expected an auth access snapshot, received ${event.type}`);
+    }
+    return event.payload;
   });
 
 // Keep Scient-owned integration cases on the exact inherited server harness.
@@ -2085,109 +2081,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Deferred.succeed(ready, undefined);
       assert.equal((yield* Fiber.join(request)).status, 200);
       assert.isTrue(yield* Deferred.isDone(completed));
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("serves static index content for GET / when staticDir is configured", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
-      const indexPath = path.join(staticDir, "index.html");
-      yield* fileSystem.writeFileString(indexPath, "<html>router-static-ok</html>");
-
-      yield* buildAppUnderTest({ config: { staticDir } });
-
-      const response = yield* HttpClient.get("/");
-      assert.equal(response.status, 200);
-      assert.include(yield* response.text, "router-static-ok");
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("revalidates static files without sending unchanged bodies", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-cache-" });
-      const assetPath = path.join(staticDir, "app.js");
-      yield* fileSystem.writeFileString(assetPath, 'export const build = "first";');
-      yield* buildAppUnderTest({ config: { staticDir } });
-
-      const initial = yield* HttpClient.get("/app.js");
-      assert.equal(initial.status, 200);
-      assert.equal(initial.headers["cache-control"], "no-cache");
-      assert.include(yield* initial.text, "first");
-      const etag = initial.headers.etag;
-      assert.isDefined(etag);
-      assert.isDefined(initial.headers["last-modified"]);
-
-      for (const headers of [
-        { "if-none-match": etag! },
-        { "if-none-match": `"older", ${etag!.replace(/^W\//, "")}` },
-        { "if-none-match": "*" },
-        { "if-modified-since": initial.headers["last-modified"]! },
-      ]) {
-        const response = yield* HttpClient.get("/app.js", { headers });
-        assert.equal(response.status, 304);
-        assert.equal(response.headers.etag, etag);
-        assert.equal(response.headers["cache-control"], "no-cache");
-        assert.equal(yield* response.text, "");
-      }
-
-      const mismatched = yield* HttpClient.get("/app.js", {
-        headers: {
-          "if-none-match": '"another-build"',
-          "if-modified-since": initial.headers["last-modified"]!,
-        },
-      });
-      assert.equal(mismatched.status, 200);
-      assert.include(yield* mismatched.text, "first");
-
-      yield* fileSystem.writeFileString(assetPath, 'export const build = "the next build";');
-      const changed = yield* HttpClient.get("/app.js", { headers: { "if-none-match": etag! } });
-      assert.equal(changed.status, 200);
-      assert.notEqual(changed.headers.etag, etag);
-      assert.include(yield* changed.text, "next build");
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("serves changed HTML with the same size and timestamp", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-html-" });
-      const indexPath = path.join(staticDir, "index.html");
-      const modifiedAt = DateTime.toDateUtc(DateTime.makeUnsafe("1985-10-26T08:15:00.000Z"));
-      yield* fileSystem.writeFileString(indexPath, "<html>old build</html>");
-      yield* fileSystem.utimes(indexPath, modifiedAt, modifiedAt);
-      yield* buildAppUnderTest({ config: { staticDir } });
-
-      const initial = yield* HttpClient.get("/");
-      assert.equal(yield* initial.text, "<html>old build</html>");
-      const previousEtag = initial.headers.etag ?? '"previous-html"';
-      const nextHtml = "<html>new build</html>";
-      yield* fileSystem.writeFileString(indexPath, nextHtml);
-      yield* fileSystem.utimes(indexPath, modifiedAt, modifiedAt);
-
-      for (const [resource, headers] of [
-        ["/", { "if-none-match": previousEtag }],
-        ["/threads/example", { "if-modified-since": modifiedAt.toUTCString() }],
-        ["/", { "if-none-match": "*" }],
-      ] as const) {
-        const response = yield* HttpClient.get(resource, { headers });
-        assert.equal(response.status, 200);
-        assert.equal(yield* response.text, nextHtml);
-        assert.equal(response.headers["cache-control"], "no-cache");
-        assert.isUndefined(response.headers.etag);
-        assert.isUndefined(response.headers["last-modified"]);
-      }
-
-      const head = yield* HttpClient.head("/", {
-        headers: { "if-none-match": previousEtag, "accept-encoding": "identity" },
-      });
-      assert.equal(head.status, 200);
-      assert.equal(head.headers["content-length"], String(Buffer.byteLength(nextHtml)));
-      assert.equal(yield* head.text, "");
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -2273,6 +2166,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     [
       { label: "missing", contents: null },
       { label: "nonmatching", contents: '{"other.js":{"file":"assets/other-AbCd0123.js"}}' },
+      // regression: 27e6cc27fe perf(server): cache and stream static web assets (#9669)
       { label: "malformed", contents: "{not-json" },
     ].map((manifest) => ({
       caseTitle: `revalidates hash-like static filenames with a ${manifest.label} manifest`,
@@ -2309,154 +2203,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(changed.headers["cache-control"], "no-cache");
       assert.notEqual(changed.headers.etag, initial.headers.etag);
       assert.equal(yield* changed.text, "replacement config");
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("binds static metadata and bytes to one file across atomic replacement", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-replace-" });
-      const beforeOpenPath = path.join(staticDir, "before-open.txt");
-      const afterOpenPath = path.join(staticDir, "after-open.txt");
-      const afterOpenSnapshotPath = path.join(staticDir, "after-open-snapshot.txt");
-      const windowsHost = HostProcess.Platform.defaultValue() === "win32";
-      const original = "original bytes";
-      const replacement = "replacement bytes with a different size";
-      for (const filePath of [beforeOpenPath, afterOpenPath]) {
-        yield* fileSystem.writeFileString(filePath, original);
-        yield* fileSystem.writeFileString(`${filePath}.next`, replacement);
-      }
-      if (windowsHost) {
-        // Windows cannot replace an open destination, so model the race with its original handle.
-        yield* fileSystem.writeFileString(afterOpenSnapshotPath, original);
-      }
-      const replaced = new Set<string>();
-      const replaceOnce = Effect.fnUntraced(function* (filePath: string) {
-        if (replaced.has(filePath)) return;
-        replaced.add(filePath);
-        yield* fileSystem.rename(`${filePath}.next`, filePath);
-      });
-      const replacingFileSystem = FileSystem.FileSystem.of({
-        ...fileSystem,
-        stat: (filePath) =>
-          fileSystem
-            .stat(filePath)
-            .pipe(
-              Effect.tap(() => (filePath === beforeOpenPath ? replaceOnce(filePath) : Effect.void)),
-            ),
-        open: (filePath, options) =>
-          fileSystem
-            .open(
-              filePath === afterOpenPath && windowsHost ? afterOpenSnapshotPath : filePath,
-              options,
-            )
-            .pipe(
-              Effect.tap(() => (filePath === afterOpenPath ? replaceOnce(filePath) : Effect.void)),
-            ),
-      });
-      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
-        Effect.provideService(FileSystem.FileSystem, replacingFileSystem),
-      );
-
-      for (const [name, expected] of [
-        ["before-open.txt", replacement],
-        ["after-open.txt", original],
-      ] as const) {
-        const response = yield* HttpClient.get(`/${name}`, {
-          headers: { "accept-encoding": "identity" },
-        });
-        assert.equal(response.status, 200);
-        assert.equal(response.headers["content-length"], String(expected.length));
-        assert.isTrue(response.headers.etag?.startsWith(`W/"${expected.length.toString(16)}-`));
-        assert.equal(yield* response.text, expected);
-        assert.isTrue(replaced.has(path.join(staticDir, name)));
-        assert.equal(yield* fileSystem.readFileString(path.join(staticDir, name)), replacement);
-      }
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("closes static file handles after GET, HEAD, 304, and request cancellation", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-close-" });
-      const filePath = path.join(staticDir, "app.txt");
-      const body = "file content\n".repeat(1024);
-      yield* fileSystem.writeFileString(filePath, body);
-      const closed = yield* Queue.unbounded<FileSystem.File>();
-      const blocked = yield* Deferred.make<void>();
-      const active = new Set<FileSystem.File>();
-      let blockAfterOpen = false;
-      let bodyReads = 0;
-      const trackedFileSystem = FileSystem.FileSystem.of({
-        ...fileSystem,
-        open: (candidate, options) =>
-          Effect.gen(function* () {
-            if (candidate !== filePath) return yield* fileSystem.open(candidate, options);
-            let opened: FileSystem.File | undefined;
-            // Registered first, so this signal runs after the real descriptor-close finalizer.
-            yield* Effect.addFinalizer(() =>
-              Effect.gen(function* () {
-                if (opened === undefined) return;
-                active.delete(opened);
-                yield* Queue.offer(closed, opened);
-              }),
-            );
-            const file = yield* fileSystem.open(candidate, options);
-            opened = file;
-            active.add(file);
-            if (blockAfterOpen) {
-              yield* Deferred.succeed(blocked, undefined);
-              return yield* Effect.never;
-            }
-            return new Proxy(file, {
-              get(target, key) {
-                if (key === "readAlloc") {
-                  return (size: number) => {
-                    bodyReads += 1;
-                    return target.readAlloc(size);
-                  };
-                }
-                return Reflect.get(target, key, target);
-              },
-            });
-          }),
-      });
-      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
-        Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
-      );
-
-      const get = yield* HttpClient.get("/app.txt");
-      assert.equal(yield* get.text, body);
-      yield* Queue.take(closed);
-      assert.equal(active.size, 0);
-      assert.isAbove(bodyReads, 0);
-      const readsAfterGet = bodyReads;
-
-      const head = yield* HttpClient.head("/app.txt", { headers: { "accept-encoding": "gzip" } });
-      assert.equal(head.status, 200);
-      assert.equal(head.headers["content-encoding"], "gzip");
-      assert.equal(yield* head.text, "");
-      yield* Queue.take(closed);
-      assert.equal(active.size, 0);
-      assert.equal(bodyReads, readsAfterGet);
-
-      const unchanged = yield* HttpClient.get("/app.txt", {
-        headers: { "if-none-match": get.headers.etag! },
-      });
-      assert.equal(unchanged.status, 304);
-      yield* Queue.take(closed);
-      assert.equal(active.size, 0);
-      assert.equal(bodyReads, readsAfterGet);
-
-      blockAfterOpen = true;
-      const cancelled = yield* HttpClient.get("/app.txt").pipe(Effect.forkChild);
-      yield* Deferred.await(blocked);
-      assert.equal(active.size, 1);
-      yield* Fiber.interrupt(cancelled);
-      yield* Queue.take(closed);
-      assert.equal(active.size, 0);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -2718,14 +2464,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(second.response.status, 200);
       assert.equal(third.response.status, 200);
 
-      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: { authorization: `Bearer ${third.body.access_token}` },
+      const { clientSessions: clients } = yield* readAuthAccessSnapshot({
+        bearer: third.body.access_token ?? "",
       });
-      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
-        readonly current: boolean;
-        readonly subject: string;
-      }>;
-      assert.equal(clientsResponse.status, 200);
       assert.equal(clients.length, 1);
       assert.equal(clients[0]?.current, true);
       assert.equal(clients[0]?.subject, "desktop-bootstrap");
@@ -2771,26 +2512,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
-      });
-      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
-        readonly current: boolean;
-        readonly client: {
-          readonly label?: string;
-          readonly deviceType: string;
-          readonly ipAddress?: string;
-          readonly os?: string;
-          readonly userAgent?: string;
-        };
-      }>;
+      const { clientSessions: clients } = yield* readAuthAccessSnapshot({ cookie: ownerCookie });
       const mobileClient = clients.find((client) => !client.current);
 
       assert.equal(pairingResponse.status, 200);
       assert.equal(response.status, 200);
-      assert.equal(clientsResponse.status, 200);
       assert.deepInclude(mobileClient?.client, {
         label: "Scient Mobile",
         deviceType: "mobile",
@@ -3854,7 +3580,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const mintUrl = yield* getHttpServerUrl("/api/connect/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const postMint = () =>
         fetchEffect(mintUrl, {
           method: "POST",
@@ -4365,7 +4091,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const mintUrl = yield* getHttpServerUrl("/api/connect/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const postMint = (request: ReturnType<typeof makeCloudMintCredentialRequest>) =>
         fetchEffect(mintUrl, {
           method: "POST",
@@ -4685,7 +4411,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       label,
       protocol,
     })),
-  )("$caseTitle", ({ label, protocol }) =>
+  )("$caseTitle", ({ label: _label, protocol }) =>
     Effect.gen(function* () {
       const app = yield* buildAppUnderTest();
       // Observe the exact memoized live auth service; the spy delegates rather
@@ -5116,67 +4842,59 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("returns only pairing metadata to access-read HTTP sessions", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-      const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
-        scope: "access:read",
-      });
-      assert.equal(reader.response.status, 200);
-      assert.equal(reader.body.scope, "access:read");
-      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
-        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
-        body: yield* HttpBody.json({ label: "Synthetic phone" }),
-      });
-      const created = (yield* createdResponse.json) as { id: string; credential: string };
-      assert.equal(createdResponse.status, 200);
-      const response = yield* HttpClient.get("/api/auth/pairing-links", {
-        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
-      });
-      assert.equal(response.status, 200);
-      const responseText = yield* response.text;
-      assert.notInclude(responseText, '"credential"');
-      assert.notInclude(responseText, created.credential);
-      const links = yield* responseJsonEffect<
-        ReadonlyArray<{
-          readonly id: string;
-          readonly label?: string;
-          readonly scopes: ReadonlyArray<string>;
-          readonly permissions: ReadonlyArray<string>;
-        }>
-      >(response);
-      const listed = links.find((link) => link.id === created.id);
-      assert.isDefined(listed);
-      assert.deepInclude(listed, {
-        label: "Synthetic phone",
-        // Frozen legacy scope metadata and the full granular grant are distinct.
-        scopes: [
-          "orchestration:read",
-          "orchestration:operate",
-          "terminal:operate",
-          "relay:read",
-          "access:read",
-          "access:write",
-          "relay:write",
-        ],
-        permissions: [...AuthStandardClientScopes],
-      });
+  it.effect(
+    "shows access-read sessions pairing grants without letting them issue or reuse credentials",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "access:read",
+        });
+        assert.equal(reader.response.status, 200);
+        assert.equal(reader.body.scope, "access:read");
+        const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+          body: yield* HttpBody.json({ label: "Synthetic phone" }),
+        });
+        const created = (yield* createdResponse.json) as { id: string; credential: string };
+        assert.equal(createdResponse.status, 200);
+        const { pairingLinks: links } = yield* readAuthAccessSnapshot({
+          bearer: reader.body.access_token ?? "",
+        });
+        const listed = links.find((link) => link.id === created.id);
+        assert.isDefined(listed);
+        assert.deepInclude(listed, {
+          label: "Synthetic phone",
+          // Frozen legacy scope metadata and the full granular grant are distinct.
+          scopes: [
+            "orchestration:read",
+            "orchestration:operate",
+            "terminal:operate",
+            "relay:read",
+            "access:read",
+            "access:write",
+            "relay:write",
+          ],
+          permissions: [...AuthStandardClientScopes],
+        });
 
-      const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
-        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
-        body: yield* HttpBody.json({}),
-      });
-      assert.equal(unauthorizedCreate.status, 403);
-      const idExchange = yield* exchangeAccessToken(created.id, { scope: "terminal:operate" });
-      assert.equal(idExchange.response.status, 401);
-      const authorized = yield* exchangeAccessToken(created.credential, {
-        scope: AuthStandardClientScopes.join(" "),
-      });
-      assert.equal(authorized.response.status, 200);
-      assert.equal(authorized.body.scope, AuthStandardClientScopes.join(" "));
-      const reused = yield* exchangeAccessToken(created.credential, { scope: "terminal:operate" });
-      assert.equal(reused.response.status, 401);
-    }).pipe(Effect.provide(NodeHttpServerTest)),
+        const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+          body: yield* HttpBody.json({}),
+        });
+        assert.equal(unauthorizedCreate.status, 403);
+        const idExchange = yield* exchangeAccessToken(created.id, { scope: "terminal:operate" });
+        assert.equal(idExchange.response.status, 401);
+        const authorized = yield* exchangeAccessToken(created.credential, {
+          scope: AuthStandardClientScopes.join(" "),
+        });
+        assert.equal(authorized.response.status, 200);
+        assert.equal(authorized.body.scope, AuthStandardClientScopes.join(" "));
+        const reused = yield* exchangeAccessToken(created.credential, {
+          scope: "terminal:operate",
+        });
+        assert.equal(reused.response.status, 401);
+      }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("returns only pairing metadata in access-read WebSocket snapshots and updates", () =>
@@ -5269,14 +4987,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly credential: string;
       };
 
-      const listResponse = yield* HttpClient.get("/api/auth/pairing-links", {
-        headers: {
-          cookie: ownerCookie,
-        },
-      });
-      const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
-        readonly id: string;
-      }>;
+      const { pairingLinks: listedLinks } = yield* readAuthAccessSnapshot({ cookie: ownerCookie });
 
       const revokeResponse = yield* HttpClient.post("/api/auth/pairing-links/revoke", {
         headers: {
@@ -5288,7 +4999,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const revokedBootstrap = yield* bootstrapBrowserSession(createdBody.credential);
 
       assert.equal(createdResponse.status, 200);
-      assert.equal(listResponse.status, 200);
       assert.isTrue(listedLinks.some((entry) => entry.id === createdBody.id));
       assert.equal(revokeResponse.status, 200);
       assert.equal(revokedBootstrap.response.status, 401);
@@ -5374,22 +5084,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isDefined(pairedSessionCookie);
 
       const pairedSessionCookieHeader = pairedSessionCookie ?? "";
-      const listBeforeResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
+      const { clientSessions: clientsBefore } = yield* readAuthAccessSnapshot({
+        cookie: ownerCookie,
       });
-      const clientsBefore = (yield* listBeforeResponse.json) as ReadonlyArray<{
-        readonly sessionId: string;
-        readonly current: boolean;
-        readonly client: {
-          readonly label?: string;
-          readonly deviceType: string;
-          readonly ipAddress?: string;
-          readonly os?: string;
-          readonly browser?: string;
-        };
-      }>;
       const pairedClientBefore = clientsBefore.find((entry) => !entry.current);
       const pairedSessionId = clientsBefore.find((entry) => !entry.current)?.sessionId;
 
@@ -5402,15 +5099,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly revokedCount: number;
       };
 
-      const listAfterResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
+      const { clientSessions: clientsAfter } = yield* readAuthAccessSnapshot({
+        cookie: ownerCookie,
       });
-      const clientsAfter = (yield* listAfterResponse.json) as ReadonlyArray<{
-        readonly sessionId: string;
-        readonly current: boolean;
-      }>;
 
       const pairedClientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
@@ -5425,7 +5116,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly traceId: string;
       };
 
-      assert.equal(listBeforeResponse.status, 200);
       assert.equal(ownerPairingBody.label, "Julius iPhone");
       assert.lengthOf(clientsBefore, 2);
       assert.isDefined(pairedSessionId);
@@ -5439,7 +5129,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       assert.equal(revokeOthersResponse.status, 200);
       assert.equal(revokeOthersBody.revokedCount, 1);
-      assert.equal(listAfterResponse.status, 200);
       assert.lengthOf(clientsAfter, 1);
       assert.equal(clientsAfter[0]?.current, true);
       assert.equal(pairedClientPairingResponse.status, 401);
@@ -5476,11 +5165,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const readCookie = yield* issueScopedSession("access:read");
-      const readListResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: readCookie,
-        },
-      });
+      const readInventory = yield* readAuthAccessSnapshot({ cookie: readCookie });
       const readWriteResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
           cookie: readCookie,
@@ -5492,20 +5177,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       };
 
       const writeCookie = yield* issueScopedSession("access:write");
-      const writeListResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: writeCookie,
-        },
-      });
-      const writeListBody = (yield* writeListResponse.json) as {
-        readonly requiredScope: string;
-      };
+      const writeListError = yield* Effect.flip(readAuthAccessSnapshot({ cookie: writeCookie }));
 
-      assert.equal(readListResponse.status, 200);
+      assert.isAbove(readInventory.clientSessions.length, 0);
       assert.equal(readWriteResponse.status, 403);
       assert.equal(readWriteBody.requiredScope, "access:write");
-      assert.equal(writeListResponse.status, 403);
-      assert.equal(writeListBody.requiredScope, "access:read");
+      assert.equal(writeListError._tag, "EnvironmentAuthorizationError");
+      if (writeListError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(writeListError.requiredScope, "access:read");
+      }
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -5531,15 +5211,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         pairingBody.credential,
       );
 
-      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
-      });
-      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
-        readonly sessionId: string;
-        readonly current: boolean;
-      }>;
+      const { clientSessions: clients } = yield* readAuthAccessSnapshot({ cookie: ownerCookie });
       const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
       assert.isDefined(pairedSessionId);
 
@@ -5604,8 +5276,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  // SCIENT-FORK:START — Upstream T3 added threads without a project (#13612)
-  // and projects created from a name (#14527). Scratch is approved but still
+  // SCIENT-FORK:START — Upstream T3 added threads without a project
+  // and projects created from a name. Scratch is approved but still
   // withheld in Git data directories; create-from-name remains gated off.
   it.effect("withholds threads without a project inside a Git data directory", () =>
     Effect.gen(function* () {
@@ -6235,7 +5907,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "dpop",
         "range",
         "traceparent",
-        THREAD_SNAPSHOT_FORMAT_HEADER,
         ORCHESTRATION_PROTOCOL_HEADER,
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -6311,78 +5982,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(record.resourceAttributes["service.name"], "t3code-web");
         assert.equal(record.status?.code, String(span.status.code));
       }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("routes websocket rpc server.upsertKeybinding", () =>
-    Effect.gen(function* () {
-      const rule: KeybindingRule = {
-        command: "terminal.toggle",
-        key: "ctrl+k",
-      };
-      const resolved: ResolvedKeybindingRule = {
-        command: "terminal.toggle",
-        shortcut: {
-          key: "k",
-          metaKey: false,
-          ctrlKey: true,
-          shiftKey: false,
-          altKey: false,
-          modKey: true,
-        },
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          keybindings: {
-            upsertKeybindingRule: () => Effect.succeed([resolved]),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverUpsertKeybinding](rule)),
-      );
-
-      assert.deepEqual(response.issues, []);
-      assert.deepEqual(response.keybindings, [resolved]);
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("routes websocket rpc server.removeKeybinding", () =>
-    Effect.gen(function* () {
-      const rule: KeybindingRule = {
-        command: "terminal.toggle",
-        key: "ctrl+k",
-      };
-      const resolved: ResolvedKeybindingRule = {
-        command: "terminal.toggle",
-        shortcut: {
-          key: "j",
-          metaKey: false,
-          ctrlKey: false,
-          shiftKey: false,
-          altKey: false,
-          modKey: true,
-        },
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          keybindings: {
-            removeKeybindingRule: () => Effect.succeed([resolved]),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverRemoveKeybinding](rule)),
-      );
-
-      assert.deepEqual(response.issues, []);
-      assert.deepEqual(response.keybindings, [resolved]);
-    }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("routes custom model mutations without returning the API key", () =>
@@ -6545,8 +6144,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(readerUrl, (client) =>
           Effect.gen(function* () {
-            const readable = yield* client[WS_METHODS.serverGetSettings]({});
-            assert.equal(readable.customModels.revision, 1);
+            const readable = yield* client[WS_METHODS.serverGetConfig]({});
+            assert.equal(readable.settings.customModels.revision, 1);
             const before = { ...calls };
             const results = [
               yield* client[WS_METHODS.serverSaveCustomModel](save).pipe(Effect.result),
@@ -6568,7 +6167,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               assert.equal(result.failure.requiredScope, "orchestration:operate");
             }
             assert.equal(
-              (yield* client[WS_METHODS.serverGetSettings]({})).customModels.revision,
+              (yield* client[WS_METHODS.serverGetConfig]({})).settings.customModels.revision,
               1,
             );
           }),
@@ -6584,7 +6183,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               revision: 1,
             });
             assert.equal(
-              (yield* client[WS_METHODS.serverGetSettings]({})).customModels.revision,
+              (yield* client[WS_METHODS.serverGetConfig]({})).settings.customModels.revision,
               1,
             );
           }),
@@ -6840,8 +6439,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               "Droid: 403 Complete 18+ age confirmation in OpenRouter settings.",
             );
 
-            const settings = yield* client[WS_METHODS.serverGetSettings]({});
-            assert.equal(settings.customModels.revision, 1);
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            assert.equal(config.settings.customModels.revision, 1);
           }),
         ),
       );
@@ -7001,6 +6600,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ],
       };
       const started = yield* Deferred.make<void>();
+      const deadlineRegistered = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const clock = yield* Clock.Clock;
       const instance: ProviderInstance = {
         instanceId: id,
         driverKind: ProviderDriverKind.make("droid"),
@@ -7015,7 +6617,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         textGeneration: {
           generateThreadTitle: () =>
-            Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Deferred.succeed(cancelled, undefined)),
+            ),
           generateBranchName: (): never => {
             throw new Error("Unexpected generation");
           },
@@ -7039,7 +6644,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
         },
-      });
+      }).pipe(
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          sleep: (duration) =>
+            Duration.toMillis(duration) === 45_000
+              ? clock.sleep(duration).pipe(
+                  Effect.forkChild({ startImmediately: true }),
+                  Effect.tap(() => Deferred.succeed(deadlineRegistered, undefined)),
+                  Effect.flatMap(Fiber.join),
+                )
+              : clock.sleep(duration),
+        }),
+      );
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -7051,24 +6668,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               instanceId: id,
             }).pipe(Effect.result, Effect.forkChild);
             yield* Deferred.await(started);
-            // The timeout's timer registers on the server's own schedule, and its
-            // answer travels back in real time. Advance test time once past the
-            // timeout and wait; advancing while the answer is on its way would add
-            // minutes of test time and trip the connection's own timers.
-            const waitLive = (millis: number) =>
-              Effect.gen(function* () {
-                for (
-                  let waited = 0;
-                  waited < millis && pending.pollUnsafe() === undefined;
-                  waited += 20
-                )
-                  yield* Effect.sleep("20 millis").pipe(TestClock.withLive);
-              });
-            yield* waitLive(100);
-            for (let attempt = 0; attempt < 3 && pending.pollUnsafe() === undefined; attempt += 1) {
-              yield* TestClock.adjust("46 seconds");
-              yield* waitLive(2_000);
-            }
+            // The RPC server owns this timer. Observe its registration before advancing it.
+            yield* Deferred.await(deadlineRegistered);
+            yield* TestClock.adjust("44999 millis");
+            assert.isFalse(yield* Deferred.isDone(cancelled));
+            yield* TestClock.adjust("1 millis");
+            yield* Deferred.await(cancelled);
             return yield* Fiber.join(pending);
           }),
         ),
@@ -7305,7 +6910,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               const error = yield* client[WS_METHODS.assetsCreateUrl]({
                 resource: { _tag: "media-file", threadId, path: name },
               }).pipe(Effect.flip);
-              assert.equal(error._tag, "AssetWorkspaceContextNotFoundError");
+              assert.equal(error._tag, "AssetWorkspaceContextResolutionError");
+              assert.deepInclude(error, {
+                resource: { _tag: "media-file", threadId, path: name },
+              });
             }
           }),
         ),
@@ -7772,14 +7380,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               profile: null,
             }).pipe(Stream.runHead, Effect.flip);
             assert.equal(handoff._tag, "ProviderSetupError");
-            const callback = yield* client[WS_METHODS.codexAuthCallbackSubscribe]({
-              instanceId: providerSetupInstanceId,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              flowId: "synthetic-callback",
-              authorizationUrl: "https://example.com/authorize",
-              returnUrl: "scient://auth-return",
-            }).pipe(Stream.runHead, Effect.flip);
-            assert.equal(callback._tag, "ProviderSetupError");
           }),
         ),
       );
@@ -7969,28 +7569,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const firstCookie = yield* getAuthenticatedSessionCookieHeader();
       const secondCookie = yield* getAuthenticatedSessionCookieHeader();
-      const firstClients = yield* HttpClient.get("/api/auth/clients", {
-        headers: { cookie: firstCookie },
-      }).pipe(
-        Effect.flatMap(
-          responseJsonEffect<
-            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
-          >,
-        ),
-      );
-      const secondClients = yield* HttpClient.get("/api/auth/clients", {
-        headers: { cookie: secondCookie },
-      }).pipe(
-        Effect.flatMap(
-          responseJsonEffect<
-            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
-          >,
-        ),
-      );
+      const { clientSessions: firstClients } = yield* readAuthAccessSnapshot({
+        cookie: firstCookie,
+      });
+      const { clientSessions: secondClients } = yield* readAuthAccessSnapshot({
+        cookie: secondCookie,
+      });
       const firstOwner = firstClients.find((session) => session.current)?.sessionId;
       const secondOwner = secondClients.find((session) => session.current)?.sessionId;
-      assert.isString(firstOwner);
-      assert.isString(secondOwner);
+      assertTrue(firstOwner !== undefined && secondOwner !== undefined);
       assert.notEqual(firstOwner, secondOwner);
       const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
       const target = {
@@ -8290,6 +7877,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 instanceId: instanceIds[1],
                 cwd,
                 fresh: mode === "workspace-fresh",
+                awaitNativeInventory: false,
               });
               return probe(versionCache);
             },
@@ -9149,35 +8737,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(second.payload.bootstrapProjectCreated, true);
       assert.equal(second.payload.bootstrapThreadCreated, true);
     }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("routes websocket rpc projects.searchEntries", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-search-" });
-      yield* fs.writeFileString(
-        path.join(workspaceDir, "needle-file.ts"),
-        "export const needle = 1;",
-      );
-
-      yield* buildAppUnderTest();
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsSearchEntries]({
-            cwd: workspaceDir,
-            query: "needle",
-            limit: 10,
-          }),
-        ),
-      );
-
-      assert.isAtLeast(response.entries.length, 1);
-      assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
-      assert.equal(response.truncated, false);
-    }).pipe(Effect.provide(NodeHttpServerTest), TestClock.withLive),
   );
 
   it.effect("routes websocket rpc project listing and exact file reads", () =>
@@ -10618,10 +10177,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             ).pipe(Effect.result);
 
             assert.equal(failed._tag, "Failure");
-            assert.deepEqual(effects, [
-              "analytics:client.connected",
-              "launch:cmd-thread-create-failed",
-            ]);
+            assert.deepEqual(effects, ["launch:cmd-thread-create-failed"]);
 
             const succeeded = yield* client[ORCHESTRATION_V2_WS_METHODS.launchThread](
               createThreadCommand(
@@ -10639,12 +10195,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(effects, [
-        "analytics:client.connected",
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
-        // Inherited feature usage; Scient's analytics contract drops this name.
-        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10659,21 +10212,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           deviceModel: "iPhone 15 Pro",
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
+          workspaceStrategy: "root",
         },
-        {
-          surface: "mobile",
-          appVersion: "1.2.3",
-          clientAppVersion: "1.2.3",
-          clientOs: "iOS",
-          os: "iOS",
-          clientDeviceType: "phone",
-          osMajorVersion: 18,
-          clientOsMajorVersion: 18,
-          deviceModel: "iPhone 15 Pro",
-          clientDeviceModel: "iPhone 15 Pro",
-          connectionMethod: "relay",
-        },
-        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -10770,27 +10310,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("ignores invalid client telemetry without rejecting the connection", () =>
     Effect.gen(function* () {
-      const connectedProperties: Array<Readonly<Record<string, unknown>> | undefined> = [];
-
-      yield* buildAppUnderTest({
-        layers: {
-          analyticsService: {
-            record: (event, properties) =>
-              event === "client.connected"
-                ? Effect.sync(() => connectedProperties.push(properties))
-                : Effect.void,
-          },
-        },
-      });
+      yield* buildAppUnderTest();
 
       const invalidUrl = yield* getWsServerUrl(
         "/ws?clientSurface=watch&clientDeviceType=television&clientOs=Plan9&clientWebDeployment=cdn&clientBrowser=&clientOsMajorVersion=-1&connectionMethod=teleport",
       );
       yield* Effect.scoped(
-        withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetSettings]({})),
+        withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
       );
-
-      assert.deepEqual(connectedProperties, [{}]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -10831,62 +10358,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("routes websocket rpc shell.openInEditor", () =>
-    Effect.gen(function* () {
-      let openedInput: { cwd: string; editor: EditorId } | null = null;
-      yield* buildAppUnderTest({
-        layers: {
-          externalLauncher: {
-            launchEditor: (input) =>
-              Effect.sync(() => {
-                openedInput = input;
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.shellOpenInEditor]({
-            cwd: "/tmp/project",
-            editor: "cursor",
-          }),
-        ),
-      );
-
-      assert.deepEqual(openedInput, { cwd: "/tmp/project", editor: "cursor" });
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("routes websocket rpc shell.openInEditor errors", () =>
-    Effect.gen(function* () {
-      const externalLauncherError = new ExternalLauncherCommandNotFoundError({
-        editor: "cursor",
-        command: "cursor",
-      });
-      yield* buildAppUnderTest({
-        layers: {
-          externalLauncher: {
-            launchEditor: () => Effect.fail(externalLauncherError),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.shellOpenInEditor]({
-            cwd: "/tmp/project",
-            editor: "cursor",
-          }),
-        ).pipe(Effect.result),
-      );
-
-      assertFailure(result, externalLauncherError);
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
   it.effect("routes file preparation and exact asset transport end to end", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -10923,334 +10394,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, contents);
     }).pipe(Effect.provide(NodeHttpServerTest), Effect.scoped),
-  );
-
-  it.effect("routes websocket rpc git methods", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        config: {
-          cwd: "/tmp/repo",
-        },
-        layers: {
-          vcsDriver: {
-            isInsideWorkTree: () => Effect.succeed(true),
-          },
-          gitManager: {
-            createWorktree: () =>
-              Effect.succeed({
-                worktree: { path: "/tmp/wt", refName: "feature/demo" },
-              }),
-            invalidateLocalStatus: () => Effect.void,
-            invalidateRemoteStatus: () => Effect.void,
-            invalidateStatus: () => Effect.void,
-            localStatus: () =>
-              Effect.succeed({
-                isRepo: true,
-                hasPrimaryRemote: true,
-                isDefaultRef: true,
-                refName: "main",
-                hasWorkingTreeChanges: false,
-                workingTree: { files: [], insertions: 0, deletions: 0 },
-              }),
-            remoteStatus: () =>
-              Effect.succeed({
-                hasUpstream: true,
-                aheadCount: 0,
-                behindCount: 0,
-                pr: null,
-              }),
-            status: () =>
-              Effect.succeed({
-                isRepo: true,
-                hasPrimaryRemote: true,
-                isDefaultRef: true,
-                refName: "main",
-                hasWorkingTreeChanges: false,
-                workingTree: { files: [], insertions: 0, deletions: 0 },
-                hasUpstream: true,
-                aheadCount: 0,
-                behindCount: 0,
-                pr: null,
-              }),
-            runStackedAction: (input, options) =>
-              Effect.gen(function* () {
-                const result = {
-                  action: "commit" as const,
-                  branch: { status: "skipped_not_requested" as const },
-                  commit: {
-                    status: "created" as const,
-                    commitSha: "abc123",
-                    subject: "feat: demo",
-                  },
-                  push: { status: "skipped_not_requested" as const },
-                  pr: { status: "skipped_not_requested" as const },
-                  toast: {
-                    title: "Committed abc123",
-                    description: "feat: demo",
-                    cta: {
-                      kind: "run_action" as const,
-                      label: "Push",
-                      action: {
-                        kind: "push" as const,
-                      },
-                    },
-                  },
-                };
-
-                yield* (
-                  options?.progressReporter?.publish({
-                    actionId: options.actionId ?? input.actionId,
-                    cwd: input.cwd,
-                    action: input.action,
-                    kind: "phase_started",
-                    phase: "commit",
-                    label: "Committing...",
-                  }) ?? Effect.void
-                );
-
-                yield* (
-                  options?.progressReporter?.publish({
-                    actionId: options.actionId ?? input.actionId,
-                    cwd: input.cwd,
-                    action: input.action,
-                    kind: "action_finished",
-                    result,
-                  }) ?? Effect.void
-                );
-
-                return result;
-              }),
-            resolvePullRequest: () =>
-              Effect.succeed({
-                pullRequest: {
-                  number: 1,
-                  title: "Demo PR",
-                  url: "https://example.com/pr/1",
-                  baseBranch: "main",
-                  headBranch: "feature/demo",
-                  state: "open",
-                },
-              }),
-            preparePullRequestThread: () =>
-              Effect.succeed({
-                pullRequest: {
-                  number: 1,
-                  title: "Demo PR",
-                  url: "https://example.com/pr/1",
-                  baseBranch: "main",
-                  headBranch: "feature/demo",
-                  state: "open",
-                },
-                branch: "feature/demo",
-                worktreePath: null,
-                isOnPullRequestHead: true,
-              }),
-          },
-          gitVcsDriver: {
-            pullCurrentBranch: () =>
-              Effect.succeed({
-                status: "pulled",
-                refName: "main",
-                upstreamRef: "origin/main",
-              }),
-            listRefs: () =>
-              Effect.succeed({
-                refs: [
-                  {
-                    name: "main",
-                    current: true,
-                    isDefault: true,
-                    worktreePath: null,
-                  },
-                ],
-                isRepo: true,
-                hasPrimaryRemote: true,
-                nextCursor: null,
-                totalCount: 1,
-              }),
-            removeWorktree: () => Effect.void,
-            createRef: (input) => Effect.succeed({ refName: input.refName }),
-            switchRef: (input) => Effect.succeed({ refName: input.refName }),
-          },
-          vcsStatusBroadcaster: {
-            refreshStatus: () =>
-              Effect.succeed({
-                isRepo: true,
-                hasPrimaryRemote: true,
-                isDefaultRef: true,
-                refName: "main",
-                hasWorkingTreeChanges: false,
-                workingTree: { files: [], insertions: 0, deletions: 0 },
-                hasUpstream: true,
-                aheadCount: 0,
-                behindCount: 0,
-                pr: null,
-              }),
-          },
-          reviewService: {
-            getDiffPreview: (input) =>
-              Effect.succeed({
-                cwd: input.cwd,
-                generatedAt: DateTime.nowUnsafe(),
-                sources: [
-                  {
-                    id: "working-tree",
-                    kind: "working-tree",
-                    title: "Dirty worktree",
-                    baseRef: "HEAD",
-                    headRef: null,
-                    diff: "dirty-diff",
-                    diffHash: "hash-dirty",
-                    truncated: false,
-                  },
-                  {
-                    id: "branch-range",
-                    kind: "branch-range",
-                    title: "Against main",
-                    baseRef: "main",
-                    headRef: "feature/demo",
-                    diff: "base-diff",
-                    diffHash: "hash-base",
-                    truncated: false,
-                  },
-                ],
-              }),
-            getDiffFileContents: () =>
-              Effect.succeed({
-                oldContents: "before\n",
-                newContents: "after\n",
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-
-      const pull = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsPull]({ cwd: "/tmp/repo" })),
-      );
-      assert.equal(pull.status, "pulled");
-
-      const refreshedStatus = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsRefreshStatus]({ cwd: "/tmp/repo" }),
-        ),
-      );
-      assert.equal(refreshedStatus.isRepo, true);
-
-      const stackedEvents = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitRunStackedAction]({
-            actionId: "action-1",
-            cwd: "/tmp/repo",
-            action: "commit",
-          }).pipe(
-            Stream.runCollect,
-            Effect.map((events) => Array.from(events)),
-          ),
-        ),
-      );
-      const lastStackedEvent = stackedEvents.at(-1);
-      assert.equal(lastStackedEvent?.kind, "action_finished");
-      if (lastStackedEvent?.kind === "action_finished") {
-        assert.equal(lastStackedEvent.result.action, "commit");
-      }
-
-      const resolvedPr = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitResolvePullRequest]({
-            cwd: "/tmp/repo",
-            reference: "1",
-          }),
-        ),
-      );
-      assert.equal(resolvedPr.pullRequest.number, 1);
-
-      const prepared = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitPreparePullRequestThread]({
-            cwd: "/tmp/repo",
-            reference: "1",
-            mode: "local",
-          }),
-        ),
-      );
-      assert.equal(prepared.branch, "feature/demo");
-
-      const refs = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsListRefs]({ cwd: "/tmp/repo" })),
-      );
-      assert.equal(refs.refs[0]?.name, "main");
-
-      const worktree = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsCreateWorktree]({
-            cwd: "/tmp/repo",
-            refName: "main",
-            path: null,
-          }),
-        ),
-      );
-      assert.equal(worktree.worktree.refName, "feature/demo");
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsRemoveWorktree]({
-            cwd: "/tmp/repo",
-            path: "/tmp/wt",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsCreateRef]({
-            cwd: "/tmp/repo",
-            refName: "feature/new",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsSwitchRef]({
-            cwd: "/tmp/repo",
-            refName: "main",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsInit]({
-            cwd: "/tmp/repo",
-          }),
-        ),
-      );
-
-      const diffPreview = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.reviewGetDiffPreview]({ cwd: "/tmp/repo" }),
-        ),
-      );
-      assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
-
-      const diffFileContents = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.reviewGetDiffFileContents]({
-            cwd: "/tmp/repo",
-            sourceKind: "working-tree",
-            changeType: "change",
-            baseRef: "HEAD",
-            headRef: null,
-            oldPath: "README.md",
-            newPath: "README.md",
-          }),
-        ),
-      );
-      assert.equal(diffFileContents.oldContents, "before\n");
-      assert.equal(diffFileContents.newContents, "after\n");
-    }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("routes websocket rpc git.pull errors", () =>
@@ -11742,6 +10885,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 source: "assistant",
                 snippet: "Search reached the final response.",
                 messageCreatedAt: "2026-06-01T00:01:00.000Z",
+                // Upstream's indexed search ranks matches: an exact phrase, one hit.
+                quality: 1.25,
+                hits: 1,
+                messageId: MessageId.make("assistant-0"),
               },
             ]);
           }),
@@ -12578,127 +11725,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("negotiates compact HTTP snapshots without changing local or inherited history", () =>
-    Effect.gen(function* () {
-      const app = yield* buildAppUnderTest();
-      const source = yield* seedV2StreamThread(app);
-      yield* app.v2.eventSink.write({
-        events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 0, false),
-      });
-      const sourceProjection = yield* app.v2.threads.getThreadProjection(transferV2ThreadId);
-      const sourceRun = sourceProjection.runs[0];
-      assertTrue(sourceRun !== undefined);
-      const targetThreadId = ThreadId.make("http-compact-inherited-target");
-      const created = transferV2ThreadCreated(ProviderDriverKind.make("codex"));
-      yield* app.v2.eventSink.write({
-        events: [
-          {
-            ...created,
-            id: EventId.make("http-compact-inherited-target-created"),
-            threadId: targetThreadId,
-            payload: {
-              ...source.thread,
-              id: targetThreadId,
-              lineage: {
-                parentThreadId: transferV2ThreadId,
-                relationshipToParent: "fork",
-                rootThreadId: transferV2ThreadId,
-              },
-              forkedFrom: { type: "run", threadId: transferV2ThreadId, runId: sourceRun.id },
-            },
-          },
-        ],
-      });
-      yield* app.v2.eventSink.write({
-        events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 1, false).map((event) => {
-          switch (event.type) {
-            case "run.created":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "run.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "message.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "turn-item.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            default:
-              throw new Error(`Unexpected transcript fixture event ${event.type}`);
-          }
-        }),
-      });
-      const headers = {
-        cookie: yield* getAuthenticatedSessionCookieHeader(),
-        [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-      };
-      const url = `${yield* getHttpServerUrl()}/api/orchestration/threads/${targetThreadId}/bounded`;
-      const legacyResponse = yield* measureHttpGet({ url, headers });
-      const compactResponse = yield* measureHttpGet({
-        url,
-        headers: { ...headers, [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT },
-      });
-      assert.equal(legacyResponse.status, 200);
-      assert.equal(compactResponse.status, 200);
-      const legacyText = Buffer.from(legacyResponse.decodedBody).toString("utf8");
-      const compactText = Buffer.from(compactResponse.decodedBody).toString("utf8");
-      const legacy = yield* decodeLegacyThreadBoundedSnapshot(legacyText);
-      const compact = yield* decodeTransferThreadSnapshot(compactText);
-      assertTrue("snapshotFormat" in compact);
-      const { snapshotFormat, ...expanded } = compact;
-      assert.equal(snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
-      assert.deepEqual(expanded, legacy);
-      const legacyJson = yield* decodeSnapshotWireAssertions(legacyText);
-      const compactJson = yield* decodeSnapshotWireAssertions(compactText);
-      assert.notProperty(legacyJson, "snapshotFormat");
-      assert.equal(compactJson.snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
-      let references = 0;
-      let inheritedInline = 0;
-      for (const [index, row] of legacy.projection.visibleTurnItems.entries()) {
-        const legacyRow = legacyJson.projection.visibleTurnItems[index];
-        const wireRow = compactJson.projection.visibleTurnItems[index];
-        assertTrue(legacyRow !== undefined && wireRow !== undefined);
-        assert.notProperty(legacyRow, "itemIndex");
-        assert.deepEqual(legacyRow.item, encodeTurnItemJson(row.item));
-        if ("itemIndex" in wireRow) {
-          references += 1;
-          assert.equal(row.visibility, "local");
-          assert.notProperty(wireRow, "item");
-          const { itemIndex: referenceIndex, ...referenceMetadata } = wireRow;
-          const { item: legacyItem, ...legacyMetadata } = legacyRow;
-          assertTrue(typeof referenceIndex === "number");
-          assert.deepEqual(referenceMetadata, legacyMetadata);
-          assert.deepEqual(compactJson.projection.turnItems[referenceIndex], legacyItem);
-        } else if (row.visibility === "inherited") {
-          inheritedInline += 1;
-          assert.deepEqual(wireRow, legacyRow);
-        }
-      }
-      assert.isAbove(references, 0);
-      assert.isAbove(inheritedInline, 0);
-      assert.deepEqual(
-        legacy.projection.runs.map((run) => run.id),
-        [RunId.make("run-1")],
-      );
-      assert.isTrue(
-        legacy.projection.visibleTurnItems.some((row) => row.sourceThreadId === transferV2ThreadId),
-      );
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
   it.effect("pages the complete V2 transcript after a bounded HTTP cold open", () =>
     Effect.gen(function* () {
       const app = yield* buildAppUnderTest();
@@ -13184,7 +12210,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(clientProjection.turnItems.length, 2);
         yield* Fiber.interrupt(reader);
         const replay = yield* collectV2ThreadCatchup(wsUrl, seededRun.at(-1)!.sequence);
-        assert.equal(replay.filter((item) => item.kind === "event").length, 102);
+        // Catch-up replay coalesces the same way, keeping the last update on each side of a boundary.
+        assert.deepEqual(
+          replay.flatMap((item) => (item.kind === "event" ? [item.event.id] : [])),
+          [
+            EventId.make("live-tool-49"),
+            EventId.make("interleaved-answer"),
+            EventId.make("live-tool-99"),
+            completed.id,
+          ],
+        );
         assert.deepEqual(replay.at(-1), { kind: "synchronized" });
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -14607,6 +13642,657 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
+  // regression: 27e6cc27fe perf(server): cache and stream static web assets (#9669)
+
+  it.effect("binds static metadata and bytes to one file across atomic replacement", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-replace-" });
+      const beforeOpenPath = path.join(staticDir, "before-open.txt");
+      const afterOpenPath = path.join(staticDir, "after-open.txt");
+      const afterOpenSnapshotPath = path.join(staticDir, "after-open-snapshot.txt");
+      const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+      const original = "original bytes";
+      const replacement = "replacement bytes with a different size";
+      for (const filePath of [beforeOpenPath, afterOpenPath]) {
+        yield* fileSystem.writeFileString(filePath, original);
+        yield* fileSystem.writeFileString(`${filePath}.next`, replacement);
+      }
+      if (windowsHost) {
+        // Windows cannot replace an open destination, so model the race with its original handle.
+        yield* fileSystem.writeFileString(afterOpenSnapshotPath, original);
+      }
+      const replaced = new Set<string>();
+      const replaceOnce = Effect.fnUntraced(function* (filePath: string) {
+        if (replaced.has(filePath)) return;
+        replaced.add(filePath);
+        yield* fileSystem.rename(`${filePath}.next`, filePath);
+      });
+      const replacingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (filePath) =>
+          fileSystem
+            .stat(filePath)
+            .pipe(
+              Effect.tap(() => (filePath === beforeOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+        open: (filePath, options) =>
+          fileSystem
+            .open(
+              filePath === afterOpenPath && windowsHost ? afterOpenSnapshotPath : filePath,
+              options,
+            )
+            .pipe(
+              Effect.tap(() => (filePath === afterOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, replacingFileSystem),
+      );
+
+      for (const [name, expected] of [
+        ["before-open.txt", replacement],
+        ["after-open.txt", original],
+      ] as const) {
+        const response = yield* HttpClient.get(`/${name}`, {
+          headers: { "accept-encoding": "identity" },
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["content-length"], String(expected.length));
+        assert.isTrue(response.headers.etag?.startsWith(`W/"${expected.length.toString(16)}-`));
+        assert.equal(yield* response.text, expected);
+        assert.isTrue(replaced.has(path.join(staticDir, name)));
+        assert.equal(yield* fileSystem.readFileString(path.join(staticDir, name)), replacement);
+      }
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: 27e6cc27fe perf(server): cache and stream static web assets (#9669)
+
+  it.effect("closes static file handles after GET, HEAD, 304, and request cancellation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-close-" });
+      const filePath = path.join(staticDir, "app.txt");
+      const body = "file content\n".repeat(1024);
+      yield* fileSystem.writeFileString(filePath, body);
+      const closed = yield* Queue.unbounded<FileSystem.File>();
+      const blocked = yield* Deferred.make<void>();
+      const active = new Set<FileSystem.File>();
+      let blockAfterOpen = false;
+      let bodyReads = 0;
+      const trackedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: (candidate, options) =>
+          Effect.gen(function* () {
+            if (candidate !== filePath) return yield* fileSystem.open(candidate, options);
+            let opened: FileSystem.File | undefined;
+            // Registered first, so this signal runs after the real descriptor-close finalizer.
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                if (opened === undefined) return;
+                active.delete(opened);
+                yield* Queue.offer(closed, opened);
+              }),
+            );
+            const file = yield* fileSystem.open(candidate, options);
+            opened = file;
+            active.add(file);
+            if (blockAfterOpen) {
+              yield* Deferred.succeed(blocked, undefined);
+              return yield* Effect.never;
+            }
+            return new Proxy(file, {
+              get(target, key) {
+                if (key === "readAlloc") {
+                  return (size: number) => {
+                    bodyReads += 1;
+                    return target.readAlloc(size);
+                  };
+                }
+                return Reflect.get(target, key, target);
+              },
+            });
+          }),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+      );
+
+      const get = yield* HttpClient.get("/app.txt");
+      assert.equal(yield* get.text, body);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.isAbove(bodyReads, 0);
+      const readsAfterGet = bodyReads;
+
+      const head = yield* HttpClient.head("/app.txt", { headers: { "accept-encoding": "gzip" } });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers["content-encoding"], "gzip");
+      assert.equal(yield* head.text, "");
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      const unchanged = yield* HttpClient.get("/app.txt", {
+        headers: { "if-none-match": get.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      blockAfterOpen = true;
+      const cancelled = yield* HttpClient.get("/app.txt").pipe(Effect.forkChild);
+      yield* Deferred.await(blocked);
+      assert.equal(active.size, 1);
+      yield* Fiber.interrupt(cancelled);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc server.upsertKeybinding", () =>
+    Effect.gen(function* () {
+      const rule: KeybindingRule = {
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      };
+      const resolved: ResolvedKeybindingRule = {
+        command: "terminal.toggle",
+        shortcut: {
+          key: "k",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            upsertKeybindingRule: () => Effect.succeed([resolved]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverUpsertKeybinding](rule)),
+      );
+
+      assert.deepEqual(response.issues, []);
+      assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: 0e38870647 Add keybindings settings editor (#2533)
+
+  it.effect("routes websocket rpc server.removeKeybinding", () =>
+    Effect.gen(function* () {
+      const rule: KeybindingRule = {
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      };
+      const resolved: ResolvedKeybindingRule = {
+        command: "terminal.toggle",
+        shortcut: {
+          key: "j",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            removeKeybindingRule: () => Effect.succeed([resolved]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverRemoveKeybinding](rule)),
+      );
+
+      assert.deepEqual(response.issues, []);
+      assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc projects.searchEntries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-search-" });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "needle-file.ts"),
+        "export const needle = 1;",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsSearchEntries]({
+            cwd: workspaceDir,
+            query: "needle",
+            limit: 10,
+          }),
+        ),
+      );
+
+      assert.isAtLeast(response.entries.length, 1);
+      assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
+      assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServerTest), TestClock.withLive),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc shell.openInEditor", () =>
+    Effect.gen(function* () {
+      let openedInput: { cwd: string; editor: EditorId } | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            launchEditor: (input) =>
+              Effect.sync(() => {
+                openedInput = input;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellOpenInEditor]({
+            cwd: "/tmp/project",
+            editor: "cursor",
+          }),
+        ),
+      );
+
+      assert.deepEqual(openedInput, { cwd: "/tmp/project", editor: "cursor" });
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc shell.openInEditor errors", () =>
+    Effect.gen(function* () {
+      const externalLauncherError = new ExternalLauncherCommandNotFoundError({
+        editor: "cursor",
+        command: "cursor",
+      });
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            launchEditor: () => Effect.fail(externalLauncherError),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellOpenInEditor]({
+            cwd: "/tmp/project",
+            editor: "cursor",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertFailure(result, externalLauncherError);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc git methods", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          cwd: "/tmp/repo",
+        },
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitManager: {
+            createWorktree: () =>
+              Effect.succeed({
+                worktree: { path: "/tmp/wt", refName: "feature/demo" },
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            localStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            remoteStatus: () =>
+              Effect.succeed({
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+            status: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+            runStackedAction: (input, options) =>
+              Effect.gen(function* () {
+                const result = {
+                  action: "commit" as const,
+                  branch: { status: "skipped_not_requested" as const },
+                  commit: {
+                    status: "created" as const,
+                    commitSha: "abc123",
+                    subject: "feat: demo",
+                  },
+                  push: { status: "skipped_not_requested" as const },
+                  pr: { status: "skipped_not_requested" as const },
+                  toast: {
+                    title: "Committed abc123",
+                    description: "feat: demo",
+                    cta: {
+                      kind: "run_action" as const,
+                      label: "Push",
+                      action: {
+                        kind: "push" as const,
+                      },
+                    },
+                  },
+                };
+
+                yield* (
+                  options?.progressReporter?.publish({
+                    actionId: options.actionId ?? input.actionId,
+                    cwd: input.cwd,
+                    action: input.action,
+                    kind: "phase_started",
+                    phase: "commit",
+                    label: "Committing...",
+                  }) ?? Effect.void
+                );
+
+                yield* (
+                  options?.progressReporter?.publish({
+                    actionId: options.actionId ?? input.actionId,
+                    cwd: input.cwd,
+                    action: input.action,
+                    kind: "action_finished",
+                    result,
+                  }) ?? Effect.void
+                );
+
+                return result;
+              }),
+            resolvePullRequest: () =>
+              Effect.succeed({
+                pullRequest: {
+                  number: 1,
+                  title: "Demo PR",
+                  url: "https://example.com/pr/1",
+                  baseBranch: "main",
+                  headBranch: "feature/demo",
+                  state: "open",
+                },
+              }),
+            preparePullRequestThread: () =>
+              Effect.succeed({
+                pullRequest: {
+                  number: 1,
+                  title: "Demo PR",
+                  url: "https://example.com/pr/1",
+                  baseBranch: "main",
+                  headBranch: "feature/demo",
+                  state: "open",
+                },
+                branch: "feature/demo",
+                worktreePath: null,
+                isOnPullRequestHead: true,
+              }),
+          },
+          gitVcsDriver: {
+            pullCurrentBranch: () =>
+              Effect.succeed({
+                status: "pulled",
+                refName: "main",
+                upstreamRef: "origin/main",
+              }),
+            listRefs: () =>
+              Effect.succeed({
+                refs: [
+                  {
+                    name: "main",
+                    current: true,
+                    isDefault: true,
+                    worktreePath: null,
+                  },
+                ],
+                isRepo: true,
+                hasPrimaryRemote: true,
+                nextCursor: null,
+                totalCount: 1,
+              }),
+            removeWorktree: () => Effect.void,
+            createRef: (input) => Effect.succeed({ refName: input.refName }),
+            switchRef: (input) => Effect.succeed({ refName: input.refName }),
+          },
+          vcsStatusBroadcaster: {
+            refreshStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+          },
+          reviewService: {
+            getDiffPreview: (input) =>
+              Effect.succeed({
+                cwd: input.cwd,
+                generatedAt: DateTime.nowUnsafe(),
+                sources: [
+                  {
+                    id: "working-tree",
+                    kind: "working-tree",
+                    title: "Dirty worktree",
+                    baseRef: "HEAD",
+                    headRef: null,
+                    diff: "dirty-diff",
+                    diffHash: "hash-dirty",
+                    truncated: false,
+                  },
+                  {
+                    id: "branch-range",
+                    kind: "branch-range",
+                    title: "Against main",
+                    baseRef: "main",
+                    headRef: "feature/demo",
+                    diff: "base-diff",
+                    diffHash: "hash-base",
+                    truncated: false,
+                  },
+                ],
+              }),
+            getDiffFileContents: () =>
+              Effect.succeed({
+                oldContents: "before\n",
+                newContents: "after\n",
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      const pull = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsPull]({ cwd: "/tmp/repo" })),
+      );
+      assert.equal(pull.status, "pulled");
+
+      const refreshedStatus = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRefreshStatus]({ cwd: "/tmp/repo" }),
+        ),
+      );
+      assert.equal(refreshedStatus.isRepo, true);
+
+      const stackedEvents = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitRunStackedAction]({
+            actionId: "action-1",
+            cwd: "/tmp/repo",
+            action: "commit",
+          }).pipe(
+            Stream.runCollect,
+            Effect.map((events) => Array.from(events)),
+          ),
+        ),
+      );
+      const lastStackedEvent = stackedEvents.at(-1);
+      assert.equal(lastStackedEvent?.kind, "action_finished");
+      if (lastStackedEvent?.kind === "action_finished") {
+        assert.equal(lastStackedEvent.result.action, "commit");
+      }
+
+      const resolvedPr = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitResolvePullRequest]({
+            cwd: "/tmp/repo",
+            reference: "1",
+          }),
+        ),
+      );
+      assert.equal(resolvedPr.pullRequest.number, 1);
+
+      const prepared = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitPreparePullRequestThread]({
+            cwd: "/tmp/repo",
+            reference: "1",
+            mode: "local",
+          }),
+        ),
+      );
+      assert.equal(prepared.branch, "feature/demo");
+
+      const refs = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsListRefs]({ cwd: "/tmp/repo" })),
+      );
+      assert.equal(refs.refs[0]?.name, "main");
+
+      const worktree = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsCreateWorktree]({
+            cwd: "/tmp/repo",
+            refName: "main",
+            path: null,
+          }),
+        ),
+      );
+      assert.equal(worktree.worktree.refName, "feature/demo");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRemoveWorktree]({
+            cwd: "/tmp/repo",
+            path: "/tmp/wt",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsCreateRef]({
+            cwd: "/tmp/repo",
+            refName: "feature/new",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsSwitchRef]({
+            cwd: "/tmp/repo",
+            refName: "main",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsInit]({
+            cwd: "/tmp/repo",
+          }),
+        ),
+      );
+
+      const diffPreview = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.reviewGetDiffPreview]({ cwd: "/tmp/repo" }),
+        ),
+      );
+      assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
+
+      const diffFileContents = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.reviewGetDiffFileContents]({
+            cwd: "/tmp/repo",
+            sourceKind: "working-tree",
+            changeType: "change",
+            baseRef: "HEAD",
+            headRef: null,
+            oldPath: "README.md",
+            newPath: "README.md",
+          }),
+        ),
+      );
+      assert.equal(diffFileContents.oldContents, "before\n");
+      assert.equal(diffFileContents.newContents, "after\n");
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
   it.effect("routes websocket rpc terminal methods", () =>
     Effect.gen(function* () {
       const snapshot = {
@@ -14630,7 +14316,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             write: () => Effect.void,
             resize: () => Effect.void,
             clear: () => Effect.void,
-            restart: () => Effect.succeed(snapshot),
             close: () => Effect.void,
           },
         },
@@ -14679,19 +14364,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      const restarted = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalRestart]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cwd: "/tmp/project",
-            cols: 120,
-            rows: 40,
-          }),
-        ),
-      );
-      assert.equal(restarted.terminalId, "default");
-
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalClose]({
@@ -14702,6 +14374,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
 
   it.effect("routes websocket rpc terminal.write errors", () =>
     Effect.gen(function* () {
@@ -14759,11 +14433,10 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
             return yield* Effect.scoped(
               Effect.gen(function* () {
                 const threadSnapshot = yield* measureHttpGet({
-                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded`,
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
                   headers: {
                     cookie,
                     [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
                   },
                 });
                 yield* Effect.logInfo(
@@ -14903,19 +14576,14 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                 const turnStartSqlStatements = sqlCounter.count();
                 const committed = yield* commitMeasuredTransferTurn(app.v2.eventSink, provider);
                 const finalThreadSequence = committed.at(-1)!.sequence;
-                const finalSequences = {
-                  detail: finalThreadSequence,
-                  aggregate: finalThreadSequence,
-                };
                 assert.isAbove(finalThreadSequence, decodedThread.snapshotSequence);
 
                 const reachedFinalThreadEvent = (item: OrchestrationV2ThreadStreamItem) =>
                   item.kind === "event" && item.sequence === finalThreadSequence;
-                // Shell items carry the sequence of the latest coalesced
-                // event for the thread, so the last one lands at or past
-                // the final thread event.
+                // Shell projection can read the final state at an earlier cursor;
+                // skipUnchangedThreadShells then suppresses its later duplicate.
                 const reachedFinalShellEvent = (item: OrchestrationV2ShellStreamItem) =>
-                  item.kind === "thread.updated" && item.sequence >= finalSequences.aggregate;
+                  isMeasuredTransferShellUpdate(item, provider, decodedShell.snapshotSequence);
                 yield* collectQueueUntil(
                   threadItems,
                   reachedFinalThreadEvent,
@@ -14926,15 +14594,15 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   reachedFinalThreadEvent,
                   `${provider} second client thread stream to reach sequence ${finalThreadSequence}`,
                 );
-                yield* collectQueueUntil(
+                const shellUpdates = yield* collectQueueUntil(
                   shellItems,
                   reachedFinalShellEvent,
-                  `${provider} shell stream to reach sequence ${finalSequences.aggregate}`,
+                  `${provider} shell stream to show the completed measured turn`,
                 );
-                yield* collectQueueUntil(
+                const secondShellUpdates = yield* collectQueueUntil(
                   secondShellItems,
                   reachedFinalShellEvent,
-                  `${provider} second client shell stream to reach sequence ${finalSequences.aggregate}`,
+                  `${provider} second client shell stream to show the completed measured turn`,
                 );
                 const measuredTurnWebSocket = transferDelta(
                   turnStartTotals,
@@ -14949,6 +14617,22 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   secondClient.recorder.totals(),
                 );
                 const measuredTurnSqlStatements = sqlCounter.count() - turnStartSqlStatements;
+
+                // Read the oracle outside both measured SQL intervals. Both sockets
+                // must carry the complete canonical shell, not just a completion flag.
+                const expectedShell = yield* app.v2.threads.getThreadShell(TRANSFER_THREAD_ID);
+                assert.isNotNull(expectedShell);
+                for (const update of [shellUpdates.at(-1), secondShellUpdates.at(-1)]) {
+                  assertTrue(
+                    update !== undefined &&
+                      isMeasuredTransferShellUpdate(
+                        update,
+                        provider,
+                        decodedShell.snapshotSequence,
+                      ),
+                  );
+                  assert.deepEqual(update.thread, expectedShell);
+                }
 
                 // The second device drops and comes back with the cursors it
                 // held before the turn, one subscription at a time so the
@@ -14998,6 +14682,78 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   TRANSFER_HISTORY_TURN_COUNT + 1,
                 );
 
+                // A long agent turn opens with a bounded first page (553203c57b).
+                for (const events of transferV2LongTurnThreadBatches(provider))
+                  yield* app.v2.eventSink.write({ events });
+                const getTransferPath = (path: string) =>
+                  measureHttpGet({
+                    url: `${baseUrl}${path}`,
+                    headers: {
+                      cookie,
+                      [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                    },
+                  }).pipe(Effect.tap((http) => Effect.sync(() => assert.equal(http.status, 200))));
+                const longTurnPath = `/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}`;
+                const readLongTurnColdOpen = (query: string) =>
+                  Effect.gen(function* () {
+                    const http = yield* getTransferPath(`${longTurnPath}/bounded?${query}`);
+                    const snapshot = yield* decodeTransferThreadSnapshot(
+                      Buffer.from(http.decodedBody).toString("utf8"),
+                    );
+                    return {
+                      http,
+                      rows: snapshot.projection.visibleTurnItems.length,
+                      cursor: snapshot.historyCursor,
+                    };
+                  });
+                const readLongTurnHistoryPage = (historyCursor: string, query: string) =>
+                  Effect.gen(function* () {
+                    const http = yield* getTransferPath(
+                      `${longTurnPath}/history?cursor=${encodeURIComponent(historyCursor)}&${query}`,
+                    );
+                    const page = yield* decodeTransferHistoryPage(
+                      Buffer.from(http.decodedBody).toString("utf8"),
+                    );
+                    assert.isTrue(page.hasMoreHistory);
+                    return { http, rows: page.items.length };
+                  });
+                const readFleetShell = (query: string) =>
+                  Effect.gen(function* () {
+                    const http = yield* getTransferPath(`/api/orchestration/shell?${query}`);
+                    const shell = yield* decodeTransferShellSnapshot(
+                      Buffer.from(http.decodedBody).toString("utf8"),
+                    );
+                    return { http, rows: shell.threads.length };
+                  });
+
+                const { cursor: _legacyCursor, ...longTurnColdOpenLegacy } =
+                  yield* readLongTurnColdOpen("compactTurnItems=1");
+                const { cursor: longTurnCursor, ...longTurnColdOpen } = yield* readLongTurnColdOpen(
+                  "compactTurnItems=1&dedupeBodies=1&compactIds=1",
+                );
+                if (longTurnCursor === null)
+                  return yield* Effect.die("Expected older long-turn history");
+                const longTurnHistoryPageLegacy = yield* readLongTurnHistoryPage(
+                  longTurnCursor,
+                  "",
+                );
+                const longTurnHistoryPage = yield* readLongTurnHistoryPage(
+                  longTurnCursor,
+                  "compactIds=1",
+                );
+
+                // The transfer thread plus the long-turn thread.
+                const earlierThreads = decodedShell.threads.length + 1;
+                yield* app.v2.eventSink.write({ events: transferV2ShellFleetEvents(provider) });
+                const fleetShellLegacy = yield* readFleetShell("");
+                const fleetShell = yield* readFleetShell("omitIdleSubagents=1&omitOlderSettled=1");
+                assert.equal(
+                  fleetShellLegacy.rows,
+                  earlierThreads +
+                    TRANSFER_V2_SHELL_SETTLED_THREADS +
+                    TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
+                );
+
                 return {
                   provider,
                   startupTransport: "bounded-compact-http-with-live-cursor",
@@ -15016,6 +14772,12 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   },
                   measuredTurnSqlStatements,
                   reconnectSqlStatements,
+                  longTurnColdOpenLegacy,
+                  longTurnColdOpen,
+                  longTurnHistoryPageLegacy,
+                  longTurnHistoryPage,
+                  fleetShellLegacy,
+                  fleetShell,
                 } satisfies TransferBudgetRun;
               }),
             );

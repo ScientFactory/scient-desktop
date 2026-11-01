@@ -1,9 +1,6 @@
 /**
- * Whether each provider driver can receive Scient connectors: remote MCP
- * servers that Scient proxies at `/mcp/connectors/<id>` and that the agent
- * reaches with its own Scient MCP session bearer. Each built-in driver has an
- * explicit, reviewed decision; unknown drivers fail closed.
- * See docs/internals/scient-extensions.md ("Grants and delivery").
+ * Unknown drivers fail closed for connector delivery. Every built-in needs an explicit reviewed
+ * remote-HTTP-MCP capability decision; see docs/internals/scient-extensions.md.
  */
 import type {
   ConnectorProviderSupport,
@@ -24,6 +21,8 @@ const CONNECTOR_TRANSPORT_SUPPORT: Record<string, ConnectorTransportSupport> = {
   codex: { status: "supported" },
   cursor: { status: "supported" },
   droid: { status: "supported" },
+  // fx runs on the shared ACP adapter, which adds the same per-connector bridges.
+  fx: { status: "supported" },
   grok: { status: "supported" },
   muse: { status: "supported" },
   // The Scient extension registers each connector's tools as `<server>__<tool>`.

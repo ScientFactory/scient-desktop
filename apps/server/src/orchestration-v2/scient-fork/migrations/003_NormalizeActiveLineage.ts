@@ -1,26 +1,7 @@
 /**
- * Scient migration 3: normalize-active-lineage.
- *
- * Adds remaining lifecycle columns (status, checkpoint/workspace status,
- * attempt count, error, timestamps), quarantines malformed lineage rows into
- * a dedicated evidence table, normalizes prototype mode values to the
- * canonical `transcript-bootstrap` active model, and creates supporting
- * indexes.
- *
- * Quarantine: rows with missing or invalid identity/mode/lifecycle values are
- * copied to `scient_thread_lineage_quarantine` (full payload snapshot,
- * machine-readable reason, timestamp) and removed from
- * `scient_thread_lineage`. A malformed row therefore never blocks application
- * startup and never leaks into active fork recovery, while remaining
- * available for forensic repair. The migration itself stays transactional:
- * either every malformed row is quarantined and the normalization commits,
- * or nothing does.
- *
- * Physical compatibility columns (`provider_mode`, `fidelity_mode`) remain
- * queryable after this migration; only active runtime reads/writes use the
- * canonical model. No columns are dropped.
- *
- * SCIENT-OWNED.
+ * Quarantine malformed lineage transactionally so it cannot block startup or enter recovery; retain
+ * full evidence for repair. Keep physical compatibility columns queryable while runtime reads use
+ * the canonical model.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -34,11 +15,8 @@ const encodeEvidencePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.U
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Add all missing columns (conditional ALTER).
-  // This includes columns that migration 2 would have added, so migration 3
-  // is self-sufficient even on databases where migrations 1/2 were pre-seeded
-  // in the ledger by the legacy ensureScientForkSchema without actually
-  // running the migration effects.
+  // Legacy ledgers may record migrations 1/2 without running them, so this migration must add their
+  // missing columns too.
 
   const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(scient_thread_lineage)`;
   const columnNames = new Set(columns.map((column) => column.name));
@@ -79,11 +57,8 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // NULL workspace_mode cannot be normalized: the canonical schema requires
-  // an explicit workspace mode ('local' or 'new-worktree') and fabricating a
-  // value the original data did not carry would be dishonest. The same holds
-  // for a null fork origin or an unrecognized mode/status. Such rows are
-  // quarantined with evidence instead of failing the whole migration.
+  // Missing or invalid identity, mode, and lifecycle values cannot be invented safely; quarantine
+  // those rows with evidence instead of blocking migration.
   const malformedRows = yield* sql<{
     readonly thread_id: string;
     readonly workspace_mode: string | null;

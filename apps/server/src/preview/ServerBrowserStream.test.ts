@@ -90,7 +90,7 @@ it.effect.each([
       exportDocumentPdf: () => Effect.die("Document export is outside this stream fixture."),
       navigateDocument: () => Effect.die("Document navigation is outside this stream fixture."),
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: (input) =>
@@ -135,8 +135,7 @@ it.effect.each([
       received.resolve();
     });
     yield* Effect.promise(() => received.promise);
-    // The ack follows every mutation on the socket, so this is also a barrier
-    // proving all preceding inputs were processed, without a timing sleep.
+    // The socket ack follows every mutation, providing a barrier without sleeps.
     yield* Effect.promise(() => acked.promise);
     expect(frames).toEqual([frame]);
     expect(viewports).toEqual([{ type: "viewport", width: 1280, height: 800 }]);
@@ -170,7 +169,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
       navigateDocument: () => Effect.die("Document navigation is outside this stream fixture."),
       // SCIENT-FORK:END
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
@@ -221,7 +220,6 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     ]);
     yield* Effect.promise(() => next.promise);
     expect(received).toEqual([1, "probe"]);
-    // Frames 2 and 3 were superseded before they could be sent.
     expect(released).toEqual([2, 3]);
 
     next = Promise.withResolvers();
@@ -244,7 +242,7 @@ it.effect.each([
       exportDocumentPdf: () => Effect.die("Document export is outside this stream fixture."),
       navigateDocument: () => Effect.die("Document navigation is outside this stream fixture."),
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => {
@@ -287,7 +285,7 @@ it.effect("serves a tab's download only to an authorized session", () =>
       exportDocumentPdf: () => Effect.die("Document export is outside this stream fixture."),
       navigateDocument: () => Effect.die("Document navigation is outside this stream fixture."),
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: (input) =>
         Effect.sync(() => {
           requests.push(input);
@@ -337,7 +335,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
       exportDocumentPdf: () => Effect.die("Document export is outside this stream fixture."),
       navigateDocument: () => Effect.die("Document navigation is outside this stream fixture."),
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: (input) =>
         Effect.sync(() => {
@@ -408,7 +406,7 @@ it.effect.each([
       exportDocumentPdf: () => Effect.die("Document export is outside this stream fixture."),
       navigateDocument: () => Effect.die("Document navigation is outside this stream fixture."),
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => Effect.fail(new ServerBrowser.ServerBrowserLaunchError({ cause: error })),

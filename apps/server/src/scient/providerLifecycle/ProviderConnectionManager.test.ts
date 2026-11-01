@@ -20,6 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import * as RpcTest from "effect/rpc/RpcTest";
 import { RPC_REQUIRED_SCOPES } from "../../auth/RpcAuthorization.ts";
@@ -83,20 +84,20 @@ const authenticatedProvider = (provider: ServerProvider): ServerProvider => ({
   ...(provider.connection ? { connection: { ...provider.connection, canDisconnect: true } } : {}),
 });
 
-const yieldUntil = <A>(
-  effect: Effect.Effect<A, never, never>,
+/** The first value of `ref`, current or later, that satisfies `predicate`. */
+const awaitState = <A>(
+  ref: SubscriptionRef.SubscriptionRef<A>,
   predicate: (value: A) => boolean,
-): Effect.Effect<A, never, never> =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const value = yield* effect;
-      if (predicate(value)) {
-        return value;
-      }
-      yield* Effect.yieldNow;
-    }
-    return yield* Effect.die(new Error("Timed out waiting for provider connection state."));
-  });
+): Effect.Effect<A> =>
+  SubscriptionRef.changes(ref).pipe(
+    Stream.filter(predicate),
+    Stream.runHead,
+    Effect.flatMap((value) =>
+      value._tag === "Some"
+        ? Effect.succeed(value.value)
+        : Effect.die(new Error("The provider connection state stream ended.")),
+    ),
+  );
 
 function makeHarness(options?: {
   readonly provider?: ServerProvider;
@@ -115,10 +116,12 @@ function makeHarness(options?: {
   readonly useProductionLayer?: boolean;
 }) {
   return Effect.gen(function* () {
-    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
+    const providersRef = yield* SubscriptionRef.make<ReadonlyArray<ServerProvider>>(
       options?.providers ?? [options?.provider ?? disconnectedProvider],
     );
-    const transitionsRef = yield* Ref.make<ReadonlyArray<ProviderConnectionOperation | null>>([]);
+    const transitionsRef = yield* SubscriptionRef.make<
+      ReadonlyArray<ProviderConnectionOperation | null>
+    >([]);
     const refreshCountRef = yield* Ref.make(0);
     const accountChangeRefreshCountRef = yield* Ref.make(0);
 
@@ -126,10 +129,13 @@ function makeHarness(options?: {
       (input) =>
         Effect.gen(function* () {
           yield* options?.beforeSetProviderConnectionOperation?.(input.operation) ?? Effect.void;
-          yield* Ref.update(transitionsRef, (transitions) => [...transitions, input.operation]);
+          yield* SubscriptionRef.update(transitionsRef, (transitions) => [
+            ...transitions,
+            input.operation,
+          ]);
           // As the registry does: a sign-in to one of a provider's accounts is
           // published in its own field.
-          return yield* Ref.updateAndGet(providersRef, (providers) =>
+          return yield* SubscriptionRef.updateAndGet(providersRef, (providers) =>
             providers.map((provider) => {
               if (provider.instanceId !== input.instanceId || !provider.connection) return provider;
               const { accountOperation: _previous, ...connection } = provider.connection;
@@ -155,7 +161,7 @@ function makeHarness(options?: {
             message: "Simulated strict refresh failure.",
           });
         }
-        return yield* Ref.updateAndGet(providersRef, (providers) =>
+        return yield* SubscriptionRef.updateAndGet(providersRef, (providers) =>
           providers.map((provider) =>
             provider.instanceId === instanceId
               ? (options?.refreshProvider?.(provider, refreshCount) ?? provider)
@@ -165,46 +171,51 @@ function makeHarness(options?: {
       });
 
     const registry: ProviderRegistryShape = {
-      getProviders: Ref.get(providersRef),
-      refresh: () => Ref.get(providersRef),
-      refreshAfterUpdate: () => Ref.get(providersRef),
+      getProviders: SubscriptionRef.get(providersRef),
+      refresh: () => SubscriptionRef.get(providersRef),
+      refreshAfterUpdate: () => SubscriptionRef.get(providersRef),
       refreshInstance: (instanceId) =>
-        refreshInstance(instanceId, false).pipe(Effect.catch(() => Ref.get(providersRef))),
-      refreshWorkspaceSnapshot: () => Ref.get(providersRef),
+        refreshInstance(instanceId, false).pipe(
+          Effect.catch(() => SubscriptionRef.get(providersRef)),
+        ),
+      refreshWorkspaceSnapshot: () => SubscriptionRef.get(providersRef),
       refreshInstanceStrict: (instanceId) => refreshInstance(instanceId, true),
       refreshInstanceAfterAccountChange: (instanceId) =>
         Ref.update(accountChangeRefreshCountRef, (count) => count + 1).pipe(
           Effect.andThen(refreshInstance(instanceId, true)),
         ),
-      reloadInstance: () => Ref.get(providersRef),
-      reloadInstanceStrict: () => Ref.get(providersRef),
+      reloadInstance: () => SubscriptionRef.get(providersRef),
+      reloadInstanceStrict: () => SubscriptionRef.get(providersRef),
+      reloadSecretsAndRefresh: () => SubscriptionRef.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
-      getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
-      getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
-      getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
-      recordProviderNativeInventory: () => Ref.get(providersRef),
+      getProviderManagedRuntimeActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderSkillActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderPluginActionsForInstance: () => Effect.sync(() => undefined),
+      recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
-      setProviderMaintenanceActionState: () => Ref.get(providersRef),
+      setProviderMaintenanceActionState: () => SubscriptionRef.get(providersRef),
       setProviderConnectionOperation,
-      setProviderAuthenticationFailure: () => Ref.get(providersRef),
+      setProviderAuthenticationFailure: () => SubscriptionRef.get(providersRef),
       streamChanges: Stream.empty,
     };
 
     const lifecycleCoordinator = yield* makeLifecycleCoordinator;
-    const lifecycleReleaseCountRef = yield* Ref.make(0);
+    const lifecycleReleaseCountRef = yield* SubscriptionRef.make(0);
     const trackedLifecycleCoordinator = ProviderLifecycleCoordinator.of({
       ...lifecycleCoordinator,
       release: (input) =>
-        Ref.update(lifecycleReleaseCountRef, (count) => count + 1).pipe(
-          Effect.andThen(lifecycleCoordinator.release(input)),
-        ),
+        lifecycleCoordinator
+          .release(input)
+          .pipe(
+            Effect.ensuring(SubscriptionRef.update(lifecycleReleaseCountRef, (count) => count + 1)),
+          ),
     });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
@@ -293,7 +304,7 @@ describe("ProviderConnectionManager", () => {
         );
 
         yield* Deferred.succeed(completed, undefined);
-        const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        const transitions = yield* awaitState(transitionsRef, (items) =>
           items.some((item) => item?.status === "connected"),
         );
         assert.deepStrictEqual(
@@ -348,7 +359,7 @@ describe("ProviderConnectionManager", () => {
       assert.strictEqual(started.providers[0]?.connection?.operation?.userCode, "GROK-1234");
 
       yield* Deferred.succeed(completed, undefined);
-      yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "connected"),
       );
     }),
@@ -381,7 +392,7 @@ describe("ProviderConnectionManager", () => {
       assert.strictEqual(started.providers[0]?.connection?.operation?.authorizationUrl, undefined);
 
       yield* Deferred.succeed(completed, undefined);
-      yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "connected"),
       );
     }),
@@ -640,7 +651,7 @@ describe("ProviderConnectionManager", () => {
 
       yield* Deferred.succeed(completed, undefined);
       yield* Effect.yieldNow;
-      const transitions = yield* Ref.get(transitionsRef);
+      const transitions = yield* SubscriptionRef.get(transitionsRef);
       assert.strictEqual(transitions.at(-1)?.status, "cancelled");
     }),
   );
@@ -682,7 +693,7 @@ describe("ProviderConnectionManager", () => {
 
       assert.strictEqual(cancelled.providers[0]?.connection?.operation?.status, "cancelled");
       assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -736,7 +747,7 @@ describe("ProviderConnectionManager", () => {
       const cancelled = yield* Fiber.join(cancelFiber);
       assert.strictEqual(cancelled.providers[0]?.connection?.operation?.status, "cancelled");
       assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -775,12 +786,12 @@ describe("ProviderConnectionManager", () => {
 
         assert.strictEqual(cancelled.providers[0]?.connection?.operation?.status, "cancelled");
         assert.deepStrictEqual(
-          (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+          (yield* SubscriptionRef.get(transitionsRef)).map((item) => item?.status ?? null),
           ["starting", "waiting_for_browser", "cancelled"],
         );
         assert.strictEqual(yield* Ref.get(scopeClosures), 1);
         assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
       }),
   );
 
@@ -841,15 +852,15 @@ describe("ProviderConnectionManager", () => {
           assert.strictEqual(cancelResult.failure.reason, "operation_not_found");
         }
         assert.strictEqual(
-          (yield* Ref.get(providersRef))[0]?.connection?.operation?.status,
+          (yield* SubscriptionRef.get(providersRef))[0]?.connection?.operation?.status,
           "connected",
         );
         assert.deepStrictEqual(
-          (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+          (yield* SubscriptionRef.get(transitionsRef)).map((item) => item?.status ?? null),
           ["starting", "waiting_for_browser", "verifying", "connected"],
         );
         assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
       }),
   );
 
@@ -909,9 +920,9 @@ describe("ProviderConnectionManager", () => {
         assert.strictEqual(yield* Ref.get(supervisorInterruptions), 1);
         assert.strictEqual(yield* Ref.get(operationScopeClosures), 1);
         assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
         assert.deepStrictEqual(
-          (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+          (yield* SubscriptionRef.get(transitionsRef)).map((item) => item?.status ?? null),
           ["starting", "waiting_for_browser"],
         );
         const inactive = yield* manager
@@ -923,7 +934,7 @@ describe("ProviderConnectionManager", () => {
         assert.strictEqual(yield* Ref.get(attemptCancellations), 1);
         assert.strictEqual(yield* Ref.get(supervisorInterruptions), 1);
         assert.strictEqual(yield* Ref.get(operationScopeClosures), 1);
-        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
       }),
   );
 
@@ -950,8 +961,8 @@ describe("ProviderConnectionManager", () => {
       const startFiber = yield* manager
         .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
         .pipe(Effect.forkChild);
-      const starting = yield* yieldUntil(
-        Ref.get(providersRef),
+      const starting = yield* awaitState(
+        providersRef,
         (providers) => providers[0]?.connection?.operation?.status === "starting",
       );
       const operationId = starting[0]?.connection?.operation?.operationId;
@@ -964,7 +975,7 @@ describe("ProviderConnectionManager", () => {
       assert.strictEqual(result.providers[0]?.connection?.operation?.status, "cancelled");
       assert.strictEqual(yield* Deferred.isDone(providerCancelled), true);
       assert.deepStrictEqual(
-        (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+        (yield* SubscriptionRef.get(transitionsRef)).map((item) => item?.status ?? null),
         ["starting", "cancelled"],
       );
     }),
@@ -1010,7 +1021,8 @@ describe("ProviderConnectionManager", () => {
         .start({ instanceId: CODEX_INSTANCE, method: "claude_subscription" })
         .pipe(Effect.forkChild);
       yield* Deferred.await(waitingPublishStarted);
-      const operationId = (yield* Ref.get(providersRef))[0]?.connection?.operation?.operationId;
+      const operationId = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.operation
+        ?.operationId;
       assert.ok(operationId);
 
       const cancelFiber = yield* manager
@@ -1028,12 +1040,12 @@ describe("ProviderConnectionManager", () => {
       );
       assert.strictEqual(cancelled.providers[0]?.connection?.operation?.status, "cancelled");
       assert.strictEqual(
-        (yield* Ref.get(providersRef))[0]?.connection?.operation?.status,
+        (yield* SubscriptionRef.get(providersRef))[0]?.connection?.operation?.status,
         "cancelled",
       );
       assert.strictEqual(yield* Deferred.isDone(providerCancelled), true);
       assert.deepStrictEqual(
-        (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+        (yield* SubscriptionRef.get(transitionsRef)).map((item) => item?.status ?? null),
         ["starting", "waiting_for_browser", "cancelled"],
       );
     }),
@@ -1064,7 +1076,7 @@ describe("ProviderConnectionManager", () => {
       assert.strictEqual(second.reason, "connection_failed");
       assert.strictEqual(starts, 2);
       assert.deepStrictEqual(
-        (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+        (yield* SubscriptionRef.get(transitionsRef)).map((item) => item?.status ?? null),
         ["starting", "failed", "starting", "failed"],
       );
     }),
@@ -1109,7 +1121,7 @@ describe("ProviderConnectionManager", () => {
       assert.strictEqual(failed._tag, "Failure");
       if (failed._tag === "Failure") assert.strictEqual(failed.failure.reason, "connection_failed");
       assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -1159,11 +1171,13 @@ describe("ProviderConnectionManager", () => {
   it.effect("keeps an accepted startup when its caller goes away, and cancel still stops it", () =>
     Effect.gen(function* () {
       const interrupted = yield* Deferred.make<void>();
+      const startupEntered = yield* Deferred.make<void>();
       const starts = yield* Ref.make(0);
       const actions: ProviderConnectionActions = {
         methods: ["codex_browser"],
         start: () =>
-          Ref.updateAndGet(starts, (count) => count + 1).pipe(
+          Deferred.succeed(startupEntered, undefined).pipe(
+            Effect.andThen(Ref.updateAndGet(starts, (count) => count + 1)),
             Effect.flatMap((count) =>
               count === 1
                 ? Effect.never.pipe(
@@ -1183,15 +1197,11 @@ describe("ProviderConnectionManager", () => {
       const first = yield* manager
         .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
         .pipe(Effect.forkChild);
-      yield* yieldUntil(
-        Ref.get(providersRef),
-        (providers) => providers[0]?.connection?.operation?.status === "starting",
-      );
+      yield* Deferred.await(startupEntered);
       yield* Fiber.interrupt(first);
       // A reload or disconnect of the asking client only detaches it.
-      for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
       assert.isFalse(yield* Deferred.isDone(interrupted));
-      const running = (yield* Ref.get(providersRef))[0]?.connection?.operation;
+      const running = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.operation;
       assert.strictEqual(running?.status, "starting");
 
       yield* manager.cancel({ instanceId: CODEX_INSTANCE, operationId: running!.operationId });
@@ -1263,7 +1273,7 @@ describe("ProviderConnectionManager", () => {
         method: "droid_device_pairing",
       });
       yield* Deferred.succeed(completed, undefined);
-      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      const transitions = yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "failed"),
       );
 
@@ -1295,7 +1305,7 @@ describe("ProviderConnectionManager", () => {
 
       yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
       yield* Deferred.succeed(completed, undefined);
-      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      const transitions = yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "failed"),
       );
 
@@ -1307,7 +1317,8 @@ describe("ProviderConnectionManager", () => {
         transitions.at(-1)?.message,
         "The provider finished sign in, but Scient could not verify the connected account.",
       );
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -1382,7 +1393,7 @@ describe("ProviderConnectionManager", () => {
         "Scient could not verify the provider before starting sign in. Try again.",
       );
       assert.strictEqual(yield* Ref.get(starts), 0);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 0);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 0);
     }),
   );
 
@@ -1484,7 +1495,7 @@ describe("ProviderConnectionManager", () => {
       assert.equal(yield* Ref.get(logoutCount), 0);
       assert.equal(yield* Ref.get(refreshCountRef), 0);
       assert.equal(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-      assert.equal(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.equal(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -1510,7 +1521,7 @@ describe("ProviderConnectionManager", () => {
         "The provider completed sign out, but Scient could not verify the current account state.",
       );
       assert.strictEqual(yield* Ref.get(disconnects), 1);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -1548,7 +1559,7 @@ describe("ProviderConnectionManager", () => {
       yield* Deferred.succeed(releaseRefresh, undefined);
       yield* Fiber.join(disconnectFiber);
       assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
-      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
 });
@@ -1629,7 +1640,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       assert.strictEqual(operation?.userCode, "ABCD-1234");
 
       yield* Deferred.succeed(completed, undefined);
-      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      const transitions = yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "connected"),
       );
       assert.deepStrictEqual(
@@ -1671,7 +1682,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         method: "scient_agent_account",
         account: "openai-codex",
       });
-      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      const transitions = yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "failed"),
       );
       assert.strictEqual(
@@ -1710,9 +1721,8 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         actions,
         provider: agentProvider([account({ id: "openai-codex" })]),
       });
-      const published = Ref.get(providersRef).pipe(
-        Effect.map((providers) => providers[0]?.connection?.accountOperation),
-      );
+      const accountOperationOf = (providers: ReadonlyArray<ServerProvider>) =>
+        providers[0]?.connection?.accountOperation;
 
       const started = yield* manager.start({
         instanceId: SCIENT_INSTANCE,
@@ -1735,9 +1745,11 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       assert.strictEqual(early.reason, "authorization_code_not_supported");
 
       yield* Queue.offer(asked, "Paste the redirect URL");
-      const waiting = yield* yieldUntil(
-        published,
-        (operation) => operation?.acceptsAuthorizationCode === true,
+      const waiting = accountOperationOf(
+        yield* awaitState(
+          providersRef,
+          (providers) => accountOperationOf(providers)?.acceptsAuthorizationCode === true,
+        ),
       );
       assert.strictEqual(waiting?.instructions, "Paste the redirect URL");
       assert.strictEqual(waiting?.questionId, "question-1");
@@ -1785,7 +1797,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       });
       yield* Deferred.succeed(asked, undefined);
       for (let turn = 0; turn < 20; turn += 1) yield* Effect.yieldNow;
-      const operation = (yield* Ref.get(providersRef))[0]?.connection?.accountOperation;
+      const operation = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.accountOperation;
       assert.strictEqual(operation?.status, "cancelled");
       assert.notStrictEqual(operation?.acceptsAuthorizationCode, true);
     }),
@@ -1835,7 +1847,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         authorizationCode: "the-token",
       });
       // The answer's own `verifying` must not hide the question that followed it.
-      const waiting = (yield* Ref.get(providersRef))[0]?.connection?.accountOperation;
+      const waiting = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.accountOperation;
       assert.strictEqual(waiting?.status, "waiting_for_browser");
       assert.strictEqual(waiting?.acceptsAuthorizationCode, true);
       assert.strictEqual(waiting?.instructions, "Enter your account ID");
@@ -2116,7 +2128,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         assert.strictEqual(error.reason, "invalid_method");
       }
       // No operation, so the method never reaches a field an older client decodes.
-      assert.deepStrictEqual(yield* Ref.get(transitionsRef), []);
+      assert.deepStrictEqual(yield* SubscriptionRef.get(transitionsRef), []);
     }),
   );
 
@@ -2354,8 +2366,8 @@ describe("ProviderConnectionManager failure stage", () => {
         completed,
         new ProviderConnectionActionError({ message: "Session failed.", afterSignIn: true }),
       );
-      const transitions = yield* yieldUntil(
-        Ref.get(transitionsRef),
+      const transitions = yield* awaitState(
+        transitionsRef,
         (items) => items.filter((item) => item?.status === "failed").length === 3,
       );
 
@@ -2386,7 +2398,7 @@ describe("ProviderConnectionManager failure stage", () => {
       };
       const { manager, transitionsRef } = yield* makeHarness({ actions });
       yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
-      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      const transitions = yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "failed"),
       );
       assert.strictEqual(transitions[0]?.message, "Starting sign-in.");
@@ -2418,7 +2430,7 @@ describe("ProviderConnectionManager sign-in request ids", () => {
         signInRequestId: "request-12345678",
       });
       yield* Deferred.fail(completed, new ProviderConnectionActionError({ message: "Declined." }));
-      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+      const transitions = yield* awaitState(transitionsRef, (items) =>
         items.some((item) => item?.status === "failed"),
       );
       assert.deepStrictEqual(
@@ -2437,10 +2449,12 @@ describe("ProviderConnectionManager over the RPC boundary", () => {
   it.effect("keeps an accepted startup when the asking client disconnects", () =>
     Effect.gen(function* () {
       const reachBrowser = yield* Deferred.make<void>();
+      const startupEntered = yield* Deferred.make<void>();
       const actions: ProviderConnectionActions = {
         methods: ["codex_browser"],
         start: () =>
-          Deferred.await(reachBrowser).pipe(
+          Deferred.succeed(startupEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(reachBrowser)),
             Effect.as({
               authorizationUrl: "https://auth.openai.com/",
               authorizationUrlKind: "primary" as const,
@@ -2480,16 +2494,13 @@ describe("ProviderConnectionManager over the RPC boundary", () => {
         method: "codex_browser",
         signInRequestId: "request-12345678",
       }).pipe(Effect.ignore, Effect.forkChild);
-      yield* yieldUntil(
-        Ref.get(providersRef),
-        (providers) => providers[0]?.connection?.operation?.status === "starting",
-      );
+      yield* Deferred.await(startupEntered);
       // The renderer reloads: its connection, and the request on it, go away.
       yield* Scope.close(clientScope, Exit.void);
       yield* Deferred.succeed(reachBrowser, undefined);
 
-      const providers = yield* yieldUntil(
-        Ref.get(providersRef),
+      const providers = yield* awaitState(
+        providersRef,
         (current) => current[0]?.connection?.operation?.status !== "starting",
       );
       const operation = providers[0]?.connection?.operation;
@@ -2527,7 +2538,7 @@ describe("ProviderConnectionManager sign-in page claims", () => {
         method: "codex_browser",
         signInRequestId: requestId,
       });
-      const operationId = operationOf(yield* Ref.get(providersRef))!.operationId;
+      const operationId = operationOf(yield* SubscriptionRef.get(providersRef))!.operationId;
       const claim = manager.claimSignInPage({
         instanceId: CODEX_INSTANCE,
         operationId,
@@ -2550,8 +2561,8 @@ describe("ProviderConnectionManager sign-in page claims", () => {
       yield* manager
         .start({ instanceId: CODEX_INSTANCE, method: "codex_browser", signInRequestId: requestId })
         .pipe(Effect.forkChild);
-      const starting = yield* yieldUntil(
-        Ref.get(providersRef),
+      const starting = yield* awaitState(
+        providersRef,
         (providers) => operationOf(providers)?.status === "starting",
       );
       const operationId = operationOf(starting)!.operationId;
@@ -2565,8 +2576,8 @@ describe("ProviderConnectionManager sign-in page claims", () => {
 
       assert.isFalse((yield* claim({})).granted, "not waiting on its page yet");
       yield* Deferred.succeed(gate, undefined);
-      yield* yieldUntil(
-        Ref.get(providersRef),
+      yield* awaitState(
+        providersRef,
         (providers) => operationOf(providers)?.status === "waiting_for_browser",
       );
       assert.isFalse((yield* claim({ signInRequestId: "another-request-id" })).granted);

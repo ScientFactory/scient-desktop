@@ -49,14 +49,8 @@ import {
 import { PYTHON_TOOLKIT_CATALOG, assessPythonToolkits } from "./PythonToolkitCatalog.ts";
 
 /**
- * The Python runtime as the running server has it: a real interpreter probe and
- * the bridge script on disk.
- *
- * Everything language-specific is already in `PythonRuntimeAdapter`, and
- * everything protocol-specific is already in `ComputeBridgeTransport`. What is
- * left, and all this module does, is the two things neither of them can answer
- * for itself: where the bridge script lives in this installation, and how a
- * probe process actually gets run.
+ * Keep installation bridge lookup and real probe execution here; language policy belongs to
+ * PythonRuntimeAdapter and protocol behavior to ComputeBridgeTransport.
  */
 
 export const BRIDGE_SCRIPT_NAME = "scient_compute_bridge.py";
@@ -70,26 +64,14 @@ export const BRIDGE_SCRIPT_NAME = "scient_compute_bridge.py";
 export const STAGED_BRIDGE_DIRECTORY = "scient-compute-bridge";
 
 /**
- * How long a probe may take before it is treated as no answer.
- *
- * A probe is one interpreter importing five modules, so a healthy one answers
- * in well under a second. The number is generous because the slow case is a
- * cold interpreter on a cold disk, and the failure this guards against is not
- * slowness but silence: an interpreter that never answers would otherwise hold
- * discovery open for as long as the user is willing to wait.
+ * Allow cold interpreter/disk startup but bound silence so an arbitrary configured interpreter
+ * cannot hold discovery forever.
  */
 const PROBE_TIMEOUT = Duration.seconds(20);
 
 /**
- * How long the probe keeps reading after the interpreter is done.
- *
- * By then the bytes are already in the operating-system pipe, so this is only
- * the time it takes to copy them, and generous for that. What it guards against
- * is the same thing the duplex port guards against: a descendant that inherited
- * stdout keeps the pipe open after the interpreter itself is gone, so
- * end-of-file never arrives and a reader waiting for it waits forever. A
- * configured interpreter can be any program the user named -- a wrapper script,
- * an activation shim -- so this is not only a theoretical shape.
+ * Wrappers can leave descendants holding stdout after interpreter exit. Bound post-exit drain while
+ * preserving buffered bytes, rather than waiting forever for EOF.
  */
 const PROBE_DRAIN_GRACE = Duration.seconds(2);
 
@@ -125,13 +107,8 @@ export function moduleDirectory(): string {
 }
 
 /**
- * The places the bridge script can be, in the order they are tried.
- *
- * The server runs two ways and the bridge sits differently in each: from
- * source it is in `bridge/` beside this module, and from the bundle it is in a
- * directory the build staged beside the bundled entry point. Source is tried
- * first so that a developer editing the bridge is never served a copy an
- * earlier build left behind.
+ * Try source bridge before staged build output so developers never execute a stale copy left by an
+ * earlier build.
  */
 export function bridgePathCandidates(directory: string): ReadonlyArray<string> {
   // External interpreters cannot read Electron's virtual ASAR filesystem.
@@ -144,12 +121,8 @@ export function bridgePathCandidates(directory: string): ReadonlyArray<string> {
 }
 
 /**
- * Finds the bridge script, or explains where it was looked for.
- *
- * Resolved once when the service is built rather than per launch: an
- * installation that is missing the bridge is broken in a way no session can
- * work around, and saying so at startup is more useful than saying it the
- * first time a user opens a panel.
+ * Resolve the bridge once at service construction: a missing installation asset cannot be repaired
+ * by an individual session and should be reported at startup.
  */
 export const resolveBridgePath = Effect.fn("PythonComputeRuntime.resolveBridgePath")(function* (
   directory: string,
@@ -166,17 +139,9 @@ export const resolveBridgePath = Effect.fn("PythonComputeRuntime.resolveBridgePa
 });
 
 /**
- * Runs the probe script on one candidate interpreter and returns its stdout.
- *
- * This is the adapter's only process boundary, and it is deliberately thin: it
- * decides nothing about what the output means. A candidate that cannot be
- * spawned, exits non-zero, or says nothing in time all fail here, and the
- * adapter reads a failure as "not a usable interpreter" without needing to
- * know which of the three happened.
- *
- * The environment is the sanitized one, passed with `extendEnv: false`, so a
- * probe sees what a launch will see. Without that the probe could report
- * packages that the bridge, started under the launch policy, cannot import.
+ * Probe with the same sanitized environment and extendEnv false as launch; otherwise readiness
+ * could advertise packages the bridge cannot import. Keep process failure interpretation in the
+ * adapter.
  */
 export const makeSpawnProbe = Effect.fn("PythonComputeRuntime.makeSpawnProbe")(function* (
   processes: ExecutionProcessPort,
@@ -503,21 +468,9 @@ export const pythonRuntimeBinding: Effect.Effect<
 });
 
 /**
- * The compute session service as the server runs it: Python over the Jupyter
- * bridge, with no idle timeout.
- *
- * No idle timeout is the deliberate default. A kernel holds the state a user
- * has built up by running code, and taking that away while they are reading
- * their own output would be the service deciding their work is over. Sessions
- * end when the user ends them or when the server stops.
- *
- * An installation with no bridge script starts with no Python binding rather
- * than not starting. Compute is one feature of an application that has many,
- * and refusing to boot an editor because a `.py` file is missing would take
- * away everything else with it. The session service already has an answer for
- * a language it cannot run, so the loss is contained to opening a session, and
- * the release gate -- which asserts the bridge is staged -- is where a build
- * that shipped without it is supposed to be caught.
+ * Default to no idle timeout so reading output cannot silently destroy a user's namespace. Missing
+ * bridge assets disable Python rather than the whole editor; release qualification must catch the
+ * packaging defect.
  */
 export const layer = layerWithRuntimeBindings(
   pythonRuntimeBinding.pipe(

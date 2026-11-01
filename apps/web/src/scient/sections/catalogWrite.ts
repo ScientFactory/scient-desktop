@@ -24,11 +24,8 @@ export type CatalogEdit<R> = (layout: LiveLayout) => {
 };
 
 /**
- * Applies `edit` to the stored catalog and writes the result, conditional on
- * the catalog still being the one `edit` saw. If another client wrote first,
- * the server drops the section keys and returns what it holds, and `edit`
- * runs again on that. `edit` returns a null layout to skip the write. `send`
- * resolves the catalog the server holds afterward, or null if the write failed.
+ * Retry edits against the returned live catalog when compare-and-set drops stale section keys. A
+ * null layout skips writing; returned server state, not the optimistic edit, decides success.
  */
 export async function writeCatalog<R>(input: {
   readonly stored: LiveLayout;

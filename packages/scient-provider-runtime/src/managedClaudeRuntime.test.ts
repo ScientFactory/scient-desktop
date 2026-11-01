@@ -28,6 +28,7 @@ describe("ManagedClaudeRuntime", () => {
     );
   });
 
+  // regression: a91381e446 feat(providers): add guided Claude setup and lifecycle
   it.each(["x64", "arm64"] as const)(
     "runs the reviewed Windows %s artifact through download, checksum verification, smoke test, activation, restart, repair, and removal",
     async (arch) => {
@@ -108,6 +109,7 @@ describe("ManagedClaudeRuntime", () => {
     },
   );
 
+  // regression: a91381e446 feat(providers): add guided Claude setup and lifecycle
   it("never activates a Windows artifact when checksum verification fails", async () => {
     const artifact = resolveReviewedClaudeArtifact({ platform: "win32", arch: "x64" });
     expect(artifact).toBeDefined();

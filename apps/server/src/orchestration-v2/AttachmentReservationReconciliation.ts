@@ -56,13 +56,12 @@ export const layer = Layer.effect(
     const events = yield* EventStoreV2;
     const receipts = yield* CommandReceiptStoreV2;
     const readDirectory = (path: string) =>
-      fs
-        .readDirectory(path)
-        .pipe(
-          Effect.catch((error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(error),
-          ),
-        );
+      fs.readDirectory(path).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed([]),
+        ),
+      );
     const reconcile = Effect.fn("AttachmentReservations.reconcile")(function* (
       ids?: ReadonlyArray<string>,
     ) {
@@ -110,8 +109,9 @@ export const layer = Layer.effect(
                   Effect.flatMap((current) =>
                     current === text.value ? fs.remove(path, { force: true }) : Effect.void,
                   ),
-                  Effect.catch((error) =>
-                    error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
+                  Effect.catchIf(
+                    (error) => error.reason._tag === "NotFound",
+                    () => Effect.void,
                   ),
                   Effect.uninterruptible,
                 ),

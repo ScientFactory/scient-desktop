@@ -45,6 +45,7 @@ import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
+import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -54,6 +55,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import {
+  knownProviderFailureMessage,
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
@@ -64,6 +66,7 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 // SCIENT-FORK:START — owned finalization and private subscription lifetime.
 import {
+  abandonedCommittedRootTurn,
   isCommittedRootProviderTurn,
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
@@ -89,13 +92,11 @@ import {
 } from "./scient-fork/NativeWorkflowOwnership.ts";
 // SCIENT-FORK:END
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
-  // Set once this run's root turn ended. A child thread created after that
-  // belongs to the run that is live then, so this one no longer adopts it,
-  // except a workflow member enrolled below: its coordinator keeps this run
-  // open, so the member is this run's to follow.
+  // After root settlement, new children belong to the live run unless their coordinator still holds this run open.
   readonly rootTurnEnded: boolean;
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
@@ -138,6 +139,14 @@ function isSettledSubagentStatus(status: OrchestrationV2Subagent["status"]): boo
   return !isOrchestrationV2WorkActive(status);
 }
 
+/** A provider-native subagent's turns arrive on its parent's run, but the parent agent started them. */
+const NATIVE_SUBAGENT_TURN_ORIGIN: ProviderEventIngestor.ProviderTurnOrigin = {
+  createdBy: "agent",
+  creationSource: "provider",
+  scheduled: false,
+  subagent: true,
+};
+
 const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "command_execution",
   "dynamic_tool",
@@ -152,10 +161,7 @@ function isSettledRunEligibleForInheritedBackground(status: OrchestrationV2Run["
   return status === "interrupted" || status === "failed" || status === "cancelled";
 }
 
-/**
- * Provider sessions are runtime containers and can host multiple provider threads, so the durable
- * provider-thread lineage is the discriminator.
- */
+/** Use durable provider-thread lineage; sessions can host multiple threads. */
 export function selectInheritedBackgroundTurnItems(input: {
   readonly threadId: ThreadId;
   readonly currentProviderThreadId: ProviderThreadId;
@@ -216,10 +222,7 @@ function childTurnsContinue(terminal: RunTerminalOutcome): boolean {
   return terminal.status === "failed" && terminal.childTurnsContinue === true;
 }
 
-/**
- * A running subagent stays with the run that launched it, which keeps ingesting until it ends;
- * taking it over too would store its events twice.
- */
+/** Launching runs still ingest running subagents; taking them over would duplicate events. */
 export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"]): boolean {
   return status === "completed";
 }
@@ -503,10 +506,7 @@ export function routeProviderEvent(
         return [false, { ...state, ownedThreadIds, ownedProviderThreadIds, ownedProviderTurns }];
       }
       const coordinator = event.subagent;
-      // A provider-native subagent's child thread follows the live run it is
-      // attributed to. A resume reattributes it to the resuming run, which
-      // never saw the child thread created when the subagent was not
-      // completed at its start (e.g. cancelled by a server restart).
+      // Resumes reattribute child threads to the live run, which may not have observed their creation.
       const adopted =
         ownsRun(coordinator.runId) &&
         !state.rootTurnEnded &&
@@ -557,6 +557,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "background_work.updated":
+      return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -637,6 +639,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   >;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -662,6 +665,7 @@ export const layer: Layer.Layer<
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
   | McpAppModelContext.McpAppModelContext
+  | PreviewAgentActivity.PreviewAgentActivity
   | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   RunExecutionServiceV2,
@@ -673,6 +677,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const threadDispatch = yield* ThreadCommandExecutor;
@@ -686,11 +691,13 @@ export const layer: Layer.Layer<
         readonly attempt: OrchestrationV2RunAttempt;
         readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+        readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         readonly terminal: RunTerminalOutcome;
         readonly preserveProviderThread?: boolean;
         readonly pendingStartOwner?: EventSink.PendingStartOwner;
         readonly failedStartReceipt?: OrchestrationV2ProviderTurn;
+        readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         // SCIENT-FORK:START — distinguish rejected ownership from a retained held lease.
@@ -703,7 +710,18 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
-        const finalizedAttempt: OrchestrationV2RunAttempt | null = {
+        // SCIENT-FORK:START — a failed start receipt settles as the terminal provider turn.
+        const terminalProviderTurn =
+          input.abandonedProviderTurn ??
+          (input.failedStartReceipt === undefined
+            ? undefined
+            : {
+                ...input.failedStartReceipt,
+                status: "failed" as const,
+                completedAt,
+              });
+        // SCIENT-FORK:END
+        const finalizedAttempt: OrchestrationV2RunAttempt = {
           ...input.attempt,
           status: input.terminal.status,
           completedAt,
@@ -717,6 +735,10 @@ export const layer: Layer.Layer<
                 ? false
                 : yield* input.hasUnpairedRunInterruptRequest();
             if (hasUnpairedRequest) {
+              const reason =
+                input.loadRunInterruptReason === undefined
+                  ? undefined
+                  : yield* input.loadRunInterruptReason();
               yield* eventSink.writeWithEffects({
                 effects: [],
                 events: [
@@ -733,6 +755,7 @@ export const layer: Layer.Layer<
                       run: input.run,
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
+                      reason,
                       completedAt,
                     }),
                   },
@@ -744,6 +767,10 @@ export const layer: Layer.Layer<
           return false;
         }
         const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
+        const reason =
+          input.terminal.status === "interrupted" && input.loadRunInterruptReason !== undefined
+            ? yield* input.loadRunInterruptReason()
+            : undefined;
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
         const hasOpenSubagentProjection =
           open.subagents.size > 0 ||
@@ -764,9 +791,7 @@ export const layer: Layer.Layer<
             : [];
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
-        // Completion cohorts are advanced by Orchestrator while a provider
-        // turn is in flight. Do not replay the run snapshot captured at start
-        // over a newer acknowledgement, successor, or Stop barrier.
+        // Omit delegatedCompletion; the startup snapshot must not overwrite newer acknowledgements, successors, or Stop barriers.
         const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
           input.run;
         const finalizedRun: OrchestrationV2Run = {
@@ -792,9 +817,7 @@ export const layer: Layer.Layer<
         const checkpointCaptureCommandId = CommandId.make(
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
-        // Stopped runs capture too: their checkpoint is the rollback point for
-        // the next message. The capture is enqueued with these terminal events,
-        // ahead of any later run's start on this thread's effect lane.
+        // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
         const finalization = {
           effects:
             input.terminal.status === "completed" ||
@@ -814,7 +837,7 @@ export const layer: Layer.Layer<
                 ]
               : [],
           events: [
-            ...(input.failedStartReceipt === undefined
+            ...(terminalProviderTurn === undefined
               ? []
               : [
                   {
@@ -825,28 +848,22 @@ export const layer: Layer.Layer<
                     nodeId: input.rootNode.id,
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
-                    payload: {
-                      ...input.failedStartReceipt,
-                      status: "failed" as const,
-                      completedAt,
-                    },
+                    payload: terminalProviderTurn,
                   },
                 ]),
+            // SCIENT-FORK:START
             ...cascadedSubagentEvents,
-            ...(finalizedAttempt === null
-              ? []
-              : [
-                  {
-                    id: yield* allocateEventId(),
-                    type: "run-attempt.updated" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    providerInstanceId: input.run.providerInstanceId,
-                    occurredAt: completedAt,
-                    payload: finalizedAttempt,
-                  },
-                ]),
+            // SCIENT-FORK:END
+            {
+              id: yield* allocateEventId(),
+              type: "run-attempt.updated" as const,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: finalizedAttempt,
+            },
             ...(input.terminal.status === "interrupted"
               ? [
                   {
@@ -862,6 +879,7 @@ export const layer: Layer.Layer<
                       run: input.run,
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
+                      reason,
                       completedAt,
                     }),
                   },
@@ -955,6 +973,12 @@ export const layer: Layer.Layer<
 
     return RunExecutionServiceV2.of({
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {
+        const rootTurnOrigin: ProviderEventIngestor.ProviderTurnOrigin = {
+          createdBy: input.message.createdBy,
+          creationSource: input.message.creationSource,
+          scheduled: input.message.scheduledTaskId !== undefined,
+          subagent: input.appThread.lineage.relationshipToParent === "subagent",
+        };
         // Startup failure and stream shutdown can report the same attempt.
         const refreshAfterTurn = yield* Effect.cached(
           finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
@@ -1020,24 +1044,27 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          yield* checkpointService
-            .captureBaseline({
-              scope: input.checkpointScope,
-              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning(
-                      "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                      { runId: input.run.id },
-                    ),
-              ),
-              // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
-              (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
-              // SCIENT-FORK:END
-            );
+          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          yield* (
+            input.appThread.lineage.sideChat === true
+              ? Effect.void
+              : checkpointService.captureBaseline({
+                  scope: input.checkpointScope,
+                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                })
+          ).pipe(
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              (_cause) =>
+                Effect.logWarning(
+                  "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                  { runId: input.run.id },
+                ),
+            ),
+            // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
+            (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
+            // SCIENT-FORK:END
+          );
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn()) &&
@@ -1097,6 +1124,7 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
+        const observedRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         const committedRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         const routeIdentity: ProviderEventRouteIdentity = {
           threadId: input.run.threadId,
@@ -1169,6 +1197,7 @@ export const layer: Layer.Layer<
         const rootFinalizationOwnerLost = yield* Ref.make(false);
         // SCIENT-FORK:END
         const providerThreadOwnerLost = yield* Ref.make(false);
+        const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1213,6 +1242,9 @@ export const layer: Layer.Layer<
               : {
                   hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
                 }),
+            ...(input.loadRunInterruptReason === undefined
+              ? {}
+              : { loadRunInterruptReason: input.loadRunInterruptReason }),
             openRunOwnedSubagents: openSubagents,
             terminal,
             failureItemPersisted: terminal.status === "failed",
@@ -1373,7 +1405,7 @@ export const layer: Layer.Layer<
             }
           }
         });
-        const shouldStopProviderEventIngestion = Effect.gen(function* () {
+        const agentTurnsSettled = Effect.gen(function* () {
           if (!(yield* Ref.get(rootTerminalSeen))) {
             return false;
           }
@@ -1393,13 +1425,27 @@ export const layer: Layer.Layer<
           ) {
             return true;
           }
+          if (pendingBackgroundProviderTurns.size > 0) {
+            return false;
+          }
           const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
           if (childProviderTurns.size > 0) {
             return false;
           }
           const childSubagents = yield* Ref.get(activeChildSubagents);
-          if (childSubagents.size > 0) {
+          return childSubagents.size === 0;
+        });
+        const shouldStopProviderEventIngestion = Effect.gen(function* () {
+          if (!(yield* agentTurnsSettled)) {
             return false;
+          }
+          const terminal = yield* Ref.get(terminalEvent);
+          if (
+            terminal !== null &&
+            terminal.status !== "completed" &&
+            !childTurnsContinue(terminal)
+          ) {
+            return true;
           }
           // Newly owned items depend on adapters emitting a non-terminal event before the root
           // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream
@@ -1430,6 +1476,7 @@ export const layer: Layer.Layer<
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
+        const endPreviewActivity = yield* previewAgentActivity.begin(input.run.threadId);
         // SCIENT-FORK:START — a running fork reads this live root's streamed text.
         const runningForkText = makeRunningForkTextSnapshots({
           owner: textSnapshotOwner,
@@ -1480,12 +1527,26 @@ export const layer: Layer.Layer<
                   activeChildSubagents,
                   ownedProviderTurns: (yield* Ref.get(eventRouting)).ownedProviderTurns,
                 });
+                const { ownedProviderTurns } = yield* Ref.get(eventRouting);
+                for (const id of pendingBackgroundProviderTurns) {
+                  if (!ownedProviderTurns.has(id)) pendingBackgroundProviderTurns.delete(id);
+                }
               }
               // SCIENT-FORK:END
               // Route, persist, and track each frame in one sequential step.
               // Separate filter/tap operators can process a whole chunk's
               // ownership transfers before tracking its earlier accepted rows.
               if (!accepted) return;
+              if (
+                event.type === "provider_turn.updated" &&
+                event.driver === input.session.driver &&
+                event.providerTurn.providerThreadId === input.providerThread.id &&
+                event.providerTurn.nodeId === input.rootNode.id &&
+                event.providerTurn.runAttemptId === input.attemptId
+              ) {
+                yield* Ref.set(observedRootProviderTurn, event.providerTurn);
+              }
+
               let storedEventCount = 0;
               let deliveredEvent = filterAssistantEvent(
                 event,
@@ -1504,6 +1565,11 @@ export const layer: Layer.Layer<
                     modelSelection: input.modelSelection,
                     runtimeMode: input.runtimePolicy.runtimeMode,
                     interactionMode: input.runtimePolicy.interactionMode,
+                    origin:
+                      event.type === "provider_turn.updated" &&
+                      event.providerTurn.providerThreadId !== input.providerThread.id
+                        ? NATIVE_SUBAGENT_TURN_ORIGIN
+                        : rootTurnOrigin,
                   },
                   providerSessionId: input.providerSessionId,
                   providerInstanceId: input.run.providerInstanceId,
@@ -1598,7 +1664,20 @@ export const layer: Layer.Layer<
                 yield* Ref.set(rootTerminalSeen, true);
                 yield* finalizeRootRun(event);
               }
+              if (event.type === "background_work.updated") {
+                if (event.pending) {
+                  pendingBackgroundProviderTurns.add(event.providerTurnId);
+                } else {
+                  pendingBackgroundProviderTurns.delete(event.providerTurnId);
+                }
+              }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
+            }),
+          ),
+          // Also after events this run does not accept, such as a child handed to another run.
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              if (yield* agentTurnsSettled) yield* endPreviewActivity;
             }),
           ),
           Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
@@ -1648,9 +1727,39 @@ export const layer: Layer.Layer<
                 )
                   return;
                 const providerThread = yield* Ref.get(latestProviderThread);
+                const routing = yield* Ref.get(eventRouting);
+                // Native frames authorize interruption; only committed receipts authorize repair.
+                const interrupted =
+                  routing.rootProviderTurnId !== null && !routing.rootTurnEnded
+                    ? yield* input.session
+                        .interruptTurn({
+                          providerThread,
+                          providerTurnId: routing.rootProviderTurnId,
+                          requestRuntimeRestart: true,
+                          onlyIfActive: true,
+                        })
+                        .pipe(
+                          Effect.as(true),
+                          Effect.catchCauseIf(
+                            (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
+                            (interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
+                          ),
+                        )
+                    : false;
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                const squashed = Cause.squash(cause);
                 const receipt = yield* Ref.get(committedRootProviderTurn);
+                const abandonedProviderTurn = abandonedCommittedRootTurn({
+                  receipt,
+                  observed: yield* Ref.get(observedRootProviderTurn),
+                  interrupted,
+                  completedAt,
+                });
                 let nextRetryWarningAt = completedAt;
                 yield* writeOwnedFinalRunEvents({
                   run: input.run,
@@ -1658,9 +1767,7 @@ export const layer: Layer.Layer<
                   checkpointScope: input.checkpointScope,
                   providerThread,
                   attempt: input.attempt,
-                  ...(receipt === null || isTerminalProviderTurnStatus(receipt.status)
-                    ? {}
-                    : { failedStartReceipt: receipt }),
+                  ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
                   writeIfRunCurrent: {
                     activeAttemptId: input.attemptId,
                     expectedStatus: "running",
@@ -1673,7 +1780,13 @@ export const layer: Layer.Layer<
                   openRunOwnedSubagents: openSubagents,
                   completedAt,
                   terminal: makeFailedTerminalEvent(
-                    makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
+                    makeProviderFailure({
+                      cause: squashed,
+                      message:
+                        knownProviderFailureMessage(squashed) ??
+                        userFacingDatabaseErrorMessage(squashed),
+                      class: "unknown",
+                    }),
                     latestItemOrdinal + 1,
                     receipt?.id,
                   ),
@@ -1716,6 +1829,7 @@ export const layer: Layer.Layer<
                 );
               }),
           ),
+          Effect.ensuring(endPreviewActivity),
           Effect.ensuring(subscriptionLifetime.close),
           Effect.forkDetach,
         );
@@ -1920,11 +2034,19 @@ export const layer: Layer.Layer<
   }),
 ).pipe(Layer.provide(threadCommandExecutorLayer));
 
+/**
+ * Clients send Stop without a reason; server callers acting for an agent
+ * always set one, so a missing reason means a person stopped the run.
+ */
+export const USER_STOP_REASON = "Stopped by user";
+
 export function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;
+  /** The Stop's own reason, from its run_interrupt_request item. */
+  readonly reason: string | undefined;
   readonly completedAt: DateTime.Utc;
 }): OrchestrationV2TurnItem {
   return {
@@ -1949,6 +2071,6 @@ export function makeInterruptResultTurnItem(input: {
     completedAt: input.completedAt,
     updatedAt: input.completedAt,
     type: "run_interrupt_result",
-    message: "Run interrupted by user",
+    message: input.reason ?? "Stopped by the provider",
   };
 }

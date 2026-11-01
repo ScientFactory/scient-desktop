@@ -1,19 +1,7 @@
 /**
- * Runs the Antigravity browser-helper preflight once per helper executable and
- * launch settings in each server process.
- *
- * The preflight proves that the `BROWSER` helper prints its marker and exits 0,
- * so the agent never opens a browser of its own. The result depends only on the
- * executable, fixed while the server runs (an app update restarts it), and on
- * the variables that change how Node or Electron starts, so a success is kept
- * for that combination; after a failure the next sign-in checks again.
- *
- * On Windows, creating the process is synchronous and starting Scient.exe as the
- * helper can block the event loop for seconds, which is why it runs once. A
- * timeout does not wait for the helper's teardown (`taskkill`, then an
- * unbounded wait for the exit): the teardown continues in the background, and if
- * it stalls one forced kill ends the process, after which it is left with a
- * debug log.
+ * Cache success by helper executable/launch settings to avoid Windows synchronous spawn stalls;
+ * retry failures next sign-in. Prove the browser helper prints its marker without opening a
+ * browser. Bound timeout response separately from background teardown and forced-kill fallback.
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off - A synchronous digest keys an in-memory cache.
 import * as NodeCrypto from "node:crypto";

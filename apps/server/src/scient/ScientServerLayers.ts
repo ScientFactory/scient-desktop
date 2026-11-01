@@ -1,22 +1,10 @@
-import * as KeepAwake from "./keepAwake/KeepAwakeService.ts";
-import { httpLayer as keepAwakeHttpLayer } from "./keepAwake/http.ts";
 /**
- * Scient server composition: the Scient services, HTTP groups and provider
- * lifecycle layers that server.ts mounts into the shared server layer.
- * Shared upstream layers are passed in so every consumer builds the same
- * layer instance.
- *
- * @module ScientServerLayers
+ * Pass shared upstream layers into composition so every Scient consumer receives the same instances
+ * rather than independently constructing ownership services.
  */
-import { ServerSelfUpdateError } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
-import * as ServerConfig from "../config.ts";
 import { ComputeMcpGatewayLive } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
-import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
-import * as ProcessRunner from "../processRunner.ts";
 import { scientAnalyticsHttpApiLayer } from "../telemetry/http.ts";
 import { scientProjectHttpApiLayer } from "../scientProject/http.ts";
 import * as WorkspaceAuthorityProjection from "./projectScope/WorkspaceAuthorityProjection.ts";
@@ -46,10 +34,13 @@ import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
+import { scientPdfHttpApiLayer } from "./pdf/http.ts";
+import { scientKeepAwakeHttpApiLayer } from "./keepAwake/http.ts";
 import { scientThreadQueueHttpApiLayer } from "./threadQueue/http.ts";
 import { scientConversationExportHttpApiLayer } from "./conversationExport/http.ts";
 import * as ConversationExportFiles from "./conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "./conversationExport/ConversationExportService.ts";
+import * as EditorFlush from "./editorFlush/EditorFlush.ts";
 import * as ConversationSnapshotService from "./conversationExport/ConversationSnapshotService.ts";
 import { scientConversationImportHttpApiLayer } from "./conversationImport/http.ts";
 import * as ConversationImportStaging from "./conversationImport/ConversationImportStaging.ts";
@@ -61,6 +52,9 @@ import { scientWordExportHttpApiLayer } from "./pandoc/http.ts";
 import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
+import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
+import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
 // Skill discovery and selected-turn delivery share one live policy/catalog.
 export const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
@@ -94,21 +88,12 @@ export function makeScientRouteServices<
   EndpointsOut,
   EndpointsError,
   EndpointsIn,
-  UpdateOut,
-  UpdateError,
-  UpdateIn,
 >(shared: {
   readonly PersistenceLayerLive: Layer.Layer<PersistenceOut, PersistenceError, PersistenceIn>;
   readonly ServerSettingsLayerLive: Layer.Layer<SettingsOut, SettingsError, SettingsIn>;
   readonly OwnedLocalEndpointRegistryLive: Layer.Layer<EndpointsOut, EndpointsError, EndpointsIn>;
-  readonly DesktopAppUpdateLayerLive: Layer.Layer<UpdateOut, UpdateError, UpdateIn>;
 }) {
-  const {
-    PersistenceLayerLive,
-    ServerSettingsLayerLive,
-    OwnedLocalEndpointRegistryLive,
-    DesktopAppUpdateLayerLive,
-  } = shared;
+  const { PersistenceLayerLive, ServerSettingsLayerLive, OwnedLocalEndpointRegistryLive } = shared;
 
   const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
   // Word export runs the managed Pandoc. One tool serves the converter, the
@@ -154,13 +139,9 @@ export function makeScientRouteServices<
     Layer.provide(OwnedLocalEndpointRegistryLive),
   );
 
-  // The build coordinator owns its execution port the way the analysis runtime
-  // does; the toolchain probe is merged out because the HTTP group reads it too,
-  // and the managed installer sits on top of the probe so a finished install can
-  // drop its cache. The package installer is mounted once for both, because
-  // `tlmgr` serializes against a single distribution tree. All of them keep
-  // TeX's own files where TeX can read them, which on Windows may not be the
-  // profile `latexDir`.
+  // Mount one package installer for managed setup and builds so tlmgr serialization spans both.
+  // Share probe cache with HTTP/installer invalidation, and use the selected TeX-readable location
+  // rather than assuming profile latexDir.
   const ScientLatexServicesLive = Layer.mergeAll(
     LatexBuildService.layer,
     LatexTikzPreview.layer,
@@ -172,19 +153,28 @@ export function makeScientRouteServices<
     Layer.provide(LatexTexDirectory.layer),
   );
 
+  // Overleaf manual sync: one service for the routes and the agent tools, with its
+  // own state store, private repositories and applier under `stateDir/overleaf`.
+  const OverleafSyncLive = OverleafSync.layer.pipe(
+    Layer.provide(WorkspaceBindingResolverLayerLive),
+    Layer.provide(WorkspaceBindingStore.layer),
+  );
+
   /** Scient HTTP API groups, provided in order after the upstream groups. */
   const provideScientHttpApiGroups = <A, E, R>(self: Layer.Layer<A, E, R>) =>
     self.pipe(
-      Layer.provide(keepAwakeHttpLayer.pipe(Layer.provide(KeepAwake.layer))),
       Layer.provide(scientProjectHttpApiLayer),
       Layer.provide(scientSourcesHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
+      Layer.provide(scientPdfHttpApiLayer),
+      Layer.provide(scientKeepAwakeHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(scientConversationExportHttpApiLayer),
       Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(scientWordExportHttpApiLayer),
+      Layer.provide(scientOverleafHttpApiLayer),
     );
 
   /** Scient services behind the routes, provided in order. */
@@ -198,30 +188,13 @@ export function makeScientRouteServices<
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
+      Layer.provide(OverleafSyncLive),
+      // The Overleaf service saves a folder's editors through the editor-save request.
+      Layer.provide(OverleafEditorSave.layerFromEditorFlush),
+      // One server-lifetime set of connected windows, shared by the WebSocket
+      // handlers that windows answer on and the tools that ask them.
+      Layer.provide(EditorFlush.layer),
     );
 
-  /** Self-update that hands running threads to the next server. */
-  const ScientServerSelfUpdateLive = Layer.effect(
-    ServerSelfUpdate.ServerSelfUpdate,
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
-      return yield* ServerSelfUpdate.withRunningThreadContinuation({
-        mode: config.mode,
-        selfUpdate: yield* ServerSelfUpdate.make(),
-        prepare: recovery.prepareForUpdate.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerSelfUpdateError({
-                reason: "Could not prepare running thread continuation.",
-                cause,
-              }),
-          ),
-        ),
-        clear: recovery.clearUpdateContinuation,
-      });
-    }),
-  ).pipe(Layer.provide(DesktopAppUpdateLayerLive), Layer.provide(ProcessRunner.layer));
-
-  return { provideScientHttpApiGroups, provideScientRouteServices, ScientServerSelfUpdateLive };
+  return { provideScientHttpApiGroups, provideScientRouteServices };
 }

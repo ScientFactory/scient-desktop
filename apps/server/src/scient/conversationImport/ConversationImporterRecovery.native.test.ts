@@ -58,7 +58,7 @@ const attemptDirectory = (name = "attempt") =>
 
 const readThread = (threadId: ThreadId) =>
   Effect.flatMap(ProjectionStoreV2, (store) => store.getThreadProjection(threadId)).pipe(
-    Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(undefined) }),
+    Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.sync(() => undefined) }),
   );
 
 const threadCount = Effect.flatMap(

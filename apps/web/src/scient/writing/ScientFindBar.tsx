@@ -47,13 +47,6 @@ export interface ScientFindBarController {
 const findIconClassName = "size-3.5";
 const findInputClassName = "h-7";
 
-/**
- * The find and replace strip shared by the document editors, shown under the
- * writing bar. One row while searching;
- * expanding the replace chevron reveals a second slim row aligned under the
- * find field. All controls are dock-sized so the bar reads as one chrome
- * family with the editing dock above it.
- */
 export function ScientFindBar({
   controller,
   snapshot,
@@ -68,6 +61,7 @@ export function ScientFindBar({
   const focusRequestedFind = useEffectEvent((..._changes: readonly unknown[]) => {
     if (snapshot.findOpen) inputRef.current?.focus();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the find input DOM node when the controller requests it
   useEffect(
     () => focusRequestedFind(snapshot.findFocusRequest, snapshot.findOpen),
     [snapshot.findFocusRequest, snapshot.findOpen],

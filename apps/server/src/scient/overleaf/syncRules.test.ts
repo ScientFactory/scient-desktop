@@ -13,6 +13,10 @@ import {
   firstStaleFile,
   guardedPaths,
   hasConflictMarkers,
+  hasConflictBlock,
+  hasScientConflictMarkers,
+  heldFiles,
+  publicationTree,
   unitOutcome,
 } from "./syncRules.ts";
 
@@ -254,6 +258,322 @@ describe("advanceBase", () => {
         }),
       ),
     ).toEqual({ "a.tex": "original" });
+  });
+});
+
+describe("heldFiles", () => {
+  const held = (input: Partial<Parameters<typeof heldFiles>[0]>) =>
+    heldFiles({
+      recorded: [],
+      fresh: [],
+      local: tree({}),
+      remote: tree({}),
+      target: tree({}),
+      localRenames: [],
+      remoteRenames: [],
+      marked: () => true,
+      conflicted: () => false,
+      released: [],
+      ...input,
+    });
+  const record = (path: string, overleafPaths = [path], folderPaths: string[] = []) => ({
+    path,
+    folderPaths,
+    overleafPaths,
+  });
+  const nothing = { paths: [], unresolved: [], carried: [], released: [], unreleasable: [] };
+
+  it("holds a file given new marks at its one path", () => {
+    expect(
+      held({ fresh: ["a.tex"], local: tree({ "a.tex": "1" }), target: tree({ "a.tex": "m" }) }),
+    ).toEqual({ ...nothing, paths: ["a.tex"] });
+  });
+
+  it("follows a recorded file renamed in the folder, keeping its Overleaf path", () => {
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "b.tex": "m" }),
+        remote: tree({ "a.tex": "1" }),
+        target: tree({ "b.tex": "m" }),
+        localRenames: [{ from: "a.tex", to: "b.tex" }],
+      }),
+    ).toEqual({
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex"])],
+      released: [],
+      unreleasable: [],
+    });
+  });
+
+  it("follows a recorded file Overleaf renamed, remembering where it was until applied", () => {
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "m" }),
+        remote: tree({ "c.tex": "1" }),
+        target: tree({ "c.tex": "m" }),
+        remoteRenames: [{ from: "a.tex", to: "c.tex" }],
+      }),
+    ).toEqual({
+      paths: ["a.tex", "c.tex"],
+      unresolved: [{ path: "a.tex", links: ["c.tex"] }],
+      carried: [record("c.tex", ["c.tex"], ["a.tex"])],
+      released: [],
+      unreleasable: [],
+    });
+  });
+
+  it("finds a recorded file still marked by its record even after an earlier rename", () => {
+    // The folder renamed a.tex to b.tex while marked; Overleaf still has a.tex.
+    expect(
+      held({
+        recorded: [record("b.tex", ["a.tex"])],
+        local: tree({ "b.tex": "m" }),
+        remote: tree({ "a.tex": "2" }),
+        target: tree({ "b.tex": "m2" }),
+      }).paths,
+    ).toEqual(["a.tex", "b.tex"]);
+  });
+
+  it("finds a file an unfinished apply left at another recorded folder path", () => {
+    // The record moved to new.tex, but the rename was never carried out.
+    expect(
+      held({
+        recorded: [record("new.tex", ["new.tex"], ["old.tex"])],
+        local: tree({ "old.tex": "m" }),
+        remote: tree({ "new.tex": "1" }),
+        target: tree({ "new.tex": "m" }),
+        remoteRenames: [{ from: "old.tex", to: "new.tex" }],
+      }),
+    ).toEqual({
+      paths: ["new.tex", "old.tex"],
+      unresolved: [{ path: "old.tex", links: ["new.tex"] }],
+      carried: [record("new.tex", ["new.tex"], ["old.tex"])],
+      released: [],
+      unreleasable: [],
+    });
+  });
+
+  it("holds nothing for a recorded file whose marks are gone or that was deleted", () => {
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "resolved" }),
+        target: tree({ "a.tex": "resolved" }),
+        marked: () => false,
+      }),
+    ).toEqual(nothing);
+    expect(held({ recorded: [record("a.tex")] })).toEqual(nothing);
+  });
+
+  it("holds a file with Scient's marks that no record finds, with the lost record's paths", () => {
+    // Git saw no rename (the base had no a.tex): a.tex moved to b.tex unseen.
+    expect(
+      held({
+        recorded: [record("a.tex", ["x.tex"])],
+        local: tree({ "b.tex": "m", "notes.md": "n" }),
+        remote: tree({ "x.tex": "1" }),
+        target: tree({ "b.tex": "m", "notes.md": "n" }),
+        conflicted: (path) => path === "b.tex",
+      }),
+    ).toEqual({
+      paths: ["a.tex", "b.tex", "x.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex", "x.tex"] }],
+      carried: [record("b.tex", ["x.tex"])],
+      released: [],
+      unreleasable: [],
+    });
+    // Without a record, a file with Scient's marks is held all the same.
+    expect(
+      held({
+        local: tree({ "b.tex": "m" }),
+        target: tree({ "b.tex": "m" }),
+        conflicted: () => true,
+      }).paths,
+    ).toEqual(["b.tex"]);
+  });
+
+  it("keeps no record for a held file the result removes", () => {
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "m" }),
+      }),
+    ).toEqual({ ...nothing, paths: ["a.tex"], unresolved: [{ path: "a.tex", links: [] }] });
+  });
+
+  it("does not take a clean file at a recorded path as settled while another file has a conflict", () => {
+    // The marked a.tex moved to b.tex, and a new a.tex took its place.
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "new", "b.tex": "m" }),
+        remote: tree({ "a.tex": "1" }),
+        target: tree({ "a.tex": "new", "b.tex": "m" }),
+        marked: (path) => path === "b.tex",
+        conflicted: (path) => path === "b.tex",
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex"])],
+    });
+    // With no other conflict, the clean file is the settled one.
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "new", "b.tex": "m" }),
+        remote: tree({ "a.tex": "1" }),
+        target: tree({ "a.tex": "new", "b.tex": "m" }),
+        marked: () => false,
+      }),
+    ).toEqual(nothing);
+  });
+
+  it("gives a record found nowhere to every held file, even one its own record claims", () => {
+    // The marked a.tex moved over the marked b.tex.
+    expect(
+      held({
+        recorded: [record("a.tex"), record("b.tex")],
+        local: tree({ "b.tex": "m" }),
+        remote: tree({ "a.tex": "1", "b.tex": "2" }),
+        target: tree({ "b.tex": "m" }),
+        conflicted: () => true,
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex", "b.tex"])],
+    });
+    // A file given new marks keeps them too, without becoming unresolved.
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        fresh: ["c.tex"],
+        local: tree({ "c.tex": "1" }),
+        remote: tree({ "a.tex": "1", "c.tex": "2" }),
+        target: tree({ "c.tex": "m" }),
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "c.tex"],
+      carried: [record("c.tex", ["a.tex", "c.tex"])],
+    });
+  });
+
+  it("keeps a clean file at a recorded path held while any other file is held", () => {
+    // The marked a.tex moved over the marked b.tex, and a new a.tex took its place.
+    expect(
+      held({
+        recorded: [record("a.tex"), record("b.tex")],
+        local: tree({ "a.tex": "new", "b.tex": "m" }),
+        remote: tree({ "a.tex": "1", "b.tex": "2" }),
+        target: tree({ "a.tex": "new", "b.tex": "m" }),
+        marked: (path) => path === "b.tex",
+        conflicted: (path) => path === "b.tex",
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex", "b.tex"])],
+    });
+  });
+
+  it("keeps a clean replacement ambiguous when a marked file's disk identity is unknown", () => {
+    const result = held({
+      recorded: [record("a.tex"), record("b.tex")],
+      recordedFileIds: new Map([
+        ["a.tex", "old-a"],
+        ["b.tex", "old-b"],
+      ]),
+      fileIds: new Map([
+        ["a.tex", "new-a"],
+        ["b.tex", "unknown"],
+      ]),
+      local: tree({ "a.tex": "clean", "b.tex": "marks" }),
+      target: tree({ "a.tex": "clean", "b.tex": "marks" }),
+      marked: (path) => path === "b.tex",
+      conflicted: (path) => path === "b.tex",
+    });
+    expect(result.paths).toEqual(["a.tex", "b.tex"]);
+  });
+
+  it("does not release a file whose path another held file keeps", () => {
+    // a.tex's record also names b.tex: the marked b.tex keeps a.tex's path.
+    const files = tree({ "a.tex": "guide", "b.tex": "m" });
+    expect(
+      held({
+        recorded: [record("b.tex", ["a.tex"])],
+        local: files,
+        remote: files,
+        target: files,
+        conflicted: () => true,
+        released: ["a.tex"],
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex", "b.tex"])],
+      unreleasable: ["a.tex"],
+    });
+  });
+
+  it("sends a released file as it is, and never releases marks this sync writes", () => {
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        fresh: ["c.tex"],
+        local: tree({ "a.tex": "m", "guide.md": "g", "c.tex": "1" }),
+        remote: tree({ "a.tex": "1", "c.tex": "2" }),
+        target: tree({ "a.tex": "m", "guide.md": "g", "c.tex": "m" }),
+        conflicted: (path) => path === "guide.md",
+        released: ["a.tex", "guide.md", "c.tex", "absent.tex"],
+      }),
+    ).toEqual({ ...nothing, paths: ["c.tex"], released: ["a.tex", "guide.md"] });
+  });
+});
+
+describe("hasConflictBlock", () => {
+  it("finds an opening, a separator and a closing line in order, whatever the labels", () => {
+    expect(hasConflictBlock("a\n<<<<<<<\nx\n=======\ny\n>>>>>>>\nb\n")).toBe(true);
+    expect(hasConflictBlock("<<<<<<< HEAD\r\nx\r\n=======\r\ny\r\n>>>>>>> main\r\n")).toBe(true);
+    expect(hasConflictBlock("<<<<<<< a\n||||||| base\nz\n=======\ny\n>>>>>>> b")).toBe(true);
+    // A Markdown underline, lone marks, or the lines out of order are not a block.
+    expect(hasConflictBlock("Results\n=======\n\nAll good.\n")).toBe(false);
+    expect(hasConflictBlock("<<<<<<< a\nx\n>>>>>>> b\n")).toBe(false);
+    expect(hasConflictBlock(">>>>>>> b\n=======\n<<<<<<< a\n")).toBe(false);
+    expect(hasConflictBlock("  <<<<<<< a\n=======\n>>>>>>> b\n")).toBe(false);
+  });
+});
+
+describe("hasScientConflictMarkers", () => {
+  it("knows Scient's labelled marks and nothing else", () => {
+    expect(hasScientConflictMarkers("a\n<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n")).toBe(
+      true,
+    );
+    expect(hasScientConflictMarkers("<<<<<<< Scient:main.tex\nx\n")).toBe(true);
+    expect(hasScientConflictMarkers("Results\n=======\n\nAll good.\n")).toBe(false);
+    expect(hasScientConflictMarkers("<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> main\n")).toBe(false);
+  });
+});
+
+describe("publicationTree", () => {
+  it("sets every held path to Overleaf's entry, or absent where Overleaf has none", () => {
+    expect(
+      plain(
+        publicationTree({
+          target: tree({ "b.tex": "marked", "other.tex": "mine" }),
+          remote: tree({ "a.tex": "theirs", "other.tex": "old" }),
+          held: ["a.tex", "b.tex"],
+        }),
+      ),
+    ).toEqual({ "a.tex": "theirs", "other.tex": "mine" });
   });
 });
 

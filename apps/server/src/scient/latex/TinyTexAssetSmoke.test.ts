@@ -428,11 +428,9 @@ const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAs
   });
 
 /**
- * A Windows profile whose name TeX Live cannot read. TeX's own files must
- * move to a private ASCII folder under the real `%ProgramData%`, locked to
- * this account; TinyTeX installed there must be the one the probe finds; and a
- * build of documents in Hebrew-named folders, invoked exactly as the build
- * service invokes it, must produce PDFs.
+ * Windows qualification needs a real private ASCII ProgramData TeX root and Hebrew document paths,
+ * using production invocation. Merely discovering an installed binary cannot prove those paths
+ * compile PDFs.
  */
 const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
   Effect.gen(function* () {

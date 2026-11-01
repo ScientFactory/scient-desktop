@@ -3,14 +3,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 /**
- * The bounded primitives every compute schema is built from.
- *
- * Internal to the package: `index.ts` does not re-export this module, because a
- * consumer that could name `Label` would be depending on the width of a field
- * rather than on the field. They live in one file so a live contract and a
- * durable record cannot disagree about how long an error message may be -- a
- * record that accepted more than the wire does would be unsendable, and a
- * record that accepted less would be unstorable.
+ * Share bounds between wire and durable schemas so accepted records remain storable/sendable. Keep
+ * primitives internal: consumers should depend on field contracts, not incidental width aliases.
  */
 export const EntityId = Schema.NonEmptyString.check(Schema.isMaxLength(128));
 export const Slug = Schema.NonEmptyString.check(Schema.isMaxLength(64));

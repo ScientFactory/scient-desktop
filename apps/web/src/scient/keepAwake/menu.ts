@@ -1,41 +1,39 @@
-import type { ContextMenuItem, KeepAwakeChoice } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-export type KeepAwakeMenuId = "keep-awake" | `keep-awake:${KeepAwakeChoice}`;
-export interface KeepAwakeMenuState {
-  readonly choice: KeepAwakeChoice;
-  readonly status: "off" | "idle" | "awake" | "paused" | "unknown" | undefined;
-  readonly available: boolean;
+import { readPrimaryEnvironmentId } from "../../state/environments";
+
+export type KeepAwakeMenuId = "keep-awake";
+
+interface MenuThread {
+  readonly environmentId: EnvironmentId;
+  readonly id: ThreadId;
 }
-export function keepAwakeMenu(
-  state: KeepAwakeMenuState | undefined,
-): ContextMenuItem<KeepAwakeMenuId>[] {
-  if (state === undefined) return [];
-  const status =
-    !state.available || state.status === "unknown"
-      ? "unavailable"
-      : state.status === "awake"
-        ? "requested"
-        : state.status === "paused"
-          ? "paused"
-          : undefined;
-  return [
-    {
-      id: "keep-awake",
-      label: `Keep computer awake${status ? ` (${status})` : ""}`,
-      children: [
-        {
-          id: "keep-awake:app",
-          label: "Use app setting",
-          checked: state.choice === "app",
-          disabled: !state.available,
-        },
-        {
-          id: "keep-awake:once",
-          label: "Until work finishes",
-          checked: state.choice === "once",
-          disabled: !state.available,
-        },
-      ],
-    },
-  ];
+
+export function keepAwakeMenu(chosen: boolean | undefined): ContextMenuItem<KeepAwakeMenuId>[] {
+  return chosen === undefined
+    ? []
+    : [{ id: "keep-awake", label: "Keep computer awake until done", checked: chosen }];
+}
+
+/**
+ * Whether the thread is on "until done". Undefined when the choice would do nothing: the app
+ * setting already covers the thread, or it runs on another computer, which this sleep can't pause.
+ */
+export async function readKeepAwakeChosen(thread: MenuThread) {
+  const keepAwake = window.desktopBridge?.keepAwake;
+  if (keepAwake === undefined || thread.environmentId !== readPrimaryEnvironmentId()) {
+    return undefined;
+  }
+  const state = await keepAwake().catch(() => null);
+  return state === null || state.appSetting ? undefined : state.threads.includes(thread.id);
+}
+
+export async function handleKeepAwakeMenuAction(
+  action: string,
+  thread: MenuThread,
+  chosen: boolean | undefined,
+) {
+  if (action !== "keep-awake") return false;
+  await window.desktopBridge?.keepAwake?.({ threadId: thread.id, enabled: !chosen });
+  return true;
 }

@@ -56,11 +56,8 @@ export function hasLatexGuidance(state: EditorState): boolean {
 }
 
 /**
- * Shows a template's guidance in the empty places it was left for. Draws only.
- * Places are matched by position, block for block: the editor keeps a node's
- * first identity across edits, so identities cannot be relied on. While the
- * page and its source disagree on their blocks (a structural edit not yet
- * applied), nothing is drawn.
+ * Match guidance by block position, not persistent node identity, which survives edits. Draw
+ * nothing while structural source/projection blocks disagree; guidance must never mutate content.
  */
 export function latexGuidancePlaceholders(projection: () => LatexVisualDocument | null) {
   let drawn: {

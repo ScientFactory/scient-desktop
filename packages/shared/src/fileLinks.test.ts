@@ -55,6 +55,7 @@ describe("resolvePathLinkTarget", () => {
     expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
   });
 
+  // SCIENT-FORK:START
   it.each([
     ["/tmp/project\\", "/tmp/project\\/notes.txt:12:3"],
     ["/tmp/project/", "/tmp/project/notes.txt:12:3"],
@@ -65,6 +66,7 @@ describe("resolvePathLinkTarget", () => {
     expect(resolvePathLinkTarget("notes.txt:12:3", cwd)).toBe(expected);
   });
 
+  // SCIENT-FORK:END
   it("keeps Windows absolute paths with forward slashes unchanged", () => {
     expect(
       resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),

@@ -112,30 +112,9 @@ import type {
 } from "./LocalComputeStore.ts";
 
 /**
- * One coordinator for every live compute session.
- *
- * A transport speaks to one runtime and knows nothing else; a store knows what
- * happened and nothing about what is happening. This is the only place that
- * holds both, and everything it does follows from two rules.
- *
- * The first is that the store is told before anyone else. Every status change,
- * every request, every line of output is durable before it is published, so a
- * client can never have been told something the disk does not know. The one
- * deliberate exception is a queue position, which is a view of the queue as it
- * is right now rather than something that happened, and is documented where it
- * is derived.
- *
- * The second is that a generation is a namespace. A session that restarts is a
- * new namespace with the same name, and every mutating command carries the
- * generation the caller believed it was addressing. A command for a generation
- * that has been replaced is refused rather than applied to the namespace that
- * replaced it, because running a user's code in the wrong namespace is worse
- * than telling them their view is stale.
- *
- * Nothing is ever replayed. Code that was in flight when the server stopped is
- * recorded as lost and code that was still queued is recorded as cancelled,
- * because re-running what a user did not ask for again is worse than telling
- * them it did not run.
+ * Persist status, requests, and output before publication; queue position alone is transient.
+ * Generations are namespaces: reject stale mutations instead of executing in a replacement. Never
+ * replay after restart; mark in-flight work lost and queued work cancelled.
  */
 
 /** How long the idle sweep waits between passes, however short the timeout is. */
@@ -236,16 +215,9 @@ export interface ComputeRuntimeVerificationRequest {
 }
 
 /**
- * Retention and lifetime limits, injected so a test can reach them.
- *
- * `idleTimeoutMs` is null by default on purpose: a namespace a user built up
- * over an afternoon is not something to reclaim behind their back, and the
- * decision to trade it for memory belongs to whoever configures the server.
- *
- * The two output ceilings bound what a session can write to disk. They are
- * separate because a runaway loop inside one execution is a different failure
- * from a session that has been chatting to itself for a week, and a client
- * needs to be told which one it is looking at.
+ * Default idle reclamation stays disabled because discarding a user's namespace requires server
+ * policy. Keep execution/session output ceilings separate so runaway cells and accumulated session
+ * output report distinct causes.
  */
 export interface ComputeSessionServiceOptions {
   readonly maximumConcurrentStarts: number;
@@ -343,16 +315,9 @@ interface InterruptTarget {
 }
 
 /**
- * A session this process is holding open.
- *
- * `pendingRef` holds only the executions that have not reached a terminal
- * status. History is read from the store, so a session that has been worked in
- * all day costs the memory of its queue rather than the memory of everything it
- * has ever run.
- *
- * `mutation` is what makes the event drain and the commands agree: both take it
- * before touching any of these refs, and neither holds it across a call to the
- * transport, so a slow interrupt cannot stall the output it is trying to stop.
+ * Hold only nonterminal executions in memory; durable history must not grow live-session memory.
+ * Commands and event drain share mutation ownership but never hold it across transport calls, or a
+ * slow interrupt could block the output it needs to stop.
  */
 interface LiveComputeSession {
   readonly workspaceReceipt: ComputeWorkspaceReceipt | null;
@@ -1029,12 +994,8 @@ const make = Effect.gen(function* () {
   ) => setSessionStatusEffect(operation, live, next, change);
 
   /**
-   * Moves one execution to a new status, or leaves it alone.
-   *
-   * A report about an execution that has already ended, or about one this
-   * process is no longer holding, is normal rather than exceptional: a
-   * transport settles what was in flight after a stop has already recorded it.
-   * Such a report is logged and dropped instead of being forced through.
+   * Late transport settlement after Stop is normal. Log/drop reports for ended or no-longer-held
+   * executions rather than forcing another status transition.
    */
   const setExecutionStatusEffect = Effect.fn("ComputeSessionService.setExecutionStatus")(function* (
     operation: ComputeOperation,
@@ -1098,12 +1059,8 @@ const make = Effect.gen(function* () {
   ) => setExecutionStatusEffect(operation, live, executionId, next, change);
 
   /**
-   * Re-derives queue positions in memory after the queue moves.
-   *
-   * Deliberately not persisted: a position is a view of the queue as it is right
-   * now rather than something that happened, and it is null on disk for every
-   * execution that survives a restart anyway. Rewriting N result files because
-   * one execution was cancelled would buy nothing.
+   * Queue position is a current view, not history, and is null after restart. Rewriting every
+   * queued result on each cancellation would add cost without durable meaning.
    */
   const republishQueuePositions = Effect.fn("ComputeSessionService.republishQueuePositions")(
     function* (live: LiveComputeSession) {
@@ -1219,15 +1176,9 @@ const make = Effect.gen(function* () {
     }));
 
   /**
-   * Charges recorded output against a budget.
-   *
-   * An execution's counters are kept in memory and written out when its status
-   * changes, not on every line: `output.ndjson` is append-only and is the
-   * durable truth, while `result.json` is atomically replaced, and replacing a
-   * file per line of a loop that prints ten thousand of them would make a
-   * session unusable. Recovery recounts from the transcript for the executions
-   * that were in flight, which is the only case where the counters could be
-   * behind.
+   * Append-only output.ndjson is durable truth; update result counters on status changes instead of
+   * replacing a file per line. Recovery recounts in-flight transcripts because only those counters
+   * may lag.
    */
   const chargeBudget = Effect.fn("ComputeSessionService.chargeBudget")(function* (
     operation: ComputeOperation,
@@ -1271,12 +1222,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Stands in for the output that would have crossed a ceiling.
-   *
-   * It takes that output's own sequence, because exactly one product belongs at
-   * that position in the transcript and this is now what it is. Everything
-   * after it in the same execution is dropped without another marker: one
-   * honest statement that the transcript is incomplete is what a reader needs.
+   * Use the refused output's sequence for its truncation marker: one product owns that transcript
+   * position. Drop later output in that execution without repeated markers.
    */
   const truncationMarker = (
     output: ComputeOutput,
@@ -1327,14 +1274,9 @@ const make = Effect.gen(function* () {
       yield* publishOutputs(live, executionId, [marker]);
       return false;
     }
-    // Image bytes are stored before the line that names them, so a transcript
-    // never points at bytes that are not there. Bytes the store refuses are
-    // the same kind of loss as a ceiling and are marked the same way -- and so
-    // is an image that arrives carrying no bytes at all. That last one is a
-    // transport breaking its own contract rather than a runtime producing more
-    // than we keep, but it costs a reader the same thing, a transcript line
-    // pointing at an image nobody can open, so it is refused the same way
-    // instead of trusted because it came from inside the process.
+    // Store image bytes before their transcript reference. Missing or refused bytes must produce
+    // the same visible loss marker as a ceiling, even when an internal transport supplied the
+    // invalid image.
     if (event.output._tag === "image") {
       const carried = event.image;
       if (carried === null) {
@@ -1492,15 +1434,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Retains supported files observed changing during this execution. This is
-   * an observation window, not producer attribution: another tab or an external
-   * process may have written the file. Preserve the project-file origin so it
-   * cannot be confused with a runtime display or followed as one.
-   *
-   * The observer is a Scient-owned port rather than a language adapter hook:
-   * Python, R, Julia, and later runtimes all write into the same authorized
-   * project workspace. A transport reports runtime messages only and never
-   * scans the user's files or tries to infer meaning from printed paths.
+   * File changes observed during execution do not prove producer attribution; retain project-file
+   * origin separately from runtime displays. The Scient observer owns authorized workspace
+   * scanning; language transports must not infer file authority from output paths.
    */
   const collectProjectOutputs = Effect.fn("ComputeSessionService.collectProjectOutputs")(function* (
     live: LiveComputeSession,
@@ -1799,14 +1735,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Closes the book on a session, exactly once.
-   *
-   * A session that ends while a stop is in flight has stopped, whatever the
-   * runtime's parting words were: the user asked for this and it happened. A
-   * session that ends any other way is lost, and says why. Both routes arrive
-   * here -- a `lost` event, a transport failure, the event stream simply ending,
-   * and the stop command itself -- so the first one to take the lease decides
-   * and the rest find a terminal record and leave it alone.
+   * The first terminal lease winner settles once. An end during requested Stop is stopped; every
+   * other unexpected end is lost. Later transport/command paths must observe the terminal record
+   * and leave it unchanged.
    */
   const endSession = Effect.fn("ComputeSessionService.endSession")(function* (
     live: LiveComputeSession,
@@ -3472,17 +3403,8 @@ const make = Effect.gen(function* () {
 });
 
 /**
- * The layer for a host whose runtimes have to be found before they can be used.
- *
- * Runtimes are injected rather than imported, so a test can drive the whole
- * coordinator against a simulated runtime and a second language costs a binding
- * rather than a branch.
- *
- * They arrive as an effect because a production binding is not a value a caller
- * already holds: the bridge script has to be located on disk and the process
- * ports have to be acquired. Keeping that inside layer construction means a
- * host that cannot find its runtime says so while it is starting rather than
- * the first time someone opens a panel.
+ * Acquire runtime discovery/process ports during layer construction so a missing runtime fails at
+ * startup, not first panel use. Inject language runtimes rather than branching the coordinator.
  */
 export const layerWithRuntimeBindings = <E, R>(
   bindings: Effect.Effect<ReadonlyArray<ComputeRuntimeBinding>, E, R>,
@@ -3496,13 +3418,13 @@ export const layerWithRuntimeBindings = <E, R>(
     Layer.provide(projectOutputObserverLayer),
   );
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layerWithRuntimes = (
   bindings: ReadonlyArray<ComputeRuntimeBinding>,
   options: ComputeSessionServiceOptions = DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
 ) => layerWithRuntimeBindings(Effect.succeed(bindings), options);
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = Layer.effect(ComputeSessionService, make).pipe(
   Layer.provide(ComputeHostCapacity.layer),
   Layer.provide(disabledProjectOutputObserverLayer),

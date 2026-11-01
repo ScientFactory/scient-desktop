@@ -32,7 +32,7 @@ you downloaded the installer from the official Scient page before deciding
 whether to continue.
 
 When Scient runs a project through Windows Subsystem for Linux, choose the distro
-in **Settings → Connections** to run agents and projects there, and install the
+in **Settings → Sharing & access** to run agents and projects there, and install the
 provider CLIs inside that distro. Scient keeps a Linux-local copy of the matching
 server runtime there and installs it automatically. The first launch after an app
 update can take longer while that copy is prepared. Later launches reuse it,
@@ -47,7 +47,7 @@ built-in desktop updater to continue finding it.
 
 ## Use Scient from a terminal
 
-In **Settings → General → About**, install the **scient command** to put the
+In **Settings → About**, install the **scient command** to put the
 desktop app's bundled CLI on your terminal's PATH. Open a new terminal after
 installation. If Settings reports that the installation folder is outside PATH,
 add that folder to your shell's PATH.
@@ -84,7 +84,7 @@ instead of the short name. Paste them as shown: they select the installation
 and profile that reported the problem, including Linux browser setup under
 `sudo`. Windows operational snippets use PowerShell.
 
-When **Settings → Storage** suggests reclaiming database space, run the command
+When **Settings → Maintenance** suggests reclaiming database space, run the command
 it shows; see [Reclaim database space](./background-service.md#reclaim-database-space).
 
 ## Start using Scient
@@ -120,6 +120,7 @@ computer.
 | Antigravity | Install and sign in with Google from Scient's provider settings.                                                                                          |
 | Pi          | Use Scient's managed **Install** action or [set up Pi](./providers-pi.md#setup) with Node.js 22.19 or newer, then run `pi` and `/login`.                  |
 | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
+| fx          | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
 
 Provider CLIs must be on the server's `PATH`. If Scient cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -150,7 +151,8 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [Cursor](./providers-cursor.md),
 [Grok](./providers-grok.md), [Droid](./providers-droid.md),
 [OpenCode](./providers-opencode.md), [Antigravity](./providers-antigravity.md),
-[Muse Code](./providers-muse.md), [Pi](./providers-pi.md), and [Oh My Pi](./providers-omp.md).
+[Muse Code](./providers-muse.md), [Pi](./providers-pi.md), [Oh My Pi](./providers-omp.md),
+and [fx](./providers-fx.md).
 
 ## Next steps
 

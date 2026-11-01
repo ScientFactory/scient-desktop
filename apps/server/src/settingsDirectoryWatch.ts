@@ -12,6 +12,8 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 // SCIENT-FORK:START — settings-only native hints and precise metadata fallback boundary.
+import { statFingerprint } from "./statFingerprint.ts";
+
 const watchError = (directory: string, cause: unknown) =>
   PlatformError.systemError({
     _tag: "Unknown",
@@ -61,9 +63,6 @@ const isMissing = (cause: unknown) =>
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");
 
-const statFingerprint = (stat: NodeFS.BigIntStats) =>
-  [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
-
 const readFingerprint = (filePath: string) =>
   Effect.tryPromise({
     try: async () => {
@@ -112,7 +111,7 @@ export const acquireSettingsMetadataChanges = Effect.fnUntraced(function* (
         readFailed = false;
       }),
     ),
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catch((error) =>
       Effect.gen(function* () {
         if (!readFailed) yield* Effect.logError(error);

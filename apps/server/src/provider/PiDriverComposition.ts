@@ -31,7 +31,7 @@ import { ServerConfig } from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makePiCustomModelsClientFactory } from "./pi/PiCustomModels.ts";
 import { makePiCustomModelsConnectionFactory } from "./pi/PiCustomModelsConnection.ts";
-import { PiRpcProtocolError, type PiRpcSpawnOptions } from "./pi/PiRpcClient.ts";
+import { PiRpcProtocolError, type PiRpcSpawnOptions } from "@t3tools/provider-pi/server/rpcClient";
 import { makePiManagedRuntimeResolution } from "../scient/providerLifecycle/PiManagedRuntimeActions.ts";
 import { turnStartErrorKeepingReceipt } from "../orchestration-v2/scient-provider/NativeTurnReceipts.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";

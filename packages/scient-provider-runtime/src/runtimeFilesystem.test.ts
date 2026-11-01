@@ -28,6 +28,7 @@ describe("Windows runtime filesystem recovery", () => {
     await f.fs.remove("stage");
     expect(f.pause).not.toHaveBeenCalled();
   });
+  // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
   it.each(["EPERM", "EACCES", "EBUSY"])(
     "retries a temporary %s move without replacing a destination",
     async (code) => {
@@ -90,6 +91,7 @@ describe("Windows runtime filesystem recovery", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(f.rename).toHaveBeenCalledTimes(1);
   });
+  // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
   it.each(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"])(
     "retries %s cleanup independently of move rules",
     async (code) => {

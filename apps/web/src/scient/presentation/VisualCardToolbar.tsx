@@ -84,6 +84,7 @@ export function VisualCardToolbar(props: {
   const directMovement = exploration || props.movement === "direct";
   const ToolbarRoot = commandGroup ? CompactCommandGroup : "span";
   const movementAllowed = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps movementAllowed reflecting whether direct dragging is allowed
   useLayoutEffect(() => {
     movementAllowed.current = directMovement || moving;
   }, [directMovement, moving]);
@@ -100,6 +101,7 @@ export function VisualCardToolbar(props: {
         },
       };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches drag behavior to the toolbar and handle DOM nodes until unmount
   useEffect(() => {
     const toolbar = toolbarRef.current;
     const handle = handleRef.current;

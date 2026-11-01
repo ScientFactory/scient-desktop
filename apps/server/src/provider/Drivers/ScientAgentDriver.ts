@@ -1,4 +1,9 @@
-import { ScientAgentSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
+import {
+  supportsScientClaudePlugins,
+  ScientAgentSettings,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
@@ -33,7 +38,7 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
-import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
+import { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import { OMP_ISOLATED_ARGS } from "../omp/OmpRpcProcess.ts";
 import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
@@ -45,6 +50,14 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import {
+  makeScientAgentPluginInventory,
+  runScientAgentPluginCommand,
+} from "../../scient/extensions/ScientAgentPluginInventory.ts";
+import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMcpInventory.ts";
+import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
+import { readScientClaudePlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
+import { discoverScientAgentSkills } from "../scient/ScientAgentSkills.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -65,14 +78,9 @@ export type ScientAgentDriverEnv =
   | ServerSettingsService;
 
 /**
- * Scient Agent, ScientFactory's agent. It runs through the same adapter, RPC
- * client and Scient tool bridge as Oh My Pi, as a separate product: this
- * driver gives it its own executable, a config root inside Scient's state
- * directory, and its own session and extension folders. It never reads an
- * Oh My Pi home, and an Oh My Pi conversation cannot resume in it.
- *
- * One instance for now. Managed installation uses qualified ScientFactory
- * releases; a configured executable remains usable before the first release.
+ * Scient Agent must use its own config/session/extension roots and cannot resume OMP conversations.
+ * Share transport/tool bridge behavior, not OMP homes. Managed installs use qualified Scient
+ * releases; configured executables remain usable independently.
  */
 export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -113,6 +121,11 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       root,
       platform,
     });
+    const claudeHome = path.resolve(
+      processEnv.CLAUDE_CONFIG_DIR?.trim() ||
+        path.join(yield* HostProcess.HomeDirectory, ".claude"),
+    );
+    processEnv.CLAUDE_CONFIG_DIR = claudeHome;
     // A crashed server never removed its extension files, and a bootstrap
     // it left unread still holds credentials.
     yield* sweepStaleOmpExtensionFiles({
@@ -161,6 +174,7 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       const { accounts, ...draft } = snapshot;
       return {
         ...stampIdentity(draft),
+        usesClaudePlugins: supportsScientClaudePlugins(draft.version),
         connection: {
           methods: [],
           canDisconnect: false,
@@ -200,6 +214,19 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
       customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
     });
+    const executableGate = yield* OmpExecutableGate;
+    const runPluginCommand = (cwd: string | undefined, args: ReadonlyArray<string>) =>
+      runScientAgentPluginCommand(
+        launchConfig.binaryPath,
+        processEnv,
+        cwd ?? serverConfig.stateDir,
+        args,
+      ).pipe(
+        Effect.provideService(OmpExecutableGate, executableGate),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
     const checkProvider = (cwd?: string) =>
       checkOmpProviderStatus(
         scientAgentTarget,
@@ -212,7 +239,13 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.map(stamp),
+        Effect.flatMap((snapshot) =>
+          effectiveConfig.enabled && snapshot.installed
+            ? discoverScientAgentSkills((args) => runPluginCommand(cwd, args)).pipe(
+                Effect.map((skills) => stamp({ ...snapshot, skills })),
+              )
+            : Effect.succeed(stamp(snapshot)),
+        ),
       );
     // One isolated agent process per sign-in or sign-out, in the caller's scope.
     const openSignIn = makeRpcClient({
@@ -265,7 +298,43 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         ),
       ),
     );
+    const native = yield* makeScientAgentPluginInventory(
+      runPluginCommand,
+      (cwd) =>
+        readScientClaudePlugins((args) => runPluginCommand(cwd, args), claudeHome, cwd).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+      () =>
+        readScientAgentMcpServers(root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+    ).pipe(Effect.provideService(Path.Path, path));
+    const store = yield* makeSharedPluginStore({
+      kind: "scient",
+      claudeHome,
+      agentRoot: root,
+      installed: () => native.actions.listPlugins({}),
+      run: (args) =>
+        runScientAgentPluginCommand(
+          launchConfig.binaryPath,
+          processEnv,
+          serverConfig.stateDir,
+          args,
+        ).pipe(
+          Effect.provideService(OmpExecutableGate, executableGate),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
     return {
+      pluginActions: { ...native.actions, store },
+      nativeInventoryChanges: native.reports,
       instanceId,
       driverKind: DRIVER_KIND,
       continuationIdentity,

@@ -4,7 +4,7 @@ Choose **Import projects and conversations** on the final **Start working** step
 It is optional: **Add project** continues to work as before. Import checks the primary machine
 only after you open it.
 
-Scient finds directories that Claude Code or Codex has used. The default
+Scient finds directories that Claude Code, Codex or Pi has used. The default
 selection includes git repositories active within the last 30 days with at least three conversations. Select **Choose**
 to include older projects or change the selection.
 
@@ -15,8 +15,12 @@ directories under `Downloads` are not offered.
 A large or malformed history can reach the scan limit. Scient keeps the
 projects it found and warns when projects or conversations may be missing.
 
-Imported projects include Codex and Claude conversations active within the last
-30 days. You can continue those conversations in Scient.
+Imported projects include Claude, Codex and Pi conversations active within the last
+30 days. You can continue those conversations in Scient. Pi is off by default:
+enable it in Settings, then open `/welcome` to import its sessions. Pi sessions
+are read from each enabled Pi provider's session directory, which follows
+`PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
+Pi conversation imports its active branch, the one Pi reopens.
 
 Conversation import is best effort. Scient keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.
@@ -24,10 +28,12 @@ It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
 conversation so Scient does not remove user text. It reads one conversation at
-a time and skips files larger than 16 MiB. It ignores malformed records and skips
+a time and skips files larger than 4 GiB. It also skips a conversation when the
+message text and metadata it keeps need more than 32 MiB of memory. Tool output
+does not count toward that limit. It ignores malformed records and skips
 unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 64 MiB per project,
+Each import attempt reads up to 100 conversation files and 4 GiB per project,
 with up to 100,000 input records. Run import again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.

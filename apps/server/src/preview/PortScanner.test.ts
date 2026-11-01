@@ -1,13 +1,18 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the stop test drives real server processes.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeNet from "node:net";
 import * as Clock from "effect/Clock";
 import * as Fiber from "effect/Fiber";
 import * as Cause from "effect/Cause";
+
 import { it as effectIt } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
+import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Duration from "effect/Duration";
@@ -18,12 +23,15 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
 import * as OwnedLocalEndpoints from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
+
+vi.mock("@t3tools/provider-core/server/processGroup", { spy: true });
+
 const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
   Effect.fail(
     new ProcessRunner.ProcessSpawnError({
@@ -108,6 +116,26 @@ effectIt.effect("unknown listeners and terminal ownership never authorize protoc
     expect(requests).toEqual([explicit]);
   }).pipe(Effect.provide(layer));
 });
+
+const processOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(0),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+const ownedScanner = (processIds: ReadonlyArray<number> = [1234]) =>
+  Effect.tap(PortScanner.PortDiscovery, (scanner) =>
+    scanner.registerTerminalProcesses({
+      threadId: "scanner-thread",
+      terminalId: "scanner-terminal",
+      processIds,
+    }),
+  );
 
 effectIt.effect(
   "forgetting a URL discards cached readiness instead of granting future discovery",
@@ -236,14 +264,6 @@ const commonDevServer = Effect.acquireRelease(
   ({ server }) => closeServer(server),
 );
 
-const commonNonHttpServer = Effect.acquireRelease(
-  openCommonDevServer((socket) => {
-    socket.on("error", () => undefined);
-    socket.once("data", () => socket.end("MYSQL\r\n\r\n"));
-  }),
-  ({ server }) => closeServer(server),
-);
-
 /**
  * Integration tests against a real TCP listener. We provide the Windows host
  * platform with a failing listener probe so the tests exercise configured URLs
@@ -321,7 +341,8 @@ effectIt.effect("never sends HTTP bytes to a protected internal endpoint", () =>
     protectedPort = lease.ports[0] ?? 0;
     yield* lease.handoff;
 
-    const scanner = yield* PortScanner.PortDiscovery;
+    // Terminal ownership lists a declared listener, but never a protected one.
+    const scanner = yield* ownedScanner([7_777]);
     expect(
       yield* scanner.scan([
         `http://localhost:${protectedPort}/`,
@@ -477,10 +498,11 @@ effectIt.effect("preserves explicit loopback hosts and bounds wildcard rewrites"
 effectIt.effect("projects configured paths independently for simultaneous subscribers", () => {
   const docsUrl = `http://localhost:${LSOF_TEST_PORT}/docs`;
   const adminUrl = `http://localhost:${LSOF_TEST_PORT}/admin`;
+  let ready = true;
   const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     return Promise.resolve(
-      url === docsUrl || url === adminUrl
+      ready && (url === docsUrl || url === adminUrl)
         ? new Response("app", { headers: { "content-type": "text/html" } })
         : new Response("not found", { status: 404 }),
     );
@@ -488,7 +510,7 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
   const layer = makeLsofScannerLayer({ pid: () => 1234, fetch: fetchFn });
 
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
+    const scanner = yield* ownedScanner();
     const docsSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     const adminSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     yield* scanner.subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, (servers) =>
@@ -499,6 +521,11 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
     );
     yield* scanner.retain;
 
+    expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
+    expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
+
+    ready = false;
+    yield* TestClock.adjust(Duration.seconds(15));
     expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
     expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
   }).pipe(Effect.scoped, Effect.provide(layer));
@@ -684,6 +711,44 @@ effectIt.effect("uses only explicit HTTPS and does not follow redirects while pr
   }).pipe(Effect.provide(layer));
 });
 
+effectIt.effect(
+  "probes only a configured HTTPS URL, keeps it for an owned listener when the check fails, and does not follow redirects",
+  () => {
+    const configuredUrl = `https://localhost:${LSOF_TEST_PORT}/app`;
+    const requests: Array<readonly [string, string | undefined]> = [];
+    let respond = async () =>
+      new Response(null, { status: 302, headers: { location: "https://example.com" } });
+    const fetchFn = (async (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      requests.push([String(input), init?.redirect]);
+      return respond();
+    }) as typeof globalThis.fetch;
+    const layer = makeLsofScannerLayer({ pid: () => 1234, fetch: fetchFn });
+
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { pid: 1234, url: configuredUrl },
+      ]);
+
+      respond = async () => new Response("unavailable", { status: 503 });
+      yield* TestClock.adjust(Duration.seconds(15));
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { pid: 1234, url: configuredUrl },
+      ]);
+
+      respond = () => Promise.reject(new TypeError("fetch failed"));
+      yield* TestClock.adjust(Duration.seconds(15));
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { pid: 1234, url: configuredUrl },
+      ]);
+      expect(requests).toEqual(Array.from({ length: 3 }, () => [configuredUrl, "manual"]));
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 effectIt.effect("shared listeners affect ownership metadata, never probe authorization", () => {
   const owned = `p1234\ncnode\nn[::1]:${LSOF_TEST_PORT}\n`;
   const unowned = `p5678\ncrpc\nn127.0.0.1:${LSOF_TEST_PORT}\n`;
@@ -728,7 +793,7 @@ effectIt.effect("shared listeners affect ownership metadata, never probe authori
 });
 
 effectIt.effect(
-  "excludes HTTP errors, non-navigation responses, and successful non-documents",
+  "excludes configured URLs answering with HTTP errors, non-navigation responses, or non-documents",
   () => {
     let pid = 1;
     let makeResponse = () =>
@@ -736,33 +801,35 @@ effectIt.effect(
     const fetchFn = ((_input: Parameters<typeof globalThis.fetch>[0]) =>
       Promise.resolve(makeResponse())) as typeof globalThis.fetch;
     const layer = makeLsofScannerLayer({ pid: () => pid, fetch: fetchFn });
+    const configuredUrl = `http://localhost:${LSOF_TEST_PORT}/`;
 
     return Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+      const scan = () => scanner.scan([configuredUrl]);
+      expect(yield* scan()).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
         new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+      expect(yield* scan()).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
         new Response("ready", { status: 200, headers: { "content-type": "text/plain" } });
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+      expect(yield* scan()).toHaveLength(0);
 
       pid += 1;
       makeResponse = () => new Response(null, { status: 304, headers: { location: "/cached" } });
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+      expect(yield* scan()).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
         new Response(null, { status: 204, headers: { "content-type": "text/html" } });
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+      expect(yield* scan()).toHaveLength(0);
 
       pid += 1;
       makeResponse = () => new Response(null, { status: 302 });
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+      expect(yield* scan()).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
@@ -770,7 +837,7 @@ effectIt.effect(
           status: 200,
           headers: { "content-type": "application/xhtml+xml; charset=utf-8" },
         });
-      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
+      expect(yield* scan()).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -1015,7 +1082,8 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/docs`])).toMatchObject([
         { port: LSOF_TEST_PORT, url: `http://localhost:${LSOF_TEST_PORT}/docs` },
       ]);
-      expect(processCalls).toBe(1);
+      // The first listener read also looks for agent servers; macOS reads environments with ps.
+      expect(processCalls).toBe(platform === "darwin" ? 2 : 1);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -1110,23 +1178,30 @@ effectIt.effect(
 );
 
 effectIt.effect("ignores a partial Windows netstat snapshot when one query exits nonzero", () => {
-  const fetchFn = ((_input: Parameters<typeof globalThis.fetch>[0]) =>
-    Promise.resolve(
-      new Response("hello", { headers: { "content-type": "text/html" } }),
-    )) as typeof globalThis.fetch;
+  let ipv6Fails = true;
+  const requests: string[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
   const layer = PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
+            if (input.command === "tasklist.exe") {
+              return Effect.succeed(
+                processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
+              );
+            }
             const isIpv6 = input.args.includes("tcpv6");
             return Effect.succeed({
               stdout: isIpv6
                 ? ""
                 : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n",
               stderr: "",
-              code: isIpv6 ? ChildProcessSpawner.ExitCode(1) : null,
+              code: isIpv6 && ipv6Fails ? ChildProcessSpawner.ExitCode(1) : null,
               timedOut: false,
               stdoutTruncated: false,
               stderrTruncated: false,
@@ -1150,7 +1225,394 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
       processIds: [1234],
     });
     // The partial snapshot is dropped: the explicit URL keeps no listener metadata.
-    const [server] = yield* scanner.scan(["http://localhost:5173/"]);
+    const url = "http://localhost:5173/";
+    const [server] = yield* scanner.scan([url]);
     expect(server?.pid).toBeNull();
+    ipv6Fails = false;
+    expect(yield* scanner.scan([url])).toMatchObject([
+      { port: 5173, pid: 1234, processName: "node", url },
+    ]);
+    expect(requests).toEqual([url, url]);
   }).pipe(Effect.provide(layer));
 });
+
+effectIt.effect("rechecks the socket owner before stopping a Linux server without lsof", () => {
+  let holder = "4242";
+  const missing = FileSystem.makeNoop({});
+  const layer = layerProbeFailure(
+    (input) =>
+      input.command === "lsof"
+        ? processProbeFailure(input)
+        : Effect.succeed(processOutput("4242 1 4300\n5000 1 5300\n")),
+    Object.assign(
+      () => Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } })),
+      { preconnect: () => undefined },
+    ),
+    FileSystem.layerNoop({
+      readFileString: (path) => {
+        if (path === "/proc/net/tcp") {
+          return Effect.succeed(PROC_NET_TCP.split("\n").slice(0, 2).join("\n"));
+        }
+        if (/^\/proc\/(4242|5000)\/comm$/.test(path)) return Effect.succeed("node\n");
+        if (/^\/proc\/(4242|5000)\/environ$/.test(path)) {
+          return Effect.succeed(`${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`);
+        }
+        return missing.readFileString(path);
+      },
+      readDirectory: (path) => {
+        if (path === "/proc") return Effect.succeed(["4242", "5000"]);
+        if (/^\/proc\/(4242|5000)\/fd$/.test(path)) {
+          return Effect.succeed(path === `/proc/${holder}/fd` ? ["3"] : []);
+        }
+        return missing.readDirectory(path);
+      },
+      readLink: (path) =>
+        path === `/proc/${holder}/fd/3` ? Effect.succeed("socket:[5001]") : missing.readLink(path),
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const signal = vi.spyOn(ProcessGroup, "signalProcessGroup").mockImplementation(() => {
+      throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => signal.mockRestore()));
+    const scanner = yield* PortScanner.PortDiscovery;
+    // SCIENT-FORK:START explicit-url-authority — stop lists only servers a subscriber's URLs show.
+    const configuredUrls = ["http://localhost:8765/"];
+    yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+    // SCIENT-FORK:END explicit-url-authority
+    expect(yield* scanner.scan(configuredUrls)).toMatchObject([{ pid: 4242, port: 8765 }]);
+
+    // The socket outlives its original holder. Its old pid now belongs to another agent job.
+    holder = "5000";
+    const result = yield* scanner
+      .stopServer({ pid: 4242, port: 8765 })
+      .pipe(Effect.match({ onFailure: (error) => error.reason, onSuccess: () => null }));
+    expect(signal).not.toHaveBeenCalled();
+    expect(result).toBe("not-found");
+    expect(yield* scanner.scan(configuredUrls)).toMatchObject([{ pid: 5000, port: 8765 }]);
+    yield* scanner.stopServer({ pid: 5000, port: 8765 });
+    expect(signal).toHaveBeenCalledExactlyOnceWith(5300, "SIGTERM");
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect.each(["linux", "darwin", "win32"] as const)(
+  "reads no listeners on %s while T3CODE_PORT_DISCOVERY=0, and still probes configured URLs",
+  (platform) => {
+    const configuredUrl = `http://localhost:${LSOF_TEST_PORT}/docs`;
+    const commands: string[] = [];
+    const fileReads: string[] = [];
+    const requests: string[] = [];
+    const missing = FileSystem.makeNoop({});
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              fileReads.push(path);
+              return missing.readFileString(path);
+            },
+            readDirectory: (path) => {
+              fileReads.push(path);
+              return missing.readDirectory(path);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              commands.push(input.command);
+              return Effect.succeed(processOutput(`p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`));
+            },
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          Layer.succeed(HostProcess.Environment, { T3CODE_PORT_DISCOVERY: "0" }),
+          TestOwnedLocalEndpointsLive,
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, ((
+                input: Parameters<typeof globalThis.fetch>[0],
+              ) => {
+                requests.push(String(input));
+                return Promise.resolve(
+                  new Response("docs", { headers: { "content-type": "text/html" } }),
+                );
+              }) as typeof globalThis.fetch),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      scanner.trackAgent();
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+        { port: LSOF_TEST_PORT, pid: null, terminal: null, url: configuredUrl },
+      ]);
+      expect(requests).toEqual([configuredUrl]);
+      expect(commands).toEqual([]);
+      expect(fileReads).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "attributes listeners to the agent thread in their environment on %s, after the agent exits",
+  (platform) => {
+    const agentPort = 43_124;
+    const otherPort = 43_125;
+    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\n`;
+    const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
+    let lsofStdout = otherListener;
+    let lsofFails = false;
+    let environmentFails = false;
+    let lsofCalls = 0;
+    let environmentReads = 0;
+    const requests: string[] = [];
+    const missing = FileSystem.makeNoop({});
+    const procEnviron: Record<string, string> = {
+      "/proc/4242/environ": `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
+      "/proc/5000/environ": "PATH=/usr/bin\0",
+    };
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procEnviron[path];
+              if (content === undefined) return missing.readFileString(path);
+              environmentReads += 1;
+              return Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              if (input.command === "lsof") {
+                lsofCalls += 1;
+                return lsofFails
+                  ? Effect.fail(
+                      new ProcessRunner.ProcessTimeoutError({
+                        command: input.command,
+                        argumentCount: input.args.length,
+                        cwd: input.cwd,
+                        timeoutMs: 5_000,
+                      }),
+                    )
+                  : Effect.succeed(processOutput(lsofStdout));
+              }
+              // A direct child of this process, so stop refuses it without signaling anything.
+              if (input.args[0] === "-A") {
+                return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
+              }
+              if (environmentFails) {
+                return Effect.fail(
+                  new ProcessRunner.ProcessTimeoutError({
+                    command: input.command,
+                    argumentCount: input.args.length,
+                    timeoutMs: 5_000,
+                  }),
+                );
+              }
+              environmentReads += 1;
+              return Effect.succeed(
+                processOutput(
+                  `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
+                    "  5000 postgres -D /data PATH=/usr/bin\n",
+                ),
+              );
+            },
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          // SCIENT-FORK: listener scans consult the protected endpoint registry.
+          TestOwnedLocalEndpointsLive,
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                FetchHttpClient.Fetch,
+                Object.assign(
+                  (input: string | Request | URL) => {
+                    requests.push(String(input));
+                    return Promise.resolve(
+                      new Response("app", { headers: { "content-type": "text/html" } }),
+                    );
+                  },
+                  { preconnect: () => undefined },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      // SCIENT-FORK:START explicit-url-authority — only configured URLs are read, probed, or stopped.
+      const configuredUrls = [`http://localhost:${agentPort}/`];
+      const scanAgents = scanner
+        .scan(configuredUrls)
+        .pipe(Effect.map((servers) => servers.map((server) => server.agent ?? null)));
+      yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(lsofCalls).toBe(0);
+      // SCIENT-FORK:END explicit-url-authority
+
+      // The agent exits before any client looks, and the first read fails; its server is still
+      // found.
+      lsofStdout = `${agentListener}${otherListener}`;
+      scanner.trackAgent()();
+      lsofFails = true;
+      expect(yield* scanAgents).toEqual([null]);
+      lsofFails = false;
+      if (platform === "darwin") {
+        environmentFails = true;
+        expect(yield* scanAgents).toEqual([null]);
+        environmentFails = false;
+      }
+      expect(yield* scanner.scan(configuredUrls)).toMatchObject([
+        { port: agentPort, pid: 4242, terminal: null, agent: { threadId: "thread-agent" } },
+      ]);
+      expect(new Set(requests)).toEqual(new Set(configuredUrls));
+
+      expect(yield* scanner.scan(configuredUrls)).toHaveLength(1);
+      // SCIENT-FORK: no startup listener read, so macOS has run ps once rather than twice.
+      const attributedReads = platform === "darwin" ? 1 : 2;
+      expect(environmentReads).toBe(attributedReads);
+
+      // Stop reads its target's environment again rather than trust the cache, and still finds it.
+      const stop = yield* Effect.flip(scanner.stopServer({ pid: 4242, port: agentPort }));
+      expect(stop.reason).toBe("shared-group");
+      expect(environmentReads).toBe(attributedReads + 1);
+
+      lsofStdout = otherListener;
+      expect(yield* scanAgents).toEqual([null]);
+      const lsofCallsAfterExit = lsofCalls;
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(lsofCalls).toBe(lsofCallsAfterExit);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect("stops only a job's own process group", () =>
+  Effect.sync(() => {
+    const serverPid = 100;
+    const rows = [
+      { pid: 10, ppid: 1, pgid: 10 }, // `vp run dev`, whose job holds this server
+      { pid: 20, ppid: 10, pgid: 10 }, // the web dev server in the same job
+      { pid: serverPid, ppid: 10, pgid: 10 },
+      { pid: 200, ppid: serverPid, pgid: 200 }, // agent CLI
+      { pid: 210, ppid: 200, pgid: 200 }, // a server it spawned without a group of its own
+      { pid: 300, ppid: 200, pgid: 300 }, // agent tool shell
+      { pid: 400, ppid: 300, pgid: 400 }, // `npm run dev &`
+      { pid: 401, ppid: 400, pgid: 400 },
+      { pid: 500, ppid: serverPid, pgid: 500 }, // terminal shell
+      { pid: 600, ppid: 500, pgid: 600 }, // terminal job
+    ];
+    const table = new Map(rows.map((row) => [row.pid, row]));
+    expect(PortScanner.stoppableProcessGroup(table, 401, serverPid)).toBe(400);
+    expect(PortScanner.stoppableProcessGroup(table, 600, serverPid)).toBe(600);
+    for (const pid of [20, 210, 500, 999]) {
+      expect(PortScanner.stoppableProcessGroup(table, pid, serverPid)).toBeNull();
+    }
+  }),
+);
+
+const AGENT_SERVER_SCRIPT = `
+const server = require("node:http").createServer((_, response) => {
+  response.writeHead(200, { "content-type": "text/html" });
+  response.end("<html></html>");
+});
+server.listen(0, "127.0.0.1", () => {
+  process.stdout.write(process.pid + " " + server.address().port + "\\n");
+});
+`;
+
+/**
+ * A real HTML server with an agent's environment, started the way an agent's tool shell starts a
+ * job: under a detached shell with job control, in a group of its own. Release kills only the pids
+ * it started.
+ */
+const agentServer = () =>
+  Effect.acquireRelease(
+    Effect.callback<{
+      readonly child: NodeChildProcess.ChildProcess;
+      readonly pid: number;
+      readonly port: number;
+      readonly exited: Promise<void>;
+    }>((resume) => {
+      const env = { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-live" };
+      // dash ignores `set -m` without a terminal; bash, like agent tool shells, honors it.
+      const child = NodeChildProcess.spawn(
+        "bash",
+        ["-c", 'set -m; "$0" -e "$1" & wait', process.execPath, AGENT_SERVER_SCRIPT],
+        { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
+      );
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.once("error", (error) => resume(Effect.die(error)));
+      child.stdout?.once("data", (chunk) => {
+        const [pid, port] = String(chunk).trim().split(" ").map(Number);
+        resume(Effect.succeed({ child, pid: pid!, port: port!, exited }));
+      });
+    }),
+    ({ child, pid }) =>
+      Effect.sync(() => {
+        for (const target of [pid, child.pid]) {
+          try {
+            if (target !== undefined) process.kill(target, "SIGKILL");
+          } catch {}
+        }
+      }),
+  );
+
+const isRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "stops an agent's server through its job's group, and only a listed server",
+  () =>
+    Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
+        Effect.sync(release),
+      );
+      const job = yield* agentServer();
+      // SCIENT-FORK:START explicit-url-authority — stop lists only servers a subscriber's URLs show.
+      const configuredUrls = [`http://127.0.0.1:${job.port}/`];
+      yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+      // SCIENT-FORK:END explicit-url-authority
+
+      expect(yield* scanner.scan(configuredUrls)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            pid: job.pid,
+            port: job.port,
+            agent: { threadId: "thread-live" },
+          }),
+        ]),
+      );
+
+      const unlisted = yield* Effect.flip(scanner.stopServer({ pid: process.pid, port: job.port }));
+      expect(unlisted.reason).toBe("not-found");
+
+      yield* scanner.stopServer({ pid: job.pid, port: job.port });
+      // The shell waits on its job, so it exits once the job has.
+      yield* Effect.promise(() => job.exited);
+      expect(isRunning(job.pid)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        PortScanner.layer.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(
+            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, TestOwnedLocalEndpointsLive),
+          ),
+        ),
+      ),
+    ),
+);

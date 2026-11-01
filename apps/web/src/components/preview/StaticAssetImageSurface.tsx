@@ -44,6 +44,7 @@ export function StaticAssetImageSurface(props: {
   const assetUrl = asset._tag === "Success" ? asset.url : null;
   const loadKey = JSON.stringify([reloadKey, props.refreshToken ?? null, retrySequence]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the shared asset atom's signed URL when the refresh token changes
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;
@@ -51,6 +52,7 @@ export function StaticAssetImageSurface(props: {
     refreshAsset();
   }, [props.refreshToken, refreshAsset]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the shared asset atom's signed URL when the reload key changes
   useEffect(() => {
     if (previousReloadKeyRef.current === reloadKey) return;
     previousReloadKeyRef.current = reloadKey;

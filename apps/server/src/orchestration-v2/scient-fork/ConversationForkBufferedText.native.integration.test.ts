@@ -7,7 +7,6 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
-  ProviderInstanceConfigMap,
   ThreadId,
   TurnId,
   type OrchestrationV2ThreadProjection,
@@ -31,7 +30,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
-import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
+import {
+  layerFromPath as makeSqlitePersistenceLive,
+  layerMemory as sqliteLayerMemory,
+} from "../../persistence/Sqlite.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as CodexAdapterV2 from "../Adapters/CodexAdapterV2.ts";
@@ -39,22 +41,25 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import { EffectOutboxV2 } from "../EffectOutbox.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ThreadManagementServiceShape } from "../ThreadManagementService.ts";
 import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
-import { layerFromDrivers as makeDriverLayer } from "../ProviderAdapterRegistry.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { layerFromAdaptersEffect } from "../ProviderAdapterRegistry.ts";
+import { DEFAULT_CODEX_SETTINGS } from "../Adapters/CodexAdapterV2.replay.testkit.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderTextSnapshotOwner,
   type ProviderTextSnapshotBatch,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
-import { ProjectionStoreV2, layerMemory } from "../ProjectionStore.ts";
+import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { checkpointRefForThreadTurn } from "./ForkCheckpointBaseline.ts";
 import { observeCheckpointOwnership } from "./checkpointOwnershipCompletion.testkit.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
@@ -62,6 +67,11 @@ import {
 } from "../testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+
+const isThreadPayload = Schema.is(Schema.Struct({ threadId: Schema.String }));
+const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
+const encodeForkEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 function makeCodexReplayTurn(input: {
   readonly id: string;
   readonly status: "inProgress" | "completed" | "interrupted" | "failed";
@@ -195,6 +205,7 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
               kind: "application",
@@ -798,8 +809,7 @@ it.live.each(
                     Effect.tap(() =>
                       method === "item/agentMessage/delta"
                         ? Deferred.succeed(
-                            Schema.is(Schema.Struct({ threadId: Schema.String }))(payload) &&
-                              payload.threadId === peerNativeThreadId
+                            isThreadPayload(payload) && payload.threadId === peerNativeThreadId
                               ? peerReceived
                               : receipts.filter((r) => r.method === "item/agentMessage/delta")
                                     .length === 1
@@ -814,21 +824,19 @@ it.live.each(
             } satisfies CodexClient.CodexAppServerClient["Service"];
           }),
       });
-      const configMap = yield* Schema.decodeUnknownEffect(ProviderInstanceConfigMap)({
-        codex: {
-          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-          config: { homePath: home },
+      const registry = layerFromAdaptersEffect(
+        CodexAdapterV2.createCodexAdapterV2({
+          instanceId: modelSelection.instanceId,
+          displayName: undefined,
           environment: [
-            { name: "HOME", value: home },
-            { name: "CODEX_HOME", value: home },
+            { name: "HOME", value: home, sensitive: false },
+            { name: "CODEX_HOME", value: home, sensitive: false },
           ],
-        },
-      });
-      const observedDriver: typeof CodexAdapterV2.CodexAdapterV2Driver = {
-        ...CodexAdapterV2.CodexAdapterV2Driver,
-        create: (input) =>
-          CodexAdapterV2.CodexAdapterV2Driver.create(input).pipe(
-            Effect.map((adapter) => ({
+          enabled: true,
+          config: { ...DEFAULT_CODEX_SETTINGS, homePath: home },
+        }).pipe(
+          Effect.map((adapter): ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> => [
+            {
               ...adapter,
               openSession: (input) =>
                 adapter.openSession(input).pipe(
@@ -883,15 +891,16 @@ it.live.each(
                         }),
                   })),
                 ),
-            })),
-          ),
-      };
-      const registry = makeDriverLayer({ drivers: [observedDriver], configMap }).pipe(
+            },
+          ]),
+        ),
+      ).pipe(
         Layer.provide(
           Layer.mergeAll(
             factoryLayer,
             Layer.succeed(ServerConfig.ServerConfig, config),
             allocatorLayer,
+            McpProviderSessions.layer,
             NodeServices.layer,
           ),
         ),
@@ -1009,7 +1018,7 @@ it.live.each(
           yield* fs.makeDirectory(evidenceDirectory, { recursive: true });
           yield* fs.writeFileString(
             path.join(evidenceDirectory, `${mode}.json`),
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(evidence),
+            yield* encodeForkEvidence(evidence),
           );
         }
       });
@@ -1805,7 +1814,7 @@ it.live.each(
                   scenario.control === "resource" ? "Failure" : "Success",
                 );
                 return yield* store.getThreadProjection(threadId);
-              }).pipe(Effect.provide(layerMemory));
+              }).pipe(Effect.provide(projectionStoreMemory));
               assert.deepEqual(rebuilt.messages, completed.messages);
               assert.deepEqual(rebuilt.turnItems, completed.turnItems);
               // The new-worktree child as its queued setup left it.
@@ -2080,7 +2089,7 @@ it.live.each(
               source: yield* store.getThreadProjection(threadId),
               child: yield* store.getThreadProjection(forkId),
             };
-          }).pipe(Effect.provide(layerMemory));
+          }).pipe(Effect.provide(projectionStoreMemory));
           assert.deepEqual(rebuilt.source.messages, completed.messages);
           assert.deepEqual(rebuilt.source.turnItems, completed.turnItems);
           // The in-memory store replays only the fork's own records; any shared

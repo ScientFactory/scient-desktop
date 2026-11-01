@@ -16,13 +16,8 @@ export const COMPUTE_PROTOCOL_VERSION = 1;
 export const COMPUTE_FRAME_HEADER_BYTE_LENGTH = 4;
 
 /**
- * The largest payload either side will send or accept.
- *
- * A length prefix is a promise from an untrusted peer, so the limit is checked
- * against the prefix rather than against what arrives: a corrupt or hostile
- * length is refused before Scient reserves memory for it. Sixteen mebibytes
- * holds a large figure with room to spare while keeping one message far below
- * anything that would threaten the server.
+ * Validate untrusted frame lengths before allocating for payload bytes. A bounded prefix prevents
+ * corrupt/hostile peers from reserving arbitrary memory.
  */
 export const MAX_COMPUTE_FRAME_BYTE_LENGTH = 16 * 1024 * 1024;
 
@@ -47,12 +42,8 @@ export class ComputeProtocolError extends Schema.TaggedError<ComputeProtocolErro
 ) {}
 
 /**
- * The stable shape of every message on the wire.
- *
- * `payload` stays unvalidated here on purpose. Framing and routing are one
- * concern with one lifetime; the meaning of a payload belongs to whatever
- * handles that message type, and coupling the two would make every new message
- * type a change to the transport.
+ * Validate framing/routing separately from message payload meaning. New message kinds must not
+ * require coupling their schema to the transport envelope.
  */
 export const ComputeProtocolMessage = Schema.Struct({
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -152,15 +143,8 @@ export function requireSupportedProtocolVersion(
 }
 
 /**
- * Reassembles frames from however a pipe happens to deliver bytes.
- *
- * A pipe splits and joins writes freely, so a decoder that assumed one read is
- * one message would fail the first time a figure crossed a buffer boundary.
- *
- * The buffer grows and is compacted in place rather than being rebuilt on every
- * chunk: a megabyte figure arrives as hundreds of small reads, and re-copying
- * everything received so far on each of them would turn a linear amount of work
- * into a quadratic one.
+ * Pipe reads can split or join writes arbitrarily. Grow/compact buffers in place so large frames
+ * arriving in tiny chunks remain linear rather than repeatedly recopying the accumulated payload.
  */
 export interface ComputeFrameDecoder {
   /** Frames completed by this chunk, in arrival order. */
