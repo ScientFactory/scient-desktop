@@ -648,6 +648,10 @@ export const make = Effect.gen(function* () {
         );
       }
       yield* Effect.forkIn(refresh, scope);
+      // SCIENT-FORK:START — without cached paths, provider checks would run on the launcher's
+      // bare PATH and report every installed agent as missing until the next refresh.
+      if (Option.isNone(yield* Ref.get(latest))) yield* Deferred.await(discovered);
+      // SCIENT-FORK:END
       return true;
     }).pipe(Effect.withSpan("desktop.shellEnvironment.installIntoProcess")),
   );

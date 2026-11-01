@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -145,12 +146,14 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
-  it.effect("does not wait for discovery when the cache is missing", () =>
+  // SCIENT-FORK:START — the first launch has no cached paths for provider checks.
+  it.effect("waits for discovery when the cache is missing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+      const env: NodeJS.ProcessEnv = { SHELL: "/test-shell", PATH: "/usr/bin" };
       yield* runShellEnvironment({
-        env: { SHELL: "/test-shell", PATH: "/usr/bin" },
+        env,
         platform: "darwin",
         handler: () => "",
         processSpawner: ChildProcessSpawner.make(() =>
@@ -163,13 +166,15 @@ describe("DesktopShellEnvironment", () => {
           Effect.gen(function* () {
             const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
             yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
+            assert.isUndefined(startup.pollUnsafe());
             yield* Deferred.succeed(release, undefined);
-            return yield* service.awaitDiscovery;
+            return yield* Fiber.join(startup);
           }),
       });
+      assert.include(env.PATH, "/fresh/bin");
     }),
   );
+  // SCIENT-FORK:END
 
   it.effect(
     "reuses cached paths immediately and streams fresh discovery without keeping removed paths",
@@ -267,7 +272,7 @@ describe("DesktopShellEnvironment", () => {
     "not json",
     '{"version":2,"key":"old","environment":{"PATH":"/bad/bin"}}',
     '{"version":1,"key":"other-shell","environment":{"PATH":"/bad/bin"}}',
-  ])("ignores an unusable cache and still starts before discovery: %s", (contents) =>
+  ])("ignores an unusable cache and waits for discovery: %s", (contents) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const stateDir = yield* fs.makeTempDirectoryScoped();
@@ -290,7 +295,7 @@ describe("DesktopShellEnvironment", () => {
           Effect.gen(function* () {
             const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
             yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
+            assert.isUndefined(startup.pollUnsafe());
             assert.equal(env.PATH, "/usr/bin");
             yield* Deferred.succeed(release, undefined);
             return yield* service.awaitDiscovery;
@@ -377,7 +382,7 @@ describe("DesktopShellEnvironment", () => {
         ),
         use: (service) =>
           Effect.gen(function* () {
-            yield* service.installIntoProcess;
+            yield* service.installIntoProcess.pipe(Effect.forkChild);
             yield* Deferred.await(started);
             return true;
           }),
