@@ -102,13 +102,17 @@ export function PreviewChromeRow({
 }: Props) {
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
+  // SCIENT-FORK:START — Scient Browser: the bar follows the page until someone types.
+  const [edited, setEdited] = useState(false);
+  const shownAddress = inputFocused && edited ? draft : url;
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Browser: suggestions as you type.
   const addressBar = useRef<HTMLDivElement>(null);
   // SCIENT-FORK:END
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
-    const next = draft.trim();
+    const next = shownAddress.trim();
     if (next.length === 0) return;
     onSubmit(next);
     inputRef.current?.blur();
@@ -180,10 +184,13 @@ export function PreviewChromeRow({
         {/* SCIENT-FORK:START — Scient Browser: suggestions as you type. */}
         <BrowserSuggestions
           threadRef={threadRef}
-          text={inputFocused ? draft : url}
-          active={inputFocused && draft !== url && !incognito}
+          text={shownAddress}
+          active={inputFocused && edited && !incognito}
           anchor={addressBar}
-          onTextChange={setDraft}
+          onTextChange={(text) => {
+            setDraft(text);
+            setEdited(true);
+          }}
           onPick={(value) => {
             onSubmit(value);
             inputRef.current?.blur();
@@ -198,9 +205,10 @@ export function PreviewChromeRow({
                     render={
                       <InputGroupInput
                         ref={inputRef}
-                        value={inputFocused ? draft : url}
+                        value={shownAddress}
                         onFocus={() => {
                           setDraft(url);
+                          setEdited(false);
                           setInputFocused(true);
                           queueMicrotask(() => inputRef.current?.select());
                         }}
