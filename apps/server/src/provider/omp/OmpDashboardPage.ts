@@ -3,14 +3,28 @@
  * the agent opens that page itself; in Scient the page opens in the conversation's browser.
  */
 
-const DASHBOARD_COMMAND = /^\/(?:stats|trace)(?:\s|$)/;
+const DASHBOARD_COMMAND = /^\/(stats|trace)(?:\s|$)/;
+const PROGRESS = /^\s*Syncing session files\.*\s*$/;
 // The dashboard binds to this computer, so only a local address is the page to open.
 const LOCAL_PAGE =
   /\bhttps?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}(?:[/?#][^\s<>"'`)\]]*)?/;
 
-/** Whether the message runs a command whose answer is a dashboard page. */
-export function ompOpensDashboard(text: string): boolean {
-  return DASHBOARD_COMMAND.test(text.trimStart());
+export type OmpDashboardCommand = "stats" | "trace";
+
+/** The command, when the message runs one whose answer is a dashboard page. */
+export function ompDashboardCommand(text: string): OmpDashboardCommand | undefined {
+  const command = DASHBOARD_COMMAND.exec(text.trimStart())?.[1];
+  return command === "stats" || command === "trace" ? command : undefined;
+}
+
+/** The agent's line while it starts the dashboard; the page itself follows. */
+export function ompDashboardProgress(text: string): boolean {
+  return PROGRESS.test(text);
+}
+
+/** A named link in place of the agent's raw address, which can run to several lines. */
+export function ompDashboardLink(command: OmpDashboardCommand, url: string): string {
+  return `[${command === "stats" ? "Stats dashboard" : "Trace of this conversation"}](${url})`;
 }
 
 /** The local dashboard address in a command's output, if it reports one. */

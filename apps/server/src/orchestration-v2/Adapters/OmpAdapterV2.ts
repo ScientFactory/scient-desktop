@@ -38,9 +38,12 @@ import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import {
+  type OmpDashboardCommand,
   ompDashboardThroughLink,
   ompDashboardUrl,
-  ompOpensDashboard,
+  ompDashboardCommand,
+  ompDashboardLink,
+  ompDashboardProgress,
 } from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
@@ -495,7 +498,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         // compact's response owns its item; its notification can arrive after that response.
         let manualCompaction = false;
         // `/stats` and `/trace` answer with a local page, which opens beside the conversation.
-        let dashboardRequested = false;
+        let dashboardRequested: OmpDashboardCommand | undefined;
         const openDashboard = (url: string) =>
           Option.isNone(previewBroker) || Option.isNone(serverEnvironment)
             ? Effect.void
@@ -1017,15 +1020,23 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 Effect.andThen(onUpdate({ type: "background", pending: false })),
               );
             case "command-output": {
-              const delta = dashboardRequested
-                ? ompDashboardThroughLink(update.delta, dashboardSessions)
-                : update.delta;
-              const pageUrl = dashboardRequested ? ompDashboardUrl(delta) : undefined;
-              if (pageUrl !== undefined) dashboardRequested = false;
+              const command = dashboardRequested;
+              if (command !== undefined && ompDashboardProgress(update.delta)) return Effect.void;
+              const pageUrl =
+                command === undefined
+                  ? undefined
+                  : ompDashboardUrl(ompDashboardThroughLink(update.delta, dashboardSessions));
+              if (pageUrl !== undefined) dashboardRequested = undefined;
               return onUpdate({
                 type: "text",
                 id: "command-output",
-                delta: client.redaction.text(ompCommandOutputText(delta)),
+                delta: client.redaction.text(
+                  ompCommandOutputText(
+                    command !== undefined && pageUrl !== undefined
+                      ? ompDashboardLink(command, pageUrl)
+                      : update.delta,
+                  ),
+                ),
               }).pipe(
                 Effect.andThen(
                   pageUrl === undefined
@@ -1550,7 +1561,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           send: Effect.fn("OmpAdapterV2.send")(
             function* (turnInput, nativeTurnId) {
               manualCompaction = false;
-              dashboardRequested = ompOpensDashboard(turnInput.message.text);
+              dashboardRequested = ompDashboardCommand(turnInput.message.text);
               const refusal = commandRefusal(turnInput.message.text);
               if (refusal !== undefined) {
                 yield* onUpdate({ type: "offered", nativeTurnId });

@@ -1,15 +1,37 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ompDashboardThroughLink, ompDashboardUrl, ompOpensDashboard } from "./OmpDashboardPage.ts";
+import {
+  ompDashboardCommand,
+  ompDashboardLink,
+  ompDashboardProgress,
+  ompDashboardThroughLink,
+  ompDashboardUrl,
+} from "./OmpDashboardPage.ts";
 
-describe("ompOpensDashboard", () => {
-  it("matches the dashboard commands only", () => {
-    expect(ompOpensDashboard("/stats")).toBe(true);
-    expect(ompOpensDashboard("  /stats --port 4000")).toBe(true);
-    expect(ompOpensDashboard("/trace")).toBe(true);
-    expect(ompOpensDashboard("/statsx")).toBe(false);
-    expect(ompOpensDashboard("/status")).toBe(false);
-    expect(ompOpensDashboard("show me /stats")).toBe(false);
+describe("ompDashboardCommand", () => {
+  it("names the dashboard commands only", () => {
+    expect(ompDashboardCommand("/stats")).toBe("stats");
+    expect(ompDashboardCommand("  /stats --port 4000")).toBe("stats");
+    expect(ompDashboardCommand("/trace")).toBe("trace");
+    expect(ompDashboardCommand("/statsx")).toBeUndefined();
+    expect(ompDashboardCommand("/status")).toBeUndefined();
+    expect(ompDashboardCommand("show me /stats")).toBeUndefined();
+  });
+});
+
+describe("ompDashboardLink", () => {
+  it("shows a name instead of the address", () => {
+    expect(ompDashboardLink("stats", "http://127.0.0.1:3847")).toBe(
+      "[Stats dashboard](http://127.0.0.1:3847)",
+    );
+    expect(ompDashboardLink("trace", "http://127.0.0.1:3847/#/traces?s=%2Fa.jsonl")).toBe(
+      "[Trace of this conversation](http://127.0.0.1:3847/#/traces?s=%2Fa.jsonl)",
+    );
+  });
+
+  it("drops only the start-up line", () => {
+    expect(ompDashboardProgress("Syncing session files...")).toBe(true);
+    expect(ompDashboardProgress("Stats dashboard failed: port in use")).toBe(false);
   });
 });
 
