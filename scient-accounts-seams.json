@@ -300,6 +300,16 @@
       "path": "apps/web/src/components/preview/openTerminalLinkInPreview.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/previewControls/handlers.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: hide and protect tabs in profiles this session may not see.",
+      "purpose": "List and close only tabs in browser profiles the agent session may see, by the same rule as preview_status."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/previewControls/tools.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a hidden profile's tab is refused with a safe denial.",
+      "purpose": "Let the preview control tools return an Accounts denial for a hidden profile's tab."
     }
   ],
   "scientMounts": [

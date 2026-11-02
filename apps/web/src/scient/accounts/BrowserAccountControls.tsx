@@ -1,4 +1,5 @@
 import { useSignInRecording } from "./useSignInRecording";
+import { useUniversityBrowsing } from "./useUniversityBrowsing";
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { CheckIcon, KeyRoundIcon } from "lucide-react";
 import type {
@@ -145,13 +146,16 @@ function SaveSignIn({
 
 function DesktopBrowserAccountControls({
   environmentId,
+  threadRef,
   tabId,
+  previewTabId,
   profileId,
   url,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   tabId: string;
+  previewTabId?: string | undefined;
   profileId: string;
   url: string;
 }) {
@@ -167,6 +171,15 @@ function DesktopBrowserAccountControls({
     url,
     accounts: data?.accounts ?? [],
     enabled: canWrite && pending === null,
+  });
+  useUniversityBrowsing({
+    environmentId,
+    threadRef,
+    tabId: previewTabId ?? "",
+    profileId,
+    url,
+    accounts: data?.accounts ?? [],
+    enabled: canWrite && previewTabId !== undefined,
   });
   const [filledAccount, setFilledAccount] = useState<{ accountId: string; url: string } | null>(
     null,
@@ -327,6 +340,7 @@ export function BrowserAccountControls(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   tabId: string;
+  previewTabId?: string;
   profileId: string;
   url: string;
 }) {

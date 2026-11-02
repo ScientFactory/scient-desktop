@@ -3952,6 +3952,7 @@ export const layerWsRpc = (
             observeRpcStream,
             check: accountUserRuns.check,
             paperForSource: accountUserRuns.paperForSource,
+            papers: accountUserRuns.papers,
             plainKeys: accountPlainKeys,
             linkKey: linkAccountKey,
           }),

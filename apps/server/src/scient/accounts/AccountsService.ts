@@ -11,6 +11,7 @@ import type {
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
   AccountHandoff,
+  PaperQueueSummary,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
   AccountMatchSignInInput,
@@ -91,6 +92,8 @@ export interface AccountsServiceShape {
     reveal?: Effect.Effect<void, AccountsError>,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeHandoff: (handoffId: string) => Effect.Effect<void>;
+  /** The state of a project's papers, shown as a band and a card. */
+  readonly setPaperQueue: (queue: PaperQueueSummary) => Effect.Effect<void>;
   readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;
   readonly showHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
   readonly cancelHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;

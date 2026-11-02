@@ -159,6 +159,12 @@ export function PreviewView({
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [pickActive, setPickActive] = useState(false);
+  // SCIENT-FORK:START — a guessed address that can't be reached offers a search for what was typed.
+  const [typedGuess, setTypedGuess] = useState<{
+    readonly url: string;
+    readonly text: string;
+  } | null>(null);
+  // SCIENT-FORK:END
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
     Boolean(onSendAnnotation);
@@ -290,6 +296,11 @@ export function PreviewView({
   const handleSubmitUrl = async (next: string, profileId?: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
+      // SCIENT-FORK:START — remember what was typed when the address was a guess.
+      setTypedGuess(
+        /^[a-z][a-z\d+.-]*:\/\//i.test(next.trim()) ? null : { url: resolved, text: next.trim() },
+      );
+      // SCIENT-FORK:END
       if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, resolved);
         countSiteVisit(resolved);
@@ -913,11 +924,12 @@ export function PreviewView({
       <PreviewChromeRow
         // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
         accountsTab={
-          !isServerTab && runtimeTabId
+          !isServerTab && runtimeTabId && tabId
             ? {
                 environmentId: threadRef.environmentId,
                 threadRef,
                 tabId: runtimeTabId,
+                previewTabId: tabId,
                 profileId: activeProfileId,
               }
             : undefined
@@ -1139,9 +1151,27 @@ export function PreviewView({
               code={navStatus.code}
               description={navStatus.description}
               onReload={handleRefresh}
-              {...(moveTarget === "server"
-                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                : {})}
+              {...(typedGuess && sameHost(typedGuess.url, navStatus.url)
+                ? // SCIENT-FORK:START — search for the typed words instead of a guessed address.
+                  {
+                    move: {
+                      label: `Search for “${typedGuess.text.length > 40 ? `${typedGuess.text.slice(0, 40)}…` : typedGuess.text}”`,
+                      onMove: () => {
+                        const text = typedGuess.text;
+                        setTypedGuess(null);
+                        void navigateToResolvedUrl(
+                          resolveSearchUrlTemplate(getClientSettings()).replaceAll(
+                            "%s",
+                            encodeURIComponent(text),
+                          ),
+                        );
+                      },
+                    },
+                  }
+                : // SCIENT-FORK:END
+                  moveTarget === "server"
+                  ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                  : {})}
             />
           </div>
         ) : null}
@@ -1149,3 +1179,9 @@ export function PreviewView({
     </div>
   );
 }
+
+// SCIENT-FORK:START — the failed page is the one the typed guess opened.
+function sameHost(a: string, b: string): boolean {
+  return URL.canParse(a) && URL.canParse(b) && new URL(a).host === new URL(b).host;
+}
+// SCIENT-FORK:END

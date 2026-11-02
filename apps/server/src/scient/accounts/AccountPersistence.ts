@@ -94,6 +94,35 @@ export const layer = Layer.effect(
   }),
 );
 
+/** Library accounts became website accounts carrying a library link. */
+export const foldLibraryAccounts = (state: unknown): unknown => {
+  if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
+  if (!Array.isArray(state.accounts)) return state;
+  return {
+    ...state,
+    accounts: state.accounts.map((account) => {
+      const details = account?.summary?.details;
+      if (details?.kind !== "library") return account;
+      return {
+        ...account,
+        summary: { ...account.summary, details: { ...details, kind: "website" } },
+      };
+    }),
+  };
+};
+
+export const withLibrariesFolded = (bytes: Redacted.Redacted<Uint8Array>) => {
+  const text = new TextDecoder().decode(Redacted.value(bytes));
+  try {
+    return Redacted.make(
+      new TextEncoder().encode(JSON.stringify(foldLibraryAccounts(JSON.parse(text)))),
+    );
+  } catch {
+    // Unreadable data keeps its own error from the decoder that follows.
+    return bytes;
+  }
+};
+
 export const decodePrivateJson = <A, E>(
   schema: Schema.Codec<A, E>,
   bytes: Redacted.Redacted<Uint8Array>,

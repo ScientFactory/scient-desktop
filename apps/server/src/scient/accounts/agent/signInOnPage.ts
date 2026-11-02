@@ -9,12 +9,12 @@ import { previewInvoker } from "./broker.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 
 const savedSignIn = (account: AccountSummary, url: string) =>
-  (account.details.kind === "website" || account.details.kind === "library") &&
+  account.details.kind === "website" &&
   account.secrets.password !== undefined &&
   matchesAccountOrigin(url, account.details.sites);
 
 const profileOf = ({ details }: AccountSummary) =>
-  details.kind === "website" || details.kind === "library" ? details.profileId : undefined;
+  details.kind === "website" ? details.profileId : undefined;
 
 /** The accounts of this tab's profile, else those of no profile; never another profile's. */
 const inProfile = (accounts: ReadonlyArray<AccountSummary>, profileId: string | undefined) => {

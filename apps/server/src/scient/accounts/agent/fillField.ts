@@ -41,7 +41,7 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   },
 ) {
   const { details } = account;
-  if (details.kind !== "website" && details.kind !== "library")
+  if (details.kind !== "website")
     return yield* denied("Only website and library accounts fill a page.");
   const now = yield* Clock.currentTimeMillis;
   if (signInRefused(account) || siteLimiting(account, now))
