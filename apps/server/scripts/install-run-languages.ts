@@ -24,8 +24,12 @@ const ALREADY = "true";
 
 const ELAN_UNIX =
   "curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain stable";
+// `-File` cannot pass a true switch value, so this calls the script from `-Command`.
 const ELAN_WINDOWS =
-  "curl -sSfLo elan-init.ps1 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 && powershell -ExecutionPolicy Bypass -File elan-init.ps1 -NoPrompt 1 -DefaultToolchain stable";
+  "curl -sSfLo elan-init.ps1 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 && powershell -ExecutionPolicy Bypass -Command './elan-init.ps1 -NoPrompt 1 -DefaultToolchain stable'";
+/** Runs a downloaded Windows installer silently, then lists where it went for the log. */
+const windowsInstaller = (url: string, ...places: ReadonlyArray<string>) =>
+  `curl -sSfLo setup.exe "${url}" && MSYS_NO_PATHCONV=1 ./setup.exe /S && { ls -d ${places.join(" ")} 2>/dev/null || true; }`;
 const SCALA_LINUX =
   "curl -sSfL https://github.com/VirtusLab/scala-cli/releases/latest/download/scala-cli-x86_64-pc-linux.gz | gzip -d > scala-cli && chmod +x scala-cli && sudo mv scala-cli /usr/local/bin/";
 const CLOJURE_LINUX =
@@ -45,7 +49,8 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     cpp: { linux: ALREADY, darwin: ALREADY, win32: ALREADY },
     fortran: { linux: apt("gfortran"), darwin: brew("gcc"), win32: ALREADY },
     rust: { linux: ALREADY, darwin: ALREADY, win32: ALREADY },
-    go: { linux: ALREADY, darwin: ALREADY, win32: ALREADY },
+    // GitHub's Macs keep Go off PATH, so it comes the way people install it there.
+    go: { linux: ALREADY, darwin: brew("go"), win32: ALREADY },
     java: { linux: ALREADY, darwin: ALREADY, win32: ALREADY },
     kotlin: { linux: ALREADY, darwin: brew("kotlin"), win32: choco("kotlinc") },
     scala: {
@@ -53,7 +58,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("Virtuslab/scala-cli/scala-cli"),
       win32: choco("scala-cli"),
     },
-    csharp: { linux: ALREADY, darwin: ALREADY, win32: ALREADY },
+    csharp: { linux: ALREADY, darwin: "dotnet --list-sdks", win32: ALREADY },
     fsharp: { linux: ALREADY, darwin: ALREADY, win32: ALREADY },
     zig: {
       linux: "sudo snap install zig --classic --beta",
@@ -77,7 +82,9 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     tcl: { linux: apt("tcl"), darwin: brew("tcl-tk"), win32: choco("magicsplat-tcl-tk") },
     sqlite: { linux: apt("sqlite3"), darwin: ALREADY, win32: choco("sqlite") },
     apl: {
-      linux: apt("apl"),
+      // Ubuntu has no GNU APL package, so this builds the GNU release.
+      linux:
+        "curl -sSfL https://ftp.gnu.org/gnu/apl/apl-1.8.tar.gz | tar -xz && cd apl-1.8 && ./configure -q && make -s -j4 && sudo make -s install",
       darwin: brew("gnu-apl"),
       win32: { skip: "GNU APL has no Windows build, and Dyalog needs a sign-up to download" },
     },
@@ -89,7 +96,16 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("ocaml"),
       win32: { skip: "OCaml on Windows builds its compiler through opam, about 20 minutes" },
     },
-    clojure: { linux: CLOJURE_LINUX, darwin: brew("clojure"), win32: choco("babashka") },
+    // Clojure's own Windows tool is a PowerShell module, so Windows gets babashka, from its release.
+    clojure: {
+      linux: CLOJURE_LINUX,
+      darwin: brew("clojure"),
+      win32: [
+        "curl -sSfLo bb.zip https://github.com/babashka/babashka/releases/download/v1.13.229/babashka-1.13.229-windows-amd64.zip",
+        'unzip -q bb.zip -d "$LOCALAPPDATA/babashka"',
+        `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';' + \\$env:LOCALAPPDATA + '\\babashka', 'User')"`,
+      ].join(" && "),
+    },
     "common-lisp": { linux: apt("sbcl"), darwin: brew("sbcl"), win32: choco("sbcl") },
     racket: { linux: apt("racket"), darwin: brew("minimal-racket"), win32: choco("racket") },
     elixir: { linux: apt("elixir"), darwin: brew("elixir"), win32: choco("elixir") },
@@ -101,16 +117,45 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
   },
   math: {
-    gp: { linux: apt("pari-gp"), darwin: brew("pari"), win32: choco("pari-gp") },
-    maxima: { linux: apt("maxima"), darwin: brew("maxima"), win32: choco("maxima") },
-    gap: { linux: apt("gap"), darwin: brew("gap"), win32: NO_WINDOWS("GAP") },
+    gp: {
+      linux: apt("pari-gp"),
+      darwin: brew("pari"),
+      win32: windowsInstaller(
+        "https://pari.math.u-bordeaux.fr/pub/pari/windows/Pari64-2-19-0.exe",
+        "/c/Program\\ Files*/PARI*/*",
+      ),
+    },
+    maxima: {
+      linux: apt("maxima"),
+      darwin: brew("maxima"),
+      win32: `${choco("maxima")} && { ls -d /c/maxima-*/bin /c/Program\\ Files*/Maxima*/bin 2>/dev/null || true; }`,
+    },
+    // Homebrew has no GAP, so this builds the release the way GAP's own guide says.
+    gap: {
+      linux: apt("gap"),
+      darwin:
+        'curl -sSfL https://github.com/gap-system/gap/releases/download/v4.16.1/gap-4.16.1.tar.gz | tar -xz -C "$HOME" && cd "$HOME/gap-4.16.1" && ./configure -q && make -s -j4 && sudo ln -s "$HOME/gap-4.16.1/gap" /usr/local/bin/gap',
+      win32: NO_WINDOWS("GAP"),
+    },
     macaulay2: {
       linux: apt("macaulay2"),
-      darwin: brew("Macaulay2/tap/M2"),
+      // Homebrew asks people to trust a tap before it installs from it.
+      darwin:
+        "brew tap macaulay2/tap && brew trust macaulay2/tap && brew install macaulay2/tap/macaulay2",
       win32: NO_WINDOWS("Macaulay2"),
     },
     singular: { linux: apt("singular"), darwin: brew("singular"), win32: NO_WINDOWS("Singular") },
-    coq: { linux: apt("coq"), darwin: brew("rocq"), win32: choco("coq") },
+    // Chocolatey's Coq is 8.13 and fails its own checksum; people use the Rocq Platform installer.
+    coq: {
+      linux: apt("coq"),
+      darwin: brew("rocq"),
+      win32: windowsInstaller(
+        "https://github.com/rocq-prover/platform/releases/download/2026.07.0/signed_Rocq-Platform-release-2026.07.0-version.9.1-Windows-x86_64.exe",
+        "/c/Rocq*/bin",
+        "/c/Coq*/bin",
+        "/c/Program\\ Files*/Rocq*/bin",
+      ),
+    },
     lean: { linux: ELAN_UNIX, darwin: ELAN_UNIX, win32: ELAN_WINDOWS },
     agda: {
       linux: apt("agda-bin"),
@@ -151,10 +196,14 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       linux:
         'curl -sSfL https://micro.mamba.pm/install.sh | bash && "$HOME/.local/bin/micromamba" create -y -n sage -c conda-forge sage',
     },
-    root: { linux: "sudo snap install root-framework" },
+    // Not the snap: it cannot read files outside the home folder.
+    root: {
+      linux:
+        'curl -sSfL https://micro.mamba.pm/install.sh | bash && "$HOME/.local/bin/micromamba" create -y -n root -c conda-forge root',
+    },
     "imagej-macro": {
       linux:
-        'curl -sSfLo fiji.zip https://downloads.imagej.net/fiji/latest/fiji-latest-linux64-jdk.zip && unzip -q fiji.zip -d "$HOME"',
+        'curl -sSfLo fiji.zip https://downloads.imagej.net/fiji/latest/fiji-latest-linux64-jdk.zip && unzip -q fiji.zip -d "$HOME" && ls "$HOME"/Fiji* | head -20',
     },
     netlogo: {
       linux:
@@ -204,11 +253,18 @@ for (const [languageId, ways] of Object.entries(languages)) {
     continue;
   }
   console.log(`::group::Install ${languageId}`);
-  const result = NodeChildProcess.spawnSync("bash", ["-c", way], {
-    stdio: "inherit",
-    timeout: 25 * 60_000,
-    env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" },
-  });
+  const install = () =>
+    NodeChildProcess.spawnSync("bash", ["-c", way], {
+      stdio: "inherit",
+      timeout: 25 * 60_000,
+      env: { ...NodeProcess.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" },
+    });
+  let result = install();
+  // Package sites fail now and then, as Chocolatey's did with a 503. One more try, a minute later.
+  if (result.status !== 0) {
+    NodeChildProcess.spawnSync("sleep", ["60"]);
+    result = install();
+  }
   console.log("::endgroup::");
   if (result.status === 0) {
     installed.push(languageId);

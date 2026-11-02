@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- gated test runs real tools on real files.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -82,7 +83,8 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string, string?]>> = {
   lua: ["a.lua", 'print("scient-ran")\n'],
   tcl: ["a.tcl", 'puts "scient-ran"\n'],
   elixir: ["a.exs", 'IO.puts("scient-ran")\n'],
-  erlang: ["a.erl", 'main(_) -> io:format("scient-ran~n").\n'],
+  // escript skips a file's first line, which in a real file names the module.
+  erlang: ["a.erl", '-module(a).\n-export([main/1]).\nmain(_) -> io:format("scient-ran~n").\n'],
   csharp: ["a.cs", 'System.Console.WriteLine("scient-ran");\n'],
   fsharp: ["a.fsx", 'printfn "scient-ran"\n'],
   zig: [
@@ -157,7 +159,14 @@ const runStep = (step: {
         cwd: step.cwd,
         environment: step.environment,
       });
-      const output = yield* Effect.forkScoped(Stream.runCollect(handle.output));
+      // Printed as it comes, so a run that never ends still shows where it stopped.
+      const output = yield* Effect.forkScoped(
+        Stream.runCollect(
+          handle.output.pipe(
+            Stream.tap((chunk) => Effect.sync(() => NodeProcess.stderr.write(chunk.text))),
+          ),
+        ),
+      );
       const code = yield* handle.exitCode;
       const chunks = yield* Fiber.join(output);
       return { code, output: Array.from(chunks, (chunk) => chunk.text).join("") };
@@ -165,9 +174,26 @@ const runStep = (step: {
   ).pipe(
     Effect.timeoutOrElse({
       duration: "5 minutes",
-      orElse: () => Effect.succeed({ code: -1, output: "\n[still running after 5 minutes]" }),
+      orElse: () =>
+        Effect.sync(() => {
+          NodeProcess.stderr.write(`[still running after 5 minutes: ${step.executable}]\n`);
+          return { code: -1, output: "\n[still running after 5 minutes]" };
+        }),
     }),
   );
+
+/** Where this computer's PATH finds a language's commands, to explain a scan that missed them. */
+const whereIs = (languageId: string) => {
+  const route = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === languageId);
+  const lookup = NodeProcess.platform === "win32" ? "where" : "which";
+  const found = (route?.commands ?? []).flatMap(({ command }) => {
+    const result = NodeChildProcess.spawnSync(lookup, [command], { encoding: "utf8" });
+    return result.status === 0 ? [result.stdout.trim()] : [];
+  });
+  return found.length === 0
+    ? "PATH finds none of its commands."
+    : `PATH finds ${found.join(", ")}.`;
+};
 
 describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", () => {
   const environment = Object.fromEntries(
@@ -195,13 +221,14 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
 
   for (const [languageId, [name, source, prints = "scient-ran"]] of Object.entries(PROGRAMS)) {
     const adapter = adapters.find((candidate) => candidate.kind === languageId)!;
-    it.effect.runIf(installedForTest?.includes(languageId) ?? tools.has(languageId))(
+    // The real clock, so a run that never ends meets its time limit.
+    it.live.runIf(installedForTest?.includes(languageId) ?? tools.has(languageId))(
       `runs ${languageId}`,
       () =>
         Effect.gen(function* () {
           expect(
             tools.has(languageId),
-            `${languageId} is installed, but the scan did not find it`,
+            `${languageId} is installed, but the scan did not find it. ${whereIs(languageId)}`,
           ).toBe(true);
           const profile = yield* Effect.promise(() =>
             adapter.inspect({
