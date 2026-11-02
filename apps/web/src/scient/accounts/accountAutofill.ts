@@ -1,4 +1,5 @@
 import { ThreadId, type DesktopLoginForm, type EnvironmentId } from "@t3tools/contracts";
+import { automaticSignInOnHold } from "@t3tools/shared/scientAccountSignIn";
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { readThreadPreviewState } from "~/previewStateStore";
@@ -102,9 +103,7 @@ export function watchAccountAutofill(
       account.details.kind === "website" &&
       (account.details.profileId ?? form.profileId) === form.profileId &&
       account.secrets.password?.verifiedAt !== undefined &&
-      account.signIn?.state !== "password-rejected" &&
-      account.signIn?.state !== "code-rejected" &&
-      account.signIn?.state !== "limited" &&
+      !automaticSignInOnHold(account, Date.now()) &&
       isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
     if (submit) signedBackIn.set(form.url, Date.now());

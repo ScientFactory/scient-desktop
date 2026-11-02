@@ -11,6 +11,10 @@
       "types": "./src/scientAccountAuthorization.ts",
       "import": "./src/scientAccountAuthorization.ts"
     },
+    "./scientAccountSignIn": {
+      "types": "./src/scientAccountSignIn.ts",
+      "import": "./src/scientAccountSignIn.ts"
+    },
     "./scientLoginFields": {
       "types": "./src/scientLoginFields.ts",
       "import": "./src/scientLoginFields.ts"

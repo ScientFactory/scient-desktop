@@ -1441,42 +1441,43 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      recordUse: Effect.fn("AccountsService.recordUse")((entry, message) =>
-        locked(
-          Effect.gen(function* () {
-            yield* appendActivity({ ...entry, decision: "allowed" });
-            if (entry.target.type === "account") {
-              const account = findAccount(entry.target.accountId);
-              if (account) {
-                const at = yield* now;
-                yield* commit(
-                  replaceAccount({
-                    ...account,
-                    summary: entry.signInOutcome
-                      ? withSignIn(
-                          {
-                            ...account.summary,
-                            lastUsedAt: at,
-                            ...(entry.signInOutcome === "signed-in"
-                              ? { secrets: verifiedPassword(account.summary.secrets, at) }
-                              : {}),
-                          },
-                          {
-                            state: outcomeSignInState(entry.signInOutcome),
-                            at,
-                            ...(message === undefined ? {} : { detail: message }),
-                          },
-                          yield* Clock.currentTimeMillis,
-                          "attempt",
-                        )
-                      : { ...account.summary, lastUsedAt: at },
-                  }),
-                  true,
-                );
+      recordUse: Effect.fn("AccountsService.recordUse")(
+        ({ savedPasswordUsed, ...entry }, message) =>
+          locked(
+            Effect.gen(function* () {
+              yield* appendActivity({ ...entry, decision: "allowed" });
+              if (entry.target.type === "account") {
+                const account = findAccount(entry.target.accountId);
+                if (account) {
+                  const at = yield* now;
+                  yield* commit(
+                    replaceAccount({
+                      ...account,
+                      summary: entry.signInOutcome
+                        ? withSignIn(
+                            {
+                              ...account.summary,
+                              lastUsedAt: at,
+                              ...(entry.signInOutcome === "signed-in" && savedPasswordUsed
+                                ? { secrets: verifiedPassword(account.summary.secrets, at) }
+                                : {}),
+                            },
+                            {
+                              state: outcomeSignInState(entry.signInOutcome),
+                              at,
+                              ...(message === undefined ? {} : { detail: message }),
+                            },
+                            yield* Clock.currentTimeMillis,
+                            "attempt",
+                          )
+                        : { ...account.summary, lastUsedAt: at },
+                    }),
+                    true,
+                  );
+                }
               }
-            }
-          }),
-        ).pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid),
+            }),
+          ).pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid),
       ),
     });
     return service;

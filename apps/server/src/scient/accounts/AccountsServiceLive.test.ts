@@ -626,14 +626,36 @@ describe("AccountsService grants and approvals", () => {
             action: "sign-in",
             outcome: signInOutcome === "signed-in" ? "ok" : "error",
             signInOutcome,
+            ...(signInOutcome === "signed-in" ? { savedPasswordUsed: true } : {}),
           });
           yield* Fiber.join(recorded);
           expect((yield* service.activity({ target }))[0]?.signInOutcome).toBe(signInOutcome);
         }
+        const password = Effect.map(
+          service.snapshot,
+          ({ accounts }) => accounts[0]?.secrets.password?.verifiedAt,
+        );
+        // Signed in with the saved password typed by Scient: that password has worked.
+        expect(yield* password).toBeDefined();
         yield* service.save({ ...input, accountId, secrets: {} });
         expect((yield* service.snapshot).accounts[0]?.signIn?.state).toBe("code-rejected");
         yield* service.save({ ...input, accountId });
         expect((yield* service.snapshot).accounts[0]?.signIn).toBeUndefined();
+        // A sign-in Scient didn't type the password for says nothing about the new one.
+        const seen = yield* service.changes.pipe(
+          Stream.filter((snapshot) => snapshot.accounts[0]?.signIn?.state === "signed-in"),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+        yield* service.recordUse({
+          target,
+          action: "sign-in",
+          outcome: "ok",
+          signInOutcome: "signed-in",
+        });
+        yield* Fiber.join(seen);
+        expect(yield* password).toBeUndefined();
       }),
   );
   it.effect("keeps denial local to the pending request and audits bounded, safe activity", () =>

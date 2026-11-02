@@ -454,8 +454,10 @@ tried: one that needed the user or failed would do the same with nobody there. A
 run skips imported passwords with no history and stops at 40 accounts.
 
 Autofill submits only on the user's own tab, when the site has one saved sign-in whose password
-has worked (`verifiedAt` on the password, set by a sign-in that ended signed in and cleared by a new
-password), at most once per site every 10 minutes, and only a complete form.
+has worked (`verifiedAt` on the password, set when a sign-in where Scient typed it ends signed in,
+cleared by a new password) and no hold applies (`automaticSignInOnHold`, shared from
+`@t3tools/shared/scientAccountSignIn`), at most once per site every 10 minutes, and only a complete
+form.
 
 Google answers for itself. `googleSessions` (desktop) posts to the account list Chrome reads, with
 the profile's own session and no page, and `watchGoogleSessions`, started by `accountWatchers.ts`, sends the
