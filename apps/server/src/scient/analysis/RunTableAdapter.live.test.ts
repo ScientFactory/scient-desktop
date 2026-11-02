@@ -175,15 +175,6 @@ const runStep = (step: {
       const chunks = yield* Fiber.join(output);
       return { code, output: Array.from(chunks, (chunk) => chunk.text).join("") };
     }),
-  ).pipe(
-    Effect.timeoutOrElse({
-      duration: "5 minutes",
-      orElse: () =>
-        Effect.sync(() => {
-          NodeProcess.stderr.write(`[still running after 5 minutes: ${step.executable}]\n`);
-          return { code: -1, output: "\n[still running after 5 minutes]" };
-        }),
-    }),
   );
 
 /**
@@ -235,7 +226,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
 
   for (const [languageId, [name, source, prints = "scient-ran"]] of Object.entries(PROGRAMS)) {
     const adapter = adapters.find((candidate) => candidate.kind === languageId)!;
-    // The real clock, so a run that never ends meets its time limit.
+    // Real programs, so the real clock.
     it.live.runIf(installedForTest?.includes(languageId) ?? tools.has(languageId))(
       `runs ${languageId}`,
       () =>
@@ -275,8 +266,6 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           }
           expect(output).toContain(prints);
         }).pipe(Effect.provide(Live)),
-      // A first run can fetch a compiler, as Scala and .NET do.
-      12 * 60_000,
     );
   }
 });
