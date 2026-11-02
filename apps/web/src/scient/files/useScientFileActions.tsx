@@ -369,17 +369,17 @@ export function useScientFileActions(input: {
     mode: "move" | "copy",
     paths: readonly string[],
     folder: string,
-  ): Promise<boolean> => {
+  ): Promise<ReadonlyArray<WorkspaceEntryChangeOutcome>> => {
     const sources = outermost(paths).filter(writable);
-    if (sources.length === 0) return false;
+    if (sources.length === 0) return [];
     // A copy into its own folder is a duplicate; a move there changes nothing.
     const items = sources
       .map((from) => ({ from, to: join(folder, baseName(from)) }))
       .filter((item) => mode === "copy" || item.from !== item.to);
-    if (items.length === 0) return false;
+    if (items.length === 0) return [];
     if (!(await saveEditorsUnder(items.map((item) => item.from)))) {
       refresh();
-      return false;
+      return [];
     }
     // Pasting a copy into its own folder makes "name copy", as Duplicate does.
     const besideItself = mode === "copy" && items.every((item) => item.from === item.to);
@@ -387,7 +387,7 @@ export function useScientFileActions(input: {
       { _tag: mode, items, collision: besideItself ? "keep-both" : "ask" },
       { failureTitle: mode === "move" ? "Couldn’t move" : "Couldn’t copy" },
     );
-    return done !== null;
+    return done ?? [];
   };
 
   /** Each item is copied beside itself, as "name copy". */
@@ -410,7 +410,13 @@ export function useScientFileActions(input: {
       picked.paths,
       folderFor(paths),
     );
-    if (done && picked.mode === "cut") fileClipboard = null;
+    if (picked.mode !== "cut") return;
+    // What was cut and did not move (stopped at a taken name, or failed) stays cut.
+    const moved = new Set(
+      done.flatMap((outcome) => (outcome.to === undefined ? [] : [outcome.from])),
+    );
+    const left = picked.paths.filter((path) => !moved.has(path));
+    fileClipboard = left.length > 0 ? { ...picked, paths: left } : null;
   };
 
   const moveToTrash = async (paths: readonly string[]) => {
