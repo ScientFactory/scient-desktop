@@ -166,7 +166,8 @@ describe("BrowserSuggestions", () => {
   it("never sends an address to the search engine", async () => {
     reset();
     await using _screen = await render(<Box active onPick={vi.fn()} />);
-    await userEvent.type(box(), "intranet.corp/payroll");
+    // Filled at once: a pause while typing "int" would be a plain search, rightly sent.
+    await userEvent.fill(box(), "intranet.corp/payroll");
 
     await expect.element(page.getByRole("option", { name: /Nature/ })).toBeVisible();
     expect(mocks.suggestSearches).not.toHaveBeenCalled();
