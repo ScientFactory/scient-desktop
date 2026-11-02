@@ -619,6 +619,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`30084f0018c5751a07291222e8d04e16d513700a` is recorded in
+[the 2026-11-03 30084f0018 receipt](docs/internals/t3-upstream-sync-20261103-30084f0018.md).
+Literal merge `6a48c5374b0002f54ff134789e14870a9ac00c58` has owned base
+`a49a768f7215d2ed54da156fa565a244c856fa0f` (#747) and the frozen official target as parents,
+retaining the 18 official commits after `c8a601c0df`. Claude skips its own thread naming, startup no
+longer waits for Tailscale, PR watches survive host outages, removing provider settings asks first,
+and agents start background work with `delegate_task`. No migrations. Release remains separate.
+
+The previous committed alignment through
 `c8a601c0dfa5c7626e51e06d727076f6b840a005` is recorded in
 [the 2026-11-02 c8a601c0df receipt](docs/internals/t3-upstream-sync-20261102-c8a601c0df.md).
 Literal merge `21583b219b2c15541f038efa0addb5d2de3c1b8a` has owned base
@@ -627,7 +636,7 @@ retaining the 12 official commits after `30654b3e91`. Claude threads drop the la
 session while still naming Scient, Cursor compacts with the SDK's summarize and receives Scient's
 tools on each send, and completion alerts play at once. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `30654b3e91a51937d1dba18fc83af19d8003f5ca` is recorded in
 [the 2026-11-02 30654b3e91 receipt](docs/internals/t3-upstream-sync-20261102-30654b3e91.md).
 Literal merge `139e5d022ca11bc89ea6467a6b8f3200b5618643` has owned base
