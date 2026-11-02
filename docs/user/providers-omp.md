@@ -31,7 +31,7 @@ Oh My Pi is off by default. In **Settings > Providers**, enable **Oh My Pi** and
 path when `omp` is not on the server's `PATH`. On the desktop app, you can instead choose
 **Install** to use Scient-managed Oh My Pi.
 
-Scient starts one `omp --mode rpc --approval-mode yolo` process for each conversation. With the home
+Scient starts one `omp --mode rpc-ui --approval-mode yolo` process for each conversation. With the home
 and profile left empty, that process uses the Oh My Pi home and credentials the server's
 environment selects (`PI_CODING_AGENT_DIR` or `OMP_PROFILE` when set, otherwise `~/.omp`). Every
 Oh My Pi instance with an empty home shares that login. Set **Oh My Pi home**

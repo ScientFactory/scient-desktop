@@ -28,6 +28,13 @@ import {
   AccountPlainKeyInput,
   AccountPlainKeysInput,
   AccountPaperForSourceResult,
+  PaperItem,
+  PaperQueueInput,
+  PaperQueueRequestInput,
+  Institution,
+  UniversitySearchInput,
+  UniversitySignInInput,
+  UniversityBrowseInput,
   AccountKeyUnlinkInput,
   AccountSignInSeenInput,
   AccountsCheckInput,
@@ -45,6 +52,7 @@ import {
   PasswordImportInput,
   PasswordImportResult,
 } from "./accounts.ts";
+import { PreviewTabId } from "../preview.ts";
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_ACCOUNT_WS_METHODS = {
@@ -61,6 +69,12 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSetCodeSources: "accounts.codeSources.set",
   accountsLinkKey: "accounts.keys.link",
   accountsPaperForSource: "accounts.papers.getForSource",
+  accountsPapersRequest: "accounts.papers.request",
+  accountsPapersContinue: "accounts.papers.continue",
+  accountsPapersList: "accounts.papers.list",
+  accountsUniversitySearch: "accounts.universities.search",
+  accountsUniversitySignIn: "accounts.universities.signIn",
+  accountsUniversityBrowse: "accounts.universities.browse",
   accountsPlainKeys: "accounts.plainKeys.find",
   accountsKeepPlainKey: "accounts.plainKeys.keep",
   accountsUnlinkKey: "accounts.keys.unlink",
@@ -164,6 +178,49 @@ export const WsAccountsPaperForSourceRpc = Rpc.make(
   {
     payload: AccountPaperForSourceInput,
     success: AccountPaperForSourceResult,
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsPapersRequestRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsPapersRequest,
+  { payload: PaperQueueRequestInput, success: Schema.Struct({}), error: AccountsRpcError },
+);
+
+export const WsAccountsPapersContinueRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsPapersContinue,
+  { payload: PaperQueueInput, success: Schema.Struct({}), error: AccountsRpcError },
+);
+
+export const WsAccountsPapersListRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsPapersList, {
+  payload: PaperQueueInput,
+  success: Schema.Array(PaperItem),
+  error: AccountsRpcError,
+});
+
+export const WsAccountsUniversitySignInRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySignIn,
+  {
+    payload: UniversitySignInInput,
+    success: Schema.Struct({ tabId: PreviewTabId }),
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsUniversityBrowseRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsUniversityBrowse,
+  {
+    payload: UniversityBrowseInput,
+    success: Schema.Struct({ routed: Schema.Boolean }),
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsUniversitySearchRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySearch,
+  {
+    payload: UniversitySearchInput,
+    success: Schema.Array(Institution),
     error: AccountsRpcError,
   },
 );

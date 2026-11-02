@@ -1,14 +1,12 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   type EnvironmentId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 
 import { openUrlInPreview } from "~/browser/openFileInPreview";
 import { toastManager } from "~/components/ui/toast";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { previewEnvironment } from "~/state/preview";
@@ -16,6 +14,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { accountsState } from "./accountsState";
 import { profileAccounts } from "./accountsView";
 import { useAccountCommand } from "./useAccounts";
+import { useScratchThread } from "./useScratchThread";
 
 const SIGN_IN_WINDOW_MS = 600_000;
 
@@ -44,8 +43,7 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
     useClientSettings((settings) => settings.browserDefaultProfileId) ?? DEFAULT_BROWSER_PROFILE_ID;
   const save = useAccountCommand(accountsState.save, environmentId);
   const readSnapshot = useAccountCommand(accountsState.readSnapshot, environmentId);
-  const { openScratchProject } = useScratchProject();
-  const openThread = useNewThreadHandler();
+  const scratchThread = useScratchThread(environmentId);
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
 
   const finishSignIn = (signIn: { name: string; site: string }, profileId: string) => {
@@ -81,13 +79,16 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
     });
   };
 
-  return async (url: string, profileId?: string, signIn?: { name: string; site: string }) => {
-    const project = await openScratchProject(environmentId, "Could not open the site");
-    if (!project) return false;
-    const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
-    if (!opened) return false;
-    const threadRef = scopeThreadRef(project.environmentId, opened.threadId);
-    useRightPanelStore.getState().requestMaximize(threadRef);
+  return async (
+    url: string,
+    profileId?: string,
+    signIn?: { name: string; site: string },
+    /** Opens beside this conversation, for a sign-in in the middle of its work. */
+    conversation?: ScopedThreadRef,
+  ) => {
+    const threadRef = conversation ?? (await scratchThread());
+    if (!threadRef) return false;
+    if (!conversation) useRightPanelStore.getState().requestMaximize(threadRef);
     const tabProfileId = signIn ? (profileId ?? newTabProfileId) : profileId;
     const result = await openUrlInPreview({
       threadRef,

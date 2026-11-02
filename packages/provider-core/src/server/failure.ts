@@ -101,6 +101,11 @@ function curatedCauseMessages(cause: unknown): {
               "The complete current request, including attached files and captured data, exceeds the provider input limit. Shorten the request or remove an attachment and retry.",
             category: categoryMessage(),
           };
+        // A refused native turn left the session intact, and its adapter wrote and redacted the reason.
+        case "NativeSessionOperationError":
+          if ((cause as Record<string, unknown>).breaksSession === false)
+            return { known: stringField(cause, "message"), category: categoryMessage() };
+          break;
         // SCIENT-FORK:END
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };

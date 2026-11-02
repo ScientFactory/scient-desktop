@@ -13,6 +13,7 @@ import { AccountsService, type AccountSessionScope } from "../AccountsService.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
+import { isUniversitySignInService } from "../universitySignIn.ts";
 
 const isAccountsError = Schema.is(AccountsError);
 import { AccountCookies, netscapeCookieJar } from "./cookies.ts";
@@ -26,7 +27,7 @@ import { fillField } from "./fillField.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
-import { getPaper } from "../../papers/getPaper.ts";
+import { getPaper, paperStatus, queuePapers } from "../../papers/getPaper.ts";
 import { signInCodes } from "./signInCodes.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
@@ -256,10 +257,13 @@ export const accountAgentOperations = {
       input.accountId === undefined ? undefined : yield* getAccount(scope, input.accountId);
     if (
       account &&
-      ((account.details.kind !== "website" && account.details.kind !== "library") ||
+      (account.details.kind !== "website" ||
         !matchesAccountOrigin(input.url, account.details.sites))
     )
       return yield* fail("denied", "The requested site does not match this website account.");
+    // The session at a university's sign-in service opens its mail and records too.
+    if (isUniversitySignInService((yield* accounts.snapshot).accounts, input.url))
+      return yield* fail("denied", "A university's sign-in stays in the browser.");
     const profileId =
       input.profileId ??
       (account && "profileId" in account.details ? account.details.profileId : undefined);
@@ -350,6 +354,8 @@ export const accountAgentOperations = {
   }),
   scient_account_add: addAccount,
   scient_paper_get: getPaper,
+  scient_papers_queue: queuePapers,
+  scient_papers_status: paperStatus,
 } satisfies Parameters<typeof ScientAccountsToolkit.toLayer>[0];
 type ToolInput<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]

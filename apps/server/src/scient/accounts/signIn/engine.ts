@@ -27,6 +27,11 @@ import {
 import { SignInDetection, signInDetectionScript, tickRememberScript } from "./detection.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
 import { matchesAccountOrigin } from "./origin.ts";
+import {
+  signInReturn,
+  universityDetails,
+  universitySignInLink,
+} from "@t3tools/shared/scientPaperLinks";
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
 const REJECTION_SETTLE_CHECKS = 5;
@@ -50,12 +55,13 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   tabId?: PreviewTabId,
   options: SignInOptions = {},
 ) {
-  if (account.details.kind !== "website" && account.details.kind !== "library")
+  if (account.details.kind !== "website")
     return yield* new AccountsError({
       reason: "invalid-input",
-      message: "Choose a website or library account to sign in.",
+      message: "Choose a website account to sign in.",
     });
   const details = account.details;
+  const university = universityDetails(details);
   const scope = yield* AgentInvocationContext;
   if (!scope.capabilities.has("preview"))
     return yield* new AccountsError({
@@ -95,8 +101,12 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   // A tab already on the site stays put: a saved address may be a step of an old sign-in, and the
   // page may already be the one to use.
   const destination =
-    reuse && onSite ? undefined : (details.loginUrl ?? (onSite ? current?.url : siteUrl));
-  const otherAddresses = [...new Set([details.loginUrl, siteUrl])].filter(
+    reuse && onSite
+      ? undefined
+      : university
+        ? universitySignInLink(university)
+        : (details.loginUrl ?? (onSite ? current?.url : siteUrl));
+  const otherAddresses = (university ? [] : [...new Set([details.loginUrl, siteUrl])]).filter(
     (url): url is string => url !== undefined && url !== destination,
   );
   const openInput = {
@@ -130,14 +140,28 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const target = opened.tabId;
   const password = secrets.password === undefined ? undefined : Redacted.value(secrets.password);
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
-  const decide = (page: SignInDetection) =>
-    decideSignIn(page, details.sites, {
+  const decide = (page: SignInDetection) => {
+    if (university && signInReturn(page.url ?? page.origin)) return { type: "signed-in" } as const;
+    const decision = decideSignIn(page, details.sites, {
       username: details.username !== undefined,
       password: password !== undefined,
       otp: totp !== undefined,
       ...(details.username === undefined ? {} : { accountName: details.username }),
       passwordSent: submissions.some(({ fields }) => fields.includes("password")),
     });
+    // Scient learns a university's sign-in service from the person's own first sign-in.
+    return university &&
+      decision.type === "needs-user" &&
+      decision.kind === undefined &&
+      !page.broken &&
+      !page.limited
+      ? {
+          ...decision,
+          kind: "other" as const,
+          message: "Finish signing in on your university's page.",
+        }
+      : decision;
+  };
   // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
   // continues with what is on screen.
   let filled: Array<{ origin: string; selector: string; expected: string }> = [];
@@ -203,9 +227,9 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       }
       if (continuation.type !== "continue" && !page.signedIn)
         return { outcome: continuation.type, message: continuation.message, tabId: target };
-      // A library sends a signed-in reader on to the publisher, which is none of its sites.
+      // A university sends a signed-in reader on to the publisher, which is none of its sites.
       if (
-        details.kind === "library" &&
+        university &&
         submissions.some(({ fields }) => fields.includes("password")) &&
         !matchesAccountOrigin(page.origin, details.sites) &&
         !page.broken &&

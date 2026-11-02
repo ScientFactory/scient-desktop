@@ -763,6 +763,9 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       ResetCreditCoordinator.layer,
       ProviderLatestVersions.layer,
       McpProviderSessions.layer,
+      // SCIENT-FORK:START — drivers open pages their commands start; one broker by memoization.
+      PreviewAutomationBroker.layer,
+      // SCIENT-FORK:END
     ),
   ),
   // Catalog publication is independent from provider construction. Project

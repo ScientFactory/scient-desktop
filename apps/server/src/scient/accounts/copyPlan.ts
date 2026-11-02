@@ -38,7 +38,7 @@ export function planSecretStores(
         ? details.host
         : details.tool;
   const username =
-    details.kind === "website" || details.kind === "library"
+    details.kind === "website"
       ? (details.username ?? "")
       : details.kind === "database"
         ? details.user

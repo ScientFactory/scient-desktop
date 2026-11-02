@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ompMessageUsage, ompStatsUsage, ompTodoSteps } from "./OmpDesktopPresentation.ts";
+import {
+  ompCommandOutputText,
+  ompMessageUsage,
+  ompStatsUsage,
+  ompTodoSteps,
+} from "./OmpDesktopPresentation.ts";
 
 describe("OMP desktop observations", () => {
   it("keeps cache tokens in context occupancy and rejects invalid counters", () => {
@@ -50,5 +55,23 @@ describe("OMP desktop observations", () => {
       ompTodoSteps([{ name: "Phase", tasks: [{ content: "Unknown", status: "new_state" }] }]),
     ).toBeUndefined();
     expect(ompTodoSteps([])).toEqual([]);
+  });
+});
+
+describe("ompCommandOutputText", () => {
+  it("drops terminal colors and keeps a meter's columns in a code block", () => {
+    expect(ompCommandOutputText("Used\n  Tools \u001b[38;5;39m██░░\u001b[39m 2%")).toBe(
+      "\n```text\nUsed\n  Tools ██░░ 2%\n```\n",
+    );
+  });
+
+  it("keeps a report's own code block", () => {
+    expect(ompCommandOutputText("```\n  [██░░] 10%\n```")).toBe("```\n  [██░░] 10%\n```\n\n");
+  });
+
+  it("leaves plain reports as chat text", () => {
+    expect(ompCommandOutputText("No background jobs running.")).toBe(
+      "No background jobs running.\n\n",
+    );
   });
 });
