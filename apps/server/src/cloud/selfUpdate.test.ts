@@ -269,7 +269,8 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(exit._tag === "Failure" ? String(exit.cause) : "launcher handoff").toBe(
         "launcher handoff",
       );
-      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+      // SCIENT-FORK: Scient stages a server update by installing its package.
+      expect(order).toEqual(["install", "preflight", "accept"]);
     }),
   );
 
