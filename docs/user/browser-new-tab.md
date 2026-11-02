@@ -20,5 +20,6 @@ come first, then the sites you open most, then Scholar, PubMed, arXiv, Overleaf,
 
 Press **Add** to add a site with a name of your choice. To change one, hover it, press **⋯** and
 choose **Edit** to rename it or change its link, or **Remove**. An edited shortcut becomes one of
-yours; a removed one stays away until you add it again. Shortcuts are shared by all your projects
-on this device. Sites opened in an Incognito tab aren't counted.
+yours; a removed one stays away until you add it again. Each browser profile keeps its own
+shortcuts, shared by all your projects on this device. An Incognito tab shows only the starting
+sites and keeps nothing.
