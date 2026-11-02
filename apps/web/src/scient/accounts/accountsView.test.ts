@@ -98,7 +98,7 @@ describe("Accounts decisions", () => {
         username: "a@example.com",
         profileId,
       },
-      lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+      signIn: { state, at: "2026-10-31T00:00:00.000Z" },
     });
     expect(isBrowserSignIn(google("signed-in"))).toBe(true);
     expect(
@@ -117,7 +117,7 @@ describe("Accounts decisions", () => {
     const row = (site: string, profileId: string, state?: "signed-in" | "signed-out") => ({
       ...website(profileId),
       details: { kind: "website" as const, sites: [site], profileId },
-      ...(state ? { lastCheck: { state, at: "2026-10-31T00:00:00.000Z" } } : {}),
+      ...(state ? { signIn: { state, at: "2026-10-31T00:00:00.000Z" } } : {}),
     });
     expect(
       sitesToKeep(
@@ -553,27 +553,23 @@ describe("account status", () => {
   const at = "2026-10-30T10:00:00.000Z";
   const relative = () => "2h ago";
   it("puts what needs the user first, then the last check", () => {
-    expect(
-      accountStatusLabel(
-        { lastSignInOutcome: "password-rejected", lastCheck: { state: "signed-in", at } },
-        relative,
-      ),
-    ).toBe("Password rejected");
-    expect(
-      accountStatusLabel({ signedOut: true, lastCheck: { state: "signed-in", at } }, relative),
-    ).toBe("Signed out");
-    expect(accountStatusLabel({ lastCheck: { state: "signed-in", at } }, relative)).toBe(
+    // A refusal outlasts a session seen working (the server keeps it), so the row says so.
+    expect(accountStatusLabel({ signIn: { state: "password-rejected", at } }, relative)).toBe(
+      "Password rejected",
+    );
+    expect(accountStatusLabel({ signIn: { state: "signed-out", at } }, relative)).toBe(
+      "Signed out",
+    );
+    expect(accountStatusLabel({ signIn: { state: "signed-in", at } }, relative)).toBe(
       "Signed in · 2h ago",
     );
-    expect(accountStatusLabel({ lastCheck: { state: "needs-you", at } }, relative)).toBe(
-      "Needs you",
-    );
+    expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(
       accountStatusLabel(
         {
           details: { kind: "api-key", sites: [], auth: { type: "bearer" } },
-          lastCheck: { state: "rejected", at },
+          signIn: { state: "failed", at, detail: "The service refused this key." },
         },
         relative,
       ),
@@ -676,11 +672,11 @@ describe("a university's status", () => {
 
   it("speaks about the account, from never signed in to last seen", () => {
     expect(accountStatusLabel(university, when)).toBe("Not signed in yet");
-    expect(accountStatusLabel({ ...university, signedOut: true }, when)).toBe("Sign in needed");
     const check = (state: "signed-in" | "signed-out") => ({
       ...university,
-      lastCheck: { state, at: "2026-01-01T00:00:00.000Z" },
+      signIn: { state, at: "2026-01-01T00:00:00.000Z" },
     });
+    // Also a session gone from the browser's cookies, which the server records as signed out.
     expect(accountStatusLabel(check("signed-out"), when)).toBe("Sign in needed");
     expect(accountStatusLabel(check("signed-in"), when)).toBe("Signed in · 2h ago");
   });

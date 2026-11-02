@@ -89,8 +89,8 @@ export function watchAccountAutofill(
       (match) =>
         !agentTab ||
         (agentMayUse(match.controls, accounts.agentAccess, projectId) &&
-          match.lastSignInOutcome !== "password-rejected" &&
-          match.lastCheck?.state !== "limited"),
+          match.signIn?.state !== "password-rejected" &&
+          match.signIn?.state !== "limited"),
     );
     if (!account) return;
     const lastSubmitted = signedBackIn.get(form.url) ?? 0;
@@ -101,8 +101,8 @@ export function watchAccountAutofill(
       matches.length === 1 &&
       account.details.kind === "website" &&
       (account.details.profileId ?? form.profileId) === form.profileId &&
-      account.lastSignInOutcome === "signed-in" &&
-      account.lastCheck?.state !== "limited" &&
+      // Signed in before, by Scient or as last seen, with nothing since but the session ending.
+      (account.signIn?.state === "signed-in" || account.signIn?.state === "signed-out") &&
       account.secrets.password !== undefined &&
       isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
