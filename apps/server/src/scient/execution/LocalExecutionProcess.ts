@@ -18,6 +18,25 @@ export class ExecutionProcess extends Context.Service<ExecutionProcess, Executio
 
 /** Enough to drain what an exited program wrote, short enough that nobody waits on it. */
 const OUTPUT_AFTER_EXIT = "2 seconds";
+/** How far reading runs ahead of a slow consumer, in chunks of up to 64 KiB. */
+const READ_AHEAD = 256;
+
+/**
+ * A helper a program leaves behind, such as .NET's build server, can hold its output open for
+ * good, so output ends once the program has exited and a short drain has passed. Reading runs
+ * ahead of the consumer, so what the program wrote is read before the drain ends and still
+ * reaches a consumer that was busy saving earlier output.
+ */
+export const untilExited = <A, E, R, X, F>(
+  output: Stream.Stream<A, E, R>,
+  exited: Effect.Effect<X, F>,
+): Stream.Stream<A, E, R> =>
+  output.pipe(
+    Stream.interruptWhen(
+      exited.pipe(Effect.ignore, Effect.andThen(Effect.sleep(OUTPUT_AFTER_EXIT))),
+    ),
+    Stream.buffer({ capacity: READ_AHEAD }),
+  );
 
 function processError(
   operation: ExecutionProcessError["operation"],
@@ -53,11 +72,7 @@ const make = Effect.gen(function* () {
         Stream.mapError((cause) =>
           processError("output", "Unable to read execution process output.", cause),
         ),
-        // A helper the program leaves behind, such as .NET's build server, can hold its output
-        // open for good. Once the program exits, read what it wrote, then stop waiting.
-        Stream.interruptWhen(
-          child.exitCode.pipe(Effect.ignore, Effect.andThen(Effect.sleep(OUTPUT_AFTER_EXIT))),
-        ),
+        (stream) => untilExited(stream, child.exitCode),
       );
       // Run tree cleanup even after zero exit because descendants may survive. Missing-tree errors
       // vary by platform; decide whether cancellation failed from the direct child's liveness, not
