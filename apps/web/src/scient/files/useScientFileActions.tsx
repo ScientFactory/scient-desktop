@@ -84,8 +84,10 @@ let fileClipboard: {
   readonly paths: readonly string[];
 } | null = null;
 
-/** Undo per project, newest last: the changes that reverse each step. */
-const undoStacks = new Map<string, Array<ReadonlyArray<WorkspaceEntryChange>>>();
+/** The changes that reverse one step. */
+type UndoRecord = ReadonlyArray<WorkspaceEntryChange>;
+/** Undo per project, newest last. */
+const undoStacks = new Map<string, Array<UndoRecord>>();
 const MAX_UNDO = 50;
 
 /** Tree paths end with "/" for folders; project paths never do. */
@@ -250,42 +252,58 @@ export function useScientFileActions(input: {
    */
   const perform = async (
     change: WorkspaceEntryChange,
-    options: { readonly failureTitle: string; readonly recordUndo?: boolean },
+    options: {
+      readonly failureTitle: string;
+      readonly recordUndo?: boolean;
+      /** Receives this change's own undo record, as a toast's Undo needs. */
+      readonly onUndoRecord?: (record: UndoRecord) => void;
+    },
   ): Promise<ReadonlyArray<WorkspaceEntryChangeOutcome> | null> => {
+    const record = (outcomes: ReadonlyArray<WorkspaceEntryChangeOutcome>) => {
+      const undo = settle(change, outcomes, options.recordUndo ?? true);
+      if (undo) options.onUndoRecord?.(undo);
+    };
     const result = await runChange({ environmentId, input: { cwd, change } });
     if (result._tag === "Success") {
-      settle(change, result.value.entries, options.recordUndo ?? true);
+      record(result.value.entries);
       return result.value.entries;
     }
     const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+    const completed = isChangeError(error) ? (error.completed ?? []) : [];
+    if (completed.length > 0) record(completed);
     if (
       isChangeError(error) &&
       error.failure === "exists" &&
       (change._tag === "move" || change._tag === "copy") &&
       change.collision === "ask"
     ) {
+      // Items already moved stay moved (and undoable); the choice applies to the rest.
+      const remaining = change.items.filter(
+        (item) =>
+          !completed.some((outcome) => outcome.from === item.from && outcome.to !== undefined),
+      );
       const choice = await new Promise<ClashChoice>((resolve) =>
         setClash({ paths: error.paths ?? [], resolve }),
       );
       setClash(null);
-      if (choice !== null) return perform({ ...change, collision: choice }, options);
-      refresh();
-      return null;
+      if (choice === null || remaining.length === 0) {
+        refresh();
+        return completed.length > 0 ? completed : null;
+      }
+      const rest = await perform({ ...change, items: remaining, collision: choice }, options);
+      return [...completed, ...(rest ?? [])];
     }
-    if (isChangeError(error) && error.completed?.length) {
-      settle(change, error.completed, options.recordUndo ?? true);
-    } else {
-      refresh();
-    }
+    if (completed.length === 0) refresh();
     reportFailure(options.failureTitle, error);
     return null;
   };
 
+  /** Follows the change in tabs and the tree; returns the undo record it kept. */
   const settle = (
     change: WorkspaceEntryChange,
     outcomes: ReadonlyArray<WorkspaceEntryChangeOutcome>,
     recordUndo: boolean,
-  ) => {
+  ): UndoRecord | null => {
     followMoves(
       change._tag === "move"
         ? outcomes.flatMap((outcome) =>
@@ -303,12 +321,16 @@ export function useScientFileActions(input: {
       undoStacks.set(key, stack);
     }
     refresh();
+    return undo && undo.length > 0 ? undo : null;
   };
 
-  const undoLast = async () => {
-    const steps = undoStacks.get(key)?.pop();
-    if (!steps) return;
-    for (const step of steps) {
+  /** Undoes one record, if it was not undone already; ⌘Z passes the newest. */
+  const runUndo = async (record: UndoRecord | undefined) => {
+    const stack = undoStacks.get(key);
+    const at = record === undefined || !stack ? -1 : stack.lastIndexOf(record);
+    if (at < 0) return;
+    stack!.splice(at, 1);
+    for (const step of record!) {
       if ((await perform(step, { failureTitle: "Couldn’t undo", recordUndo: false })) === null) {
         return;
       }
@@ -348,7 +370,7 @@ export function useScientFileActions(input: {
     paths: readonly string[],
     folder: string,
   ): Promise<boolean> => {
-    const sources = outermost(paths).filter((path) => mode === "copy" || writable(path));
+    const sources = outermost(paths).filter(writable);
     if (sources.length === 0) return false;
     // A copy into its own folder is a duplicate; a move there changes nothing.
     const items = sources
@@ -370,7 +392,9 @@ export function useScientFileActions(input: {
 
   /** Each item is copied beside itself, as "name copy". */
   const duplicate = async (paths: readonly string[]) => {
-    const items = outermost(paths).map((from) => ({ from, to: from }));
+    const items = outermost(paths)
+      .filter(writable)
+      .map((from) => ({ from, to: from }));
     if (items.length === 0 || !(await saveEditorsUnder(paths))) return;
     await perform(
       { _tag: "copy", items, collision: "keep-both" },
@@ -393,9 +417,15 @@ export function useScientFileActions(input: {
     const targets = outermost(paths).filter(writable);
     if (targets.length === 0) return;
     if (!(await saveEditorsUnder(targets))) return;
+    let ownUndo: UndoRecord | undefined;
     const trashed = await perform(
       { _tag: "trash", relativePaths: targets },
-      { failureTitle: `Couldn’t move to the ${trashLabel}` },
+      {
+        failureTitle: `Couldn’t move to the ${trashLabel}`,
+        onUndoRecord: (record) => {
+          ownUndo = record;
+        },
+      },
     );
     if (trashed === null) return;
     const canUndo = trashed.every((outcome) => outcome.restoreId !== undefined);
@@ -413,7 +443,8 @@ export function useScientFileActions(input: {
               children: "Undo",
               onClick: () => {
                 toastManager.close(toastId);
-                void undoLast();
+                // This toast's own step, even if other changes came after it.
+                void runUndo(ownUndo);
               },
             },
           }
@@ -440,7 +471,7 @@ export function useScientFileActions(input: {
         return void create("folder", folderFor(paths));
       case MENU.cut:
       case MENU.copy: {
-        const picked = choice === MENU.cut ? paths.filter(writable) : paths;
+        const picked = paths.filter(writable);
         if (picked.length > 0) {
           fileClipboard = { key, mode: choice === MENU.cut ? "cut" : "copy", paths: picked };
         }
@@ -545,21 +576,24 @@ export function useScientFileActions(input: {
     const selected = model.getSelectedPaths().map(projectPath);
     const focused = model.getFocusedPath();
     const paths = selected.length > 0 ? outermost(selected) : focused ? [projectPath(focused)] : [];
-    const key = event.key.toLowerCase();
+    const pressed = event.key.toLowerCase();
     let choice: MenuChoice | "undo" | null = null;
     if (command && !event.shiftKey && !event.altKey) {
-      if (key === "c") choice = MENU.copy;
-      else if (key === "x") choice = MENU.cut;
-      else if (key === "v") choice = MENU.paste;
+      if (pressed === "c") choice = MENU.copy;
+      else if (pressed === "x") choice = MENU.cut;
+      else if (pressed === "v") choice = MENU.paste;
       // ⌘D stays Scient's Diff toggle; Duplicate is in the menu.
-      else if (key === "z") choice = "undo";
-      else if (key === "backspace") choice = MENU.trash;
-    } else if (command && event.shiftKey && key === "n") {
+      else if (pressed === "z") choice = "undo";
+      else if (pressed === "backspace") choice = MENU.trash;
+    } else if (command && event.shiftKey && pressed === "n") {
       choice = MENU.newFolder;
-    } else if (!command && !event.altKey && key === "delete") {
+    } else if (!command && !event.altKey && pressed === "delete") {
       choice = MENU.trash;
     }
     if (choice === null) return;
+    // With no file change to undo, ⌘Z stays the chat's Undo.
+    const undoRecord = choice === "undo" ? undoStacks.get(key)?.at(-1) : undefined;
+    if (choice === "undo" && undoRecord === undefined) return;
     if (
       choice !== "undo" &&
       choice !== MENU.paste &&
@@ -569,7 +603,7 @@ export function useScientFileActions(input: {
       return;
     event.preventDefault();
     event.stopPropagation();
-    if (choice === "undo") void undoLast();
+    if (choice === "undo") void runUndo(undoRecord);
     else act(choice, paths);
   });
 
@@ -623,17 +657,22 @@ export function useScientFileActions(input: {
       const targets = targetsFor(treePath);
       menuTargetsRef.current = targets;
       const single = targets.length === 1;
+      // Scient's own records and tool folders stay as they are, even as a copy's source.
       const allWritable = targets.every(writable);
-      const canPaste = fileClipboard?.key === key;
+      const folder = folderFor(targets);
+      const folderWritable = folder === "" || writable(folder);
+      const canPaste = fileClipboard?.key === key && folderWritable;
+      // As Finder does, a selection says how many items an action takes.
+      const items = single ? "" : ` ${targets.length} Items`;
       const create: ContextMenuItem[] = [
-        { id: MENU.newFile, label: "New File", separatorBefore: true },
-        { id: MENU.newFolder, label: "New Folder" },
+        { id: MENU.newFile, label: "New File", separatorBefore: true, disabled: !folderWritable },
+        { id: MENU.newFolder, label: "New Folder", disabled: !folderWritable },
       ];
       const edit: ContextMenuItem[] = [
-        { id: MENU.cut, label: "Cut", separatorBefore: true, disabled: !allWritable },
-        { id: MENU.copy, label: "Copy" },
+        { id: MENU.cut, label: `Cut${items}`, separatorBefore: true, disabled: !allWritable },
+        { id: MENU.copy, label: `Copy${items}`, disabled: !allWritable },
         { id: MENU.paste, label: "Paste", disabled: !canPaste },
-        { id: MENU.duplicate, label: "Duplicate" },
+        { id: MENU.duplicate, label: `Duplicate${items}`, disabled: !allWritable },
         ...(single ? [{ id: MENU.rename, label: "Rename…", disabled: !allWritable }] : []),
       ];
       const paths: ContextMenuItem[] = [
@@ -643,7 +682,7 @@ export function useScientFileActions(input: {
       const trash: ContextMenuItem[] = [
         {
           id: MENU.trash,
-          label: `Move to ${trashLabel}`,
+          label: single ? `Move to ${trashLabel}` : `Move${items} to ${trashLabel}`,
           destructive: true,
           separatorBefore: true,
           disabled: !allWritable,
