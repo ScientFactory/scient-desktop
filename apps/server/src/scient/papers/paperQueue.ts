@@ -2,7 +2,9 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  AccountId,
   AccountsError,
+  EnvironmentId,
   PaperItem,
   ThreadId,
   type PaperAsked,
@@ -39,9 +41,17 @@ const RETRIES_AFTER_ACTING = 20;
 const BROWSER_RETRY_GAP = "1 minute";
 const MOST_BROWSER_FAILURES = 5;
 
+const StoredRequester = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: Schema.optionalKey(ThreadId),
+  browser: Schema.Boolean,
+  accounts: Schema.Union([Schema.Literal("all"), Schema.Array(AccountId)]),
+});
 const Stored = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   items: Schema.Array(PaperItem),
+  /** Who asked for each paper, so a restart keeps it to what they may use. */
+  requesters: Schema.optional(Schema.Record(Schema.String, StoredRequester)),
 });
 const decodeStored = Schema.decodeUnknownOption(Schema.fromJsonString(Stored));
 const encodeStored = Schema.encodeSync(Schema.fromJsonString(Stored));
@@ -52,7 +62,7 @@ interface Queue {
   items: Map<string, PaperItem>;
   running: boolean;
   retries: number;
-  /** Whoever last acted here; what restarted papers run as. */
+  /** Whoever last acted here: the environment the queue runs in. */
   requester: PaperRequester;
   /** Each paper runs with what its requester may use, whoever else asked since. */
   readonly requesters: Map<string, PaperRequester>;
@@ -101,6 +111,9 @@ const store = Effect.fn("Papers.queue.store")(function* (queue: Queue) {
     encodeStored({
       ...(queue.threadId === undefined ? {} : { threadId: queue.threadId }),
       items: [...queue.items.values()],
+      requesters: Object.fromEntries(
+        [...queue.requesters].filter(([itemId]) => queue.items.has(itemId)),
+      ),
     }),
   );
 });
@@ -127,7 +140,9 @@ const load = Effect.fn("Papers.queue.load")(function* (root: string, requester: 
     running: false,
     retries: 0,
     requester,
-    requesters: new Map(),
+    requesters: new Map(
+      Object.entries(Option.isSome(stored) ? (stored.value.requesters ?? {}) : {}),
+    ),
     browserDown: false,
     browserFailures: new Map(),
   };
@@ -196,7 +211,12 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
       Effect.orElseSucceed(() => undefined),
     );
   };
-  const requester = queue.requesters.get(item.itemId) ?? queue.requester;
+  // A paper from an older queue file has no record of who asked, so it gets free copies only.
+  const requester: PaperRequester = queue.requesters.get(item.itemId) ?? {
+    environmentId: queue.requester.environmentId,
+    browser: false,
+    accounts: [],
+  };
   const fetched = yield* fetchOnePaper(item, requester, savedBefore).pipe(
     Effect.catch((error) =>
       Effect.succeed({ state: "no-access" as const, message: error.message, broken: true }),
@@ -245,6 +265,9 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
       Effect.succeed({ ...known, state: "no-access", message: error.message } as const),
     ),
   );
+  // A finished paper runs no more; one waiting or needing the person runs again as its requester.
+  if (result.state === "saved" || result.state === "no-access" || result.state === "not-found")
+    queue.requesters.delete(itemId);
   queue.items.set(itemId, result);
   yield* announce(queue);
 });
@@ -320,7 +343,10 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
   );
   // A finished list has been read by whoever asked; a new list starts afresh. One paper joins it,
   // so a Get PDF doesn't wipe a list an agent hasn't read yet.
-  if (!unfinished && papers.length > 1) queue.items.clear();
+  if (!unfinished && papers.length > 1) {
+    queue.items.clear();
+    queue.requesters.clear();
+  }
   const items = papers.map((asked) => {
     const existing = [...queue.items.values()].find(
       (item) => sameAsked(item, asked) && item.state !== "no-access" && item.state !== "not-found",

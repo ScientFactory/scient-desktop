@@ -192,14 +192,13 @@ it("keeps a university's sign-in service, and nothing else of it, out of scripts
   expect(isUniversitySignInService([], `${SIGN_IN}/common`)).toBe(false);
 });
 
-it("reads saved library accounts as website accounts, without their publisher history", () => {
+it("reads saved library accounts as website accounts carrying their library link", () => {
   const library = {
     summary: {
       details: {
         kind: "library",
         sites: ["huji.ac.il"],
         proxyUrl: "https://go.example.org/r?url={url}",
-        routes: { "nature.com": "university" },
       },
     },
   };

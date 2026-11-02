@@ -94,10 +94,7 @@ export const layer = Layer.effect(
   }),
 );
 
-/**
- * Library accounts became website accounts carrying a library link. What Scient learned about each
- * publisher moved out of the account, so older saved state drops it here.
- */
+/** Library accounts became website accounts carrying a library link. */
 export const foldLibraryAccounts = (state: unknown): unknown => {
   if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
   if (!Array.isArray(state.accounts)) return state;
@@ -106,8 +103,10 @@ export const foldLibraryAccounts = (state: unknown): unknown => {
     accounts: state.accounts.map((account) => {
       const details = account?.summary?.details;
       if (details?.kind !== "library") return account;
-      const { routes: _, ...rest } = details;
-      return { ...account, summary: { ...account.summary, details: { ...rest, kind: "website" } } };
+      return {
+        ...account,
+        summary: { ...account.summary, details: { ...details, kind: "website" } },
+      };
     }),
   };
 };
