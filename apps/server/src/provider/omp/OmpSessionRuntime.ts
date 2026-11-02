@@ -164,8 +164,6 @@ interface InboxItem {
   readonly agentInvoked?: boolean;
   readonly mode?: "prompt" | "steer";
   readonly notification?: OmpRpcNotification;
-  /** An acceptance returned to the inbox after the events queued before it. */
-  readonly eventsFlushed?: boolean;
 }
 
 export interface OmpSessionRuntime {
@@ -431,7 +429,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   readonly onNativeNotification?: (notification: OmpRpcNotification) => Effect.Effect<void>;
 }): Effect.fn.Return<OmpSessionRuntime, never, Scope.Scope> {
   const inbox = yield* Queue.bounded<InboxItem>(OMP_INBOX_CAPACITY);
-  const localAcceptances: Array<InboxItem> = [];
+  /** Local commands waiting for the event queue, each with the drain marker that ends its wait. */
+  const localAcceptances: Array<{ readonly item: InboxItem; readonly drain: number }> = [];
+  let drainsRequested = 0;
+  let drainsSeen = 0;
   let catalog = emptyOmpCommandCatalog();
   let turn = initialOmpTurnState;
   let activeTurnId: string | undefined;
@@ -793,6 +794,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
     if ((yield* Queue.size(inbox)) !== 0) return;
     pendingDrainState = state.value;
+    drainsRequested += 1;
     yield* input.client.flushEvents();
   });
 
@@ -1537,6 +1539,37 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* applyEvent(notification.event);
   });
 
+  const applyAcceptance = Effect.fn("OmpSessionRuntime.applyAcceptance")(function* (
+    item: InboxItem,
+  ) {
+    const requestId = item.requestId;
+    if (requestId === undefined) return;
+    if (item.turnId !== undefined && item.turnId !== activeTurnId) {
+      rememberSettledPrompt(requestId);
+      return;
+    }
+    if (item.mode === "steer") {
+      yield* applySignal({ type: "steer-accepted" });
+    } else if (!turnIsOpen(turn)) {
+      // The turn settled (for example by an acknowledged abort) before
+      // OMP acknowledged its prompt: that prompt's frames have no owner.
+      rememberSettledPrompt(requestId);
+    } else {
+      yield* applySignal({
+        type: "prompt-accepted",
+        requestId,
+        ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
+      });
+      // A prompt OMP handled locally is never reported. If this turn took
+      // in a racing background run, the idle session decides it.
+      if (item.agentInvoked === false) promptReported = true;
+      const held = pendingOutcomes;
+      pendingOutcomes = [];
+      for (const notification of held) yield* interpretNotification(notification);
+    }
+    yield* confirmIdle;
+  });
+
   const consume = Effect.fn("OmpSessionRuntime.consume")(function* (item: InboxItem) {
     if (item.type === "begin" && item.turnId && item.admission) {
       paused = false;
@@ -1550,37 +1583,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return;
     }
     if (item.type === "accepted" && item.requestId) {
-      if (item.turnId !== undefined && item.turnId !== activeTurnId) {
-        rememberSettledPrompt(item.requestId);
-        return;
-      }
       // A local command's output precedes this reply on the wire, but runs through
       // the event queue. Settling first would drop it, so settle after that queue.
-      if (item.agentInvoked === false && !item.eventsFlushed) {
-        localAcceptances.push({ ...item, eventsFlushed: true });
-        yield* input.client.flushEvents();
+      if (item.agentInvoked === false) {
+        drainsRequested += 1;
+        localAcceptances.push({ item, drain: drainsRequested });
+        // Forked: this fiber drains the queues, so it must not wait on their space.
+        yield* input.client.flushEvents().pipe(Effect.forkIn(input.scope));
         return;
       }
-      if (item.mode === "steer") {
-        yield* applySignal({ type: "steer-accepted" });
-      } else if (!turnIsOpen(turn)) {
-        // The turn settled (for example by an acknowledged abort) before
-        // OMP acknowledged its prompt: that prompt's frames have no owner.
-        rememberSettledPrompt(item.requestId);
-      } else {
-        yield* applySignal({
-          type: "prompt-accepted",
-          requestId: item.requestId,
-          ...(item.agentInvoked === undefined ? {} : { agentInvoked: item.agentInvoked }),
-        });
-        // A prompt OMP handled locally is never reported. If this turn took
-        // in a racing background run, the idle session decides it.
-        if (item.agentInvoked === false) promptReported = true;
-        const held = pendingOutcomes;
-        pendingOutcomes = [];
-        for (const notification of held) yield* interpretNotification(notification);
-      }
-      yield* confirmIdle;
+      yield* applyAcceptance(item);
       return;
     }
     if (item.type === "command-failed") {
@@ -1605,8 +1617,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
     if (item.type === "event" && item.notification) {
       if (item.notification._tag === "Drain") {
-        const acceptance = localAcceptances.shift();
-        if (acceptance) yield* Queue.offer(inbox, acceptance);
+        drainsSeen += 1;
+        while (localAcceptances[0] !== undefined && localAcceptances[0].drain <= drainsSeen) {
+          yield* applyAcceptance(localAcceptances.shift()!.item);
+        }
         yield* confirmIdle;
         return;
       }

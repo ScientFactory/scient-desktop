@@ -1679,9 +1679,10 @@ describe("Oh My Pi local commands", () => {
       yield* h.runtime.begin("local-turn");
       yield* h.wire.send({ type: "command_output", text: "No background jobs running." });
       yield* h.runtime.accepted("local-request", false);
-      const produced = yield* h.settleFrames;
+      const seen: Array<string> = [];
+      while (seen.at(-1) !== "turn-outcome") seen.push((yield* Queue.take(h.updates)).type);
       yield* Scope.close(h.scope, Exit.void);
-      expect(produced.map((update) => update.type)).toContain("command-output");
+      expect(seen).toContain("command-output");
     }),
   );
 });

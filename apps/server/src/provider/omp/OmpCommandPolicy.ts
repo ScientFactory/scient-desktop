@@ -19,7 +19,6 @@ const OMP_SESSION_MUTATOR_COMMANDS = [
   "provider",
   "thinking",
   "fast",
-  "tools",
   "config",
   "settings",
   "permissions",
