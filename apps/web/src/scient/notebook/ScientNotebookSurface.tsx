@@ -381,14 +381,17 @@ export default function ScientNotebookSurface(props: {
   };
 
   const askAbout = useAskAboutCompute({ threadRef: props.threadRef, cwd: props.cwd });
-  const ask = useStableCallback((cellId: string) => {
+  const askAboutCell = useStableCallback((cellId: string, text: string) => {
     const source = list.current?.querySelector<HTMLElement>(
       `[data-notebook-cell="${CSS.escape(cellId)}"] [data-notebook-cell-box]`,
     );
     const place = source == null ? null : placeOfCell(source);
     if (source == null || place === null) return;
-    askAbout?.({ source, place, text: controller.store.getState().cells[cellId]?.source ?? "" });
+    askAbout?.({ source, place, text });
   });
+  const ask = useStableCallback((cellId: string) =>
+    askAboutCell(cellId, controller.store.getState().cells[cellId]?.source ?? ""),
+  );
   const revealing = usePendingComputeQuote(props.threadRef, (citation) =>
     citation.place._tag === "cell" &&
     citation.place.path === props.relativePath &&
@@ -446,6 +449,7 @@ export default function ScientNotebookSurface(props: {
     environmentId: props.environmentId,
     cwd: props.cwd,
     threadRef: props.threadRef,
+    askAboutCell: askAbout === null ? undefined : askAboutCell,
   };
   const busy =
     submitting.size > 0 ||

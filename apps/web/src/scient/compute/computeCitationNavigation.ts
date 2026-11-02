@@ -122,6 +122,11 @@ export function openComputeCitation(
     });
     return;
   }
+  const results = scientComputeSurface({ cwd });
+  if (place._tag === "session") {
+    show(results.id, () => panel.openScient(ref, results));
+    return;
+  }
   const scriptContext = scriptContextFor(ref, cwd, place);
   if (scriptContext !== null && place.path !== null) {
     const { path } = place;
@@ -139,6 +144,5 @@ export function openComputeCitation(
     show(consoleSurface.id, () => panel.openScient(ref, consoleSurface));
     return;
   }
-  const results = scientComputeSurface({ cwd });
   show(results.id, () => panel.openScient(ref, results));
 }

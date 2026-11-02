@@ -53,6 +53,7 @@ function fileName(path: string): string {
 export function computeCitationPlaceLabel(citation: ComputeCitation): string {
   const { place } = citation;
   if (place._tag === "cell") return `${fileName(place.path)} · Cell ${place.number}`;
+  if (place._tag === "session") return "Session messages";
   return place.path === null ? "Console" : fileName(place.path);
 }
 
@@ -77,16 +78,18 @@ export function computeCitationForProvider(citation: ComputeCitation) {
         ? { type: "cell" as const, path: place.path, cell: place.cellId, number: place.number }
         : place._tag === "file-run"
           ? { type: "file-run" as const, path: place.path, run: place.runId }
-          : {
-              type: "run" as const,
-              session: place.sessionId,
-              run: place.executionId,
-              ...(place.path === null ? {} : { path: place.path }),
-            },
+          : place._tag === "session"
+            ? { type: "session" as const, session: place.sessionId }
+            : {
+                type: "run" as const,
+                session: place.sessionId,
+                run: place.executionId,
+                ...(place.path === null ? {} : { path: place.path }),
+              },
     text: citation.text,
     ...(citation.comment === undefined ? {} : { comment: citation.comment }),
   };
 }
 
 export const COMPUTE_CITATION_PROVIDER_NOTE =
-  "Compute quotes give text from a run or a notebook cell, or the code of the run or cell asked about. Read a run in full, with its errors and figures, with scient_compute_output (session, run), or a file-run with scient_compute_run_file (path, run). Read a cell with its output with scient_notebook_read (path, cells). Those tools read the current workspace, so a quote from another workspaceRoot may not be readable there, and the same path there may be a different notebook. A notebook may have changed since the quote was taken.";
+  "Compute quotes give text from a run or a notebook cell, or the code of the run or cell asked about. Read a run in full, with its errors and figures, with scient_compute_output (session, run), or a file-run with scient_compute_run_file (path, run). Read a cell with its output with scient_notebook_read (path, cells). Those tools read the current workspace, so a quote from another workspaceRoot may not be readable there, and the same path there may be a different notebook. A notebook may have changed since the quote was taken. A session quote is that session's own message, such as a start-up error, given in full.";

@@ -155,4 +155,17 @@ describe("a quote of a file run", () => {
       run: "run-1",
     });
   });
+
+  it("quotes a session's own message, which belongs to no run", () => {
+    const message = {
+      ...citation,
+      place: { _tag: "session" as const, sessionId: "session-1" },
+    };
+    expect(isComputeCitation(message)).toBe(true);
+    expect(computeCitationPlaceLabel(message)).toBe("Session messages");
+    expect(computeCitationForProvider(message).place).toEqual({
+      type: "session",
+      session: "session-1",
+    });
+  });
 });
