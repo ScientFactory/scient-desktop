@@ -251,6 +251,9 @@ export const OmpAgentMessage = Schema.Struct({
   /** HTTP status of a failed provider request. */
   errorStatus: maybeNumber,
   isError: maybeBoolean,
+  // SCIENT-FORK: request timing for usage analytics, as the agent's /stats reads it.
+  duration: maybeNumber,
+  ttft: maybeNumber,
 });
 export type OmpAgentMessage = typeof OmpAgentMessage.Type;
 

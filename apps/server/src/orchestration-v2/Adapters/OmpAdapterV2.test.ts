@@ -4223,3 +4223,92 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
       ),
   );
 });
+
+it.layer(TestLayer)("OmpAdapterV2 turn usage", (it) => {
+  it.effect.each(
+    [ompTarget, scientAgentTarget].map((target) => ({
+      caseTitle: `${target.name} adds up each model request into the provider turn's usage`,
+      target,
+    })),
+  )("$caseTitle", ({ target }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"] }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, { target, makeProcess: peer.makeProcess });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const request = (messageId: string, fields: Record<string, unknown>) => ({
+          type: "message_end",
+          messageId,
+          message: { role: "assistant", model: "claude-opus-5-5", content: [], ...fields },
+        });
+        const toolCall = request("tool-call", {
+          stopReason: "toolUse",
+          duration: 1_200,
+          ttft: 300,
+          usage: {
+            input: 100,
+            output: 40,
+            cacheRead: 900,
+            cacheWrite: 50,
+            reasoningTokens: 10,
+            cost: { total: 0.01 },
+          },
+        });
+        yield* peer.emit([
+          { type: "agent_start" },
+          toolCall,
+          // A repeated end is the same request.
+          toolCall,
+          { type: "message_end", messageId: "user", message: { role: "user", content: [] } },
+          request("failed", {
+            stopReason: "error",
+            duration: 100,
+            ttft: 90,
+            usage: { input: 5, output: 0, cost: { total: 0 } },
+          }),
+          request("answer", {
+            stopReason: "stop",
+            duration: 800,
+            ttft: 200,
+            usage: {
+              input: 20,
+              output: 60,
+              cacheRead: 1_000,
+              reasoningTokens: 5,
+              cost: { total: 0.02 },
+            },
+          }),
+        ]);
+        yield* peer.finish();
+        yield* h.takeUntil((e) => e.type === "turn.terminal");
+        const terminalTurn = h.recorded.findLast(
+          (e) => e.type === "provider_turn.updated" && e.providerTurn.status === "completed",
+        );
+        assert.deepStrictEqual(
+          terminalTurn?.type === "provider_turn.updated"
+            ? terminalTurn.providerTurn.turnTokenUsage
+            : undefined,
+          {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 1_050 + 5 + 1_020,
+            outputTokens: 100,
+            cachedInputTokens: 1_900,
+            cacheCreationTokens: 50,
+            models: ["claude-opus-5-5"],
+            requests: 3,
+            failedRequests: 1,
+            estimatedCostUsd: 0.03,
+            modelDurationMs: 2_100,
+            firstTokenMs: 300,
+          },
+        );
+      }),
+    ),
+  );
+});
