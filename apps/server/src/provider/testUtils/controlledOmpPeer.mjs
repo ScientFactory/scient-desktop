@@ -13,7 +13,7 @@ const value = (flag) => args[args.indexOf(flag) + 1];
 const root = NodeFS.realpathSync(value("--session-dir"));
 const auditPath = process.env.SCIENT_CONTROLLED_OMP_AUDIT;
 const controlPath = process.env.SCIENT_CONTROLLED_OMP_CONTROL;
-if (!auditPath || !controlPath || value("--mode") !== "rpc")
+if (!auditPath || !controlPath || value("--mode") !== "rpc-ui")
   throw new Error("Invalid controlled process launch");
 const audit = (entry) =>
   NodeFS.appendFileSync(auditPath, JSON.stringify({ pid: process.pid, ...entry }) + "\n");
@@ -162,6 +162,9 @@ for await (const line of input) {
       break;
     case "set_event_filter":
       response(command, { events: command.events });
+      break;
+    case "set_ask_dialog":
+      response(command, { enabled: command.enabled });
       break;
     case "new_session":
       fresh();
