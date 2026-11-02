@@ -38,8 +38,19 @@ const windowsInstaller = (url: string, ...places: ReadonlyArray<string>) =>
 /** Inno Setup installers, which take their own silent flag. */
 const innoInstaller = (url: string, ...places: ReadonlyArray<string>) =>
   silentInstaller(url, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", places);
-const silentInstaller = (url: string, flags: string, places: ReadonlyArray<string>) =>
-  `curl -sSfLo setup.exe "${url}" && MSYS_NO_PATHCONV=1 ./setup.exe ${flags} && { ls -d ${places.join(" ")} 2>/dev/null || true; }`;
+/** Each installer gets its own file, since one still running keeps its file locked. */
+const silentInstaller = (url: string, flags: string, places: ReadonlyArray<string>) => {
+  const file = `${url
+    .replace(/\/download$/u, "")
+    .split("/")
+    .pop()!
+    .replace(/\.exe$/iu, "")}.exe`;
+  return [
+    `curl -sSfLo "${file}" "${url}"`,
+    `{ MSYS_NO_PATHCONV=1 "./${file}" ${flags} || { echo "installer exited $?"; false; }; }`,
+    `{ ls -d ${places.join(" ")} 2>/dev/null || true; }`,
+  ].join(" && ");
+};
 /** Adds a folder to the user's saved PATH, as a person following an unzip guide would. */
 const addToUserPath = (folder: string) =>
   `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';${folder}', 'User')"`;
@@ -52,7 +63,7 @@ const NEXTFLOW_UNIX =
 /** The workflow sets up a plain Python first, so pip installs into it. */
 // A named version downloads directly; asking for the latest goes through GitHub's API and its limit.
 const CMDSTAN =
-  "python -m pip install cmdstanpy && python -m cmdstanpy.install_cmdstan --version 2.40.0 --cores 4";
+  "python -m pip install cmdstanpy && python -m cmdstanpy.install_cmdstan --version 2.40.0 --cores 4 --verbose";
 
 const NO_WINDOWS = (name: string) => ({
   skip: `${name} has no Windows build; people run it through WSL, which is Linux`,
@@ -155,6 +166,9 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       // Homebrew asks people to trust a tap before it installs from it.
       darwin:
         "brew tap macaulay2/tap && brew trust macaulay2/tap && brew install macaulay2/tap/macaulay2",
+      "darwin-x64": {
+        skip: "Macaulay2 has no ready build for Intel Macs, and building it takes over 25 minutes",
+      },
       win32: NO_WINDOWS("Macaulay2"),
     },
     singular: { linux: apt("singular"), darwin: brew("singular"), win32: NO_WINDOWS("Singular") },
@@ -254,7 +268,8 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
   heavy: {
     isabelle: {
       linux:
-        'curl -sSfL "https://isabelle.in.tum.de/dist/Isabelle2025_linux.tar.gz" | tar -xz -C "$HOME"',
+        // The Cambridge mirror, since the main server does not answer GitHub's computers.
+        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2026_linux.tar.gz" | tar -xz -C "$HOME"',
     },
     sage: {
       linux:
@@ -361,7 +376,16 @@ if (platform === "win32") {
   );
   paths.push(...saved.trim().split(";").filter(Boolean));
 }
-const added = paths.filter((place) => NodeFS.existsSync(place));
+// Only what installs added: GitHub puts these first, and the saved PATH also holds Windows'
+// WindowsApps, whose bash is the WSL launcher and would replace Git Bash for the next steps.
+const separator = platform === "win32" ? ";" : ":";
+const key = (place: string) =>
+  platform === "win32" ? place.toLowerCase().replace(/\\$/u, "") : place;
+const current = new Set((NodeProcess.env.PATH ?? "").split(separator).map(key));
+const added = [...new Set(paths)].filter(
+  (place) =>
+    !current.has(key(place)) && !/\\WindowsApps\\?$/iu.test(place) && NodeFS.existsSync(place),
+);
 console.log(`Added to PATH:\n${added.join("\n")}`);
 append("GITHUB_PATH", `${added.join("\n")}\n`);
 append("GITHUB_ENV", `SCIENT_TEST_RUN_TABLE_EXPECT=${installed.join(",")}\n`);
