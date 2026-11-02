@@ -264,20 +264,24 @@ async function refreshOverleafRemoteState(
   const asked = Date.now();
   if (asked - (remoteCheckedAt.get(link) ?? 0) < REMOTE_CHECK_EVERY_MS) return;
   remoteCheckedAt.set(link, asked);
-  try {
-    const { state } = await readOverleafRemoteState(environmentId, {
-      workspaceRoot,
-      connectionId,
-    });
-    // A sync that ended or is running while this asked knows better.
+  // A sync that ended or is running while this asked knows better.
+  const answer = (state: ScientOverleafRemoteState["state"]) => {
     if (remoteCheckedAt.get(link) === asked)
       updateLifecycle(environmentId, (current) =>
         current.syncing.has(connectionId)
           ? current
           : { ...current, remoteStates: new Map(current.remoteStates).set(connectionId, state) },
       );
+  };
+  try {
+    const { state } = await readOverleafRemoteState(environmentId, {
+      workspaceRoot,
+      connectionId,
+    });
+    answer(state);
   } catch {
     // Nothing is known: the chip says what the folder shows, and the next check asks again.
+    answer("unknown");
   }
 }
 
@@ -893,4 +897,5 @@ export function resetOverleafStoreForTests(): void {
   knownRevisions.clear();
   adoptRevisions.clear();
   agentRunKeys.clear();
+  remoteCheckedAt.clear();
 }

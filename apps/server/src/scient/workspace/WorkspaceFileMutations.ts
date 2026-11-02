@@ -1512,6 +1512,16 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       await runPromise(Effect.logWarning("Could not keep a file's earlier version", cause));
     }
   };
+  /** A kept copy must outlive a power loss before the original changes; it is Scient's own. */
+  const flushCopy = async (copy: string) => {
+    await NodeFSP.chmod(copy, 0o600);
+    const handle = await NodeFSP.open(copy, "r+");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  };
   const overwrite = async (handle: NodeFSP.FileHandle, bytes: Uint8Array) => {
     let written = 0;
     while (written < bytes.byteLength)
@@ -1549,7 +1559,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         !opened.isFile() ||
         !named.isFile() ||
         opened.dev !== named.dev ||
-        opened.ino !== named.ino
+        opened.ino !== named.ino ||
+        !sameIdentity(
+          HostProcess.Platform.defaultValue() === "win32"
+            ? await fileIdentity(target, deps.nativePublicationHelper)
+            : { dev: String(opened.dev), ino: String(opened.ino) },
+          admitted.identity,
+        )
       )
         throw changed();
       if (opened.size > IN_PLACE_MAX_BYTES) throw refusal;
@@ -4135,6 +4151,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           );
         await NodeFSP.copyFile(target, kept);
         if ((await fileRevision(kept)) !== current) return finish("skipped", "revision");
+        await flushCopy(kept);
         await syncDirectory(directory);
         // The step's own copy above is the one that counts; this one shows in the file's menu.
         await keepEarlierVersion(target, snapshot, undefined, { always: true }).catch(
@@ -4179,20 +4196,25 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             await NodeFSP.unlink(target);
           });
         } else {
-          await publishPlainly(
-            resolved,
-            {
-              id: input.id,
-              kind,
-              condition,
-              expectedRevision: input.expectedRevision,
-              bytes: input.bytes,
-              ...(input.executable === undefined ? {} : { executable: input.executable }),
-            },
-            snapshot,
-            fields,
-            async () => undefined,
-          );
+          try {
+            await publishPlainly(
+              resolved,
+              {
+                id: input.id,
+                kind,
+                condition,
+                expectedRevision: input.expectedRevision,
+                bytes: input.bytes,
+                ...(input.executable === undefined ? {} : { executable: input.executable }),
+              },
+              snapshot,
+              fields,
+              async () => undefined,
+            );
+          } finally {
+            // Text a sync wrote isn't the editor's own, so the next save keeps a copy of it.
+            lastSaved.delete(resolved.target);
+          }
           if (HostProcess.Platform.defaultValue() !== "win32" && snapshot) {
             const { mode } = await NodeFSP.stat(target);
             await NodeFSP.chmod(target, input.executable ? mode | 0o111 : mode & ~0o111);
@@ -4676,12 +4698,19 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         recordsUnderRoot(root),
         NodeTimersPromises.setTimeout(OLDER_RECORDS_SCAN_MS, []),
       ]);
-      if (records.some(({ record }) => record?.version === 2 && record.phase !== "done"))
+      if (records.some(({ record }) => record?.version === 2 && record.phase !== "done")) {
+        const stop = new AbortController();
+        // Saves are never held for ever by work that may never finish. Work out of time is
+        // interrupted, since it could finish over a later save, but not awaited: it retires
+        // only once its helper answers.
         await Promise.race([
-          runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore)),
-          // Saves are never held for ever by work that may never finish.
+          runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore), {
+            signal: stop.signal,
+          }),
           NodeTimersPromises.setTimeout(OLDER_WORK_LIMIT_MS),
         ]);
+        stop.abort();
+      }
     })().catch(() => undefined);
     settledRoots.set(cwd, finished);
     return finished;

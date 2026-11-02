@@ -240,6 +240,8 @@ export const ScientOverleafManageResult = Schema.Union([
   Schema.TaggedStruct("done", {
     connection: ScientOverleafConnectionSummary,
     reconnected: Schema.optional(Schema.Boolean),
+    /** Disconnect finished an interrupted sync first, which may have written the folder. */
+    finishedInterruptedSync: Schema.optional(Schema.Boolean),
   }),
   Schema.TaggedStruct("refused", { reason: Schema.String }),
 ]);
