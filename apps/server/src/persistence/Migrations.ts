@@ -100,6 +100,8 @@ import Migration0078 from "./Migrations/078_ExcludeAttachmentPlaceholdersFromSea
 import Migration0079 from "./Migrations/079_SubagentDeliveryState.ts";
 // T3's migration 76 lands at the next free ID; Scient already recorded 076-079.
 import Migration0080 from "./Migrations/080_ProjectionProjectsPinArchive.ts";
+// T3's migration 77 lands at the next free ID; Scient already recorded 077-080.
+import Migration0081 from "./Migrations/081_RepairBooleanSettledOverride.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -202,6 +204,8 @@ export const migrationEntries = [
   [78, "ExcludeAttachmentPlaceholdersFromSearch", Migration0078],
   [79, "SubagentDeliveryState", Migration0079],
   [80, "ProjectionProjectsPinArchive", Migration0080],
+  // T3's migration 77 follows Scient's immutable migration sequence.
+  [81, "RepairBooleanSettledOverride", Migration0081],
   // SCIENT-FORK:END
 ] as const;
 
