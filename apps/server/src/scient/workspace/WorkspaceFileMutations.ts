@@ -1512,6 +1512,16 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       await runPromise(Effect.logWarning("Could not keep a file's earlier version", cause));
     }
   };
+  /** A kept copy must outlive a power loss before the original changes; it is Scient's own. */
+  const flushCopy = async (copy: string) => {
+    await NodeFSP.chmod(copy, 0o600);
+    const handle = await NodeFSP.open(copy, "r+");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  };
   const overwrite = async (handle: NodeFSP.FileHandle, bytes: Uint8Array) => {
     let written = 0;
     while (written < bytes.byteLength)
@@ -4141,6 +4151,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           );
         await NodeFSP.copyFile(target, kept);
         if ((await fileRevision(kept)) !== current) return finish("skipped", "revision");
+        await flushCopy(kept);
         await syncDirectory(directory);
         // The step's own copy above is the one that counts; this one shows in the file's menu.
         await keepEarlierVersion(target, snapshot, undefined, { always: true }).catch(
