@@ -136,7 +136,7 @@ import {
 function providerInstanceName(instance: ProviderInstanceConfig): string {
   return (
     instance.displayName?.trim() ||
-    providerClients.get(instance.driver)?.label ||
+    getDriverOption(instance.driver)?.label ||
     String(instance.driver)
   );
 }

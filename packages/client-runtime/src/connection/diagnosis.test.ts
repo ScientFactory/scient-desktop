@@ -1,5 +1,4 @@
 // SCIENT-FORK:START
-import { ConnectionBlockedError } from "./model.ts";
 import { connectionDiagnosisText } from "./diagnosis.ts";
 // SCIENT-FORK:END
 import {
