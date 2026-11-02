@@ -136,9 +136,15 @@ function run() {
   }
 }
 
-/** `--build-helpers=<dir>`: builds once and hands the paths to the job's later steps. */
+/**
+ * `--build-helpers[=<dir>]`: builds once and hands the paths to the job's later steps. The
+ * default is the user's own temp folder: the server refuses a helper another principal can
+ * write, as anything under the runner's shared temp is on Windows.
+ */
 function buildForJob(directory) {
-  const env = buildHelpers(path.resolve(directory));
+  const env = buildHelpers(
+    directory === "" ? path.join(os.tmpdir(), "scient-file-publication") : path.resolve(directory),
+  );
   const lines = Object.entries(env).map(([name, value]) => `${name}=${value}`);
   if (process.env.GITHUB_ENV) fs.appendFileSync(process.env.GITHUB_ENV, `${lines.join("\n")}\n`);
   console.log(lines.join("\n"));
@@ -146,7 +152,7 @@ function buildForJob(directory) {
 
 module.exports = { FILES, validateReport };
 if (require.main === module) {
-  const build = process.argv.find((argument) => argument.startsWith("--build-helpers="));
-  if (build) buildForJob(build.slice("--build-helpers=".length));
+  const build = process.argv.find((argument) => /^--build-helpers(=|$)/u.test(argument));
+  if (build) buildForJob(build.replace(/^--build-helpers=?/u, ""));
   else run();
 }

@@ -771,7 +771,7 @@ jobs:
           git config --global credential.helper '!exit 91'
       # Every test file reuses this build instead of compiling its own.
       - name: Build the file publication helper once
-        run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers="${{ runner.temp }}/scient-file-publication"
+        run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
       # Each case must finish its sync; 300 files runs in Test Server shard 1's test:performance.
@@ -814,7 +814,7 @@ jobs:
       - name: Test the platform report check
         run: node --test .github/scripts/overleaf-platform-tests.test.cjs
       - name: Build the file publication helper once
-        run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers="${{ runner.temp }}/scient-file-publication"
+        run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every macOS Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
   # SCIENT-FORK:END
