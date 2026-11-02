@@ -16,12 +16,12 @@ import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { AccountsService } from "./AccountsService.ts";
 import { checkAccountNow, userRunInvocation } from "./checkAccounts.ts";
 import { SignInDetection, signInDetectionScript } from "./signIn/detection.ts";
-import { matchesAccountOrigin } from "./signIn/origin.ts";
 
 /** Often enough that the page the university hands back to is closed before it shows. */
 const LOOK_GAP = "400 millis";
@@ -58,7 +58,7 @@ export const isUniversitySignInService = (accounts: ReadonlyArray<AccountSummary
       onOpenAthens(url) ||
       isLoginPlace(page) ||
       isIdentityPage(page) ||
-      matchesAccountOrigin(url, signInOrigins(university.sites))
+      anySiteMatches(signInOrigins(university.sites), url)
     );
   });
 };
@@ -106,14 +106,14 @@ export const isSignInTab = (
   // After a restart, a tab is known by the page it shows: a sign-in page at a learned address.
   const page = new URL(tab.url);
   return (
-    matchesAccountOrigin(tab.url, signInOrigins(details.sites)) &&
+    anySiteMatches(signInOrigins(details.sites), tab.url) &&
     (isLoginPlace(page) || isIdentityPage(page))
   );
 };
 
 /** The university's own pages and sign-in, which are never brought in through itself. */
 export const isUniversityPage = (details: { readonly sites: ReadonlyArray<string> }, url: string) =>
-  isOpenAthensSignIn(url) || onOpenAthens(url) || matchesAccountOrigin(url, details.sites);
+  isOpenAthensSignIn(url) || onOpenAthens(url) || anySiteMatches(details.sites, url);
 
 /**
  * Sites with the sign-in service added, where the person's password was asked for. Each exact

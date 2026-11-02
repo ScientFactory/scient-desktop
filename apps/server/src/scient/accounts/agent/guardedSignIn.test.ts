@@ -13,7 +13,7 @@ import { expect } from "vite-plus/test";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { fakeAccounts } from "./AccountsService.testkit.ts";
+import { fakeAccounts } from "../Accounts.testkit.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 
 const scope = {

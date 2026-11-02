@@ -1133,6 +1133,7 @@ const make = Effect.gen(function* () {
       startedAt: Date.parse(execution.request.submittedAt),
       ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
       failureClass: status === "lost" ? "process-crash" : "unknown",
+      language: live.adapter.languageId,
     });
     if (
       status === "succeeded" ||

@@ -7,6 +7,7 @@ import {
   type DiscoverEntry,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import { useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -27,7 +28,6 @@ import { toastManager } from "../../components/ui/toast";
 import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
-import { siteMatchesUrl } from "../accounts/accountsView";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";

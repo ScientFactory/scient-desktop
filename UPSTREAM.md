@@ -619,6 +619,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`c8a601c0dfa5c7626e51e06d727076f6b840a005` is recorded in
+[the 2026-11-02 c8a601c0df receipt](docs/internals/t3-upstream-sync-20261102-c8a601c0df.md).
+Literal merge `21583b219b2c15541f038efa0addb5d2de3c1b8a` has owned base
+`9adfeab5dce7dad6b3d70bca43fe37df6c45787b` (#737) and the frozen official target as parents,
+retaining the 12 official commits after `30654b3e91`. Claude threads drop the launching Claude
+session while still naming Scient, Cursor compacts with the SDK's summarize and receives Scient's
+tools on each send, and completion alerts play at once. No migrations. Release remains separate.
+
+The previous committed alignment through
 `30654b3e91a51937d1dba18fc83af19d8003f5ca` is recorded in
 [the 2026-11-02 30654b3e91 receipt](docs/internals/t3-upstream-sync-20261102-30654b3e91.md).
 Literal merge `139e5d022ca11bc89ea6467a6b8f3200b5618643` has owned base
@@ -627,7 +636,7 @@ retaining the 26 official commits after `fa31b66bbb`. Codex's direct thread wait
 server and tool names, Claude identifies itself as Scient, and the managed Antigravity runtime
 moves to 1.4.5. T3's migration 77 lands as 81. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `fa31b66bbb2ae5234205a8628a78e038d917202f` is recorded in
 [the 2026-11-02 fa31b66bbb receipt](docs/internals/t3-upstream-sync-20261102-fa31b66bbb.md).
 Literal merge `7518e02f8c3e20d5460b8383179f7898bb59bd6d` has owned base

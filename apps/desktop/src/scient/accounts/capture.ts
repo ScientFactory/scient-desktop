@@ -1,4 +1,4 @@
-import { collectLoginFields } from "./loginFields.ts";
+import { collectLoginFields } from "@t3tools/shared/scientLoginFields";
 
 export function createCaptureDeduplicator() {
   let last: { url: string; username: string; password: string } | undefined;
@@ -25,7 +25,7 @@ export function installSignInCapture(
   const accept = createCaptureDeduplicator();
   const capture = (form: HTMLFormElement | null) => {
     if (!form || !allowed() || !/^https?:$/.test(location.protocol)) return;
-    const fields = collectLoginFields(form);
+    const fields = collectLoginFields(Array.from(form.querySelectorAll("input")));
     const password = fields.inputs[fields.password]?.value;
     if (!password) return;
     const value = {

@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
-import { fakeAccounts } from "../accounts/agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { fetchFromPage } from "./paperFetch.ts";
 import { paperPageScript, type PaperPage } from "./paperPage.ts";

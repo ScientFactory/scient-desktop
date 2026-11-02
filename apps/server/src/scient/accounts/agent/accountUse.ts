@@ -1,14 +1,7 @@
-import {
-  AccountsError,
-  type AccountTarget,
-  type AccountUseAction,
-  type AccountSummary,
-} from "@t3tools/contracts";
+import { type AccountTarget, type AccountUseAction, type AccountSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
+import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 
-const fail = (reason: AccountsError["reason"], message: string) =>
-  new AccountsError({ reason, message });
 export const authorize = Effect.fn("AccountsAgent.authorize")(function* (
   scope: AccountSessionScope,
   target: AccountTarget,

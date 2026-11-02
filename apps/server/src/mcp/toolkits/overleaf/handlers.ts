@@ -753,7 +753,7 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
         return {
           lines: [
             result._tag === "done"
-              ? `Disconnected ${result.connection.folder === "" ? "the project's top folder" : `${result.connection.folder}/`} from Overleaf. Nothing was deleted on either side; connecting the same folder to the same project again keeps its history.`
+              ? `Disconnected ${result.connection.folder === "" ? "the project's top folder" : `${result.connection.folder}/`} from Overleaf.${result.finishedInterruptedSync ? " The interrupted sync was finished first." : ""} Nothing was deleted on either side; connecting the same folder to the same project again keeps its history.`
               : manageRefusalLine(result.reason),
           ],
           result,
