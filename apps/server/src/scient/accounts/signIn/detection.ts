@@ -3,6 +3,7 @@ import {
   REMEMBER_SIGN_IN_LABEL,
   SITE_LIMITED_TEXT,
 } from "@t3tools/shared/scientSignInPage";
+import { loginFieldsKitSource } from "@t3tools/shared/scientLoginFields";
 import * as Schema from "effect/Schema";
 
 export const SignInDetection = Schema.Struct({
@@ -29,11 +30,8 @@ export const SignInDetection = Schema.Struct({
 export type SignInDetection = typeof SignInDetection.Type;
 
 export const signInDetectionScript = String.raw`(() => {
-  const visible = (element) => {
-    const style = getComputedStyle(element);
-    return element.getClientRects().length > 0 && style.visibility !== "hidden" && style.display !== "none";
-  };
-  const inputs = Array.from(document.querySelectorAll("input")).filter(input => visible(input) && !input.disabled && !input.readOnly);
+  const login = ${loginFieldsKitSource};
+  const visible = login.visible;
   const path = (element) => {
     if (!element) return null;
     const parts = [];
@@ -46,24 +44,16 @@ export const signInDetectionScript = String.raw`(() => {
     return "html > " + parts.join(" > ");
   };
   // Sign-up and change-password pages ask for a password too; a saved one must not go there.
-  const passwords = inputs.filter(input => input.type === "password");
-  const newPassword = passwords.length > 1 || passwords.some(input => input.autocomplete === "new-password");
-  const password = newPassword ? undefined : passwords[0];
-  const label = (input) => [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" ");
-  const otp = inputs.find(input => input.autocomplete === "one-time-code")
-    ?? inputs.find(input => input.type !== "password" && input.type !== "email" && /otp|mfa|2fa|two.?factor|verification|one.?time|(auth|security|sms).?code|\bcode\b/i.test(label(input)))
-    ?? inputs.find(input => input.type !== "password" && input.inputMode === "numeric" && input.maxLength >= 4 && input.maxLength <= 8);
-  const username = newPassword ? undefined : inputs.find(input => input !== otp && (input.autocomplete === "username" || input.type === "email"))
-    ?? inputs.find(input => input !== otp && /^(user(name)?|email|login)$/i.test(input.name || input.id))
-    ?? (password ? inputs.slice(0, inputs.indexOf(password)).reverse().find(input => input !== otp && (input.type === "text" || input.type === "tel")) : undefined);
+  const fields = login.collect(Array.from(document.querySelectorAll("input")), { refuseNewPasswordPage: true });
+  const password = fields.inputs[fields.password];
+  const otp = fields.inputs[fields.otp];
+  const username = fields.inputs[fields.username];
   const form = (password ?? otp ?? username)?.form;
   const submit = Array.from((form ?? document).querySelectorAll("button, input[type=submit]")).find(element => visible(element) && !element.hasAttribute("disabled") && (element instanceof HTMLInputElement || element.type === "submit"));
   const text = document.body?.innerText ?? "";
   const rememberLabel = new RegExp(${JSON.stringify(REMEMBER_SIGN_IN_LABEL)}, "i");
   const forgetLabel = new RegExp(${JSON.stringify(FORGET_SIGN_IN_LABEL)}, "i");
-  const boxLabel = (box) => [label(box), ...Array.from(box.labels ?? []).map(item => item.textContent)].join(" ");
-  // Styled checkboxes hide the input and show its label.
-  const remember = Array.from((form ?? document).querySelectorAll("input[type=checkbox]")).find(box => !box.checked && !box.disabled && (visible(box) || Array.from(box.labels ?? []).some(visible)) && rememberLabel.test(boxLabel(box)) && !forgetLabel.test(boxLabel(box)));
+  const remember = login.rememberBox(Array.from((form ?? document).querySelectorAll("input[type=checkbox]")), rememberLabel, forgetLabel, true);
   const stay = !password && !otp && /stay signed in\?/i.test(text)
     ? Array.from(document.querySelectorAll("button, input[type=submit]")).find(element => visible(element) && /^yes$/i.test((element.value || element.textContent || "").trim()))
     : undefined;

@@ -90,6 +90,7 @@ import {
 import {
   ompCommandOutputText,
   ompMessageUsage,
+  ompRequestUsage,
   ompStatsUsage,
   ompTodoSteps,
 } from "../../provider/omp/OmpDesktopPresentation.ts";
@@ -556,6 +557,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         });
         // SCIENT-FORK: costs are authoritative session totals, including billed cache refreshes.
         let contextUsage: ThreadTokenUsageSnapshot | undefined;
+        // A repeated message_end must not count its model request twice.
+        const countedRequests = new Set<string>();
         let statsUnsupported = false;
         const contextWindow = (provider?: string, modelId?: string) => {
           const window = catalog.find(
@@ -696,13 +699,28 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     contextWindow(activeModel?.provider, activeModel?.modelId) ??
                     contextUsage?.maxTokens,
                 );
-                if (!usage) return Effect.void;
+                const messageId = typeof event.messageId === "string" ? event.messageId : undefined;
+                const request =
+                  messageId !== undefined && countedRequests.has(messageId)
+                    ? undefined
+                    : ompRequestUsage(event.message);
+                if (request !== undefined && messageId !== undefined) {
+                  if (countedRequests.size >= 1_000) countedRequests.clear();
+                  countedRequests.add(messageId);
+                }
+                if (!usage)
+                  return request === undefined ? Effect.void : onUpdate({ type: "usage", request });
                 contextUsage = {
                   ...contextUsage,
                   ...usage,
                   ...(usage.maxTokens ? { maxTokens: usage.maxTokens } : { maxTokens: undefined }),
                 };
-                return onUpdate({ type: "usage", tokenUsage: usage, contextUsage });
+                return onUpdate({
+                  type: "usage",
+                  tokenUsage: usage,
+                  contextUsage,
+                  ...(request === undefined ? {} : { request }),
+                });
               }
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);

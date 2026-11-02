@@ -20,7 +20,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../../config.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { AccountsService } from "../../../scient/accounts/AccountsService.ts";
-import { fakeAccounts } from "../../../scient/accounts/agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "../../../scient/accounts/Accounts.testkit.ts";
 import * as Preview from "../../../preview/Manager.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

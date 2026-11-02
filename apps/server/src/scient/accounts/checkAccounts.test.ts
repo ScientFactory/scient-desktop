@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AccountsService } from "./AccountsService.ts";
-import { fakeAccounts } from "./agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "./Accounts.testkit.ts";
 import type { ProfileDetection } from "./agent/profileDetection.ts";
 import { OPEN_ATHENS_CHECK_PAGE } from "@t3tools/shared/scientPaperLinks";
 import { checkAccounts, checkAddress, sessionState, worthChecking } from "./checkAccounts.ts";

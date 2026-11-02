@@ -13,8 +13,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
-import { matchesAccountOrigin } from "../accounts/signIn/origin.ts";
 import { fetchFromPage, type FetchResult } from "./paperFetch.ts";
 import { articleAddress, lookUpPaper, openAccessPdf, type Paper } from "./paperLookup.ts";
 import { buttonSteps, routeSteps, type RouteStep, type WorkedRoute } from "./paperRoutes.ts";
@@ -164,7 +164,7 @@ const savedSignIn = (accounts: ReadonlyArray<AccountSummary>, url: string) =>
     ({ details, secrets }) =>
       details.kind === "website" &&
       secrets.password !== undefined &&
-      matchesAccountOrigin(url, details.sites),
+      anySiteMatches(details.sites, url),
   );
 
 interface Reached extends Omit<RouteStep, "url"> {
