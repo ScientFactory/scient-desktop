@@ -180,7 +180,7 @@ const noteSession = Effect.fn("Papers.noteSession")(function* (
   state: "signed-in" | "signed-out",
 ) {
   if (!account) return;
-  const last = account.lastCheck;
+  const last = account.signIn;
   const age = (yield* Clock.currentTimeMillis) - (last ? Date.parse(last.at) : 0);
   if (last?.state === state && (state === "signed-out" || age < LAST_SEEN_GAP_MS)) return;
   const accounts = yield* AccountsService;

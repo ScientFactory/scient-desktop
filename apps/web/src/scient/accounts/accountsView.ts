@@ -52,10 +52,10 @@ export function profileAccounts(
  * copy stops working and would replace the session and remembered device this profile has.
  */
 export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
-  return accounts.flatMap(({ details, lastCheck }) =>
+  return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&
-    (lastCheck?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
+    (signIn?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
       ? details.sites
       : [],
   );
@@ -543,7 +543,7 @@ export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profi
       details.profileId === profileId &&
       details.sites.includes(GOOGLE_SITE),
   );
-  return rows.length > 0 && rows.every(({ lastCheck }) => lastCheck?.state === "signed-out");
+  return rows.length > 0 && rows.every(({ signIn }) => signIn?.state === "signed-out");
 }
 
 /**
@@ -602,7 +602,7 @@ export function changedSourceProfile(
 
 /** Whether a university's sign-in was last seen working. */
 export const signedIntoUniversity = (account: AccountSummary) =>
-  !account.signedOut && account.lastCheck?.state === "signed-in";
+  account.signIn?.state === "signed-in";
 
 /** What each kind of account is called on screen. */
 export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
@@ -705,25 +705,33 @@ export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
 
 /** The account's sign-in state in a few words, or nothing when there is nothing to say. */
 export function accountStatusLabel(
-  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck" | "signedOut"> & {
+  account: Pick<AccountSummary, "signIn"> & {
     readonly details?: AccountSummary["details"];
   },
   relativeTime: (iso: string) => string,
 ) {
-  if (account.details?.kind === "api-key")
-    return account.lastCheck?.state === "rejected" ? "Key refused" : null;
-  if (account.lastSignInOutcome === "password-rejected") return "Password rejected";
-  if (account.lastSignInOutcome === "code-rejected") return "Code rejected";
+  const signIn = account.signIn;
+  // A refused key is the one thing a key's check says.
+  if (account.details?.kind === "api-key") return signIn?.state === "failed" ? "Key refused" : null;
   const university = account.details && universityDetails(account.details);
-  if (account.signedOut) return university ? "Sign in needed" : "Signed out";
-  const check = account.lastCheck;
-  if (!check) return university ? "Not signed in yet" : null;
-  if (check.state === "signed-in") return `Signed in · ${relativeTime(check.at)}`;
-  if (check.state === "signed-out") return university ? "Sign in needed" : "Signed out";
-  if (check.state === "needs-you") return "Needs you";
-  if (check.state === "rejected") return "Sign-in rejected";
-  if (check.state === "limited") return "Site is limiting access";
-  return "Couldn't check";
+  if (!signIn) return university ? "Not signed in yet" : null;
+  switch (signIn.state) {
+    case "signed-in":
+      return `Signed in · ${relativeTime(signIn.at)}`;
+    case "signed-out":
+      return university ? "Sign in needed" : "Signed out";
+    case "needs-you":
+      return "Needs you";
+    case "password-rejected":
+      return "Password rejected";
+    case "code-rejected":
+      return "Code rejected";
+    case "limited":
+      return "Site is limiting access";
+    case "failed":
+    case "unknown":
+      return "Couldn't check";
+  }
 }
 
 const ACTIVITY_LABELS: Readonly<Record<AccountUseAction, string>> = {

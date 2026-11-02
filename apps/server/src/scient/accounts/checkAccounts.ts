@@ -3,7 +3,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   ProviderInstanceId,
   ThreadId,
-  type AccountCheckState,
+  type AccountSignInState,
   type AccountSummary,
   type AccountsCheckInput,
   type EnvironmentId,
@@ -95,7 +95,7 @@ export const worthChecking = (account: AccountSummary) =>
   (universityDetails(account.details) !== undefined ||
     account.secrets.password === undefined ||
     account.lastUsedAt !== undefined ||
-    account.lastSignInOutcome !== undefined);
+    account.signIn !== undefined);
 
 /**
  * Only a link that came back counts. A directory link goes to the university's sign-in service on
@@ -105,7 +105,7 @@ export const worthChecking = (account: AccountSummary) =>
 const universitySessionState = (
   details: NonNullable<ReturnType<typeof universityDetails>>,
   page: ProfileDetection,
-): AccountCheckState => {
+): AccountSignInState => {
   if (page.deniedText) return "unknown";
   const back = signInReturn(page.finalUrl);
   if (back) return details.institution || back === "proxied" ? "signed-in" : "unknown";
@@ -120,11 +120,11 @@ const universitySessionState = (
 };
 
 export function sessionState(
-  account: Pick<AccountSummary, "details" | "lastSignInOutcome" | "secrets">,
+  account: Pick<AccountSummary, "details" | "signIn" | "secrets">,
   url: string,
   page: ProfileDetection,
   hasSessionCookie: boolean,
-): AccountCheckState {
+): AccountSignInState {
   const { details } = account;
   if (page.limited) return "limited";
   const university = universityDetails(details);
@@ -136,15 +136,15 @@ export function sessionState(
   if (page.signInLink) return "signed-out";
   // Anonymous visitors get protected cookies too, so one proves nothing about a new sign-in.
   const knownSession =
-    account.lastSignInOutcome === "signed-in" || account.secrets.password === undefined;
+    account.signIn?.state === "signed-in" || account.secrets.password === undefined;
   return hasSessionCookie && knownSession ? "signed-in" : "unknown";
 }
 
 /** A check that can't tell leaves a university's last known state, with the date it was seen. */
-const keepsLastSeen = (account: AccountSummary, state: AccountCheckState) =>
+const keepsLastSeen = (account: AccountSummary, state: AccountSignInState) =>
   state === "unknown" &&
   universityDetails(account.details) !== undefined &&
-  account.lastCheck?.state === "signed-in";
+  account.signIn?.state === "signed-in";
 
 /** OpenAthens' own answer, read from its page in the person's profile. */
 const askOpenAthens = Effect.fn("AccountsCheck.openAthens")(function* (
@@ -236,25 +236,25 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
       );
     });
     const openAthens = openAthensUniversity(account);
-    const state: AccountCheckState = openAthens
+    const state: AccountSignInState = openAthens
       ? yield* askOpenAthens(invoke, tabId)
       : yield* readPage;
     const onHold = automaticSignInOnHold(account, yield* Clock.currentTimeMillis);
     if (keepsLastSeen(account, state)) return;
     if (state !== "signed-out" || account.secrets.password === undefined || onHold) {
       // A hold keeps its own explanation, unless the row would otherwise go on saying signed in.
-      if (onHold && state === "signed-out" && account.lastCheck?.state !== "signed-in") return;
+      if (onHold && state === "signed-out" && account.signIn?.state !== "signed-in") return;
       return yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "unknown"
           ? {
-              message: openAthens
+              detail: openAthens
                 ? "OpenAthens didn't answer."
                 : "Couldn't tell from the site's page.",
             }
           : {}),
         ...(state === "limited"
-          ? { message: "The site is limiting access from this network." }
+          ? { detail: "The site is limiting access from this network." }
           : {}),
       });
     }
@@ -266,7 +266,7 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
     });
     if ("tabId" in result) tabs.add(result.tabId);
     // Nothing reached the site, so nothing else says what was seen here.
-    else yield* accounts.recordCheck(account.accountId, { state, message: result.message });
+    else yield* accounts.recordCheck(account.accountId, { state, detail: result.message });
   }).pipe(
     Effect.ensuring(
       Effect.forEach(tabs, (tab) => invoke("close", {}, tab).pipe(Effect.ignore), {
@@ -301,7 +301,7 @@ const runCheck = Effect.fn("AccountsCheck.run")(function* (input: AccountsCheckI
               ? Effect.void
               : accounts.recordCheck(account.accountId, {
                   state: "unknown",
-                  message: error.message || "The browser could not open this site.",
+                  detail: error.message || "The browser could not open this site.",
                 }),
           ),
         );

@@ -74,7 +74,7 @@ const account: AccountSummary = {
   },
   controls: defaultAccountControls("website"),
   status: "ready",
-  signedOut: true,
+  signIn: { state: "signed-out", at: "2026-10-26T00:00:00.000Z" },
   createdAt: "2026-10-26T00:00:00.000Z",
   updatedAt: "2026-10-26T00:00:00.000Z",
 };
@@ -88,7 +88,7 @@ const row = (value = account) => (
   />
 );
 
-it("offers sign-in again in the account profile, then removes the status and action when cookies return", async () => {
+it("offers sign-in again in the account profile, then removes the status and action once signed in", async () => {
   using _fixture = fixture();
   await using screen = await render(row());
   await expect.element(page.getByText("Signed out", { exact: true })).toBeVisible();
@@ -99,7 +99,9 @@ it("offers sign-in again in the account profile, then removes the status and act
       expect.objectContaining({ url: "https://example.com/login", profileId: "work" }),
     ),
   );
-  await screen.rerender(row({ ...account, signedOut: false }));
+  await screen.rerender(
+    row({ ...account, signIn: { state: "signed-in", at: "2026-10-26T00:00:00.000Z" } }),
+  );
   await expect.element(page.getByText("Signed out", { exact: true })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Account menu" }).click();
   await expect
@@ -162,7 +164,8 @@ it("opens linked stores through the shell and gates Keychain by the local platfo
 
 it("withholds native store links in a browser client", async () => {
   using _fixture = fixture("MacIntel", false);
-  await using _screen = await render(row({ ...account, signedOut: undefined }));
+  const { signIn: _signIn, ...unchecked } = account;
+  await using _screen = await render(row(unchecked));
   await page.getByRole("button", { name: "Account menu" }).click();
   await expect
     .element(page.getByRole("menuitem", { name: "Open Keychain Access", exact: true }))

@@ -140,7 +140,7 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
     return { routed: false };
   const university = universitiesOf(accounts).find(
     (account) =>
-      account.lastCheck?.state === "signed-in" &&
+      account.signIn?.state === "signed-in" &&
       (universityDetails(account.details)?.profileId ?? DEFAULT_BROWSER_PROFILE_ID) ===
         input.profileId,
   );
