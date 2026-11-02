@@ -93,8 +93,7 @@ export function credentialContents(
       for (const variable of account.details.variables)
         env[variable.name] = variable.secret ? value(variable.name) : (variable.value ?? "");
       break;
-    case "website":
-    case "library": {
+    case "website": {
       const name = account.name
         .toUpperCase()
         .replace(/[^A-Z0-9_]/g, "_")

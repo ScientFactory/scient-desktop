@@ -1,5 +1,5 @@
 import { KeyRoundIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -32,7 +32,16 @@ const desktopIcons = new Map<string, Promise<string | null>>();
  * web client tries the site's favicon.ico. Never a third-party icon service, so the list of the
  * user's sites stays private.
  */
-export function SiteFavicon({ site }: { readonly site: string }) {
+export function SiteFavicon({
+  site,
+  className = "size-10",
+  fallback,
+}: {
+  readonly site: string;
+  readonly className?: string;
+  /** Shown for a site with no icon. */
+  readonly fallback?: ReactNode;
+}) {
   const siteIcon = window.desktopBridge?.accounts?.siteIcon;
   const [desktopIcon, setDesktopIcon] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -57,7 +66,9 @@ export function SiteFavicon({ site }: { readonly site: string }) {
   }, [site]);
   const src = siteIcon ? desktopIcon : failed ? null : `https://${site}/favicon.ico`;
   return (
-    <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-[25%] bg-muted ${className}`}
+    >
       {src ? (
         <img
           key={src}
@@ -71,7 +82,7 @@ export function SiteFavicon({ site }: { readonly site: string }) {
           onError={() => (siteIcon ? setDesktopIcon(null) : setFailed(true))}
         />
       ) : (
-        <KeyRoundIcon className="size-4 text-muted-foreground" />
+        (fallback ?? <KeyRoundIcon className="size-4 text-muted-foreground" />)
       )}
     </span>
   );

@@ -5,7 +5,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import type { AnalyticsConsent, AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
 import { consentAllows } from "./contract.ts";
-import { eventContractViolation, EVENT_DEFINITIONS } from "./wireContract.ts";
+import { EVENT_NAME_PATTERN, eventContractViolation, isWireValue } from "./wireContract.ts";
 
 const MAX_OUTBOX_EVENTS = 10_000;
 const MAX_DEAD_LETTERS = 100;
@@ -219,12 +219,7 @@ export class AnalyticsOutbox {
           typeof parsed !== "object" ||
           parsed === null ||
           Array.isArray(parsed) ||
-          Object.values(parsed).some(
-            (value) =>
-              typeof value !== "boolean" &&
-              typeof value !== "string" &&
-              !(typeof value === "number" && Number.isSafeInteger(value)),
-          )
+          Object.values(parsed).some((value) => !isWireValue(value))
         ) {
           throw new Error("invalid-properties");
         }
@@ -250,7 +245,7 @@ export class AnalyticsOutbox {
           occurred_at: row.occurred_at,
           privacy_level: row.privacy_level,
           consent_level: row.consent_level,
-          properties: parsed as Readonly<Record<string, boolean | string | number>>,
+          properties: parsed as AnalyticsEvent["properties"],
           attemptCount: row.attempt_count,
           priority: analyticsPriority(row.priority),
         });
@@ -275,11 +270,7 @@ export class AnalyticsOutbox {
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       for (const row of rows) {
-        insert.run(
-          row.id,
-          Object.hasOwn(EVENT_DEFINITIONS, row.name) ? row.name : "unknown",
-          errorClass,
-        );
+        insert.run(row.id, EVENT_NAME_PATTERN.test(row.name) ? row.name : "unknown", errorClass);
         removed += Number(this.#remove.run(row.id).changes);
       }
       this.#database

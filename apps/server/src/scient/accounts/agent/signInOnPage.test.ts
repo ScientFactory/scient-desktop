@@ -16,7 +16,7 @@ import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { fakeAccounts } from "./AccountsService.testkit.ts";
+import { fakeAccounts } from "../Accounts.testkit.ts";
 import { signInOnPage } from "./signInOnPage.ts";
 
 const profileId = BrowserProfileId.make("default");

@@ -10265,12 +10265,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
+      // SCIENT-FORK:START — each sent message also carries its length and frustration signals.
+      const messageSignals = {
+        messageChars: 5,
+        messageWords: 1,
+        yelling: 0,
+        profanity: 0,
+        anguish: 0,
+        negation: 0,
+        repetition: 0,
+        blame: 0,
+      };
+      // SCIENT-FORK:END
       assert.deepEqual(
         analyticsEvents
           .filter(({ event }) => event === "client.turn.requested")
           .map(({ properties }) => properties),
         [
           {
+            ...messageSignals,
             surface: "mobile",
             appVersion: "3.0.0",
             clientAppVersion: "3.0.0",
@@ -10284,6 +10297,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             connectionMethod: "relay",
           },
           {
+            ...messageSignals,
             surface: "web",
             appVersion: "2.0.0",
             clientAppVersion: "2.0.0",

@@ -97,6 +97,47 @@ describe("resolveAddressBarInput", () => {
     );
   });
 
+  // SCIENT-FORK:START — paper IDs open the paper, and a dotted number is no website.
+  it("opens a pasted paper ID where that kind of ID lives", () => {
+    expect(resolveAddressBarInput("10.1056/NEJMoa2606998")).toBe(
+      "https://doi.org/10.1056/NEJMoa2606998",
+    );
+    expect(resolveAddressBarInput(" doi:10.1016/j.cell.2023.01.001 ")).toBe(
+      "https://doi.org/10.1016/j.cell.2023.01.001",
+    );
+    expect(
+      resolveAddressBarInput(
+        "10.1002/(SICI)1097-0258(19980815/30)17:15/16<1661::AID-SIM968>3.0.CO;2-2",
+      ),
+    ).toBe(
+      "https://doi.org/10.1002/(SICI)1097-0258(19980815/30)17:15/16%3C1661::AID-SIM968%3E3.0.CO;2-2",
+    );
+    expect(resolveAddressBarInput("2401.12345")).toBe("https://arxiv.org/abs/2401.12345");
+    expect(resolveAddressBarInput("arXiv:2401.12345v2")).toBe("https://arxiv.org/abs/2401.12345v2");
+    expect(resolveAddressBarInput("arXiv:hep-th/9901001")).toBe(
+      "https://arxiv.org/abs/hep-th/9901001",
+    );
+    expect(resolveAddressBarInput("PMID: 12345678")).toBe(
+      "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+    );
+    expect(resolveAddressBarInput("pmc1234567")).toBe(
+      "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/",
+    );
+    // A DOI link stays the link it is.
+    expect(resolveAddressBarInput("https://doi.org/10.1056/x")).toBe("https://doi.org/10.1056/x");
+  });
+
+  it("never reads a dotted number as a website", () => {
+    expect(resolveAddressBarInput("10.1056")).toBe("https://duckduckgo.com/?q=10.1056");
+    expect(resolveAddressBarInput("3.14")).toBe("https://duckduckgo.com/?q=3.14");
+    expect(resolveAddressBarInput("v1.2")).toBe("https://duckduckgo.com/?q=v1.2");
+    expect(resolveAddressBarInput("123456")).toBe("https://duckduckgo.com/?q=123456");
+    expect(resolveAddressBarInput("192.168.1.5")).toBe("https://192.168.1.5/");
+    expect(resolveAddressBarInput("nejm.org/doi/x")).toBe("https://nejm.org/doi/x");
+    expect(resolveAddressBarInput("münchen.de")).toBe("https://xn--mnchen-3ya.de/");
+  });
+  // SCIENT-FORK:END
+
   it("still rejects empty input and unsupported schemes", () => {
     expect(() => resolveAddressBarInput("  ")).toThrow(PreviewUrlNormalizationError);
     expect(() => resolveAddressBarInput("ftp://example.com")).toThrow(PreviewUrlNormalizationError);

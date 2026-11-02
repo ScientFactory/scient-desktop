@@ -95,6 +95,30 @@ export const accountsState = {
     label: "accounts:paperForSource",
     tag: WS_METHODS.accountsPaperForSource,
   }),
+  requestPapers: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:requestPapers",
+    tag: WS_METHODS.accountsPapersRequest,
+  }),
+  listPapers: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:listPapers",
+    tag: WS_METHODS.accountsPapersList,
+  }),
+  continuePapers: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:continuePapers",
+    tag: WS_METHODS.accountsPapersContinue,
+  }),
+  universitySignIn: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:universitySignIn",
+    tag: WS_METHODS.accountsUniversitySignIn,
+  }),
+  universityBrowse: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:universityBrowse",
+    tag: WS_METHODS.accountsUniversityBrowse,
+  }),
+  searchUniversities: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:searchUniversities",
+    tag: WS_METHODS.accountsUniversitySearch,
+  }),
   plainKeys: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:plainKeys",
     tag: WS_METHODS.accountsPlainKeys,

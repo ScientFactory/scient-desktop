@@ -15,6 +15,7 @@ import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 
 import { HandoffBrowser } from "./HandoffBrowser";
+import { ThreadPaperRequests } from "./PaperRequests";
 
 const revealed = new Set<string>();
 
@@ -189,11 +190,31 @@ export function ThreadAccountApprovals({
   const { data, canWrite } = useAccounts(environmentId);
   if (!data) return null;
   const approvals = data.approvals.filter((approval) => approval.threadId === threadId);
-  return approvals.length ? (
-    <div className="mb-2">
-      <AccountApprovals environmentId={environmentId} approvals={approvals} canWrite={canWrite} />
-    </div>
-  ) : null;
+  const papers = (data.paperQueues ?? []).filter(
+    (queue) => queue.threadId === threadId && queue.requests.length > 0,
+  );
+  return (
+    <>
+      {approvals.length ? (
+        <div className="mb-2">
+          <AccountApprovals
+            environmentId={environmentId}
+            approvals={approvals}
+            canWrite={canWrite}
+          />
+        </div>
+      ) : null}
+      {papers.map((queue) => (
+        <ThreadPaperRequests
+          key={queue.root}
+          environmentId={environmentId}
+          queue={queue}
+          canWrite={canWrite}
+          threadId={threadId}
+        />
+      ))}
+    </>
+  );
 }
 
 /** A thread's sign-ins waiting for the user; they sit in the conversation and scroll with it. */

@@ -4,47 +4,27 @@ import {
   type AccountApprovalDecision,
   type AccountCheck,
   type AccountCheckState,
-  type AccountControls,
   type AccountSummary,
   type AccountTarget,
   type BrowserProfileId,
   type BrowserProfileRecord,
-  type GrantScope,
   type ProjectId,
 } from "@t3tools/contracts";
-import type { AccountAuthorization, AccountSessionScope } from "./AccountsService.ts";
+import type { AccountAccessControls } from "@t3tools/shared/scientAccountAuthorization";
 
-type AccessControls = Pick<AccountControls, "access" | "scope" | "allowedProjects">;
-
-export const inScope = (scope: GrantScope, projectId: ProjectId | undefined) =>
-  scope.type === "all-projects" ||
-  (projectId !== undefined && scope.projectIds.includes(projectId));
+export {
+  agentAccessOff,
+  authorizationDecision,
+  inScope,
+} from "@t3tools/shared/scientAccountAuthorization";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 
 export const effectiveProfile = (
   profiles: ReadonlyArray<BrowserProfileRecord>,
   id: BrowserProfileId,
 ) => profiles.find((profile) => profile.profileId === id) ?? defaultBrowserProfileRecord(id);
 
-export const agentAccessOff = (enabled: boolean, access: AccountControls["access"]) =>
-  !enabled || access === "off";
-
-export const authorizationDecision = (
-  enabled: boolean,
-  controls: AccessControls,
-  scope: AccountSessionScope,
-): AccountAuthorization | { readonly decision: "ask" } => {
-  if (agentAccessOff(enabled, controls.access)) return { decision: "denied", reason: "off" };
-  if (!inScope(controls.scope, scope.projectId))
-    return { decision: "denied", reason: "out-of-scope" };
-  if (
-    controls.access === "allowed" ||
-    (scope.projectId !== undefined && controls.allowedProjects?.includes(scope.projectId))
-  )
-    return { decision: "allowed" };
-  return scope.unattended ? { decision: "denied", reason: "declined" } : { decision: "ask" };
-};
-
-export const applyApprovalDecision = <T extends AccessControls>(
+export const applyApprovalDecision = <T extends AccountAccessControls>(
   controls: T,
   decision: AccountApprovalDecision,
   projectId: ProjectId | undefined,
@@ -63,20 +43,9 @@ export const sameTarget = (left: AccountTarget, right: AccountTarget) =>
     ? right.type === "account" && left.accountId === right.accountId
     : right.type === "profile" && left.profileId === right.profileId;
 
-export const siteMatches = (sites: ReadonlyArray<string>, origin: string) => {
-  try {
-    const url = new URL(origin);
-    if (url.protocol !== "https:" || url.username || url.password || url.origin !== origin)
-      return false;
-    return sites.some((site) =>
-      site.startsWith("https://")
-        ? new URL(site).origin === origin
-        : url.hostname === site || url.hostname.endsWith(`.${site}`),
-    );
-  } catch {
-    return false;
-  }
-};
+/** `anySiteMatches` for a value that must be a bare origin, such as a page origin from the client. */
+export const siteMatches = (sites: ReadonlyArray<string>, origin: string) =>
+  URL.canParse(origin) && new URL(origin).origin === origin && anySiteMatches(sites, origin);
 
 /** What a finished sign-in says about the account's status. */
 export const outcomeCheckState = (
