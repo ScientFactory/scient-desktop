@@ -13,6 +13,7 @@ import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AccountsService } from "./AccountsService.ts";
 import { fakeAccounts } from "./agent/AccountsService.testkit.ts";
 import type { ProfileDetection } from "./agent/profileDetection.ts";
+import { OPEN_ATHENS_CHECK_PAGE } from "@t3tools/shared/scientPaperLinks";
 import { checkAccounts, checkAddress, sessionState, worthChecking } from "./checkAccounts.ts";
 
 const account: AccountSummary = {
@@ -34,9 +35,34 @@ const account: AccountSummary = {
 const library: AccountSummary = {
   ...account,
   details: {
-    kind: "library",
+    kind: "website",
     sites: ["huji.ac.il"],
-    proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
+    proxyUrl: "https://go.example.org/redirector?url={url}",
+  },
+};
+const university: AccountSummary = {
+  ...account,
+  details: {
+    kind: "website",
+    sites: ["huji.ac.il", "https://login.microsoftonline.com"],
+    institution: {
+      name: "Hebrew University",
+      entityId: "https://idp.huji.ac.il/openathens",
+      domain: "huji.ac.il",
+    },
+  },
+};
+/** A university that signs in with its own service, not OpenAthens. */
+const shibboleth: AccountSummary = {
+  ...account,
+  details: {
+    kind: "website",
+    sites: ["huji.ac.il", "https://login.microsoftonline.com"],
+    institution: {
+      name: "Example University",
+      entityId: "https://idp.cc.huji.ac.il/simplesaml/saml2/idp/metadata.php",
+      domain: "huji.ac.il",
+    },
   },
 };
 const url = "https://example.com";
@@ -61,15 +87,31 @@ describe("account session state", () => {
     expect(sessionState(account, url, { ...page, limited: true }, true)).toBe("limited");
   });
 
-  plain("a library session shows by leaving the university's sign-in pages", () => {
+  plain("an OpenAthens university is asked on its OpenAthens page, never a journal", () => {
+    expect(checkAddress(university)).toBe(OPEN_ATHENS_CHECK_PAGE);
+  });
+
+  plain("a university is signed in only when its link came back", () => {
+    const address = checkAddress(shibboleth)!;
+    expect(address).toContain("fsso.springer.com");
+    const at = (finalUrl: string, extra = {}) =>
+      sessionState(shibboleth, address, { ...page, finalUrl, ...extra }, false);
+    expect(at("https://www.nature.com/")).toBe("signed-in");
+    expect(at("https://idp.cc.huji.ac.il/simplesaml/login")).toBe("signed-out");
+    expect(at("https://login.microsoftonline.com/common")).toBe("signed-out");
+    expect(at("https://sso.other.example/start", { passwordField: true })).toBe("signed-out");
+    // A sign-in service that isn't this university's sites still isn't a session.
+    expect(at("https://www.nature.com/", { deniedText: true })).toBe("unknown");
+    expect(at("https://fsso.springer.com/error")).toBe("unknown");
+  });
+
+  plain("a library link the network waved through says nothing about the sign-in", () => {
     const address = checkAddress(library)!;
     expect(address).toContain(encodeURIComponent("https://www.nature.com/"));
-    expect(
-      sessionState(library, address, { ...page, finalUrl: "https://idp.cc.huji.ac.il/x" }, false),
-    ).toBe("signed-out");
-    expect(
-      sessionState(library, address, { ...page, finalUrl: "https://www.nature.com/" }, false),
-    ).toBe("signed-in");
+    const at = (finalUrl: string) => sessionState(library, address, { ...page, finalUrl }, false);
+    expect(at("https://www.nature.com/")).toBe("unknown");
+    expect(at("https://www-nature-com.ezproxy.huji.ac.il/")).toBe("signed-in");
+    expect(at("https://ezproxy.huji.ac.il/login")).toBe("signed-out");
   });
 
   plain("a whole run skips imported passwords nobody used", () => {
@@ -170,5 +212,44 @@ it.effect("only records a session that is already live", () =>
     const { uses, checks } = yield* run([account], false);
     expect(uses).toEqual([]);
     expect(checks[0]?.state).toBe("unknown");
+  }),
+);
+
+const askOpenAthens = (answer: boolean | "unclear" | null) => {
+  const opened: string[] = [];
+  const broker = PreviewAutomationBroker.of({
+    connect: () => Effect.succeed(Stream.empty),
+    focusHost: () => Effect.void,
+    respond: () => Effect.void,
+    invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+      Effect.sync(() => {
+        const input = request.input as { url?: string; expression?: string };
+        if (request.operation === "open" && input.url) opened.push(input.url);
+        if (request.operation !== "evaluate") return { tabId: "tab-hidden", tabs: [] } as A;
+        return (input.expression?.includes("fetch(") ? true : answer) as A;
+      }),
+  });
+  // The person signs in to their university themselves; Scient keeps no password for it.
+  const signedInByThePerson: AccountSummary = { ...university, secrets: {} };
+  const fake = fakeAccounts({ accounts: [signedInByThePerson] });
+  return checkAccounts({}, EnvironmentId.make("env-fixture")).pipe(
+    Effect.provideService(AccountsService, {
+      ...fake.service,
+      snapshot: Effect.succeed({ accounts: [signedInByThePerson] } as never),
+    }),
+    Effect.provideService(PreviewAutomationBroker, broker),
+    Effect.map(() => ({ opened, checks: fake.checks })),
+  );
+};
+
+it.live("takes OpenAthens' own answer for an OpenAthens university", () =>
+  Effect.gen(function* () {
+    const yes = yield* askOpenAthens(true);
+    expect(yes.opened).toEqual([OPEN_ATHENS_CHECK_PAGE]);
+    expect(yes.checks.at(-1)).toMatchObject({ state: "signed-in" });
+    const no = yield* askOpenAthens(false);
+    expect(no.checks.at(-1)).toMatchObject({ state: "signed-out" });
+    const unclear = yield* askOpenAthens("unclear");
+    expect(unclear.checks.at(-1)).toMatchObject({ state: "unknown" });
   }),
 );

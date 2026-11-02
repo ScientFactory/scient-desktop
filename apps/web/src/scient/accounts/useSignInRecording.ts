@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef } from "react";
 import type { AccountSummary, EnvironmentId } from "@t3tools/contracts";
+import { signInReturn, universitiesOf } from "@t3tools/shared/scientPaperLinks";
 import { useClientSettings } from "~/hooks/useSettings";
 import { toastManager } from "~/components/ui/toast";
 import { isIdentityProvider, signedInSite, type CookieMetadata } from "./sessionDetection";
@@ -42,6 +43,8 @@ export function useSignInRecording(input: {
       after: ReadonlyArray<CookieMetadata>,
     ) => {
       if (isSigningIn(input.environmentId, input.profileId, input.url)) return false;
+      // Where a university's own sign-in link lands is that sign-in, not a new site.
+      if (universitiesOf(input.accounts).length > 0 && signInReturn(input.url)) return false;
       const site = signedInSite({
         previousUrl,
         url: input.url,

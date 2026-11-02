@@ -13,6 +13,13 @@ export const isLoginPlace = (url: URL) =>
   /(?:^|[/_-])(?:log[\s_-]?in|sign[\s_-]?in|sso|auth)(?:[/_-]|$)/i.test(url.pathname) ||
   /^(?:login|signin|sso|auth|idp)\./i.test(url.hostname);
 
+/** University and company sign-in services, which many sites hand a sign-in to. */
+export const isIdentityPage = (url: URL) =>
+  url.hostname === "login.microsoftonline.com" ||
+  url.hostname.endsWith(".okta.com") ||
+  url.hostname.endsWith(".openathens.net") ||
+  /\/(?:idp|adfs|cas|saml2?|simplesaml)\/|\/shibboleth/i.test(url.pathname);
+
 /** What the user has to do to finish a sign-in that is waiting for them. */
 export function accountHandoffInstruction(kind: AccountHandoff["kind"]) {
   switch (kind) {

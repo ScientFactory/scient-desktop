@@ -1,7 +1,7 @@
 # Scient Accounts
 
 Connect something once, and every agent can use it the way the user allows. Accounts covers website
-sign-ins, library access, API keys, databases, command-line logins and browser profiles. It owns
+sign-ins, university access, API keys, databases, command-line logins and browser profiles. It owns
 Scient's encrypted store and the links to values kept in the system keychain, 1Password, Bitwarden (including Vaultwarden), Proton Pass or Custom
 models. Settings → Accounts & secrets is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
 
@@ -315,7 +315,7 @@ Family `accounts`, capability `accounts`, granted to every provider session by
 | `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts  |
 | `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                     |
 | `scient_account_add`             | Upstream's private secret card, saved as an API-key account; returns its id and usage, or the matching account                                                               |
-| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the library account in the browser, then a preprint                                             |
+| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the publisher and each connected university in the browser, then a preprint                     |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
 in this conversation", "Always in this project", "Always") and waits up to ten minutes.
@@ -368,7 +368,7 @@ when the app is unfocused; clicking opens the requesting thread.
 
 `preview_open` and `preview_navigate` run this without an agent call. `previewProfileFallback` first
 looks for another Allowed profile that opens the page (new tabs only), then `signInOnPage` signs in
-with the Allowed website or library account matching the page or the requested address, on the same
+with the Allowed website account matching the page or the requested address, on the same
 tab, and navigates back to the requested address. `accountsNote` carries the result. Ask accounts
 get a note pointing at `scient_account_sign_in`, which asks; a `lastSignInOutcome` of
 `password-rejected` or `code-rejected` stops automatic attempts until the secret changes, since
@@ -435,12 +435,13 @@ submitted saved password leaves no login form six seconds later. A saved passwor
 key resets it. Rows show
 it through `accountStatusLabel`, after anything that needs the user.
 
-`accounts.check` (`checkAccounts.ts`) opens each account's site or library link in its own profile,
+`accounts.check` (`checkAccounts.ts`) opens each account's site or university sign-in link in its own profile,
 one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
 (`userRunInvocation`), so agent access doesn't apply. A tab without a profile is a throwaway session,
 so the profile is always named. A session shows by a sign-out link, a login wall or sign-in link, then
 a protected cookie, which only counts for a sign-in known to have worked because anonymous visitors
-get those too; a library by leaving the university's pages on a publisher link. A signed-out
+get those too; an OpenAthens university by OpenAthens' own `/check` answer on
+`my.openathens.net`; another university by its sign-in link coming all the way back. A signed-out
 account with a saved password gets one unattended sign-in, only if the last one worked or none was
 tried: one that needed the user or failed would do the same with nobody there. A whole
 run skips imported passwords with no history and stops at 40 accounts.
@@ -607,13 +608,49 @@ provider environment. The existing proxy redacts reflected values in responses.
   shows its own sign-in and returns to the inbox, so Scient adds no flow of its own, and the Google
   check that follows clears the label. `/mail/u/<address>/` gives "Temporary Error", so it is not
   used.
-- **Library access**: a library account's link pattern (`proxyUrl` with `{url}`, e.g. HUJI's
-  OpenAthens redirector) is how `scient_paper_get` reaches paywalled PDFs. Pasting any library
-  link derives the pattern. The tool opens the article through it in the library account's
-  profile, signs in with that account when its sign-in page asks, takes the page's
-  `citation_pdf_url` or PDF link, fetches the PDF inside the page so the session applies, and
-  checks `%PDF`. Library fetches are serialized per server, 10-20 s apart and capped at 100 a
-  day: libraries suspend access that looks like bulk downloading.
+- **University access**: a website account with `institution` (from the public directory) or
+  `proxyUrl` (a library link with `{url}`) reaches a university's subscriptions; older `library`
+  accounts fold into this shape when read (`foldLibraryAccounts`). `accounts.universities.signIn`
+  (`universitySignIn.ts`) opens the sign-in link visibly beside a conversation, in the account's
+  profile. An OpenAthens university (`usesOpenAthens`: its directory entity is an OpenAthens one)
+  signs in at `my.openathens.net/auth` with the entity preselected, which goes straight to the
+  university's page and back to the person's MyAthens page; no journal is involved. Other
+  universities have no sign-in page of their own, so a publisher's institutional link asks for
+  them. Scient watches the tab every 0.4 s and closes it the moment the link comes back, before
+  confirming, so the publisher's page never stays. A tab Scient opened for a sign-in, or after a
+  restart one in the account's profile showing a sign-in page at a learned address or OpenAthens'
+  sign-in, is reused, and such leftovers close when a sign-in succeeds; other pages are never
+  touched. A full `sites` list keeps the sign-in addresses and the university's domain and drops
+  other domains first. It adds each exact origin that asked the person for something to `sites`, even under a
+  domain `sites` already covers, so a saved password can only ever go where the person already
+  signed in and the export guard knows the address; directory data never authorizes that. The sign-in counts once the hidden check agrees; it
+  then continues waiting papers. A check that can't tell keeps the last known state and its date.
+  While any university is connected, `scient_account_browser_session` refuses every sign-in or
+  identity page (`isLoginPlace`, `isIdentityPage`), `*.openathens.net`, and the learned sign-in
+  origins: that session also opens the university's other services, and the guard doesn't depend
+  on what the bounded `sites` list still holds. Sign-in tabs are tracked with the account they
+  sign in, so one university never takes over another's.
+  Quiet keep-alive visits use `my.openathens.net/check` for OpenAthens universities.
+- **Browsing access**: `accounts.universities.browse` (`universityBrowsing.ts`) runs 2.5 s after a
+  tab settles on an `https` address, only for a university signed in and living in that tab's
+  profile, never for private or local hosts. If the loaded page names a DOI or a journal for
+  indexers, it is reloaded once per profile, account and journal host (six hours, kept only after
+  the reroute happened; a definite "no way in" is kept an hour) through the university: for
+  OpenAthens, the server asks `go.openathens.net/redirector/<domain>` with the article's address
+  minus query and fragment, without following redirects, and uses the journal route it answers
+  with; otherwise the library link or a known platform's institutional link. The tab is reread just
+  before navigating and left alone if the person moved on. Pages that aren't articles never leave
+  the machine.
+- **Papers**: `scient_paper_get` and `scient_papers_queue` go through one queue, one route set per
+  university: the OpenAthens redirector (which knows every journal the university subscribes to
+  and resolves DOI links), the library link, then the journal platform's institutional link
+  (`institutionLink`: Atypon, Shibboleth, Elsevier, Springer, IEEE and JSTOR hosts, each checked
+  against OpenAthens' own routes). When the publisher's page shows an institutional sign-in button,
+  `institutionLinkFromButton` builds the university's link from it (Atypon `ssostart`, a
+  Shibboleth SP's `Login`, or a discovery service's `return` with `entityID`) as a further route. The route that worked last at a publisher is kept in memory by the paper service, not
+  on the account, and a paper's result refreshes the university's last seen state. Reaching a page
+  follows the browser profile; signing in follows the account. Publishers go one at a time with a
+  10-20 s pause, and back off only when they refuse.
 - Browser-sign-in rows name the profile agents use; the usual Signed out / Sign in again applies.
 - **API keys**: Get a key opens the service's key page in the default browser. A pasted key with a
   known prefix picks its catalogue entry and goes straight into the key input, never into search

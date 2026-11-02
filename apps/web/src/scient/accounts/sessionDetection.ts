@@ -1,4 +1,5 @@
 import { GOOGLE_SITE } from "@t3tools/contracts";
+import { isIdentityPage } from "@t3tools/shared/scientSignInPage";
 
 export interface CookieMetadata {
   readonly domain: string;
@@ -58,13 +59,10 @@ export function isIdentityProvider(raw: string) {
     const url = new URL(raw);
     if (url.protocol !== "https:") return false;
     return (
-      ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"].includes(
-        url.hostname,
-      ) ||
+      ["accounts.google.com", "appleid.apple.com"].includes(url.hostname) ||
       (url.hostname === "github.com" && /^\/login(?:\/|$)/.test(url.pathname)) ||
       (url.hostname === "orcid.org" && /^\/signin(?:\/|$)/.test(url.pathname)) ||
-      url.hostname.endsWith(".okta.com") ||
-      /\/idp\/|\/shibboleth/i.test(url.pathname)
+      isIdentityPage(url)
     );
   } catch {
     return false;
