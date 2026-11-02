@@ -62,6 +62,14 @@ export function threadShellFromProjection(
     runs.filter(isActivityRunForShell).sort((left, right) => right.ordinal - left.ordinal)[0] ??
     null;
   const liveRunIds = new Set(runs.filter(isActivityRunForShell).map((run) => run.id));
+  const userMessages = projection.messages
+    .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
+    .sort(
+      (left, right) =>
+        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+    );
+  const latestUserAuthoredMessageAt =
+    userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null;
   const pendingRuntimeRequest =
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
@@ -73,19 +81,17 @@ export function threadShellFromProjection(
     pendingRuntimeRequest === null || pendingRuntimeRequest.responseCapability.type === "message"
       ? secretRequestAsPendingInput(
           projection.turnItems
-            .filter((item) => item.status === "waiting" && waitsOnUser(item, liveRunIds))
+            .filter(
+              (item) =>
+                item.status === "waiting" &&
+                waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+            )
             .sort(
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
             )[0] ?? null,
         )
       : null;
-  const userMessages = projection.messages
-    .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
-    .sort(
-      (left, right) =>
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-    );
   const latestUserMessage = userMessages[0] ?? null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
     latestRun,
@@ -166,8 +172,7 @@ export function threadShellFromProjection(
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
-    latestUserAuthoredMessageAt:
-      userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null,
+    latestUserAuthoredMessageAt,
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
@@ -376,14 +381,23 @@ export function secretRequestAsPendingInput(
 
 /**
  * A secret card is answered while its agent waits in the run. A link card's
- * agent asked without waiting, so the card waits on the user after its run.
+ * agent asked without waiting, so the card waits on the user after its run,
+ * until the user writes in the thread again and so has moved past it.
  */
 const waitsOnUser = (
   item: OrchestrationV2ThreadProjection["turnItems"][number],
   liveRunIds: ReadonlySet<RunId>,
+  latestUserAuthoredMessageAt: DateTime.Utc | null,
 ) =>
-  item.type === "link_request" ||
+  (item.type === "link_request" && linkCardStillAsks(item, latestUserAuthoredMessageAt)) ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
+
+export const linkCardStillAsks = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  latestUserAuthoredMessageAt: DateTime.Utc | null,
+) =>
+  latestUserAuthoredMessageAt === null ||
+  !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
 
 /** The goal belongs to the provider thread that currently owns the conversation. */
 export function activeProviderGoalForShell(

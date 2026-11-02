@@ -32,6 +32,9 @@ an unrecognized model remain in token totals but add no estimated cost. Scient r
 table at most daily and can use its cached copy offline; without either copy, affected records are
 shown as unpriced rather than guessed.
 
+Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
+the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including Scient-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on
 the server to read a different data directory; comma-separated paths read multiple directories.

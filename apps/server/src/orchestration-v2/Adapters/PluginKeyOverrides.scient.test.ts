@@ -43,6 +43,7 @@ it("registers the Claude proxy under the original scoped plugin server name", ()
 });
 it("keeps Codex's original server key while disabling its native plugin transport", () => {
   const result = codexThreadRuntimeParams({
+    threadId: null,
     mcpSession: { ...session, pluginKeyServerNames: { [alias]: "api.v1" } },
   });
   expect(result.config['plugins."sample@synthetic".mcp_servers."api.v1".enabled']).toBe(false);
@@ -69,6 +70,7 @@ it("delivers only launcher paths for Claude and Codex stdio replacements", () =>
     env: launcher.env,
   });
   const codex = codexThreadRuntimeParams({
+    threadId: null,
     mcpSession: { ...mcpSession, pluginKeyStdioServers: [{ ...launcher, serverName: "api.v1" }] },
   });
   expect(codex.config['mcp_servers."api.v1"']).toEqual({

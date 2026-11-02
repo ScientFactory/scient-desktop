@@ -29,6 +29,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../../onboarding/firstRun", () => ({ completeOnboarding: mocks.complete }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
+  useServerConfigs: () => new Map(),
   readProjects: () => mocks.projects,
   waitForProject: async () => mocks.projects[0],
 }));
@@ -42,6 +43,7 @@ vi.mock("../../state/environments", () => {
   return {
     useEnvironments: () => ({ environments: [environment] }),
     usePrimaryEnvironment: () => environment,
+    usePrimaryEnvironmentId: () => null,
   };
 });
 vi.mock("../../state/server", () => ({

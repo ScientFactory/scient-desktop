@@ -35,6 +35,7 @@ import {
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -176,6 +177,7 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "@t3tools/client-runtime/state/projects";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   dispatchCommandPalette,
   getCommandPaletteReturnFocus,
@@ -728,10 +730,12 @@ function OpenCommandPaletteDialog(props: {
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
+  const canBrowsePaths =
+    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
   const browsePath = getFilesystemBrowsePath(
     query,
     browseEnvironmentPlatform,
-    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null,
+    canBrowsePaths,
     filesystemBrowseScope,
   );
   const isBrowsing = browsePath.isBrowsing;
@@ -1021,7 +1025,10 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     clearTypedHighlight();
     // SCIENT-FORK:START
-    followAddProjectBrowseQuery(nextQuery, browseEnvironmentPlatform);
+    followAddProjectBrowseQuery(
+      canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery,
+      browseEnvironmentPlatform,
+    );
     // SCIENT-FORK:END
     setQuery(nextQuery);
     if (
@@ -2199,6 +2206,21 @@ function OpenCommandPaletteDialog(props: {
       if (addProjectCloneFlow.step === "repository") {
         const rawRepository = query.trim();
         if (rawRepository.length === 0 || isRemoteProjectLookingUp) {
+          return;
+        }
+
+        const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
+          addProjectCloneFlow.source,
+          rawRepository,
+        );
+        if (incompleteOwnerMessage) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Repository name incomplete",
+              description: incompleteOwnerMessage,
+            }),
+          );
           return;
         }
 

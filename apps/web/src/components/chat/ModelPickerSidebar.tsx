@@ -16,7 +16,8 @@ function unavailableSettingsAction(
   entry: ProviderInstanceEntry,
   hasSetupSurface: boolean,
 ): "enable" | "install or reconnect" | null {
-  if (!entry.enabled || entry.status === "disabled") {
+  // An unavailable instance (a driver this build lacks or the policy leaves out) says why instead.
+  if ((!entry.enabled && entry.isAvailable) || entry.status === "disabled") {
     return "enable";
   }
   if (entry.status === "ready" && entry.isAvailable) {

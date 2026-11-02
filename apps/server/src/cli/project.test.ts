@@ -44,6 +44,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -66,7 +67,11 @@ const layerCliAuthority = Layer.mergeAll(
       ),
     ),
     Layer.provide(GitVcsDriver.layer),
-    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    Layer.provide(
+      ServerSettings.layer.pipe(
+        Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+      ),
+    ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(SqlitePersistence.layerMemory),

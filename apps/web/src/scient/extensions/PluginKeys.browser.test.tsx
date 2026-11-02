@@ -60,7 +60,10 @@ vi.mock("./ExtensionDetailPages", () => ({
     </section>
   ),
 }));
-vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => [],
+  useServerConfigs: () => new Map(),
+}));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: state.data, error: null }),
 }));

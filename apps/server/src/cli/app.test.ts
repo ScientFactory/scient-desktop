@@ -39,6 +39,7 @@ import { describe, expect } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const liveProcess = Effect.acquireRelease(
   Effect.promise(async () => {
@@ -75,7 +76,11 @@ const layerCliAuthority = Layer.mergeAll(
       ),
     ),
     Layer.provide(GitVcsDriver.layer),
-    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    Layer.provide(
+      ServerSettings.layer.pipe(
+        Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+      ),
+    ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(SqlitePersistence.layerMemory),

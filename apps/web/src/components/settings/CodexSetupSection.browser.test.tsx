@@ -54,6 +54,7 @@ vi.mock("../../composerDraftStore", async () => {
   return {
     DraftId: Schema.String.pipe(Schema.brand("DraftId")),
     useComposerDraftStore: () => null,
+    clearComposerDraftsEnvironment: () => undefined,
   };
 });
 vi.mock("./AddCodexAccountDialog", () => ({ AddCodexAccountDialog: () => null }));
@@ -74,6 +75,7 @@ vi.mock("./settingsLayout", () => ({
     </div>
   ),
 }));
+vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("../../state/environments", () => ({
   useEnvironmentHttpBaseUrl: () => "https://remote.example",
   usePrimaryEnvironmentId: () => null,
