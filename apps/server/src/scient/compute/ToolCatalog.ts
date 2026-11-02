@@ -136,14 +136,27 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   },
   "imagej-macro": {
     commands: ["fiji", "ImageJ"],
+    // Current Fiji starts from fiji-<system>-<arch>, in a folder named Fiji; older ones from ImageJ-*.
     places: {
       darwin: [
+        "/Applications/Fiji*.app/Contents/MacOS/fiji-macos*",
+        "~/Applications/Fiji*.app/Contents/MacOS/fiji-macos*",
         "/Applications/Fiji.app/Contents/MacOS/ImageJ-macosx",
         "~/Applications/Fiji.app/Contents/MacOS/ImageJ-macosx",
         "/Applications/ImageJ.app/Contents/MacOS/*",
       ],
-      linux: ["~/Fiji.app/ImageJ-linux64", "/opt/Fiji.app/ImageJ-linux64"],
-      win32: ["~/Fiji.app/ImageJ-win64.exe", "%ProgramFiles%\\Fiji.app\\ImageJ-win64.exe"],
+      linux: [
+        "~/Fiji*/fiji-linux-*",
+        "/opt/Fiji*/fiji-linux-*",
+        "~/Fiji.app/ImageJ-linux64",
+        "/opt/Fiji.app/ImageJ-linux64",
+      ],
+      win32: [
+        "~/Fiji*\\fiji-windows-*.exe",
+        "%ProgramFiles%\\Fiji*\\fiji-windows-*.exe",
+        "~/Fiji.app/ImageJ-win64.exe",
+        "%ProgramFiles%\\Fiji.app\\ImageJ-win64.exe",
+      ],
     },
   },
   nextflow: { commands: ["nextflow"] },
@@ -214,7 +227,8 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
       darwin: [
         "/Applications/harris/idl*/bin/idl",
         "/Applications/NV5/idl*/bin/idl",
-        "/Applications/GNU Data Language.app/Contents/MacOS/gdl",
+        // The app's own launcher only opens Terminal, so Run starts the program inside it.
+        "/Applications/GNU Data Language.app/Contents/Resources/bin/gdl",
       ],
       linux: ["/usr/local/harris/idl*/bin/idl", "/usr/local/nv5/idl*/bin/idl"],
       win32: [
@@ -278,7 +292,16 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   fsharp: DOTNET,
   clojure: { commands: ["clojure", "clj", "bb"] },
   "common-lisp": { commands: ["sbcl", "ccl", "clisp", "ecl"] },
-  elixir: { commands: ["elixir"] },
+  elixir: {
+    commands: ["elixir"],
+    // Chocolatey's Elixir says it is on PATH but is not; the installer's own folder too.
+    places: {
+      win32: [
+        "%ProgramData%\\chocolatey\\lib\\Elixir\\tools\\bin\\elixir.bat",
+        "%ProgramFiles%\\Elixir\\bin\\elixir.bat",
+      ],
+    },
+  },
   erlang: { commands: ["erl", "escript"] },
   go: { commands: ["go"], places: { win32: ["%ProgramFiles%\\Go\\bin\\go.exe"] } },
   haskell: { commands: ["ghc", "runghc"], places: { win32: ["C:\\ghcup\\bin\\ghc.exe"] } },

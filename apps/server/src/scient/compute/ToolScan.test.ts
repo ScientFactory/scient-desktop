@@ -168,6 +168,16 @@ describe("the tool scan", () => {
     expect(tools.get("elixir")?.[0]?.executable).toBe("C:\\tools\\elixir\\bin\\elixir.bat");
   });
 
+  it("keeps the preferred name when two in one folder are the same file", () => {
+    const tools = scan(
+      computer(["/opt/bin/scilab", "/opt/bin/scilab-cli"], {
+        environment: { PATH: "/opt/bin" },
+        links: { "/opt/bin/scilab-cli": "/opt/bin/scilab" },
+      }),
+    );
+    expect(tools.get("scilab")?.map((tool) => tool.name)).toEqual(["scilab-cli"]);
+  });
+
   it("leads with the catalog's order within one folder", () => {
     const tools = scan(computer(["/usr/bin/cc", "/usr/bin/gcc", "/usr/bin/clang"]));
     expect(tools.get("c")?.map((tool) => tool.name)).toEqual(["clang", "gcc", "cc"]);

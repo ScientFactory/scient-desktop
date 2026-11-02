@@ -371,19 +371,28 @@ export function toolScanSteps(context: DiscoveryContext): ReadonlyArray<ToolScan
 export function groupTools(
   tools: ReadonlyArray<FoundLanguageTool>,
 ): ReadonlyMap<string, ReadonlyArray<FoundLanguageTool>> {
-  const grouped = new Map<string, FoundLanguageTool[]>();
-  const seen = new Set<string>();
-  for (const tool of tools) {
-    const key = `${tool.languageId}\n${tool.identity}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    grouped.set(tool.languageId, [...(grouped.get(tool.languageId) ?? []), tool]);
-  }
   const rank = (tool: FoundLanguageTool) => {
     const index = LANGUAGE_TOOLS[tool.languageId]?.commands.indexOf(tool.name) ?? -1;
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;
   };
   const folder = (tool: FoundLanguageTool) => tool.executable.replace(/[\\/][^\\/]*$/u, "");
+  const grouped = new Map<string, FoundLanguageTool[]>();
+  const kept = new Map<string, FoundLanguageTool>();
+  for (const tool of tools) {
+    const key = `${tool.languageId}\n${tool.identity}`;
+    const earlier = kept.get(key);
+    // Two names for one file in one folder, as scilab-cli is for scilab: keep the name the
+    // language prefers, since such a tool decides what to be from the name it was started by.
+    if (earlier !== undefined) {
+      if (folder(earlier) !== folder(tool) || rank(tool) >= rank(earlier)) continue;
+      const found = grouped.get(tool.languageId)!;
+      found[found.indexOf(earlier)] = tool;
+      kept.set(key, tool);
+      continue;
+    }
+    kept.set(key, tool);
+    grouped.set(tool.languageId, [...(grouped.get(tool.languageId) ?? []), tool]);
+  }
   for (const [languageId, found] of grouped) {
     const places = [...new Set(found.map(folder))];
     grouped.set(
