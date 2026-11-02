@@ -779,9 +779,18 @@ export function makeNativeSessionAdapterV2(
                       providerThread: thread,
                     });
                   }
-                  // SCIENT-FORK: per-request counts become the turn's usage when it ends.
+                  // SCIENT-FORK: per-request counts become the turn's usage when it ends. A
+                  // request the agent made after waking on its own waits for that wake's turn.
                   if (active && update.request)
                     active.usage = addRequestUsage(active.usage, update.request);
+                  else if (update.request && thread && wake.length > 0 && !budget.closed) {
+                    const pending: NativeSessionUpdate = { type: "usage", request: update.request };
+                    yield* budget.admit(pending, false, 1, (charge) =>
+                      Effect.sync(() => {
+                        wake.push({ update: pending, charge });
+                      }),
+                    );
+                  }
                   if (active && update.tokenUsage) {
                     active.turn = {
                       ...active.turn,
