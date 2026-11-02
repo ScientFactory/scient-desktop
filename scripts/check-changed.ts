@@ -40,6 +40,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import ts from "typescript-legacy";
 
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
+import { vitePlusCommand } from "./check-changed-command.ts";
 
 const GiB = 1024 ** 3;
 
@@ -185,6 +186,15 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
 
 const CODE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
+// CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
+const NODE_TEST = /^\.github[/\\]scripts[/\\]/;
+export const splitTests = (tests: Iterable<string>) => {
+  const all = [...tests];
+  return {
+    vitestTests: all.filter((file) => !NODE_TEST.test(file)),
+    nodeTests: all.filter((file) => NODE_TEST.test(file)),
+  };
+};
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // A flag wins over its environment variable; either must be a positive integer.
@@ -337,6 +347,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   for (const test of docReaderTests(files)) tests.add(test);
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
+  const scriptTests = new Set(splitTests(tests).nodeTests);
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -410,8 +421,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const vp = (args: ReadonlyArray<string>, cwd = root, program = "vp") =>
     Effect.scoped(
       Effect.gen(function* () {
+        const [command, commandArgs] =
+          program === "vp" ? vitePlusCommand(args, platform) : [program, args];
         const handle = yield* spawner.spawn(
-          ChildProcess.make(program, args, {
+          ChildProcess.make(command, commandArgs, {
             cwd,
             env,
             extendEnv: true,
@@ -493,13 +506,15 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     return ts.forEachChild(node, importsNodeTest) === true;
   };
   const nodeTests = yield* Effect.filter([...tests], (file) =>
-    fs
-      .readFileString(inRoot(file))
-      .pipe(
-        Effect.map((source) =>
-          importsNodeTest(ts.createSourceFile(file, source, ts.ScriptTarget.Latest)),
-        ),
-      ),
+    scriptTests.has(file)
+      ? Effect.succeed(true)
+      : fs
+          .readFileString(inRoot(file))
+          .pipe(
+            Effect.map((source) =>
+              importsNodeTest(ts.createSourceFile(file, source, ts.ScriptTarget.Latest)),
+            ),
+          ),
   );
   const vitestTests = [...tests].filter((file) => !nodeTests.includes(file));
   // SCIENT-FORK:END node-runner-tests

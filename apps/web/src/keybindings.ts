@@ -15,15 +15,20 @@ import {
   matchesKeybindingShortcutModifiers,
   normalizeEventKey,
   resolveEventKeys,
-  type ShortcutEventLike,
+  type ShortcutEventLike as SharedShortcutEventLike,
   type ShortcutModifierStateLike,
 } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
 import { keyboardFocusContext, surfaceOwnsShortcut } from "./scient/keyboard/ownership";
+import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
 
-export type { ShortcutEventLike, ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
+export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
 export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+
+export interface ShortcutEventLike extends SharedShortcutEventLike {
+  target?: EventTarget | null;
+}
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
@@ -178,10 +183,16 @@ export function resolveShortcutCommand(
 ): KeybindingCommand | null {
   if (event.defaultPrevented || event.isComposing || surfaceOwnsShortcut(event)) return null;
   const platform = resolvePlatform(options);
-  const context = resolveContext({
-    ...options,
-    context: { ...keyboardFocusContext(event), ...options?.context },
-  });
+  const focus = keyboardFocusContext(event);
+  const context = resolveContext({ ...options, context: { ...focus, ...options?.context } });
+  // A forwarded shortcut has no composed path, so its target or the active element decides.
+  if (
+    focus.editableFocus === undefined &&
+    options?.context?.editableFocus === undefined &&
+    typeof document !== "undefined"
+  ) {
+    context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
+  }
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];

@@ -355,17 +355,13 @@ describe("web images in chat", () => {
       expect(host.querySelector('[role="group"]')).toBeNull();
       expect(requestedImageSources(images, host)).toEqual([sameOrigin]);
     }
-    // A picture whose every candidate stays on the app keeps its source.
+    // The shared pipeline drops every source, so no candidate can load past this gate.
     await render(
       `<picture><source srcset="/test/fixtures/assets/0001.png 2x"><img src="${sameOrigin}" alt="logo"></picture>`,
     );
-    expect(host.querySelector("source")?.getAttribute("srcset")).toBe(
-      "/test/fixtures/assets/0001.png 2x",
-    );
-    await images.release(host, 2);
-    expect(host.querySelector("img")?.currentSrc).toBe(
-      new URL("/test/fixtures/assets/0001.png", window.location.href).href,
-    );
+    expect(host.querySelector("source")).toBeNull();
+    await images.release(host);
+    expect(host.querySelector("img")?.currentSrc).toContain("/test/fixtures/assets/0001.png");
   });
 
   it("gates remote videos written with image syntax", async () => {

@@ -220,19 +220,12 @@ describe("onDocumentSaved", () => {
     expect(h.saved).not.toHaveBeenCalled();
   });
 
-  it("stays silent for a failed save and for a conflict", async () => {
+  it("stays silent for a failed save", async () => {
     const failing = setup();
     failing.failWith(new Error("disk full"));
     failing.lease.change("B", 0);
     expect(await failing.lease.flushNow()).toBe(false);
     expect(failing.saved).not.toHaveBeenCalled();
-
-    const conflicting = setup();
-    conflicting.lease.change("B", 0);
-    conflicting.outside("Agent");
-    expect(await conflicting.lease.flushNow()).toBe(false);
-    expect(conflicting.lease.getSnapshot().conflict).not.toBeNull();
-    expect(conflicting.saved).not.toHaveBeenCalled();
   });
 
   it("stops reporting once unsubscribed", async () => {

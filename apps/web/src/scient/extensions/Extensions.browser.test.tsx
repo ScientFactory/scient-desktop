@@ -175,7 +175,10 @@ vi.mock("../../components/settings/useScopedSettings", () => ({
 vi.mock("../../components/settings/SettingInheritance", () => ({
   SettingInheritance: () => null,
 }));
-vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => state.projects,
+  useServerConfigs: () => new Map(),
+}));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => {

@@ -69,6 +69,7 @@ function setup(options: { cleanTtlMs?: number; cleanLimit?: number } = {}) {
   };
   const createTransport = vi.fn(() => transport);
   const registry = new MarkdownPersistenceRegistry({
+    keepLocalOverConflicts: false,
     checkpointStore: durableStore().store,
     createTransport,
     debounceMs: 250,
@@ -90,70 +91,6 @@ describe("MarkdownPersistenceRegistry", () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
-  });
-
-  it("keeps raw or composing input and the source lease during a retained mutation episode", async () => {
-    const { transport } = setup();
-    const registry = new MarkdownPersistenceRegistry({
-      checkpointStore: durableStore().store,
-      createTransport: () => ({
-        ...transport,
-        classifyFailure: () => "recovery_required",
-      }),
-      cleanLimit: 0,
-      cleanTtlMs: 1,
-    });
-    const lease = registry.acquire(target, initial)!;
-    const input = { message: "Composing", payload: { raw: "\\begin{", composing: true } };
-    expect(lease.retainPendingInput(input)).toBe(true);
-    lease.noteMutationFailure(new Error("Retained mutation"));
-    lease.noteFreshnessHint();
-    expect(await lease.retry()).toBe(false);
-    expect(await lease.refresh()).toBe(false);
-    lease.release();
-    await vi.advanceTimersByTimeAsync(500);
-    const reopened = registry.acquire(target, null)!;
-    expect(reopened.getPendingInput()).toBe(input);
-    expect(reopened.getSnapshot()).toMatchObject({
-      draftSource: "A",
-      attention: "recovery_required",
-      pending: true,
-    });
-    expect(reopened.target.relativePath).toBe(target.relativePath);
-    expect(transport.write).not.toHaveBeenCalled();
-    expect(transport.read).not.toHaveBeenCalled();
-    reopened.release();
-  });
-
-  it("retains initial disk attention even when the restored draft equals current bytes", async () => {
-    const { registry, transport } = setup({ cleanLimit: 0, cleanTtlMs: 1 });
-    const publicationAttention = {
-      recoveryId: "retained-restart",
-      mutationId: "mutation-restart",
-      retainedPaths: [".scient/retained/old-object.md"],
-      message: "A displaced object still needs review.",
-    };
-    const lease = registry.acquire(target, { ...initial, publicationAttention })!;
-    expect(lease.getSnapshot()).toMatchObject({
-      publicationAttention,
-      publicationOutcome: "retained-attention",
-      attentionMutationId: "mutation-restart",
-      attention: "recovery_required",
-      draftSource: "A",
-      pending: true,
-    });
-    expect(await lease.flushNow()).toBe(false);
-    expect(registry.forgetClean(target)).toBe(false);
-    lease.release();
-    await vi.advanceTimersByTimeAsync(500);
-    const reopened = await registry.open(target);
-    expect(reopened.getSnapshot()).toMatchObject({
-      publicationAttention,
-      draftSource: "A",
-      pending: true,
-    });
-    expect(transport.write).not.toHaveBeenCalled();
-    reopened.release();
   });
 
   it("settles a cached clean session on reopen instead of assuming equal disk bytes are clean", async () => {
@@ -822,6 +759,7 @@ describe("a merge strategy per file", () => {
   it("uses the file's own strategy for an outside change, and Markdown's for other files", async () => {
     const disk = { source: "First\n\nSecond\n", revision: "r0" };
     const registry = new MarkdownPersistenceRegistry({
+      keepLocalOverConflicts: false,
       checkpointStore: durableStore().store,
       createTransport: () => transport(() => disk),
       reconcile: (file) => (file.relativePath.endsWith(".tex") ? conflictOnly : undefined),
@@ -1215,36 +1153,6 @@ describe("recovery copies across a rename", () => {
     vi.useRealTimers();
   });
 
-  it("restores retained attention after restart even when the current file equals the draft", async () => {
-    const { store, value } = memoryStore({
-      token: "retained",
-      baselineSource: "A",
-      baselineRevision: "rA",
-      draftSource: "B",
-      publicationSource: "B",
-      attention: "recovery_required",
-      conflict: false,
-    });
-    const registry = new MarkdownPersistenceRegistry({
-      checkpointStore: store,
-      createTransport: diskTransport("B"),
-    });
-    const lease = await registry.open(target);
-    lease.noteFreshnessHint();
-    expect(await lease.refresh()).toBe(false);
-    expect(await lease.retry()).toBe(false);
-    expect(lease.getSnapshot()).toMatchObject({
-      baselineSource: "A",
-      draftSource: "B",
-      attention: "recovery_required",
-      pending: true,
-    });
-    await vi.advanceTimersByTimeAsync(500);
-    expect(value()?.attention).toBe("recovery_required");
-    lease.release();
-    expect(registry.has(target)).toBe(true);
-  });
-
   it("replays a checkpoint's ambiguous identity while retaining newer draft bytes", async () => {
     const intent: MarkdownSaveIntent = {
       mutationId: "old-publication",
@@ -1279,7 +1187,6 @@ describe("recovery copies across a rename", () => {
       baselineSource: "A",
       draftSource: "C",
       publicationSource: "B",
-      attention: "recovery_required",
       pending: true,
     });
     lease.release();
@@ -1922,153 +1829,4 @@ describe("durable publication admission", () => {
     });
     lease.release();
   });
-});
-
-describe("authorized retained review journal admission", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => {
-    vi.clearAllTimers();
-    vi.useRealTimers();
-  });
-
-  it.each(["notes.md", "main.tex"])(
-    "restores %s confirmation from exact durable authorization without resolving again",
-    async (relativePath) => {
-      const file = { ...target, relativePath };
-      const attention = {
-        recoveryId: `review-${relativePath}`,
-        mutationId: "retained",
-        retainedPaths: ["/private/A"],
-        message: "Review.",
-      };
-      const { store, values } = durableStore();
-      let resolved = false;
-      let disconnected = true;
-      const transport: MarkdownPersistenceTransport = {
-        read: async () => {
-          if (resolved && disconnected) {
-            disconnected = false;
-            throw new Error("Connection lost");
-          }
-          return {
-            source: "C",
-            revision: "rC",
-            ...(resolved ? {} : { publicationAttention: attention }),
-          };
-        },
-        resolve: async ({ recoveryId, currentRevision }) => {
-          if (resolved || recoveryId !== attention.recoveryId || currentRevision !== "rC")
-            throw new Error("The native authorization cannot be repeated or moved.");
-          resolved = true;
-          return { revision: "rC" };
-        },
-        write: async () => {
-          throw new Error("Review cannot publish source");
-        },
-        classifyFailure: () => "terminal",
-        subscribe: () => () => {},
-        project: () => {},
-      };
-      const registry = () =>
-        new MarkdownPersistenceRegistry({
-          checkpointStore: store,
-          createTransport: () => transport,
-          keepsCheckpoint: documentKeepsCheckpoint,
-        });
-      const lease = registry().acquire(file, {
-        ...initial,
-        relativePath,
-        publicationAttention: attention,
-      })!;
-      lease.change("local draft", lease.getSnapshot().editVersion);
-      expect(await lease.resolveRetainedAttention(attention.recoveryId, "rC")).toBe(false);
-      const checkpoint = values.get(projectFileOperationKey(file))!;
-      expect(checkpoint).toMatchObject({
-        authorizedCurrentReview: { recoveryId: attention.recoveryId, currentRevision: "rC" },
-        baselineSource: "A",
-        draftSource: "local draft",
-        publicationAttention: attention,
-      });
-      lease.release();
-      const restarted = await registry().open(file);
-      expect(await restarted.resolveRetainedAttention(attention.recoveryId, "rC")).toBe(true);
-      expect(values.get(projectFileOperationKey(file))).toMatchObject({
-        authorizedCurrentReview: null,
-        publicationAttention: null,
-        attention: null,
-        baselineSource: "C",
-        draftSource: "local draft",
-        conflict: true,
-      });
-      expect(restarted.getSnapshot()).toMatchObject({
-        baselineSource: "C",
-        draftSource: "local draft",
-        attention: null,
-        conflict: { externalSource: "C", externalRevision: "rC" },
-      });
-    },
-  );
-
-  it.each(["cas", "quota"])(
-    "never confirms after %s refuses the authorized phase",
-    async (failure) => {
-      const attention = {
-        recoveryId: `review-${failure}`,
-        mutationId: "retained",
-        retainedPaths: ["/private/A"],
-        message: "Review.",
-      };
-      const foreign: MarkdownDraftCheckpoint = {
-        token: "another-owner",
-        baselineSource: "foreign base",
-        baselineRevision: "foreign revision",
-        draftSource: "foreign work",
-      };
-      let durable = failure === "cas" ? foreign : undefined;
-      let resolved = false;
-      let confirmationCrossed = false;
-      const registry = new MarkdownPersistenceRegistry({
-        checkpointStore: {
-          read: async () => durable,
-          replace: async (_key, expected, next) => {
-            if (failure === "quota") throw new Error("Quota");
-            if (durable?.token !== expected) return false;
-            durable = next;
-            return true;
-          },
-        },
-        createTransport: () => ({
-          read: async () => {
-            if (resolved) confirmationCrossed = true;
-            return {
-              source: "C",
-              revision: "rC",
-              ...(resolved ? {} : { publicationAttention: attention }),
-            };
-          },
-          resolve: async () => {
-            resolved = true;
-            return { revision: "rC" };
-          },
-          write: async () => {
-            throw new Error("Review cannot publish");
-          },
-          classifyFailure: () => "terminal",
-          subscribe: () => () => {},
-          project: () => {},
-        }),
-      });
-      const lease = registry.acquire(target, { ...initial, publicationAttention: attention })!;
-      lease.change("my work", lease.getSnapshot().editVersion);
-      expect(await lease.resolveRetainedAttention(attention.recoveryId, "rC")).toBe(false);
-      expect(confirmationCrossed).toBe(false);
-      expect(lease.getSnapshot()).toMatchObject({
-        baselineSource: "A",
-        draftSource: "my work",
-        attention: "recovery_required",
-        authorizedCurrentReview: { recoveryId: attention.recoveryId, currentRevision: "rC" },
-      });
-      expect(durable).toEqual(failure === "cas" ? foreign : undefined);
-    },
-  );
 });

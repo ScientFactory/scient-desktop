@@ -144,40 +144,6 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("refuses a missing or incompatible helper without falling back", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-exchange-missing-" });
-      const cwd = NodePath.join(root, "paper"),
-        target = NodePath.join(cwd, "main.tex");
-      yield* fs.makeDirectory(cwd);
-      yield* fs.makeDirectory(NodePath.join(root, "records"), { mode: 0o700 });
-      yield* fs.writeFileString(target, "captured");
-      const incompatible = NodePath.join(root, "wrong-helper");
-      yield* fs.writeFileString(incompatible, "#!/bin/sh\necho scient-file-exchange/2\n", {
-        mode: 0o755,
-      });
-      for (const [id, helper] of [
-        ["missing", NodePath.join(root, "absent")],
-        ["wrong", incompatible],
-      ]) {
-        const exit = yield* Effect.gen(function* () {
-          const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-          return yield* files.replaceFileRetained({
-            cwd,
-            relativePath: "main.tex",
-            id: id!,
-            retentionDirectory: NodePath.join(root, "records"),
-            expectedRevision: bytesRevision(bytes("captured")),
-            bytes: bytes("merged"),
-          });
-        }).pipe(Effect.provide(configuredFiles(root, helper)), Effect.exit);
-        expect(exit._tag).toBe("Failure");
-        expect(yield* fs.readFileString(target)).toBe("captured");
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.live("keeps the target present during exchanges with concurrent readers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

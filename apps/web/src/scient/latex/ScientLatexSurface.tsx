@@ -879,12 +879,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     const bound = sourceBinding.current;
     const current = persistence.getSnapshot();
     if (bound === null) return refuse("The source snapshot is unavailable.");
-    if (
-      current.editingBlocked ||
-      current.error !== null ||
-      current.conflict !== null ||
-      sourceRecovery.blocked
-    )
+    if (current.editingBlocked || current.conflict !== null || sourceRecovery.blocked)
       return refuse("The source session is waiting for recovery or another operation.");
     if (
       request.snapshot.id !== bound.snapshot.id ||

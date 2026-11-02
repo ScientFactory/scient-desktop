@@ -779,22 +779,38 @@ export const layer: Layer.Layer<
         projection.thread.lineage.sideChat === true &&
         (sideChatHandoff !== undefined ||
           !projection.runs.some((previous) => previous.ordinal < run.ordinal));
-      const resolvedRuntimePolicy =
-        providerWork?.runtimePolicy ??
-        run.steeringRuntimePolicy ??
-        (yield* runtimePolicy.resolve({
-          thread: {
-            ...projection.thread,
-            runtimeMode: supervisedSideChatTurn
-              ? "approval-required"
-              : (run.runtimeMode ?? run.legacyQueue?.runtimeMode ?? projection.thread.runtimeMode),
-            interactionMode:
-              run.interactionMode ??
-              run.legacyQueue?.interactionMode ??
-              projection.thread.interactionMode,
-          },
-          modelSelection: run.modelSelection,
-        }));
+      const admittedRuntimePolicy = providerWork?.runtimePolicy ?? run.steeringRuntimePolicy;
+      const resolvedPolicy = yield* (
+        admittedRuntimePolicy
+          ? Effect.succeed(admittedRuntimePolicy)
+          : runtimePolicy.resolve({
+              thread: {
+                ...projection.thread,
+                runtimeMode: supervisedSideChatTurn
+                  ? "approval-required"
+                  : (run.runtimeMode ??
+                    run.legacyQueue?.runtimeMode ??
+                    projection.thread.runtimeMode),
+                interactionMode:
+                  run.interactionMode ??
+                  run.legacyQueue?.interactionMode ??
+                  projection.thread.interactionMode,
+              },
+              modelSelection: run.modelSelection,
+            })
+      ).pipe(Effect.result);
+      if (resolvedPolicy._tag === "Failure") {
+        const error = resolvedPolicy.failure;
+        if (error._tag !== "RuntimePolicyAboveCeilingError") return yield* error;
+        yield* settleStartFailure({
+          signal: "runtime-mode-above-ceiling",
+          title: "Thread mode is above the policy limit",
+          error,
+          message: error.message,
+        });
+        return;
+      }
+      const resolvedRuntimePolicy = resolvedPolicy.success;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );

@@ -82,9 +82,11 @@ it("delivers from a relocated CLI chunk, preserves identity across restarts, and
       import * as NodeServices from ${JSON.stringify(serverRequire.resolve("@effect/platform-node/NodeServices"))};
       import { make } from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/telemetry/ScientAnalytics.ts"))};
       import { ServerConfig } from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/config.ts"))};
+      import * as ManagedPolicy from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/policy/ManagedPolicy.ts"))};
 
       const [baseDir, endpoint, mode] = process.argv.slice(2);
       const config = Layer.mergeAll(
+        ManagedPolicy.layerTest(),
         ServerConfig.layerTest(baseDir, baseDir),
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: {
           SCIENT_ANALYTICS_ENABLED: mode === 'master-off' ? 'false' : 'true',

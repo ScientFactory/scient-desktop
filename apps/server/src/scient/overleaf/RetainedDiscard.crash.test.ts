@@ -24,7 +24,7 @@ import {
 } from "../workspace/RetainedFileMutation.ts";
 import type { DiscardCrashJob } from "./RetainedDiscard.crash-child.ts";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
-import { fixture } from "./WorkspaceApplier.testkit.ts";
+import { fixture as applierFixture } from "./WorkspaceApplier.testkit.ts";
 
 const canPublish = await nativePublicationHost();
 /** macOS can mount a disk image in a test. */
@@ -38,6 +38,9 @@ const exists = (path: string) =>
     () => false,
   );
 
+/** Discards of the records an older build left, which upgraded folders still hold. */
+const fixture = (...[body, hooks, retainedHooks]: Parameters<typeof applierFixture>) =>
+  applierFixture(body, hooks, retainedHooks, true);
 type Harness = Parameters<Parameters<typeof fixture>[0]>[0];
 const previous = "earlier\n".repeat(8192);
 
@@ -148,7 +151,7 @@ const markDiscard = async (kind: "current" | "legacy", kept: Kept) => {
 /** A fresh file layer, as after a restart, and the work that must go on beside a kept folder. */
 const goesOn = async (h: Harness, helper: string) => {
   const fresh = await h.run(
-    makeApplierFiles({ root: h.root, helper, retainedHooks: {} }).pipe(
+    makeApplierFiles({ root: h.root, helper, retainedHooks: {}, nativeSaves: true }).pipe(
       Effect.provide(NodeServices.layer),
     ),
   );
@@ -213,7 +216,7 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
         else expect(await exists(NodePath.join(directory, `discard-${leaf}.json`))).toBe(true);
         // A fresh file layer, as after a restart: its next settled read finishes it.
         const fresh = await h.run(
-          makeApplierFiles({ root: h.root, helper, retainedHooks: {} }).pipe(
+          makeApplierFiles({ root: h.root, helper, retainedHooks: {}, nativeSaves: true }).pipe(
             Effect.provide(NodeServices.layer),
           ),
         );
@@ -280,6 +283,7 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
           makeApplierFiles({
             root: h.root,
             helper,
+            nativeSaves: true,
             retainedHooks: {
               removal: async (when, path) => {
                 if (swapped || when !== "before" || path !== NodePath.join(directory, name)) return;
