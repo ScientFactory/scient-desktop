@@ -199,8 +199,10 @@ export class LazyWorkspaceTreeController {
    */
   noteAdded(relativePath: string, kind: ProjectDirectoryEntry["kind"]): void {
     if (this.#destroyed || this.#entries.has(relativePath)) return;
+    // Any folder the tree knows, loading included: a listing still on its way then
+    // reconciles against what the tree shows instead of adding the row twice.
     const parent = this.#branches.get(parentDirectory(relativePath));
-    if (parent?.status !== "loaded") return;
+    if (parent === undefined) return;
     this.#entries.set(relativePath, {
       name: relativePath.split("/").at(-1)!,
       relativePath,

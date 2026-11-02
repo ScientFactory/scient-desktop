@@ -726,10 +726,6 @@ export function useScientFileActions(input: {
       return;
     }
     const origin = event.nativeEvent.composedPath()[0];
-    // Return or Escape in a new entry's name field ends its naming.
-    if (origin instanceof HTMLInputElement && (event.key === "Enter" || event.key === "Escape")) {
-      setTimeout(finishPendingCreate, 0);
-    }
     if (
       origin instanceof HTMLInputElement ||
       origin instanceof HTMLTextAreaElement ||
@@ -820,6 +816,12 @@ export function useScientFileActions(input: {
     onKeyDown,
     /** Focus leaving the tree ends a new entry's naming, as a click elsewhere does. */
     onBlur: () => setTimeout(finishPendingCreate, 0),
+    /** Return or Escape in a name field: seen before the tree, which keeps the key to itself. */
+    onKeyDownCapture: (event: KeyboardEvent<HTMLElement>) => {
+      const origin = event.nativeEvent.composedPath()[0];
+      if (origin instanceof HTMLInputElement && (event.key === "Enter" || event.key === "Escape"))
+        setTimeout(finishPendingCreate, 0);
+    },
     /** The right-click menu's file items, in groups the panel places between its own. */
     menuItems: (treePath: string) => {
       if (!enabled) return { create: [], edit: [], trash: [], copiesMention: false };
