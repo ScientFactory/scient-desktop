@@ -7,11 +7,29 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 const repository = NodePath.resolve(import.meta.dirname, "../../../../..");
 const stage = NodePath.join(repository, "scripts/stage-file-exchange.ts");
+const sources = NodePath.join(repository, "native/file-exchange");
+
+/** The helper's sources as they are now: what a build next to this file came from. */
+const sourceDigest = () => {
+  const hash = NodeCrypto.createHash("sha256");
+  for (const file of [
+    stage,
+    ...NodeFS.readdirSync(sources)
+      .sort()
+      .map((name) => NodePath.join(sources, name)),
+  ]) {
+    hash.update(NodePath.basename(file));
+    hash.update(NodeFS.readFileSync(file));
+  }
+  return hash.digest("hex");
+};
+const sourcesPath = (helper: string) => NodePath.join(NodePath.dirname(helper), "sources.sha256");
 
 const helperBinary = () =>
   HostProcess.Platform.defaultValue() === "win32"
@@ -53,12 +71,15 @@ export function buildFilePublicationHelper(requested: string, probe: boolean) {
       stdio: "inherit",
     });
   } else NodeChildProcess.execFileSync(process.execPath, args, { stdio: "inherit" });
-  return NodePath.join(directory, helperBinary());
+  const helper = NodePath.join(directory, helperBinary());
+  NodeFS.writeFileSync(sourcesPath(helper), sourceDigest());
+  return helper;
 }
 
 /**
  * Whether `helper` is a build of this checkout's sources of the asked kind: its receipt
- * matches its bytes and is newer than every source file, so an old build is never reused.
+ * matches its bytes and its recorded sources match the sources as they are now, so a
+ * build of other sources (an older commit, another worktree) is never reused.
  */
 export function builtFromThisCheckout(helper: string, probe: boolean) {
   try {
@@ -66,17 +87,11 @@ export function builtFromThisCheckout(helper: string, probe: boolean) {
       return false;
     const receiptPath = NodePath.join(NodePath.dirname(helper), "publication-artifact.json");
     const receipt = JSON.parse(NodeFS.readFileSync(receiptPath, "utf8"));
-    if (
-      receipt.probe !== probe ||
-      receipt.sha256 !== publicationDigest(NodeFS.readFileSync(helper))
-    )
-      return false;
-    const sources = NodePath.join(repository, "native/file-exchange");
-    const built = NodeFS.statSync(receiptPath).mtimeMs;
-    return [
-      stage,
-      ...NodeFS.readdirSync(sources).map((name) => NodePath.join(sources, name)),
-    ].every((source) => NodeFS.statSync(source).mtimeMs <= built);
+    return (
+      receipt.probe === probe &&
+      receipt.sha256 === publicationDigest(NodeFS.readFileSync(helper)) &&
+      NodeFS.readFileSync(sourcesPath(helper), "utf8") === sourceDigest()
+    );
   } catch {
     return false;
   }
