@@ -1,6 +1,7 @@
 import { ChildProcess } from "effect/process";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export interface LocalOwnedProcessRequest {
@@ -128,11 +129,12 @@ export function makeLocalOwnedProcess(
     shell: false,
     detached: platform !== "win32",
     ...LOCAL_OWNED_PROCESS_KILL_OPTIONS,
-    // Nothing types into a run, so its input is closed: a tool that reads input after its file,
-    // as Scilab and GAP do, sees the end and exits instead of waiting for good.
+    // Nothing types into a run, so its input ends at once: a tool that reads input after its file,
+    // as Scilab and GAP do, exits instead of waiting for good. A real, empty pipe rather than none,
+    // since a Windows program such as GHC can stall without an input handle.
     stdin:
       options?.keepInputOpen === true
         ? { stream: "pipe" as const, endOnDone: false }
-        : ("ignore" as const),
+        : { stream: Stream.empty, endOnDone: true },
   });
 }
