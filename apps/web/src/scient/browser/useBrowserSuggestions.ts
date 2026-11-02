@@ -5,12 +5,11 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { browserHistoryState } from "./browserHistoryState";
+import { browserHistoryState, QUIET_HISTORY } from "./browserHistoryState";
 import { isPlainSearch, mergeSuggestions } from "./suggestionList";
 
 const TYPING_PAUSE_MS = 120;
 const MIN_LENGTH = 2;
-const QUIET = { reportFailure: false, reportDefect: false };
 
 /**
  * What to suggest for `text`. Past pages in this profile answer from this computer, so they appear
@@ -26,8 +25,8 @@ export function useBrowserSuggestions(input: {
   const { environmentId, profileId, text, active } = input;
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
   const searchesAllowed = useClientSettings((settings) => settings.browserSearchSuggestions);
-  const suggestPages = useAtomCommand(browserHistoryState.suggestPages, QUIET);
-  const suggestSearches = useAtomCommand(browserHistoryState.suggestSearches, QUIET);
+  const suggestPages = useAtomCommand(browserHistoryState.suggestPages, QUIET_HISTORY);
+  const suggestSearches = useAtomCommand(browserHistoryState.suggestSearches, QUIET_HISTORY);
 
   const trimmed = text.trim();
   const usable = active && trimmed.length >= MIN_LENGTH;
