@@ -1,6 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { GripIcon, MoreVerticalIcon, PlusIcon, SearchIcon } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 
 import { useFaviconForThreadUrl } from "~/browserFaviconStore";
 import { FaviconImage } from "~/components/preview/PreviewFaviconIcon";
@@ -20,7 +20,7 @@ import { Label } from "~/components/ui/label";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { profileDomains } from "~/scient/accounts/accountsView";
+import { profileAddressDomain, profileSignInSites } from "~/scient/accounts/accountsView";
 import { useAccounts } from "~/scient/accounts/useAccounts";
 
 import {
@@ -30,10 +30,12 @@ import {
   type HomeSite,
   parseSiteUrl,
   type Shortcut,
-  universityMoodle,
+  universitySite,
   useBrowserShortcuts,
+  useProfileShortcuts,
   visibleShortcuts,
 } from "./browserShortcuts";
+import { BrowserSuggestionInput, BrowserSuggestions } from "./BrowserSuggestions";
 
 const TILE_CLASS =
   "flex w-full flex-col items-center gap-1.5 rounded-lg p-1.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
@@ -113,12 +115,14 @@ function GoogleApps({
 function ShortcutCircle({
   threadRef,
   shortcut,
+  editable,
   onOpen,
   onEdit,
   onRemove,
 }: {
   threadRef: ScopedThreadRef;
   shortcut: Shortcut;
+  editable: boolean;
   onOpen: () => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -131,29 +135,39 @@ function ShortcutCircle({
         </span>
         <span className={TILE_LABEL_CLASS}>{shortcut.name}</span>
       </button>
-      <Menu>
-        <MenuTrigger
-          render={
-            <button
-              type="button"
-              className={SHORTCUT_MENU_CLASS}
-              aria-label={`${shortcut.name} options`}
-            />
-          }
-        >
-          <MoreVerticalIcon className="size-3.5" />
-        </MenuTrigger>
-        <MenuPopup align="start">
-          <MenuItem onClick={onEdit}>Edit</MenuItem>
-          <MenuItem onClick={onRemove}>Remove</MenuItem>
-        </MenuPopup>
-      </Menu>
+      {editable ? (
+        <Menu>
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                className={SHORTCUT_MENU_CLASS}
+                aria-label={`${shortcut.name} options`}
+              />
+            }
+          >
+            <MoreVerticalIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="start">
+            <MenuItem onClick={onEdit}>Edit</MenuItem>
+            <MenuItem onClick={onRemove}>Remove</MenuItem>
+          </MenuPopup>
+        </Menu>
+      ) : null}
     </div>
   );
 }
 
 /** Adds a shortcut, or edits `shortcut`. */
-function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onClose: () => void }) {
+function ShortcutDialog({
+  profileId,
+  shortcut,
+  onClose,
+}: {
+  profileId: string;
+  shortcut: Shortcut | null;
+  onClose: () => void;
+}) {
   const save = useBrowserShortcuts((state) => state.save);
   const [name, setName] = useState(shortcut?.name ?? "");
   const [link, setLink] = useState(shortcut?.url ?? "");
@@ -165,7 +179,7 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
       setInvalid(true);
       return;
     }
-    save(shortcut, link, name);
+    save(profileId, shortcut, link, name);
     onClose();
   };
   return (
@@ -224,10 +238,21 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
   );
 }
 
-function HomeSearch({ onSearch }: { onSearch: (query: string) => void }) {
+function HomeSearch({
+  threadRef,
+  profileId,
+  incognito,
+  onSearch,
+}: {
+  threadRef: ScopedThreadRef;
+  profileId: string;
+  incognito: boolean;
+  onSearch: (query: string) => void;
+}) {
   const [query, setQuery] = useState("");
+  const anchor = useRef<HTMLFormElement>(null);
   return (
-    <div className="flex w-full flex-col items-center gap-6 pt-6">
+    <div className="flex w-full flex-col items-center gap-7 pt-8">
       <p className="flex items-center gap-1.5 text-xl tracking-tight">
         <ScientSymbol className="size-6" />
         <span>
@@ -236,26 +261,42 @@ function HomeSearch({ onSearch }: { onSearch: (query: string) => void }) {
         </span>
       </p>
       <form
+        ref={anchor}
         role="search"
         className="w-full max-w-md"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (query.trim()) onSearch(query);
-        }}
+        onSubmit={(event) => event.preventDefault()}
       >
-        <InputGroup className="h-11 [--control-radius:9999px]">
-          <InputGroupAddon align="inline-start">
-            <SearchIcon />
-          </InputGroupAddon>
-          <InputGroupInput
-            type="search"
-            aria-label="Search or enter an address"
-            placeholder="Search or enter an address"
-            spellCheck={false}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </InputGroup>
+        <BrowserSuggestions
+          threadRef={threadRef}
+          profileId={profileId}
+          text={query}
+          active={!incognito}
+          anchor={anchor}
+          onTextChange={setQuery}
+          onPick={onSearch}
+        >
+          <InputGroup className="h-11 [--control-radius:9999px]">
+            <InputGroupAddon align="inline-start">
+              <SearchIcon />
+            </InputGroupAddon>
+            <BrowserSuggestionInput
+              render={
+                <InputGroupInput
+                  type="search"
+                  aria-label="Search or enter an address"
+                  placeholder="Search or enter an address"
+                  spellCheck={false}
+                  // The list's hidden field stops the browser submitting this form on Enter.
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                    event.preventDefault();
+                    if (query.trim()) onSearch(query);
+                  }}
+                />
+              }
+            />
+          </InputGroup>
+        </BrowserSuggestions>
       </form>
     </div>
   );
@@ -265,48 +306,56 @@ function HomeSearch({ onSearch }: { onSearch: (query: string) => void }) {
 export function BrowserHome({
   threadRef,
   profileId,
+  incognito,
   onOpenUrl,
   onSearch,
 }: {
   threadRef: ScopedThreadRef;
   profileId: string;
+  incognito: boolean;
   onOpenUrl: (url: string) => void;
   onSearch: (query: string) => void;
 }) {
   const { data } = useAccounts(threadRef.environmentId);
-  const moodle = universityMoodle(profileDomains(data, profileId));
-  const added = useBrowserShortcuts((state) => state.added);
-  const names = useBrowserShortcuts((state) => state.names);
-  const hidden = useBrowserShortcuts((state) => state.hidden);
-  const visits = useBrowserShortcuts((state) => state.visits);
+  const saved = useProfileShortcuts(profileId);
+  const university = universitySite(
+    profileAddressDomain(data, profileId),
+    profileSignInSites(data, profileId),
+    saved.visits,
+  );
+  const onTopRow = university ? [university] : [];
   const remove = useBrowserShortcuts((state) => state.remove);
   const [dialog, setDialog] = useState<{ shortcut: Shortcut | null } | null>(null);
   return (
-    <div className="flex flex-col items-center gap-5">
+    <div className="flex flex-col items-center gap-10 pb-6">
       <div className="flex flex-wrap items-center justify-center gap-1">
-        {[GMAIL, ...(moodle ? [moodle] : [])].map((site) => (
-          <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
+        {[GMAIL, ...onTopRow].map((site) => (
+          <Button key={site.url} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
             <SiteIcon threadRef={threadRef} site={site} className="size-5 object-contain" />
             {site.name}
           </Button>
         ))}
         <GoogleApps threadRef={threadRef} onOpenUrl={onOpenUrl} />
       </div>
-      <HomeSearch onSearch={onSearch} />
-      <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-1">
-        {visibleShortcuts({ added, names, hidden, visits }, moodle ? [moodle] : []).map(
-          (shortcut) => (
-            <ShortcutCircle
-              key={shortcut.url}
-              threadRef={threadRef}
-              shortcut={shortcut}
-              onOpen={() => onOpenUrl(shortcut.url)}
-              onEdit={() => setDialog({ shortcut })}
-              onRemove={() => remove(shortcut)}
-            />
-          ),
-        )}
-        {canAddShortcut(added) ? (
+      <HomeSearch
+        threadRef={threadRef}
+        profileId={profileId}
+        incognito={incognito}
+        onSearch={onSearch}
+      />
+      <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-x-1 gap-y-2">
+        {visibleShortcuts(saved, onTopRow).map((shortcut) => (
+          <ShortcutCircle
+            key={shortcut.url}
+            threadRef={threadRef}
+            shortcut={shortcut}
+            editable={!incognito}
+            onOpen={() => onOpenUrl(shortcut.url)}
+            onEdit={() => setDialog({ shortcut })}
+            onRemove={() => remove(profileId, shortcut)}
+          />
+        ))}
+        {!incognito && canAddShortcut(saved.added) ? (
           <div className="w-20">
             <button
               type="button"
@@ -322,7 +371,11 @@ export function BrowserHome({
         ) : null}
       </div>
       {dialog ? (
-        <ShortcutDialog shortcut={dialog.shortcut} onClose={() => setDialog(null)} />
+        <ShortcutDialog
+          profileId={profileId}
+          shortcut={dialog.shortcut}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
     </div>
   );

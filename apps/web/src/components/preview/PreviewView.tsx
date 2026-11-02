@@ -103,6 +103,8 @@ import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient: Google, apps and shortcuts on an empty tab.
 import { BrowserHome } from "~/scient/browser/BrowserHome";
+import { BrowserHistoryDialog } from "~/scient/browser/BrowserHistoryDialog";
+import { MenuItem } from "~/components/ui/menu";
 import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
 // SCIENT-FORK:END
 
@@ -125,6 +127,12 @@ function previewProfileName(
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
+
+// SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+function isPageLoadFailure(error: unknown) {
+  return error instanceof Error && error.message.includes("navigate.loadURL");
+}
+// SCIENT-FORK:END
 
 function ServerTabFileNotShown(props: {
   readonly threadRef: ScopedThreadRef;
@@ -253,26 +261,34 @@ export function PreviewView({
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
-  // SCIENT-FORK:START — Scient: shortcuts count what people open, never in an incognito tab.
-  const incognito =
-    browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
-    "incognito";
-  const countSiteVisit = (visited: string) => {
-    if (!incognito) recordSiteVisit(visited);
+  // SCIENT-FORK:START — Scient Browser: the History window.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient: shortcuts and Recently used skip incognito tabs.
+  const isIncognito = (profileId: string) =>
+    browserDefaults.profiles.find((profile) => profile.id === profileId)?.kind === "incognito";
+  const incognito = isIncognito(activeProfileId);
+  /** Counts a page under the profile its tab opened in. */
+  const countSiteVisit = (visited: string, profileId: string) => {
+    if (isIncognito(profileId)) return;
+    recordVisitForThread(threadRef, visited);
+    recordSiteVisit(profileId, visited);
   };
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — Scient: answers with the profile the page opened in, or null if it didn't.
   const navigateToResolvedUrl = async (resolvedUrl: string, profileId?: string) => {
     if (isServerTab && serverSurfaceRef.current) {
-      if (serverInputDisabled) return false;
+      if (serverInputDisabled) return null;
       serverSurfaceRef.current.navigate(resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      return true;
+      return activeProfileId;
     }
     if (runtimeTabId && previewBridge) {
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      return true;
+      return activeProfileId;
     }
     const result = await openPreviewSession({
       openPreview: open,
@@ -290,8 +306,11 @@ export function PreviewView({
         });
       }
     }
-    return result._tag === "Success";
+    if (result._tag !== "Success") return null;
+    // Without a profile, the tab took the site's, the conversation's or the project's.
+    return result.value.profileId ?? profileId ?? activeProfileId;
   };
+  // SCIENT-FORK:END
 
   const handleSubmitUrl = async (next: string, profileId?: string) => {
     try {
@@ -301,11 +320,12 @@ export function PreviewView({
         /^[a-z][a-z\d+.-]*:\/\//i.test(next.trim()) ? null : { url: resolved, text: next.trim() },
       );
       // SCIENT-FORK:END
-      if (await navigateToResolvedUrl(resolved, profileId)) {
-        recordVisitForThread(threadRef, resolved);
-        countSiteVisit(resolved);
-      }
+      const openedIn = await navigateToResolvedUrl(resolved, profileId);
+      if (openedIn) countSiteVisit(resolved, openedIn);
     } catch (error) {
+      // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+      if (isPageLoadFailure(error)) return;
+      // SCIENT-FORK:END
       toastManager.add({
         type: "error",
         title: "Could not open this address",
@@ -324,11 +344,12 @@ export function PreviewView({
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved, profileId)) {
-        recordVisitForThread(threadRef, next);
-        countSiteVisit(next);
-      }
+      const openedIn = await navigateToResolvedUrl(resolved, profileId);
+      if (openedIn) countSiteVisit(next, openedIn);
     } catch (error) {
+      // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+      if (isPageLoadFailure(error)) return;
+      // SCIENT-FORK:END
       toastManager.add({
         type: "error",
         title: "Could not open this address",
@@ -922,6 +943,11 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
+        // SCIENT-FORK:START — Scient Browser: suggestions as you type.
+        threadRef={threadRef}
+        profileId={activeProfileId}
+        incognito={incognito}
+        // SCIENT-FORK:END
         // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
         accountsTab={
           !isServerTab && runtimeTabId && tabId
@@ -989,23 +1015,28 @@ export function PreviewView({
             // SCIENT-FORK:START — place Open in new window and PDF export in the preview menu.
             <PreviewMoreMenu
               extraItems={
-                previewBridge && tabId ? (
-                  <>
-                    <PanelTabNewWindowItem label="Open in new Scient window" plain />
-                    <ScientPreviewExportActions
-                      disabled={
-                        pdfExportOwner === null ||
-                        isUnreachable ||
-                        loading ||
-                        (isServerTab && clientPdfUrl !== null)
-                      }
-                      pageUrl={url}
-                      tabId={tabId}
-                      runtimeTabId={runtimeTabId}
-                      threadRef={threadRef}
-                    />
-                  </>
-                ) : null
+                <>
+                  {incognito ? null : (
+                    <MenuItem onClick={() => setHistoryOpen(true)}>History</MenuItem>
+                  )}
+                  {previewBridge && tabId ? (
+                    <>
+                      <PanelTabNewWindowItem label="Open in new Scient window" plain />
+                      <ScientPreviewExportActions
+                        disabled={
+                          pdfExportOwner === null ||
+                          isUnreachable ||
+                          loading ||
+                          (isServerTab && clientPdfUrl !== null)
+                        }
+                        pageUrl={url}
+                        tabId={tabId}
+                        runtimeTabId={runtimeTabId}
+                        threadRef={threadRef}
+                      />
+                    </>
+                  ) : null}
+                </>
               }
               enabled={
                 runtimeTabId !== null &&
@@ -1109,10 +1140,12 @@ export function PreviewView({
               <BrowserHome
                 threadRef={threadRef}
                 profileId={activeProfileId}
+                incognito={incognito}
                 onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
                 onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
               />
             }
+            {...(incognito ? {} : { onShowHistory: () => setHistoryOpen(true) })}
             // SCIENT-FORK:END
           />
         ) : null}
@@ -1176,6 +1209,16 @@ export function PreviewView({
           </div>
         ) : null}
       </div>
+      {/* SCIENT-FORK:START — Scient Browser: history opens in the tab it's shown from. */}
+      {historyOpen ? (
+        <BrowserHistoryDialog
+          threadRef={threadRef}
+          profileId={activeProfileId}
+          onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
+          onClose={() => setHistoryOpen(false)}
+        />
+      ) : null}
+      {/* SCIENT-FORK:END */}
     </div>
   );
 }

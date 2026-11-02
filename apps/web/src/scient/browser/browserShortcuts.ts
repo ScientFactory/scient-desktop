@@ -1,7 +1,9 @@
+import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { isLocalLoopbackHost, normalizeHostname } from "~/browser/browserTargetResolver";
 import { resolveStorage } from "~/lib/storage";
 import { byDomain, GMAIL_URL } from "~/scient/accounts/accountsView";
@@ -25,7 +27,7 @@ interface SiteVisits {
   readonly lastVisitedAt: number;
 }
 
-interface SavedShortcuts {
+export interface SavedShortcuts {
   /** Sites the user added, in the order they added them. */
   readonly added: ReadonlyArray<string>;
   /** The names the user gave them, by address. */
@@ -35,11 +37,19 @@ interface SavedShortcuts {
   readonly visits: Readonly<Record<string, SiteVisits>>;
 }
 
-interface BrowserShortcutsState extends SavedShortcuts {
-  recordVisit: (url: string, at: number) => void;
+interface ShortcutsByProfile {
+  readonly profiles: Readonly<Record<string, SavedShortcuts>>;
+  /** Saved before each profile had its own, until the default profile takes them. */
+  readonly unclaimed: SavedShortcuts | null;
+}
+
+interface BrowserShortcutsState extends ShortcutsByProfile {
+  recordVisit: (profileId: string, url: string, at: number) => void;
   /** Adds a site, or replaces `previous`. An empty name leaves the site's own. */
-  save: (previous: Shortcut | null, link: string, name: string) => void;
-  remove: (shortcut: Shortcut) => void;
+  save: (profileId: string, previous: Shortcut | null, link: string, name: string) => void;
+  remove: (profileId: string, shortcut: Shortcut) => void;
+  forgetProfile: (profileId: string) => void;
+  claimUnclaimed: (profileId: string) => void;
 }
 
 /** Eight places, one of them the Add circle until the user has added eight of their own. */
@@ -47,6 +57,7 @@ const MAX_SHORTCUTS = 8;
 const MIN_VISITS_TO_SUGGEST = 2;
 const MAX_REMEMBERED_SITES = 100;
 const STORAGE_KEY = "scient:browser-shortcuts:v1";
+const NO_SHORTCUTS: SavedShortcuts = { added: [], names: {}, hidden: [], visits: {} };
 
 const GOOGLE: HomeSite = {
   name: "Google",
@@ -109,14 +120,68 @@ const STARTING_SITES: ReadonlyArray<HomeSite> = [
   CALENDAR,
 ];
 
-/** Each university's Moodle, by the domain of its people's addresses and sign-ins. */
-const UNIVERSITY_MOODLES: Readonly<Record<string, HomeSite>> = {
-  "huji.ac.il": { name: "Moodle", url: "https://moodle.huji.ac.il/", icon: ICONS.huji },
+const moodle = (url: string, icon: string): HomeSite => ({ name: "Moodle", url, icon });
+const REICHMAN = moodle("https://moodle.runi.ac.il/", ICONS.runi);
+
+/** Each university's learning site, by the domain of its people's addresses. */
+const UNIVERSITY_SITES: Readonly<Record<string, HomeSite>> = {
+  "huji.ac.il": moodle("https://moodle.huji.ac.il/", ICONS.huji),
+  "tau.ac.il": moodle("https://moodle.tau.ac.il/", ICONS.tau),
+  "technion.ac.il": moodle("https://moodle.technion.ac.il/", ICONS.technion),
+  "bgu.ac.il": moodle("https://moodle.bgu.ac.il/", ICONS.bgu),
+  "openu.ac.il": { name: "Opal", url: "https://opal.openu.ac.il/", icon: ICONS.openu },
+  "ariel.ac.il": moodle("https://moodle.ariel.ac.il/", ICONS.ariel),
+  "runi.ac.il": REICHMAN,
+  // Reichman was IDC Herzliya, and many still have those addresses.
+  "idc.ac.il": REICHMAN,
 };
 
-/** The Moodle of the university a profile belongs to, from `profileDomains`. */
-export function universityMoodle(domains: ReadonlyArray<string>) {
-  return byDomain(domains, UNIVERSITY_MOODLES)?.value;
+/** A site's host, without its port or the trailing dot of a fully written name. */
+function hostOf(site: string) {
+  return site
+    .replace(/^https?:\/\//i, "")
+    .split(/[/?#]/)[0]!
+    .replace(/:\d*$/, "")
+    .replace(/\.+$/, "")
+    .toLowerCase();
+}
+
+/** The last two labels of a host, or three under a country's zone such as ac.il or edu.au. */
+function organisationDomain(host: string) {
+  const labels = host.split(".");
+  const inZone =
+    labels.length > 2 &&
+    labels.at(-1)!.length === 2 &&
+    ["ac", "edu", "co", "org", "gov", "net"].includes(labels.at(-2)!);
+  return labels.slice(inZone ? -3 : -2).join(".");
+}
+
+/**
+ * The learning site of the university a profile's own address is at. A listed university has its
+ * own; for any other it's the Moodle on that university's domain the profile opens most or signs
+ * in to. Other profiles add it as a shortcut.
+ */
+export function universitySite(
+  addressDomain: string | undefined,
+  signInSites: ReadonlyArray<string>,
+  visits: SavedShortcuts["visits"],
+): HomeSite | undefined {
+  if (!addressDomain) return undefined;
+  const domain = hostOf(addressDomain);
+  const listed = byDomain([domain], UNIVERSITY_SITES);
+  if (listed) return listed.value;
+  const organisation = organisationDomain(domain);
+  const opened = Object.values(visits)
+    .filter(({ count }) => count >= MIN_VISITS_TO_SUGGEST)
+    .toSorted((a, b) => b.count - a.count)
+    .map(({ url }) => url);
+  const found = [...opened, ...signInSites]
+    .flatMap((site) => parseSiteUrl(site) ?? [])
+    .find(({ hostname }) => {
+      const host = hostOf(hostname);
+      return host.startsWith("moodle") && host.endsWith(`.${organisation}`);
+    });
+  return found ? { name: "Moodle", url: `${found.origin}/` } : undefined;
 }
 
 /** A web address, or null when the text isn't one. Chromium percent-encodes spaces in a host. */
@@ -140,7 +205,7 @@ function siteKeyOf(raw: string) {
 
 /** The first site on each host names it, so everything on docs.google.com reads as Docs. */
 const KNOWN_SITES = new Map(
-  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_MOODLES)]
+  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_SITES)]
     .flatMap((site) => {
       const key = siteKeyOf(site.url);
       return key ? [[key, site] as const] : [];
@@ -213,55 +278,127 @@ function withVisit(
   return Object.fromEntries(remembered);
 }
 
+/** Incognito keeps nothing, so a change to it changes nothing. */
+function changingProfile(
+  state: ShortcutsByProfile,
+  profileId: string,
+  change: (saved: SavedShortcuts) => SavedShortcuts,
+) {
+  if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return state;
+  const profiles = {
+    ...state.profiles,
+    [profileId]: change(state.profiles[profileId] ?? NO_SHORTCUTS),
+  };
+  return { profiles };
+}
+
+/** What a profile saved wins, so anything done before the old set arrived stays. */
+function combined(old: SavedShortcuts, saved: SavedShortcuts): SavedShortcuts {
+  return {
+    added: [...new Set([...old.added, ...saved.added])],
+    names: { ...old.names, ...saved.names },
+    hidden: [...new Set([...old.hidden, ...saved.hidden])],
+    visits: { ...old.visits, ...saved.visits },
+  };
+}
+
+/** Version 1 kept one set for every profile. */
+export function migrateShortcuts(persisted: unknown, version: number): ShortcutsByProfile {
+  return version < 2
+    ? { profiles: {}, unclaimed: { ...NO_SHORTCUTS, ...(persisted as Partial<SavedShortcuts>) } }
+    : (persisted as ShortcutsByProfile);
+}
+
 export const useBrowserShortcuts = create<BrowserShortcutsState>()(
   persist(
     (set) => ({
-      added: [],
-      names: {},
-      hidden: [],
-      visits: {},
-      recordVisit: (url, at) => set((state) => ({ visits: withVisit(state.visits, url, at) })),
-      save: (previous, link, name) =>
+      profiles: {},
+      unclaimed: null,
+      recordVisit: (profileId, url, at) =>
+        set((state) =>
+          changingProfile(state, profileId, (saved) => ({
+            ...saved,
+            visits: withVisit(saved.visits, url, at),
+          })),
+        ),
+      save: (profileId, previous, link, name) =>
         set((state) => {
           const url = parseSiteUrl(link);
           if (!url) return state;
-          const key = siteKey(url);
-          const index = previous ? state.added.indexOf(previous.url) : -1;
-          const added = index < 0 ? [...state.added, url.href] : state.added.with(index, url.href);
-          const names = withoutName(state.names, previous?.url);
-          if (name.trim()) names[url.href] = name.trim();
-          else delete names[url.href];
-          const hidden = state.hidden.filter((site) => site !== key);
-          return {
-            added: [...new Set(added)],
-            names,
-            // A suggestion moved to another site doesn't come back under its old one.
-            hidden: previous && previous.key !== key ? [...hidden, previous.key] : hidden,
-          };
+          return changingProfile(state, profileId, (saved) => {
+            const key = siteKey(url);
+            const index = previous ? saved.added.indexOf(previous.url) : -1;
+            const added =
+              index < 0 ? [...saved.added, url.href] : saved.added.with(index, url.href);
+            const names = withoutName(saved.names, previous?.url);
+            if (name.trim()) names[url.href] = name.trim();
+            else delete names[url.href];
+            const hidden = saved.hidden.filter((site) => site !== key);
+            return {
+              ...saved,
+              added: [...new Set(added)],
+              names,
+              // A suggestion moved to another site doesn't come back under its old one.
+              hidden: previous && previous.key !== key ? [...hidden, previous.key] : hidden,
+            };
+          });
         }),
-      remove: ({ url, key }) =>
+      remove: (profileId, { url, key }) =>
+        set((state) =>
+          changingProfile(state, profileId, (saved) => ({
+            ...saved,
+            added: saved.added.filter((site) => site !== url),
+            names: withoutName(saved.names, url),
+            hidden: saved.hidden.includes(key) ? saved.hidden : [...saved.hidden, key],
+          })),
+        ),
+      forgetProfile: (profileId) =>
         set((state) => ({
-          added: state.added.filter((site) => site !== url),
-          names: withoutName(state.names, url),
-          hidden: state.hidden.includes(key) ? state.hidden : [...state.hidden, key],
+          profiles: Object.fromEntries(
+            Object.entries(state.profiles).filter(([id]) => id !== profileId),
+          ),
         })),
+      claimUnclaimed: (profileId) =>
+        set((state) =>
+          state.unclaimed
+            ? {
+                unclaimed: null,
+                profiles: {
+                  ...state.profiles,
+                  [profileId]: combined(state.unclaimed, state.profiles[profileId] ?? NO_SHORTCUTS),
+                },
+              }
+            : state,
+        ),
     }),
     {
       name: STORAGE_KEY,
-      version: 1,
+      version: 2,
+      migrate: migrateShortcuts,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      partialize: ({ added, names, hidden, visits }) => ({ added, names, hidden, visits }),
+      partialize: ({ profiles, unclaimed }) => ({ profiles, unclaimed }),
     },
   ),
 );
+
+/** What a profile has saved. Incognito keeps nothing, so it always gets the starting set. */
+export function useProfileShortcuts(profileId: string) {
+  return useBrowserShortcuts((state) => state.profiles[profileId] ?? NO_SHORTCUTS);
+}
+
+if (useBrowserShortcuts.getState().unclaimed) {
+  void resolveBrowserDefaults()
+    .then(({ profileId }) => useBrowserShortcuts.getState().claimUnclaimed(profileId))
+    .catch(() => undefined);
+}
 
 if (typeof window !== "undefined")
   window.addEventListener("storage", (event) => {
     if (event.key === STORAGE_KEY) void useBrowserShortcuts.persist.rehydrate();
   });
 
-export function recordSiteVisit(url: string) {
-  useBrowserShortcuts.getState().recordVisit(url, Date.now());
+export function recordSiteVisit(profileId: string, url: string) {
+  useBrowserShortcuts.getState().recordVisit(profileId, url, Date.now());
 }

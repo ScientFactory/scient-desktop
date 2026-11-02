@@ -516,23 +516,23 @@ export function fillableAccounts(
 /** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
 export const GMAIL_URL = "https://mail.google.com/mail/";
 
-/**
- * The domains that tie a browser profile to its owner's organisations: the address it was imported
- * from, and the addresses and sites of its sign-ins.
- */
-export function profileDomains(
-  snapshot: Pick<AccountsSnapshot, "accounts" | "profiles"> | null | undefined,
+/** The domain of the address a browser profile was imported from, such as mail.huji.ac.il. */
+export function profileAddressDomain(
+  snapshot: Pick<AccountsSnapshot, "profiles"> | null | undefined,
   profileId: string,
 ) {
   const record = snapshot?.profiles.find((profile) => profile.profileId === profileId);
-  const signIns = (snapshot?.accounts ?? []).flatMap(({ details }) =>
-    details.kind === "website" && details.profileId === profileId ? [details] : [],
+  return record?.source?.email?.split("@")[1];
+}
+
+/** The sites a browser profile's saved sign-ins are for. */
+export function profileSignInSites(
+  snapshot: Pick<AccountsSnapshot, "accounts"> | null | undefined,
+  profileId: string,
+) {
+  return (snapshot?.accounts ?? []).flatMap(({ details }) =>
+    details.kind === "website" && details.profileId === profileId ? details.sites : [],
   );
-  const addresses = [record?.source?.email, ...signIns.map(({ username }) => username)];
-  return [
-    ...addresses.flatMap((address) => address?.split("@").slice(1) ?? []),
-    ...signIns.flatMap(({ sites }) => sites),
-  ];
 }
 
 /** Google knows this profile's accounts, and none of them works here any more. */

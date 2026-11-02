@@ -25,7 +25,8 @@ import {
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
-  profileDomains,
+  profileAddressDomain,
+  profileSignInSites,
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
@@ -626,13 +627,13 @@ describe("keys used by Scient", () => {
   });
 });
 
-describe("profileDomains", () => {
+describe("profileAddressDomain and profileSignInSites", () => {
   const signIn = (profileId: string, sites: string[], username?: string) =>
     ({ details: { kind: "website", profileId, sites, username } }) as never;
   const profile = (profileId: string, email?: string) =>
     ({ profileId, ...(email ? { source: { email } } : {}) }) as never;
 
-  it("reads the imported address and the profile's own sign-ins", () => {
+  it("reads the imported address's domain and the profile's own sign-ins", () => {
     const snapshot = {
       profiles: [profile("work", "a@mail.huji.ac.il")],
       accounts: [
@@ -640,12 +641,8 @@ describe("profileDomains", () => {
         signIn("work", ["moodle.huji.ac.il"]),
       ],
     };
-    expect(profileDomains(snapshot, "work")).toEqual([
-      "mail.huji.ac.il",
-      "cs.huji.ac.il",
-      "google.com",
-      "moodle.huji.ac.il",
-    ]);
+    expect(profileAddressDomain(snapshot, "work")).toBe("mail.huji.ac.il");
+    expect(profileSignInSites(snapshot, "work")).toEqual(["google.com", "moodle.huji.ac.il"]);
   });
 
   it("leaves out other profiles and passwords saved without a profile", () => {
@@ -656,11 +653,13 @@ describe("profileDomains", () => {
         { details: { kind: "website", sites: ["moodle.huji.ac.il"], username: "b" } } as never,
       ],
     };
-    expect(profileDomains(snapshot, "home")).toEqual([]);
+    expect(profileAddressDomain(snapshot, "home")).toBeUndefined();
+    expect(profileSignInSites(snapshot, "home")).toEqual([]);
   });
 
   it("has nothing to read before accounts load", () => {
-    expect(profileDomains(null, "work")).toEqual([]);
+    expect(profileAddressDomain(null, "work")).toBeUndefined();
+    expect(profileSignInSites(null, "work")).toEqual([]);
   });
 });
 
