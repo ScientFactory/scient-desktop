@@ -1,12 +1,7 @@
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, Info } from "lucide-react";
-import type { DocumentPersistenceCurrentReview } from "@scientfactory/scient-document";
+import { AlertTriangle, ChevronDown, ChevronUp, Copy } from "lucide-react";
 
-import {
-  retainedAttentionCopy,
-  retainedFileEvidence,
-} from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import { Button } from "~/components/ui/button";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import {
@@ -31,6 +26,15 @@ const UNEXPLAINED_REFRESH_FAILURE: MarkdownRefreshNoticeCopy = {
     "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
 };
 
+/** The text can always leave, whatever is stopping the save: this asks where to put a copy. */
+function saveTextCopy(relativePath: string, text: string) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  link.download = relativePath.split("/").at(-1) ?? "document.txt";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 /** Routine persistence is silent. Only an actionable episode is announced. */
 export function ScientMarkdownPersistenceNotice({
   persistence,
@@ -54,74 +58,39 @@ export function ScientMarkdownPersistenceNotice({
   const pendingInput = useSyncExternalStore(persistence.subscribe, persistence.getPendingInput);
   const titleId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
-  const [confirmation, setConfirmation] = useState<{
-    action: "local" | "disk";
-    revision: string;
-  } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [review, setReview] = useState<
-    (DocumentPersistenceCurrentReview & { readonly recoveryId: string | null }) | null
-  >(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const previousIssue = useRef<string | null>(null);
-  const issue = snapshot.attention
-    ? snapshot.attention
-    : pendingInput
-      ? "input"
-      : snapshot.currentMissing
-        ? "missing-current"
-        : snapshot.conflict
-          ? "conflict"
-          : snapshot.error
-            ? snapshot.pending
-              ? "failure"
-              : "refresh"
-            : null;
-  // A failure the server proved left the file untouched is a refusal, not an unknown outcome.
-  const attentionCopy = snapshot.attention
-    ? retainedAttentionCopy(
-        snapshot.attention === "outcome_unknown" && snapshot.publicationOutcome === "unchanged"
-          ? "mutation_unavailable"
-          : snapshot.attention,
-      )
-    : null;
-  const failed = snapshot.attention !== null || issue === "failure";
+  const issue = pendingInput
+    ? "input"
+    : snapshot.currentMissing
+      ? "missing-current"
+      : snapshot.error
+        ? snapshot.pending
+          ? "failure"
+          : "refresh"
+        : null;
+  const failed = issue === "failure";
   const plainReason = failed ? documentFailurePlainReason(snapshot.error) : null;
   const title =
-    (attentionCopy?.title ??
-      (issue === "input"
-        ? "Finish your edit in Rich"
-        : issue === "missing-current"
-          ? "This file is no longer on disk"
-          : issue === "conflict"
-            ? "This file changed on disk while you were editing"
-            : issue === "refresh"
-              ? refreshCopy.title
-              : "Couldn’t save")) + (plainReason ? `: ${plainReason}` : "");
+    (issue === "input"
+      ? "Finish your edit in Rich"
+      : issue === "missing-current"
+        ? "This file is no longer on disk"
+        : issue === "refresh"
+          ? refreshCopy.title
+          : "Couldn’t save") + (plainReason ? `: ${plainReason}` : "");
   const choices =
     issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
-  const evidence = snapshot.publicationAttention ?? retainedFileEvidence(snapshot.error);
-  const reviewRecoveryId = evidence.recoveryId;
-  const reviewUnchanged = reviewRecoveryId === null && snapshot.publicationOutcome === "unchanged";
-  const canReview = reviewRecoveryId !== null || reviewUnchanged;
-  const reviewMatches = review !== null && review.recoveryId === reviewRecoveryId;
 
   const reason =
-    snapshot.attention !== null || issue === "failure" || issue === "refresh"
-      ? documentFailureReason(snapshot.error)
-      : null;
+    issue === "failure" || issue === "refresh" ? documentFailureReason(snapshot.error) : null;
   const code = reason === null ? null : documentFailureCode(snapshot.error);
   // Technical facts stay out of the sentence and are only for bug reports.
-  const details = [
-    reason,
-    code ? `Code: ${code}` : null,
-    snapshot.attention && evidence.recoveryId ? `Recovery reference: ${evidence.recoveryId}` : null,
-    snapshot.attention && !evidence.recoveryId && snapshot.attentionMutationId
-      ? `Save reference: ${snapshot.attentionMutationId}`
-      : null,
-    reviewMatches && !review.missing ? `Disk revision: ${review.revision}` : null,
-  ].filter((line): line is string => line !== null);
+  const details = [reason, code ? `Code: ${code}` : null].filter(
+    (line): line is string => line !== null,
+  );
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Names the exact text last copied, so different details never read as copied.
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -132,31 +101,21 @@ export function ScientMarkdownPersistenceNotice({
     if (issue === previousIssue.current) return;
     previousIssue.current = issue;
     setAnnouncement(issue ? title : "");
-    setConfirmation(null);
-    setReview(null);
     setReviewError(null);
     setDetailsOpen(false);
   }, [issue, title]);
 
-  const tone = issue === "conflict" && snapshot.attention === null ? "info" : "warning";
-  const description = attentionCopy
-    ? attentionCopy.description
-    : issue === "input"
+  const description =
+    issue === "input"
       ? "It isn’t saved yet. Fix or undo it there before using Source."
       : issue === "missing-current"
         ? "Your text is still here and hasn’t been saved anywhere."
-        : confirmation?.action === "local"
-          ? "Replace the file on disk with your version? Scient checks for newer changes first."
-          : confirmation?.action === "disk"
-            ? "Use the version on disk? Your edits can be restored while this document stays open."
-            : issue === "conflict"
-              ? "Nothing was overwritten."
-              : issue === "refresh"
-                ? refreshCopy.description
-                : "Your changes are still here.";
+        : issue === "refresh"
+          ? refreshCopy.description
+          : "Your text is still here, and Scient keeps trying.";
 
   const run = (operation: () => Promise<boolean>) =>
-    createPersistenceNoticeOperation({ regionRef, setBusy, setConfirmation })(operation);
+    createPersistenceNoticeOperation({ regionRef, setBusy })(operation);
 
   return (
     <>
@@ -168,15 +127,11 @@ export function ScientMarkdownPersistenceNotice({
           ref={regionRef}
           role="region"
           aria-labelledby={titleId}
-          data-tone={tone}
+          data-tone="warning"
           className="shrink-0 border-b border-border bg-card scient-reading-micro text-foreground"
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5">
-            {tone === "info" ? (
-              <Info className="size-3.5 shrink-0 text-info" aria-hidden="true" />
-            ) : (
-              <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
-            )}
+            <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
             <p className="min-w-0 flex-1 basis-64 leading-snug">
               <span id={titleId} className="font-medium">
                 {title}.
@@ -184,75 +139,7 @@ export function ScientMarkdownPersistenceNotice({
               <span className="text-muted-foreground">{description}</span>
             </p>
             <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1.5">
-              {snapshot.attention ? (
-                <>
-                  {pendingInput && onReturnToRich ? (
-                    <Button size="xs" onClick={onReturnToRich}>
-                      Return to Rich
-                    </Button>
-                  ) : null}
-                  {canReview ? (
-                    <>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        disabled={busy || pendingInput !== null}
-                        onClick={() =>
-                          void run(async () => {
-                            // The refusal-only reference is never a backend recovery authorization.
-                            const disk = await persistence.reviewRetainedCurrent(
-                              reviewRecoveryId ?? "unchanged",
-                            );
-                            setReview(disk ? { ...disk, recoveryId: reviewRecoveryId } : null);
-                            setReviewError(
-                              disk
-                                ? null
-                                : "Couldn’t read the file on disk. Your text is still here.",
-                            );
-                            return disk !== null;
-                          })
-                        }
-                      >
-                        Show file on disk
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant={reviewMatches ? "default" : "outline"}
-                        disabled={busy || pendingInput !== null || !reviewMatches}
-                        onClick={() =>
-                          void run(async () => {
-                            const accepted = reviewUnchanged
-                              ? await persistence.reviewUnchangedRefusal(review!.revision)
-                              : await persistence.resolveRetainedAttention(
-                                  reviewRecoveryId!,
-                                  review!.revision,
-                                );
-                            if (!accepted)
-                              setReviewError(
-                                "The file on disk changed again. Show it again before continuing.",
-                              );
-                            return accepted;
-                          })
-                        }
-                      >
-                        Continue from this version
-                      </Button>
-                    </>
-                  ) : null}
-                  {evidence.retainedPaths.map((path) => (
-                    <Button
-                      key={path}
-                      size="xs"
-                      variant="outline"
-                      disabled={onOpenFile === undefined}
-                      title={path}
-                      onClick={() => onOpenFile?.(path)}
-                    >
-                      Open earlier version
-                    </Button>
-                  ))}
-                </>
-              ) : issue === "input" ? (
+              {issue === "input" ? (
                 onReturnToRich ? (
                   <Button size="xs" onClick={onReturnToRich}>
                     Return to Rich
@@ -280,60 +167,16 @@ export function ScientMarkdownPersistenceNotice({
                 >
                   Save it again
                 </Button>
-              ) : confirmation ? (
-                <>
-                  <Button
-                    size="xs"
-                    variant={confirmation.action === "local" ? "destructive" : "default"}
-                    disabled={busy}
-                    onClick={() =>
-                      void run(() =>
-                        confirmation.action === "local"
-                          ? persistence.resolveWithLocal(confirmation.revision)
-                          : persistence.resolveWithDisk(),
-                      )
-                    }
-                  >
-                    {confirmation.action === "local" ? "Replace disk version" : "Use disk version"}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => setConfirmation(null)}
-                  >
-                    Cancel
-                  </Button>
-                </>
-              ) : issue === "conflict" && snapshot.conflict ? (
-                <>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      setConfirmation({
-                        action: "local",
-                        revision: snapshot.conflict!.externalRevision,
-                      })
-                    }
-                  >
-                    Keep my edits…
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      setConfirmation({
-                        action: "disk",
-                        revision: snapshot.conflict!.externalRevision,
-                      })
-                    }
-                  >
-                    Use disk version…
-                  </Button>
-                </>
+              ) : issue === "failure" ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() =>
+                    saveTextCopy(persistence.target.relativePath, snapshot.draftSource)
+                  }
+                >
+                  Save a copy
+                </Button>
               ) : (
                 <>
                   <Button
@@ -374,24 +217,6 @@ export function ScientMarkdownPersistenceNotice({
               ) : null}
             </div>
           </div>
-          {snapshot.attention && canReview && reviewMatches ? (
-            <div className="px-3 pb-2 pl-9" role="group" aria-label="Reviewed current disk version">
-              {review.missing ? (
-                <p role="status" className="text-muted-foreground">
-                  The file is not on disk. Continuing keeps your text and doesn’t create the file.
-                </p>
-              ) : (
-                <>
-                  <p className="mb-1 text-muted-foreground">
-                    On disk now. Continuing keeps your text.
-                  </p>
-                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono">
-                    {review.source}
-                  </pre>
-                </>
-              )}
-            </div>
-          ) : null}
           {reviewError ? (
             <p className="px-3 pb-2 pl-9 text-warning-foreground" role="alert">
               {reviewError}
@@ -422,16 +247,37 @@ export function ScientMarkdownPersistenceNotice({
           ) : null}
         </div>
       ) : null}
+      {snapshot.restoredDraft ? (
+        <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
+          This is an unsaved draft from an earlier session, and the file has changed since.
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => void persistence.resolveRestoredDraft("keep")}
+          >
+            Keep my draft
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => void persistence.resolveRestoredDraft("file")}
+          >
+            Use the file
+          </Button>
+        </div>
+      ) : null}
       {snapshot.recoverySource !== null ? (
         <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          Your earlier edits can still be restored.
+          {snapshot.recoveryFromElsewhere
+            ? "This file also changed elsewhere. Your version was saved."
+            : "Your earlier edits can still be restored."}
           <Button
             size="xs"
             variant="ghost"
             disabled={pendingInput !== null}
             onClick={() => persistence.restoreRecovery()}
           >
-            Restore
+            {snapshot.recoveryFromElsewhere ? "Use the other version" : "Restore"}
           </Button>
         </div>
       ) : null}
@@ -442,11 +288,9 @@ export function ScientMarkdownPersistenceNotice({
 function createPersistenceNoticeOperation({
   regionRef,
   setBusy,
-  setConfirmation,
 }: {
   regionRef: RefObject<HTMLDivElement | null>;
   setBusy: Dispatch<SetStateAction<boolean>>;
-  setConfirmation: Dispatch<SetStateAction<{ action: "local" | "disk"; revision: string } | null>>;
 }) {
   return async (operation: () => Promise<boolean>) => {
     const focusWasInNotice = regionRef.current?.contains(document.activeElement) ?? false;
@@ -456,7 +300,6 @@ function createPersistenceNoticeOperation({
       await operation();
     } finally {
       setBusy(false);
-      setConfirmation(null);
       // Only restore focus when the user's action removed its focused control.
       if (focusWasInNotice)
         requestAnimationFrame(() => {

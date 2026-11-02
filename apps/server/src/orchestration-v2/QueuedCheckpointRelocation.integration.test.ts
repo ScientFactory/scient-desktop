@@ -29,6 +29,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 // Pause native execution to relocate before delivery; exercise the exact persisted
 // scope through the production Git baseline, capture, diff, and restore services.
@@ -38,6 +39,7 @@ const modelSelection = { instanceId, model: "test-model" };
 const database = SqlitePersistenceMemory;
 const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
 const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
   Layer.provide(
     Layer.mergeAll(
       projectsLayer,

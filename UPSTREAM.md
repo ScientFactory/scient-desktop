@@ -619,6 +619,25 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`fa31b66bbb2ae5234205a8628a78e038d917202f` is recorded in
+[the 2026-11-02 fa31b66bbb receipt](docs/internals/t3-upstream-sync-20261102-fa31b66bbb.md).
+Literal merge `7518e02f8c3e20d5460b8383179f7898bb59bd6d` has owned base
+`859c922ef4dff940c01ac1a7a2c4b5f4d69ca499` (#734) and the frozen official target as parents,
+retaining the 144 official commits after `3fd2b855c5`. Upstream's managed policy reads Scient's own
+locations and reaches Scient's analytics and new-thread Permissions menu. No migrations. Release
+remains separate.
+
+The previous committed alignment through
+`3fd2b855c5c6b9169cdfe3733b34011c1c5ed4b7` is recorded in
+[the 2026-11-01 3fd2b855c5 receipt](docs/internals/t3-upstream-sync-20261101-3fd2b855c5.md).
+Literal merge `0d9cd9f9230386269d31f16a76e7e451f60e0ec8` has owned base
+`d8074396a983fbb2637d4492877b572c7629e6b6` (#728) and the frozen official target as parents,
+retaining the 19 official commits after `955e2bfbb5`. Upstream starts the app before the login
+shell answers; Scient keeps that when cached paths exist and waits on a first launch, so provider
+checks never run on a bare PATH. Child approvals join Scient's account approvals above the
+composer. No migrations. Release remains separate.
+
+An earlier committed alignment through
 `955e2bfbb5c092c54ad795c8d379fec99702a6b5` is recorded in
 [the 2026-11-01 955e2bfbb5 receipt](docs/internals/t3-upstream-sync-20261101-955e2bfbb5.md).
 Literal merge `e4037122ba1a4eb3ed1b49205865e16324c505e7` has owned base
@@ -627,7 +646,7 @@ retaining the 161 official commits after `79f1fadfc6`. Upstream's model picker a
 join Scient's picker and saved-provider rule, and its right-to-left work joins Scient's direction
 modules. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `79f1fadfc6020b820d541ca4691d2feebb15dd1b` is recorded in
 [the 2026-10-31 79f1fadfc6 receipt](docs/internals/t3-upstream-sync-20261031-79f1fadfc6.md).
 Literal merge `5589000e86b47f1c227daa57521779cb8e93d5f9` has owned base

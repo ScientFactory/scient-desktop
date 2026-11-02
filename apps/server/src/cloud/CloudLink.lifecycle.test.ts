@@ -46,6 +46,7 @@ import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -120,6 +121,7 @@ describe("reconcileDesiredCloudLink", () => {
         CloudLink.layer.pipe(
           Layer.provideMerge(idleHttpServer),
           Layer.provide(Layer.succeed(ConnectReachability.ConnectReachability, idleReachability)),
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provideMerge(
             ServerConfigModule.layerTest("/", { prefix: "t3-cloud-reconcile-test-" }).pipe(
               Layer.provideMerge(NodeServices.layer),
@@ -244,6 +246,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
               }),
             ),
             Layer.provide(Layer.succeed(ConnectReachability.ConnectReachability, idleReachability)),
+            Layer.provide(ManagedPolicy.layerTest()),
           ),
         ),
         Effect.provideService(ServerSecretStore.ServerSecretStore, harness.store),

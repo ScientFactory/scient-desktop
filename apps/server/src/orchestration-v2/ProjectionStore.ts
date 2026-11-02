@@ -36,6 +36,7 @@ import {
   providerInstanceHistoryForShell,
   threadShellFromProjection as threadShellWithPullRequests,
   COMPLETED_ANSWER_TRIM_CHARACTERS,
+  linkCardStillAsks,
 } from "@t3tools/shared/orchestrationV2ThreadShell";
 import type {
   OrchestrationV2AppThread,
@@ -4627,6 +4628,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeContextTransferPayload, threadId)));
             const turnItems = yield* sql<PayloadRow>`
               SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} AS payload_json FROM orchestration_v2_projection_turn_items
+              -- Look up one run's items by key, not by walking the thread's whole history in ordinal order.
+              INDEXED BY orchestration_v2_projection_turn_items_run_ordinal_idx
               WHERE thread_id = ${threadId} AND run_id = ${runId} ORDER BY ordinal ASC, turn_item_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)));
             const providerSessions = yield* sql<PayloadRow>`
@@ -6688,6 +6691,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_messages message
                     WHERE message.thread_id = t.thread_id AND message.role = 'user'
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  AND NOT ${isIdleCompactionMessage("message")}
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
                   ) AS at
@@ -6968,6 +6972,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  AND NOT ${isIdleCompactionMessage("message")}
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
                   ) AS at
@@ -7167,6 +7172,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           pendingTurnItemsByThreadId,
         } = input;
         const thread = yield* decodeThreadPayload(row.payload_json);
+        const latestUserAuthoredMessageAt =
+          row.latest_user_authored_message_at === null
+            ? null
+            : DateTime.makeUnsafe(row.latest_user_authored_message_at);
         const waitingCards = [
           row.pending_secret_request_payload_json === null
             ? null
@@ -7174,7 +7183,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.pending_link_request_payload_json === null
             ? null
             : yield* decodeTurnItemPayload(row.pending_link_request_payload_json),
-        ].filter((item) => item !== null);
+        ]
+          .filter((item) => item !== null)
+          .filter(
+            (item) =>
+              item.type !== "link_request" || linkCardStillAsks(item, latestUserAuthoredMessageAt),
+          );
         let pendingRuntimeRequest =
           row.pending_request_payload_json !== null
             ? pendingRuntimeRequestSummary(
@@ -7297,10 +7311,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.latest_user_message_at === null
               ? null
               : DateTime.makeUnsafe(row.latest_user_message_at),
-          latestUserAuthoredMessageAt:
-            row.latest_user_authored_message_at === null
-              ? null
-              : DateTime.makeUnsafe(row.latest_user_authored_message_at),
+          latestUserAuthoredMessageAt,
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
           pendingBackgroundTasks,
           providerInstanceHistory: providerInstanceHistoryForShell({

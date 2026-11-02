@@ -27,6 +27,7 @@ if (jobPath !== undefined) {
       const files = yield* makeApplierFiles({
         root: job.root,
         helper: job.helper,
+        nativeSaves: true,
         retainedHooks: {
           removal: async (when, path) => {
             if (path === job.kill.path && when === job.kill.when)

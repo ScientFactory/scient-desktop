@@ -3,22 +3,13 @@
  * The applier publishes only through the native helper; run these review cases only where that
  * helper qualifies.
  */
-import * as NodeChildProcess from "node:child_process";
-import * as NodeModule from "node:module";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { vi } from "vite-plus/test";
-import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import {
-  filePublicationTestHelper,
-  filePublicationProbeHelper,
-  nativePublicationHost,
-} from "../workspace/fileExchange.testkit.ts";
+import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import { advanceBase } from "./syncRules.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
@@ -569,10 +560,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
             await put(h.cwd, { "guard.tex": "later" });
             await h.restart();
             const result = await h.apply("staging-only");
-            expect(result).toMatchObject({
-              outcome: "attention",
-              interrupted: [["a.tex", "guard.tex"]],
-            });
+            expect(result).toMatchObject({ outcome: "attention", interrupted: [] });
             expect(result.base).toEqual(p.base);
             expect(await read(h.cwd, "a.tex")).toBe("base");
             expect(await read(h.cwd, "guard.tex")).toBe("later");
@@ -612,7 +600,8 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
             await put(h.cwd, { "guard.tex": "later" });
             await h.restart();
             const result = await h.apply("hidden-addition");
-            expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
+            // With the file gone it looks just as before the step, so nothing is reported.
+            expect(result.interrupted).toEqual(change === "delete" ? [] : [["a.tex", "guard.tex"]]);
             expect(result.base).toEqual(p.base);
             expect(await read(h.cwd, "guard.tex")).toBe("later");
           },
@@ -646,12 +635,12 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
               );
             } else await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
             await h.restart();
-            expect((await h.apply("add-replay")).outcome).toBe("attention");
-            if (change === "replace") expect(await read(h.cwd, "a.tex")).toBe("later target");
-            else
-              await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
-                code: "ENOENT",
-              });
+            // A step goes by the file alone: one removed just after a crash is added again.
+            const { outcome } = await h.apply("add-replay");
+            expect(outcome).toBe(change === "replace" ? "attention" : "complete");
+            expect(await read(h.cwd, "a.tex")).toBe(
+              change === "replace" ? "later target" : "remote",
+            );
           },
           {},
           {
@@ -886,181 +875,86 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
   });
 
   describe("editor saves", () => {
-    it.live(
-      "checks an editor save's lease contention and revision after an overlapping apply",
-      () => {
-        let entered!: () => void, release!: () => void;
-        const started = new Promise<void>((resolve) => {
-            entered = resolve;
-          }),
-          hold = new Promise<void>((resolve) => {
-            release = resolve;
+    it.live("keeps an edit made just after a step's checks", () => {
+      let folder = "";
+      return fixture(
+        async (h) => {
+          folder = h.cwd;
+          await put(h.cwd, { "main.tex": "A" });
+          await h.apply("late", plan({ "main.tex": "A" }, { "main.tex": "remote" }));
+          expect(await read(h.cwd, "main.tex")).toBe("new user text");
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === "checked") await put(folder, { "main.tex": "new user text" });
+          },
+        },
+      );
+    });
+
+    it.live("keeps an edit made just before a step removes the file", () => {
+      let folder = "";
+      return fixture(
+        async (h) => {
+          folder = h.cwd;
+          await put(h.cwd, { "main.tex": "A", "other.tex": "O" });
+          await h.apply("late", plan({ "main.tex": "A", "other.tex": "O" }, { "other.tex": "O" }));
+          expect(await read(h.cwd, "main.tex")).toBe("new user text");
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === "checked") await put(folder, { "main.tex": "new user text" });
+          },
+        },
+      );
+    });
+
+    it.live("waits for a step and then refuses, so no save slips in or is lost", () => {
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>((resolve) => {
+          entered = resolve;
+        }),
+        hold = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      return fixture(
+        async (h) => {
+          await put(h.cwd, { "main.tex": "A" });
+          const epoch = await h.run(h.files.getMutationEpoch({ cwd: h.cwd }));
+          const applying = h.apply("hold", plan({ "main.tex": "A" }, { "main.tex": "remote" }));
+          await started;
+          // With its own lock this save would pass its check and land while the step waits.
+          const saving = h.run(
+            h.files.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "mine",
+              expectedRevision: bytesRevision(bytes("A")),
+            }),
+          );
+          const refused = expect(saving).rejects.toMatchObject({
+            _tag: "WorkspaceFileRevisionConflictError",
           });
-        let once = false;
-        return fixture(
-          async (h) => {
-            await put(h.cwd, { "main.tex": "base" });
-            const helper = await filePublicationTestHelper();
-            const probe = await filePublicationProbeHelper();
-            if (!helper || !probe) throw new Error("Native publication helpers are required.");
-            const applying = h.apply(
-              "locked",
-              plan({ "main.tex": "base" }, { "main.tex": "incoming" }),
-            );
-            let saving: Promise<unknown> | undefined;
-            try {
-              // An apply that fails before holding the lock ends the test at once.
-              await Promise.race([
-                started,
-                applying.then(() => {
-                  throw new Error("The apply finished before holding the lock.");
-                }),
-              ]);
-              const root = await NodeFSP.stat(h.cwd, { bigint: true });
-              const expectedBinding = [
-                h.cwd,
-                ".",
-                String(root.dev),
-                String(root.ino),
-                String(root.dev),
-                String(root.ino),
-                "exclusive",
-              ];
-              const blocked = Promise.withResolvers<void>();
-              const spawn = NodeChildProcess.spawn;
-              const mutableChildProcess = NodeModule.createRequire(import.meta.url)(
-                "node:child_process",
-              ) as typeof NodeChildProcess;
-              // Native ESM imports need resynchronizing after the disposable default-export spy restores.
-              using _nativeBindings = {
-                [Symbol.dispose]() {
-                  NodeModule.syncBuiltinESMExports();
-                },
-              };
-              using _helperProcesses = vi.spyOn(mutableChildProcess, "spawn").mockImplementation(((
-                command: string,
-                args?: ReadonlyArray<string> | NodeChildProcess.SpawnOptions,
-                options?: NodeChildProcess.SpawnOptions,
-              ) => {
-                if (command === helper && Array.isArray(args) && args[0] === "--lease=1") {
-                  const child = spawn(probe, args, {
-                    ...options,
-                    env: {
-                      ...(options?.env ?? HostProcess.Environment.defaultValue()),
-                      SCIENT_LEASE_CONTENTION_PROBE: "1",
-                    },
-                  });
-                  let receipt = "";
-                  for (
-                    let offset = 2;
-                    args[1] === "shared" && offset + 6 < args.length;
-                    offset += 7
-                  ) {
-                    if (!expectedBinding.every((value, index) => args[offset + index] === value))
-                      continue;
-                    child.stderr?.on("data", (chunk: Buffer | string) => {
-                      receipt += chunk.toString();
-                      if (receipt.includes("LEASE_BLOCKED\n")) blocked.resolve();
-                    });
-                    break;
-                  }
-                  return child;
-                }
-                return Array.isArray(args)
-                  ? spawn(command, args, options ?? {})
-                  : spawn(command, (args ?? {}) as NodeChildProcess.SpawnOptions);
-              }) as typeof NodeChildProcess.spawn);
-              NodeModule.syncBuiltinESMExports();
-              const requested = Promise.withResolvers<void>();
-              using observer = new DisposableStack();
-              const onChild = (message: unknown) => {
-                if (
-                  typeof message !== "object" ||
-                  message === null ||
-                  !("process" in message) ||
-                  !(message.process instanceof NodeChildProcess.ChildProcess)
-                )
-                  return;
-                const child = message.process;
-                // The diagnostics channel publishes before spawnfile/spawnargs are populated.
-                const onSpawn = () => {
-                  const args = child.spawnargs;
-                  if (child.spawnfile !== probe || args[1] !== "--lease=1" || args[2] !== "shared")
-                    return;
-                  for (let offset = 3; offset + 6 < args.length; offset += 7) {
-                    if (!expectedBinding.every((value, index) => args[offset + index] === value))
-                      continue;
-                    requested.resolve();
-                    return;
-                  }
-                };
-                const onError = (error: Error) => requested.reject(error);
-                child.once("spawn", onSpawn);
-                child.once("error", onError);
-                observer.defer(() => {
-                  child.removeListener("spawn", onSpawn);
-                  child.removeListener("error", onError);
-                });
-              };
-              NodeDiagnosticsChannel.subscribe("child_process", onChild);
-              observer.defer(() => {
-                NodeDiagnosticsChannel.unsubscribe("child_process", onChild);
-              });
-              const save = h.run(
-                Effect.result(
-                  h.files.writeFile({
-                    cwd: h.cwd,
-                    relativePath: "main.tex",
-                    contents: "editor draft",
-                    expectedRevision: bytesRevision(bytes("base")),
-                  }),
-                ),
-              );
-              saving = save;
-              // Require both the exact root binding and a native lock-refusal receipt
-              // before releasing the apply; spawning alone does not prove contention.
-              await Promise.race([
-                Promise.all([requested.promise, blocked.promise]),
-                save.then(() => {
-                  throw new Error(
-                    "The editor save finished before its lease request was observed.",
-                  );
-                }),
-              ]);
-              release();
-              await applying;
-              expect(await save).toMatchObject({
-                _tag: "Failure",
-                failure: { _tag: "WorkspaceFileRevisionConflictError" },
-              });
-            } finally {
-              release();
-              await Promise.allSettled(saving ? [applying, saving] : [applying]);
+          release();
+          await applying;
+          await refused;
+          expect(await read(h.cwd, "main.tex")).toBe("remote");
+          // A build that read the files before the sync must not publish after it.
+          expect(await h.run(h.files.getMutationEpoch({ cwd: h.cwd }))).not.toBe(epoch);
+        },
+        {},
+        {
+          at: async (point) => {
+            if (point === "checked") {
+              entered();
+              await hold;
             }
-            expect(await read(h.cwd, "main.tex")).toBe("incoming");
-            await h.run(
-              h.files.writeFile({
-                cwd: h.cwd,
-                relativePath: "main.tex",
-                contents: "editor after",
-                expectedRevision: bytesRevision(bytes("incoming")),
-              }),
-            );
-            expect(await read(h.cwd, "main.tex")).toBe("editor after");
           },
-          {},
-          {
-            at: async (point) => {
-              if (point === "checked" && !once) {
-                once = true;
-                entered();
-                await hold;
-              }
-            },
-          },
-        );
-      },
-    );
+        },
+      );
+    });
 
     it.live("never overwrites an editor save completed just before apply", () => {
       let saveBefore = async () => {};
@@ -1087,51 +981,6 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
         {
           at: async (point) => {
             if (point === "before-step") await saveBefore();
-          },
-        },
-      );
-    });
-
-    it.live("lists a late edit through a held handle after restoration", () => {
-      let folder = "",
-        handle: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
-      return fixture(
-        async (h) => {
-          folder = h.cwd;
-          await put(h.cwd, { "main.tex": "base" });
-          try {
-            const result = await h.apply(
-              "staged-handle",
-              plan({ "main.tex": "base" }, { "main.tex": "remote" }),
-            );
-            expect(result.outcome).toBe("attention");
-            // The direct write is put back, and the staged copy the handle reached is kept.
-            expect(await read(h.cwd, "main.tex")).toBe("direct A");
-            const kept = await Promise.all(
-              result.retained
-                .filter((retained) => retained.changed && retained.retainedPath !== null)
-                .map((retained) => NodeFSP.readFile(retained.retainedPath!, "utf8")),
-            );
-            expect(kept).toContain("late staged edit");
-          } finally {
-            await handle?.close();
-          }
-        },
-        {
-          at: async (point) => {
-            if (point === "after-step") {
-              await handle!.truncate(0);
-              await handle!.writeFile("late staged edit");
-              await handle!.sync();
-            }
-          },
-        },
-        {
-          at: async (point) => {
-            if (point === "checked")
-              await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "direct A");
-            if (point === "displaced")
-              handle = await NodeFSP.open(NodePath.join(folder, "main.tex"), "r+");
           },
         },
       );

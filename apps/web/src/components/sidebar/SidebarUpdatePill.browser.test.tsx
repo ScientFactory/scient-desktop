@@ -1,6 +1,6 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
@@ -130,8 +130,19 @@ describe("SidebarUpdatePill release notes", () => {
     await userEvent.tab();
     expect(releaseNotes()).toBeNull();
 
-    await publish(nightlyUpdate(RELEASE_NOTES));
-    await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
+    await publish(
+      nightlyUpdate([
+        {
+          version: "0.0.50-nightly.2",
+          items: ["**One-time tasks.** Pick a date."],
+          totalItems: 1,
+          stats: "3 changes from 2 contributors",
+          footer: "Plus 2 more bug fixes.",
+        },
+      ]),
+    );
+    await expect.element(page.getByText("One-time tasks.", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Plus 2 more bug fixes.")).toBeVisible();
   });
 });
 

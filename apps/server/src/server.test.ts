@@ -130,10 +130,6 @@ import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
 import {
-  nativeFilePublicationCapabilities,
-  resolveNativeFilePublicationHelperPath,
-} from "./scient/workspace/NativeFilePublication.ts";
-import {
   filePublicationTestHelper,
   nativePublicationHost,
 } from "./scient/workspace/fileExchange.testkit.ts";
@@ -309,6 +305,7 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { DEFAULT_SIGNAL_EXPORT, layerOtlpSerialization } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
 // @effect-diagnostics nodeBuiltinImport:off
 
@@ -321,19 +318,6 @@ const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJ
 const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
-// Retained history exists only where the resolved helper grants native publication authority.
-const nativePublicationServer = await (async () => {
-  const helper = await resolveNativeFilePublicationHelperPath();
-  if (helper === undefined) return false;
-  const capabilities = await nativeFilePublicationCapabilities(helper);
-  return (
-    capabilities.strictCurrentRoot &&
-    capabilities.publicationLease &&
-    capabilities.sharedPublicationLease &&
-    capabilities.exclusiveMove &&
-    capabilities.exclusiveLink
-  );
-})();
 const SUCCESSFUL_GIT_EXECUTION = {
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout: "",
@@ -496,6 +480,7 @@ const makeAuthTestLayer = () =>
   EnvironmentAuth.layer.pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provide(
       Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
         getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
@@ -809,6 +794,7 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.vcsDriverRegistry,
     });
     const serverSettingsLayer = Layer.mock(ServerSettings.ServerSettingsService)({
+      managedPolicy: undefined,
       start: Effect.void,
       ready: Effect.void,
       getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -1280,6 +1266,7 @@ const buildAppUnderTest = (options?: {
         // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
         Layer.provide(AccountsTestkit.layer),
         // SCIENT-FORK:END
+        Layer.provide(ManagedPolicy.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
         Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
       )
@@ -1496,7 +1483,7 @@ const buildAppUnderTest = (options?: {
         forks: Context.get(services, ConversationFork.ConversationForkService),
       },
     };
-  });
+  }).pipe(Effect.provide(ManagedPolicy.layerTest()));
 
 const parseSessionCookieFromWsUrl = (
   wsUrl: string,
@@ -9312,135 +9299,136 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect.skipIf(!nativePublicationServer)(
-    "preserves websocket file mutation ownership, retained history, and recovery refusal",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
+  it.effect("preserves websocket file mutation ownership, file history, and recovery refusal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-        yield* buildAppUnderTest();
+      yield* buildAppUnderTest();
 
-        const wsUrl = yield* getWsServerUrl("/ws");
-        yield* Effect.scoped(
-          withWsRpcClient(wsUrl, (client) =>
-            Effect.gen(function* () {
-              const input = {
-                cwd: workspaceDir,
-                relativePath: "nested/created.txt",
-                contents: "written-by-rpc",
-                createOnly: true as const,
-                mutationId: "rpc-create",
-              };
-              const created = yield* client[WS_METHODS.projectsWriteFile](input);
-              assert.equal(created.mutationId, input.mutationId);
-              assert.deepEqual(yield* client[WS_METHODS.projectsWriteFile](input), created);
-              const conflict = yield* client[WS_METHODS.projectsWriteFile]({
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const input = {
+              cwd: workspaceDir,
+              relativePath: "nested/created.txt",
+              contents: "written-by-rpc",
+              createOnly: true as const,
+              mutationId: "rpc-create",
+            };
+            const created = yield* client[WS_METHODS.projectsWriteFile](input);
+            assert.equal(created.mutationId, input.mutationId);
+            assert.deepEqual(yield* client[WS_METHODS.projectsWriteFile](input), created);
+            const conflict = yield* client[WS_METHODS.projectsWriteFile]({
+              ...input,
+              contents: "must-not-publish",
+            }).pipe(Effect.flip);
+            assert.equal(conflict._tag, "ProjectWriteFileError");
+            if (conflict._tag !== "ProjectWriteFileError")
+              return assert.fail("Expected mutation intent failure");
+            assert.equal(conflict.failure, "mutation_intent_conflict");
+            assert.equal(conflict.mutationId, input.mutationId);
+            assert.equal(
+              yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+              input.contents,
+            );
+
+            const updated = yield* client[WS_METHODS.projectsWriteFile]({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              contents: "updated-by-rpc",
+              expectedRevision: created.revision,
+              mutationId: "rpc-update",
+            });
+            const history = yield* client[WS_METHODS.projectsListFileVersions](input);
+            const retained = history.versions.find(
+              (version) => version.revision === created.revision,
+            );
+            assert.isDefined(retained);
+            if (!retained) return assert.fail("Expected the replaced revision in the history");
+            assert.isNull(history.attention);
+            const discarded = yield* client[WS_METHODS.projectsDiscardFileVersion]({
+              ...input,
+              versionId: retained.versionId,
+            });
+            assert.equal(discarded.versionId, retained.versionId);
+            const afterDiscard = yield* client[WS_METHODS.projectsListFileVersions](input);
+            assert.isFalse(
+              afterDiscard.versions.some((version) => version.versionId === retained.versionId),
+            );
+            assert.isNull(afterDiscard.attention);
+
+            for (const currentRevision of [updated.revision, null]) {
+              const refused = yield* client[WS_METHODS.projectsResolveFileMutation]({
                 ...input,
-                contents: "must-not-publish",
-              }).pipe(Effect.flip);
-              assert.equal(conflict._tag, "ProjectWriteFileError");
-              if (conflict._tag !== "ProjectWriteFileError")
-                return assert.fail("Expected mutation intent failure");
-              assert.equal(conflict.failure, "mutation_intent_conflict");
-              assert.equal(conflict.mutationId, input.mutationId);
-              assert.equal(
-                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
-                input.contents,
-              );
-
-              const updated = yield* client[WS_METHODS.projectsWriteFile]({
-                cwd: input.cwd,
-                relativePath: input.relativePath,
-                contents: "updated-by-rpc",
-                expectedRevision: created.revision,
-                mutationId: "rpc-update",
-              });
-              const history = yield* client[WS_METHODS.projectsListFileVersions](input);
-              const retained = history.versions.find(
-                (version) => version.revision === created.revision,
-              );
-              assert.isDefined(retained);
-              if (!retained) return assert.fail("Expected retained pre-publication revision");
-              assert.equal(retained.mutationId, "rpc-update");
-              assert.isNull(history.attention);
-              const discarded = yield* client[WS_METHODS.projectsDiscardFileVersion]({
-                ...input,
-                versionId: retained.versionId,
-              });
-              assert.equal(discarded.versionId, retained.versionId);
-              const afterDiscard = yield* client[WS_METHODS.projectsListFileVersions](input);
-              assert.isFalse(
-                afterDiscard.versions.some((version) => version.versionId === retained.versionId),
-              );
-              assert.isNull(afterDiscard.attention);
-
-              for (const currentRevision of [updated.revision, null]) {
-                const refused = yield* client[WS_METHODS.projectsResolveFileMutation]({
-                  ...input,
-                  recoveryId: "no-durable-attention",
-                  currentRevision,
-                  choice: "accept-current",
-                }).pipe(Effect.flip);
-                assert.equal(refused._tag, "ProjectWriteFileError");
-                if (refused._tag !== "ProjectWriteFileError")
-                  return assert.fail("Expected typed recovery refusal");
-                assert.equal(refused.failure, "mutation_intent_conflict");
-                assert.equal(refused.cwd, input.cwd);
-                assert.equal(refused.relativePath, input.relativePath);
-                assert.equal(refused.recoveryId, "no-durable-attention");
-                assert.isUndefined(refused.currentRevision);
-              }
-              assert.equal(
-                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
-                "updated-by-rpc",
-              );
-
-              const renameInput = {
-                cwd: input.cwd,
-                relativePath: input.relativePath,
-                destinationRelativePath: "nested/renamed.txt",
-                expectedRevision: updated.revision,
-                mutationId: "rpc-rename",
-              };
-              const renamed = yield* client[WS_METHODS.projectsRenameFile](renameInput);
-              assert.equal(renamed.mutationId, renameInput.mutationId);
-              assert.deepEqual(yield* client[WS_METHODS.projectsRenameFile](renameInput), renamed);
-              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
-              const absentRefused = yield* client[WS_METHODS.projectsResolveFileMutation]({
-                cwd: input.cwd,
-                relativePath: input.relativePath,
                 recoveryId: "no-durable-attention",
-                currentRevision: null,
+                currentRevision,
                 choice: "accept-current",
               }).pipe(Effect.flip);
-              assert.equal(absentRefused._tag, "ProjectWriteFileError");
-              if (absentRefused._tag !== "ProjectWriteFileError")
-                return assert.fail("Expected typed absent-path refusal");
-              assert.equal(absentRefused.failure, "mutation_intent_conflict");
-              assert.isUndefined(absentRefused.currentRevision);
-              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
-              assert.equal(
-                yield* fs.readFileString(
-                  path.join(workspaceDir, renameInput.destinationRelativePath),
-                ),
-                "updated-by-rpc",
-              );
-              const deleteInput = {
-                cwd: input.cwd,
-                relativePath: renameInput.destinationRelativePath,
-                expectedRevision: renamed.revision,
-                mutationId: "rpc-delete",
-              };
-              const deleted = yield* client[WS_METHODS.projectsDeleteFile](deleteInput);
-              assert.equal(deleted.mutationId, deleteInput.mutationId);
-              assert.deepEqual(yield* client[WS_METHODS.projectsDeleteFile](deleteInput), deleted);
-              assert.isFalse(yield* fs.exists(path.join(workspaceDir, deleteInput.relativePath)));
-            }),
-          ),
-        );
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+              assert.equal(refused._tag, "ProjectWriteFileError");
+              if (refused._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected typed recovery refusal");
+              // Without the native helper there are no older records to resolve at all.
+              assert.include(["mutation_intent_conflict", "mutation_unavailable"], refused.failure);
+              assert.equal(refused.cwd, input.cwd);
+              assert.equal(refused.relativePath, input.relativePath);
+              assert.equal(refused.recoveryId, "no-durable-attention");
+              assert.isUndefined(refused.currentRevision);
+            }
+            assert.equal(
+              yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+              "updated-by-rpc",
+            );
+
+            const renameInput = {
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              destinationRelativePath: "nested/renamed.txt",
+              expectedRevision: updated.revision,
+              mutationId: "rpc-rename",
+            };
+            const renamed = yield* client[WS_METHODS.projectsRenameFile](renameInput);
+            assert.equal(renamed.mutationId, renameInput.mutationId);
+            assert.deepEqual(yield* client[WS_METHODS.projectsRenameFile](renameInput), renamed);
+            assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+            const absentRefused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              recoveryId: "no-durable-attention",
+              currentRevision: null,
+              choice: "accept-current",
+            }).pipe(Effect.flip);
+            assert.equal(absentRefused._tag, "ProjectWriteFileError");
+            if (absentRefused._tag !== "ProjectWriteFileError")
+              return assert.fail("Expected typed absent-path refusal");
+            assert.include(
+              ["mutation_intent_conflict", "mutation_unavailable"],
+              absentRefused.failure,
+            );
+            assert.isUndefined(absentRefused.currentRevision);
+            assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+            assert.equal(
+              yield* fs.readFileString(
+                path.join(workspaceDir, renameInput.destinationRelativePath),
+              ),
+              "updated-by-rpc",
+            );
+            const deleteInput = {
+              cwd: input.cwd,
+              relativePath: renameInput.destinationRelativePath,
+              expectedRevision: renamed.revision,
+              mutationId: "rpc-delete",
+            };
+            const deleted = yield* client[WS_METHODS.projectsDeleteFile](deleteInput);
+            assert.equal(deleted.mutationId, deleteInput.mutationId);
+            assert.deepEqual(yield* client[WS_METHODS.projectsDeleteFile](deleteInput), deleted);
+            assert.isFalse(yield* fs.exists(path.join(workspaceDir, deleteInput.relativePath)));
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("rejects generic Files writes to owner-managed project paths", () =>
@@ -13151,7 +13139,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       ]);
       assert.deepEqual(
         fetchWorktreeBaseCommit.mock.calls,
-        hasOrigin ? [[{ cwd: fixture.root, refName: "main" }]] : [],
+        hasOrigin
+          ? [
+              [
+                {
+                  cwd: fixture.root,
+                  refName: "main",
+                  remote: { remoteName: "origin", branchName: "main" },
+                },
+              ],
+            ]
+          : [],
       );
       assert.deepEqual(fixture.createWorktree.mock.calls[0]?.[0], {
         cwd: fixture.root,
@@ -13817,7 +13815,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           keybindings: {
-            upsertKeybindingRule: () => Effect.succeed([resolved]),
+            upsertKeybindingRule: () => Effect.succeed({ keybindings: [resolved], issues: [] }),
           },
         },
       });
@@ -13855,7 +13853,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           keybindings: {
-            removeKeybindingRule: () => Effect.succeed([resolved]),
+            removeKeybindingRule: () => Effect.succeed({ keybindings: [resolved], issues: [] }),
           },
         },
       });

@@ -384,6 +384,9 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
   }
   if (record.phase === "done") return record.outcome !== "skipped";
   if (record.phase === "preparing") return false;
+  // A plain step has no evidence beside the file itself.
+  if (record.version === 2 && record.binding === null)
+    return (await fileRevision(record.target)) !== record.expected;
   if ("originalSecurity" in record) {
     if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
     const target = await fileIdentity(record.destination ?? record.target);

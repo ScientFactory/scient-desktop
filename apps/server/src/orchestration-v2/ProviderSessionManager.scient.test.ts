@@ -267,6 +267,7 @@ it.effect.each(
               assert.isFalse(opening.configureMcp);
               assert.isUndefined(
                 codexThreadRuntimeParams({
+                  threadId: null,
                   mcpSession:
                     opening.configureMcp === false
                       ? undefined
@@ -360,6 +361,7 @@ it.effect.each(
                 // Actual native Codex prepare parameters must not inherit the live peer's MCP channel.
                 assert.isFalse(opening.configureMcp);
                 const native = codexThreadRuntimeParams({
+                  threadId: null,
                   mcpSession:
                     opening.configureMcp === false
                       ? undefined

@@ -1,80 +1,92 @@
 # Saving workspace files
 
+A save lands or goes again. Nothing about a failed save stops the next one, and
+the editor never locks.
+
 Workspace mutations live in
-`apps/server/src/scient/workspace/WorkspaceFileMutations.ts`. When the service
-is created it asks the native helper (`native/file-exchange`) what it can do and
-chooses one of two modes for the host.
+`apps/server/src/scient/workspace/WorkspaceFileMutations.ts`. Saves, creates,
+renames, deletes and Overleaf's file writes are plain on every host. The native
+helper (`native/file-exchange`) only finishes what an older build left unfinished,
+and is removed after one release.
 
-**Native publication.** Requires strict current-root authority, publication
-leases including shared ancestor leases, and exclusive move and link. macOS
-qualifies. Saves, creates, renames and deletes keep the previous version and a
-durable record, so an interrupted operation can be recovered and reviewed. A
-save also needs one-step replacement (`atomicExchange`) and a new file one-step
-complete creation (`atomicCreateMetadata`); where a volume lacks these (creating
-on a macOS volume without clone support), that one operation is published
-plainly under the same leases and checks.
+## A save
 
-**Plain host.** Used when any of those primitives is missing: Windows (no shared
-leases, no one-step replace or create), Linux (no strict current-root
-authority), or no helper at all. Mutations, settled reads, epoch reads and
-publication fences own their workspace root in this process, like native root
-leases (`main` locked per file): work on overlapping roots runs one at a time,
-unrelated roots run independently, and a waiter is held back only by active
-overlapping work, so a held callback can always take an unrelated root (it must
-not wait for its own). A request cancelled while it waits never runs. After the
-wait each mutation resolves its path again and refuses one that now resolves
-elsewhere (`target_changed`). No earlier versions are kept; version history is
-empty and Overleaf retention reports that it needs native publication.
+1. **Keep a copy.** What the save replaces goes to the file history
+   (`scient/workspace/FileHistory.ts`, under the server's `file-history` folder,
+   shown in the file's version menu). Each copy is named for the bytes it holds.
+   Scient's own autosaves are kept five minutes apart. Text Scient didn't write is
+   only replaced once its copy is safe; if that copy fails, or the file is over the
+   history's 1 GiB limit, the save reports failure and the file stays as it is.
+2. **Write.** A temporary file next to the target is flushed, then renamed over it.
+   The revision is checked right before every rename attempt, and Windows retries a
+   rename another program briefly holds. A new file is hard-linked into place, never
+   replacing one. On volumes without hard links the name is created exclusively and
+   written in place.
+3. **If it can't be replaced**, because a program holds it, the folder refuses new
+   files, or it has other hard links: the bytes go through the file's own handle.
+   That needs a copy in the history first, and the handle must still be the admitted
+   file. A failed write puts the earlier bytes back.
+4. **Read back.** If the bytes are already on disk the save counts as done, which also
+   settles a save whose answer was lost.
 
-Plain publication, in either mode:
+A stale revision is refused and leaves the file untouched (`revision_conflict`). Any
+failure that left the target as before is reported as `"unchanged"`, with the system's
+error code. Every mutation advances the workspace mutation epoch, so build fences and
+PDF exports captured earlier refuse.
 
-- Writes a temporary file next to the target and flushes it, then checks the
-  folder and the guarded revision again and renames the file over the target
-  (Windows retries a rename refused because another program briefly holds the
-  file). A new file is hard-linked into place, never replacing one. On volumes
-  without hard links (including Windows exFAT, which reports `EISDIR`) the name
-  is created exclusively and written in place: it can never replace another
-  file, but a reader may briefly see it incomplete, and an interrupted write can
-  leave it incomplete. Permissions of an existing file are kept.
-- Refuses a stale revision and leaves the file untouched (`revision_conflict`).
-- Converges a lost reply: if the requested bytes are already on disk the save
-  succeeds without writing. A retry with the same mutation id in the same server
-  run replays its receipt; reusing the id for different bytes is refused, also
-  across the plain and native paths.
-- Reports a failure that left the target exactly as before, including a refused
-  read of the current file during admission, as an `"unchanged"` publication
-  outcome with the operating system's error code. If the rename or
-  link call fails it re-reads the target: the requested bytes count as done, the
-  previous bytes as unchanged, anything else stays unknown.
-- Advances the workspace mutation epoch before its rename, so build fences and
-  PDF exports captured earlier refuse. One count covers every root, including
-  nested ones. The count is kept in memory for the process run and shared by
-  every service instance. A plain host always names the run in its epochs, so no
-  epoch from an earlier run is accepted after a restart, and an open LaTeX PDF is
-  rebuilt once after each restart. A native host names the run only once it has
-  published plainly, so its epochs stay stable across restarts. Builds and
-  exports also re-check source contents.
+Mutations, settled reads, epoch reads and publication fences own their workspace root
+in this process: work on overlapping roots runs one at a time, and a request cancelled
+while it waits never runs. A read refuses to answer for a folder replaced while it ran.
 
-Plain moves link the file to its new name (never replacing one), confirm the new
-name holds the same file with the inspected bytes, then remove the old name; if
-that fails the new name is removed again, but only while it is still the link
-this move created. Plain moves need hard links, as on `main`. A mutation id a
-plain operation is using cannot be used for a different intent meanwhile, and a
-later native move or delete cannot reuse one a plain publication has answered. Plain deletes check the current revision first. Both can remove folders
-they leave empty.
+A rename takes the file's history along. A delete keeps a copy.
 
-Plain publication cannot stop another program from changing the file between
-the final check and the rename, and cannot pin folders against being swapped
-while it works. These are the guarantees `main` had; native publication is what
-removes them.
+## In the editor
 
-## What the user sees
+`packages/scient-document/src/persistenceCoordinator.ts` owns this. There is no
+"unknown" or "review" state.
 
-Routine saves are silent. A failure the server proved left the file unchanged
-retries after 0.25, 1 and 3 seconds (the LaTeX file status reads "Retrying…"),
-then the document shows a one-line notice (`ScientMarkdownPersistenceNotice`,
-shared by Markdown and LaTeX): "Couldn't save: the disk is full. Your changes are
-still here." with **Try again** and **Details** (raw error, code and references,
-with **Copy details**). Outcomes that need checking keep their review actions
-with plain labels: **Show file on disk**, **Continue from this version**, **Open
-earlier version**.
+- A failed save goes again after 0.25, 1, 3, 10, then every 30 seconds, for as long
+  as it takes. Saving by hand doesn't wait out the delay. Before going again over
+  newer typing or an undo it reads what landed, so undone text is never sent.
+- Brief holds stay out of sight. A failure that lasts, or isn't transient, shows one
+  notice (`ScientMarkdownPersistenceNotice`, shared by Markdown and LaTeX) with the
+  real reason and **Save a copy**.
+- A change elsewhere merges if it can. If it can't, the person's text is saved, the
+  other version goes to the history, and a small line offers **Use the other
+  version**.
+- A draft restored from an earlier session that conflicts with the file writes
+  nothing. A small line offers **Keep my draft** and **Use the file**, and typing on
+  counts as keeping it. This is the one question left: only the person knows which
+  text they want.
+
+Plain text and code files still use the older `fileSaveCoordinator`, with its own
+Try again and conflict question.
+
+## Overleaf
+
+An apply writes each file with `applyStep`: it takes the same ownership as a save,
+checks the file and its group, keeps the earlier bytes in the step's folder and the
+history, and publishes like a save. Its record has the format sync already reads.
+Running a step again looks at the file and finishes it, so a crash needs no recovery
+of its own. A delete moves the original into the kept copy, so a program still holding
+it writes there.
+
+Sync is not a person, so it never overwrites edits: Overleaf conflicts stop and ask.
+
+## Older builds
+
+The first touch of a root looks for unfinished records, without the native helper.
+Nearly every root has none. If there are some, writes wait for them to finish rather
+than race them, and are refused and retried meanwhile. Stalled work holds saves for at
+most two minutes. Nothing a record says blocks a read or a save.
+
+## Limits
+
+- An edit from another program in the last moment before a rename can be lost.
+- A program holding a file open while it is replaced writes into the old file, as with
+  `git pull`.
+- A file removed in the instant between a crash and a sync step's record is added again
+  when sync resumes: a step goes by the file alone.
+- Custom Windows ACLs and alternate data streams aren't carried across a rename.
+- A lost answer followed by a backend restart can show an error for a create, rename or
+  delete that did succeed.

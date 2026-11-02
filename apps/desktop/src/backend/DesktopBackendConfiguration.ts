@@ -628,6 +628,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         // SCIENT-FORK:START — Scient state directory and safety envelope.
         ...scientPrimaryBackendEnv(environment),
         // SCIENT-FORK:END
+        T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
       },
       extendEnv: true,

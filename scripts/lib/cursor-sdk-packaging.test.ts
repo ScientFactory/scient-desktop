@@ -85,7 +85,7 @@ it("loads packaged Cursor and distinct bundled provider schemas without checkout
       import assert from 'node:assert/strict';
       import { mkdir, readFile, writeFile } from 'node:fs/promises';
       import path from 'node:path';
-      import { Cursor } from ${JSON.stringify(NodePath.join(repoRoot, "packages/provider-cursor/src/server/sdk.ts"))};
+      import { loadCursorSdk } from ${JSON.stringify(NodePath.join(repoRoot, "packages/provider-cursor/src/server/sdk.ts"))};
       import { setClaudeSkillEnabled } from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/provider/Drivers/ClaudeSkills.ts"))};
       import * as Effect from ${JSON.stringify(serverRequire.resolve("effect/Effect"))};
       import * as NodeServices from ${JSON.stringify(serverRequire.resolve("@effect/platform-node/NodeServices"))};
@@ -119,6 +119,7 @@ it("loads packaged Cursor and distinct bundled provider schemas without checkout
       assert.match(settings, /keep this comment/);
       assert.match(settings, /"theme": "dark"/);
       assert.match(settings, /"review": "off"/);
+      const { Cursor } = loadCursorSdk();
       for (const [operation, request] of [
         ['Cursor.models.list', () => Cursor.models.list({ apiKey: '' })],
         ['Cursor.me', () => Cursor.me({ apiKey: '' })],

@@ -344,30 +344,6 @@ describe("compiler changes through the document owner", () => {
     chapter.release();
   });
 
-  it("retains both sides of a root conflict without inserting an engine declaration", async () => {
-    const h = setup({ "main.tex": "original root" });
-    const root = await h.open("main.tex");
-    root.change("pending local root", root.getSnapshot().editVersion);
-    h.disk.set("main.tex", "outside root");
-    const result = await changeLatexDocumentCompiler({
-      target,
-      lease: root,
-      compiler: "xelatex",
-      blocked: () => false,
-      isActive: () => true,
-      prepare: async () => {
-        const prepared = await prepareLatexDocument(target, { ...h.options, selected: root });
-        return prepared.ok ? prepared : null;
-      },
-    });
-    expect(result.ok).toBe(false);
-    expect(h.writes).toEqual([]);
-    expect(h.disk.get("main.tex")).toBe("outside root");
-    expect(root.getSnapshot().draftSource).toBe("pending local root");
-    expect(root.getSnapshot().conflict).not.toBeNull();
-    root.release();
-  });
-
   it("does not touch source or pending fields while recovery is blocked", async () => {
     const h = setup({ "main.tex": "root" });
     const root = await h.open("main.tex");

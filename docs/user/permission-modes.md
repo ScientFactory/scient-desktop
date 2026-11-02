@@ -36,8 +36,12 @@ unattended until it finishes or asks a question of its own.
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
 
+An administrator can cap the modes available on a machine with a
+[managed policy](./managed-policy.md#permission-modes); modes above the cap show who manages them.
+
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
-there.
+there. Subagent approval requests appear in the parent conversation with the subagent's name, so
+you can respond without switching threads.
 
 Scient offers no **Auto-accept edits** or **Full access** for fx. An fx thread already set to either
 runs in **Supervised**.
@@ -52,7 +56,9 @@ ACP Registry agents run their own tools in their own mode; Scient answers their 
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
-approval for an action.
+approval for an action. Dangerous-removal safety checks in bypass mode reject the command with
+the original warning. Claude can use a safe rewrite when the warning supplies one; otherwise it
+continues without the removal and tells you what it skipped.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
 directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 

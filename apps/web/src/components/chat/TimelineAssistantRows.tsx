@@ -110,6 +110,13 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             canForkConversation={row.canForkConversation}
             // SCIENT-FORK:END
           />
+        ) : row.showAssistantTimestamp ? (
+          <AssistantMessageMeta
+            className="mt-1.5"
+            message={row.message}
+            showCopyButton={false}
+            copyStreaming={row.assistantCopyStreaming}
+          />
         ) : null}
       </div>
     </>

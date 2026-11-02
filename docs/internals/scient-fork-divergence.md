@@ -412,6 +412,11 @@ only schema-declared secrets after config decoding and before provider factory s
 failed materialization still reconciles the authoritative stored snapshot and removes revoked
 instances. These owners do not replace native session lifetime or caller authority checks.
 
+Unlike upstream, a native session also belongs to its provider instance, so replacing an instance
+closes its running sessions. `ScientNativeSessionLifetimes.ts` then closes the session's open items
+and reports it stopped, because a closed session cannot end its own event streams. That lets the
+manager release it and fail any run still open.
+
 #### Contracts, transport and composition
 
 | Host mount                                                           | Current Scient-owned modules                                                                                                                                                                                                       |
