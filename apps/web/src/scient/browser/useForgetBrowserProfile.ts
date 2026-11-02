@@ -1,8 +1,10 @@
 import { useEnvironments } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { browserHistoryState, QUIET_HISTORY } from "./browserHistoryState";
+import { browserHistoryState } from "./browserHistoryState";
 import { useBrowserShortcuts } from "./browserShortcuts";
+
+const QUIET = { reportFailure: false, reportDefect: false };
 
 /**
  * Drops a removed profile's shortcuts and history. Its id is never used again, so history an offline
@@ -10,7 +12,7 @@ import { useBrowserShortcuts } from "./browserShortcuts";
  */
 export function useForgetBrowserProfile() {
   const { environments } = useEnvironments();
-  const clearHistory = useAtomCommand(browserHistoryState.clear, QUIET_HISTORY);
+  const clearHistory = useAtomCommand(browserHistoryState.clear, QUIET);
   return (profileId: string) => {
     useBrowserShortcuts.getState().forgetProfile(profileId);
     for (const { environmentId } of environments) {

@@ -28,9 +28,10 @@ import { toastManager } from "~/components/ui/toast";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { pagesByDay } from "./browserHistoryDays";
-import { browserHistoryState, QUIET_HISTORY } from "./browserHistoryState";
+import { browserHistoryState } from "./browserHistoryState";
 
 const SEARCH_DELAY_MS = 150;
+const QUIET = { reportFailure: false, reportDefect: false };
 
 /** Every page visited in this profile, newest first. Opening one closes this. */
 export function BrowserHistoryDialog({
@@ -45,9 +46,9 @@ export function BrowserHistoryDialog({
   onClose: () => void;
 }) {
   const { environmentId } = threadRef;
-  const list = useAtomCommand(browserHistoryState.list, QUIET_HISTORY);
-  const remove = useAtomCommand(browserHistoryState.remove, QUIET_HISTORY);
-  const clear = useAtomCommand(browserHistoryState.clear, QUIET_HISTORY);
+  const list = useAtomCommand(browserHistoryState.list, QUIET);
+  const remove = useAtomCommand(browserHistoryState.remove, QUIET);
+  const clear = useAtomCommand(browserHistoryState.clear, QUIET);
 
   const [query, setQuery] = useState("");
   const [search] = useDebouncedValue(query.trim(), { wait: SEARCH_DELAY_MS });

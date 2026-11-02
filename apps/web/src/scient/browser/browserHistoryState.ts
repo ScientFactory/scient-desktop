@@ -3,9 +3,6 @@ import { WS_METHODS } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 
-/** History is a convenience: what it can't do shows in place, never as an error toast. */
-export const QUIET_HISTORY = { reportFailure: false, reportDefect: false };
-
 export const browserHistoryState = {
   list: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "browser-history:list",
