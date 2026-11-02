@@ -115,6 +115,19 @@ type UndoRecord = ReadonlyArray<WorkspaceEntryChange>;
 const undoStacks = new Map<string, Array<UndoRecord>>();
 const MAX_UNDO = 50;
 
+/** Resolves once the window has focus, or after a second at most. */
+const windowFocused = () =>
+  new Promise<void>((resolve) => {
+    if (document.hasFocus()) return resolve();
+    const done = () => {
+      window.removeEventListener("focus", done);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, 1_000);
+    window.addEventListener("focus", done);
+  });
+
 /** Tree paths end with "/" for folders; project paths never do. */
 const projectPath = (treePath: string) => treePath.replace(/\/$/u, "");
 const parentOf = (path: string) => {
@@ -433,10 +446,35 @@ export function useScientFileActions(input: {
       relativePath = join(folder, `${stem} ${number}${extension}`);
     }
     const treePath = kind === "folder" ? `${relativePath}/` : relativePath;
+    // A native menu gives the window its focus back a moment after it closes;
+    // a name field focused before then would not get the typing.
+    await windowFocused();
     model.add(treePath);
     pendingCreateRef.current = { relativePath, kind };
     input.quietSelection();
     model.startRenaming(treePath, { removeIfCanceled: true });
+    requestAnimationFrame(() => {
+      const field = nameField();
+      if (field && field.getRootNode() instanceof ShadowRoot) {
+        const root = field.getRootNode() as ShadowRoot;
+        if (root.activeElement !== field) {
+          field.focus();
+          field.select();
+        }
+      }
+    });
+  };
+
+  /** This panel's name field while an entry is being named. */
+  const nameField = () => {
+    const trees = document.querySelectorAll(
+      `[data-file-browser-panel="${CSS.escape(`${environmentId}:${cwd}`)}"] ${FILE_TREE_TAG_NAME}`,
+    );
+    for (const tree of trees) {
+      const field = tree.shadowRoot?.querySelector("input");
+      if (field) return field;
+    }
+    return null;
   };
 
   /** Makes a named new entry on disk; the server picks a free name if this one is taken. */
@@ -456,10 +494,8 @@ export function useScientFileActions(input: {
     const pending = pendingCreateRef.current;
     if (!pending) return;
     const { relativePath, kind } = pending;
-    const stillNaming = document
-      .querySelector(FILE_TREE_TAG_NAME)
-      ?.shadowRoot?.activeElement?.matches("input");
-    if (stillNaming) return;
+    const field = nameField();
+    if (field && (field.getRootNode() as ShadowRoot).activeElement === field) return;
     pendingCreateRef.current = null;
     const treePath = kind === "folder" ? `${relativePath}/` : relativePath;
     if (modelRef.current?.getItem(treePath)) makeEntry(relativePath, kind);
