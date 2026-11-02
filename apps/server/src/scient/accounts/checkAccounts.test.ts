@@ -79,9 +79,14 @@ describe("account session state", () => {
     expect(sessionState(account, url, { ...page, signOutLink: true }, false)).toBe("signed-in");
     expect(sessionState(account, url, { ...page, signInLink: true }, true)).toBe("signed-out");
     expect(sessionState(account, url, page, true)).toBe("unknown");
-    expect(sessionState({ ...account, lastSignInOutcome: "signed-in" }, url, page, true)).toBe(
-      "signed-in",
-    );
+    expect(
+      sessionState(
+        { ...account, signIn: { state: "signed-in", at: "2026-01-01T00:00:00.000Z" } },
+        url,
+        page,
+        true,
+      ),
+    ).toBe("signed-in");
     expect(sessionState(account, url, page, false)).toBe("unknown");
     expect(sessionState(account, url, { ...page, deniedText: true }, true)).toBe("unknown");
     expect(sessionState(account, url, { ...page, limited: true }, true)).toBe("limited");
@@ -188,8 +193,7 @@ it.effect("never repeats a sign-in the site rejected", () =>
   Effect.gen(function* () {
     const rejected: AccountSummary = {
       ...account,
-      lastSignInOutcome: "password-rejected",
-      lastCheck: { state: "rejected", at: "2026-01-01T00:00:00.000Z" },
+      signIn: { state: "password-rejected", at: "2026-01-01T00:00:00.000Z" },
     };
     const { uses, checks } = yield* run([rejected]);
     expect(uses).toEqual([]);
@@ -201,7 +205,7 @@ it.effect("leaves alone a site that is limiting automation, or just needed the u
   Effect.gen(function* () {
     const at = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
     for (const state of ["limited", "needs-you"] as const) {
-      const { uses } = yield* run([{ ...account, lastCheck: { state, at } }]);
+      const { uses } = yield* run([{ ...account, signIn: { state, at } }]);
       expect(uses).toEqual([]);
     }
   }),

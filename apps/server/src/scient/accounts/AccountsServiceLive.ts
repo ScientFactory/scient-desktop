@@ -51,7 +51,7 @@ import {
   AccountsState,
   Activity,
   decodePrivateJson,
-  withLibrariesFolded,
+  withStoredAccountsFolded,
   emptyState,
   encodePrivateJson,
   type StoredAccount,
@@ -60,7 +60,7 @@ import { AccountSources, type OnePasswordClient } from "./AccountSources.ts";
 import {
   GOOGLE_RECHECK_WRITE_MS,
   isGoogleSessionRow,
-  withCheck,
+  withSignIn,
   applyApprovalDecision,
   agentAccessOff,
   authorizationDecision,
@@ -68,7 +68,7 @@ import {
   inScope,
   sameTarget,
   siteMatches,
-  outcomeCheckState,
+  outcomeSignInState,
 } from "./AccountDecisions.ts";
 import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
@@ -220,7 +220,7 @@ export const layer = Layer.effect(
       const saved = yield* persistence.read("accounts-state");
       const activity = yield* persistence.read("accounts-activity");
       const loaded = Option.isSome(saved)
-        ? yield* decodePrivateJson(AccountsState, withLibrariesFolded(saved.value))
+        ? yield* decodePrivateJson(AccountsState, withStoredAccountsFolded(saved.value))
         : emptyState;
       const log = Option.isSome(activity) ? yield* decodePrivateJson(Activity, activity.value) : [];
       cache.clear();
@@ -542,14 +542,12 @@ export const layer = Layer.effect(
             ? "needs-attention"
             : "ready",
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
-        ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastSignInOutcome
-          ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
-          : {}),
+        // A new password, code or key is untried: what the old one met no longer applies.
         ...(!input.secrets?.password &&
         !input.secrets?.totp &&
         !input.secrets?.token &&
-        existing?.summary.lastCheck
-          ? { lastCheck: existing.summary.lastCheck }
+        existing?.summary.signIn
+          ? { signIn: existing.summary.signIn }
           : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -911,13 +909,14 @@ export const layer = Layer.effect(
                   (session) => session.email === address(account) && session.valid,
                 );
                 const seen = valid ? ("signed-in" as const) : ("signed-out" as const);
-                const last = account.summary.lastCheck;
+                const last = account.summary.signIn;
                 if (last?.state === seen && nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS)
                   continue;
+                // Google's own answer for a password-free row: nothing to refuse or limit here.
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: { ...account.summary, lastCheck: { state: seen, at } },
+                    summary: { ...account.summary, signIn: { state: seen, at } },
                   }),
                   true,
                 );
@@ -1425,17 +1424,14 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const account = findAccount(accountId);
             if (!account) return;
-            yield* commit(
-              replaceAccount({
-                ...account,
-                summary: withCheck(
-                  account.summary,
-                  { ...check, at: yield* now },
-                  yield* Clock.currentTimeMillis,
-                ),
-              }),
-              true,
+            const summary = withSignIn(
+              account.summary,
+              { ...check, at: yield* now },
+              yield* Clock.currentTimeMillis,
+              "look",
             );
+            if (summary === account.summary) return;
+            yield* commit(replaceAccount({ ...account, summary }), true);
           }),
         ),
       ),
@@ -1451,18 +1447,15 @@ export const layer = Layer.effect(
                   replaceAccount({
                     ...account,
                     summary: entry.signInOutcome
-                      ? withCheck(
+                      ? withSignIn(
+                          { ...account.summary, lastUsedAt: at },
                           {
-                            ...account.summary,
-                            lastUsedAt: at,
-                            lastSignInOutcome: entry.signInOutcome,
-                          },
-                          {
-                            state: outcomeCheckState(entry.signInOutcome),
+                            state: outcomeSignInState(entry.signInOutcome),
                             at,
-                            ...(message === undefined ? {} : { message }),
+                            ...(message === undefined ? {} : { detail: message }),
                           },
                           yield* Clock.currentTimeMillis,
+                          "attempt",
                         )
                       : { ...account.summary, lastUsedAt: at },
                   }),

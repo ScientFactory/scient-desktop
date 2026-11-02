@@ -265,24 +265,33 @@ export const AccountSignInOutcome = Schema.Literals([
   "limited",
   "failed",
 ]);
+export type AccountSignInOutcome = typeof AccountSignInOutcome.Type;
 
-export const AccountCheckState = Schema.Literals([
+/**
+ * Where an account's sign-in stands. Besides `signed-in`, a sign-in attempt ends in `needs-you`,
+ * `password-rejected`, `code-rejected`, `limited` or `failed`; looking at the site finds
+ * `signed-in`, `signed-out` or `unknown`, and can also find `limited` or a session that keeps
+ * ending (`needs-you`). A refused API key is `failed`, with the service's answer in `detail`.
+ */
+export const AccountSignInState = Schema.Literals([
   "signed-in",
   "signed-out",
   "needs-you",
-  "rejected",
+  "password-rejected",
+  "code-rejected",
   "limited",
+  "failed",
   "unknown",
 ]);
-export type AccountCheckState = typeof AccountCheckState.Type;
+export type AccountSignInState = typeof AccountSignInState.Type;
 
-/** What Scient last saw when it opened or used this sign-in. */
-export const AccountCheck = Schema.Struct({
-  state: AccountCheckState,
+/** What Scient last tried or saw of this sign-in, and when. */
+export const AccountSignIn = Schema.Struct({
+  state: AccountSignInState,
   at: IsoDateTime,
-  message: Schema.optional(TrimmedNonEmptyString),
+  detail: Schema.optional(TrimmedNonEmptyString),
 });
-export type AccountCheck = typeof AccountCheck.Type;
+export type AccountSignIn = typeof AccountSignIn.Type;
 
 export const AccountSummary = Schema.Struct({
   accountId: AccountId,
@@ -293,9 +302,7 @@ export const AccountSummary = Schema.Struct({
   status: AccountStatus,
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
-  lastSignInOutcome: Schema.optional(AccountSignInOutcome),
-  lastCheck: Schema.optional(AccountCheck),
-  signedOut: Schema.optional(Schema.Boolean),
+  signIn: Schema.optional(AccountSignIn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastUsedAt: Schema.optional(IsoDateTime),

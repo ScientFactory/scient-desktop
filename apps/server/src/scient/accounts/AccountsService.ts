@@ -4,7 +4,7 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
-  AccountCheck,
+  AccountSignIn,
   AccountCodeSources,
   AccountGoogleSessions,
   AccountKeyLink,
@@ -198,10 +198,10 @@ export interface AccountsServiceShape {
     accountId: AccountId,
     fields: ReadonlyArray<string>,
   ) => Effect.Effect<Readonly<Record<string, Redacted.Redacted<string>>>, AccountsError>;
-  /** Keeps what Scient last saw of a sign-in, for the account's status. */
+  /** Keeps what Scient last saw of a sign-in, through `withSignIn`, dated by the server clock. */
   readonly recordCheck: (
     accountId: AccountId,
-    check: Omit<AccountCheck, "at">,
+    check: Omit<AccountSignIn, "at">,
   ) => Effect.Effect<void, AccountsError>;
   /** Non-blocking; records the outcome of a use that `authorize` allowed. */
   readonly recordUse: (

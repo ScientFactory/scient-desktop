@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
-import { foldLibraryAccounts, withLibrariesFolded } from "./AccountPersistence.ts";
+import { foldStoredAccounts, withStoredAccountsFolded } from "./AccountPersistence.ts";
 import { AccountsService } from "./AccountsService.ts";
 import { fakeAccounts } from "./Accounts.testkit.ts";
 import {
@@ -203,7 +203,7 @@ it("reads saved library accounts as website accounts carrying their library link
     },
   };
   const website = { summary: { details: { kind: "website", sites: ["a.org"] } } };
-  expect(foldLibraryAccounts({ format: 1, accounts: [library, website] })).toEqual({
+  expect(foldStoredAccounts({ format: 1, accounts: [library, website] })).toEqual({
     format: 1,
     accounts: [
       {
@@ -222,7 +222,7 @@ it("reads saved library accounts as website accounts carrying their library link
 
 it("leaves unreadable saved data for the decoder to report", () => {
   const bytes = Redacted.make(new TextEncoder().encode("not json"));
-  expect(withLibrariesFolded(bytes)).toBe(bytes);
+  expect(withStoredAccountsFolded(bytes)).toBe(bytes);
 });
 
 it("knows a tab left on the university's sign-in, and never a course page or another profile", () => {

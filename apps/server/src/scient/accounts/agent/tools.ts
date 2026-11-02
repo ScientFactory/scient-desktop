@@ -74,7 +74,7 @@ const list = metadata(
           readable: Schema.Boolean,
           usage: Schema.Array(Schema.String),
           status: Schema.String,
-          lastCheck: Schema.optional(Schema.String),
+          signIn: Schema.optional(Schema.String),
         }),
       ),
       profiles: Schema.Array(

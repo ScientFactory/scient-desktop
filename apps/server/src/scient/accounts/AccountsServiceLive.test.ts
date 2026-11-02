@@ -48,9 +48,9 @@ describe("AccountsService persistence", () => {
         ],
       });
       expect(
-        (yield* rows).map(({ details, lastCheck }) => [
+        (yield* rows).map(({ details, signIn }) => [
           details.kind === "website" ? details.username : undefined,
-          lastCheck?.state,
+          signIn?.state,
         ]),
       ).toEqual([
         ["a@example.com", "signed-in"],
@@ -62,7 +62,7 @@ describe("AccountsService persistence", () => {
         sessions: [{ email: "a@example.com", valid: false }],
       });
       const after = yield* rows;
-      expect(after.map(({ lastCheck }) => lastCheck?.state)).toEqual(["signed-out", "signed-out"]);
+      expect(after.map(({ signIn }) => signIn?.state)).toEqual(["signed-out", "signed-out"]);
       expect(after).toHaveLength(2);
       // Another profile keeps its own row; the saved password is never touched.
       yield* service.googleSessionsSeen({
@@ -72,7 +72,7 @@ describe("AccountsService persistence", () => {
       expect(yield* rows).toHaveLength(3);
       expect(
         (yield* service.snapshot).accounts.find(({ accountId }) => accountId === saved.accountId)
-          ?.lastCheck,
+          ?.signIn,
       ).toBeUndefined();
     }),
   );
@@ -616,7 +616,7 @@ describe("AccountsService grants and approvals", () => {
         const target = { type: "account" as const, accountId };
         for (const signInOutcome of ["password-rejected", "signed-in", "code-rejected"] as const) {
           const recorded = yield* service.changes.pipe(
-            Stream.filter((snapshot) => snapshot.accounts[0]?.lastSignInOutcome === signInOutcome),
+            Stream.filter((snapshot) => snapshot.accounts[0]?.signIn?.state === signInOutcome),
             Stream.take(1),
             Stream.runDrain,
             Effect.forkChild,
@@ -631,9 +631,9 @@ describe("AccountsService grants and approvals", () => {
           expect((yield* service.activity({ target }))[0]?.signInOutcome).toBe(signInOutcome);
         }
         yield* service.save({ ...input, accountId, secrets: {} });
-        expect((yield* service.snapshot).accounts[0]?.lastSignInOutcome).toBe("code-rejected");
+        expect((yield* service.snapshot).accounts[0]?.signIn?.state).toBe("code-rejected");
         yield* service.save({ ...input, accountId });
-        expect((yield* service.snapshot).accounts[0]?.lastSignInOutcome).toBeUndefined();
+        expect((yield* service.snapshot).accounts[0]?.signIn).toBeUndefined();
       }),
   );
   it.effect("keeps denial local to the pending request and audits bounded, safe activity", () =>
