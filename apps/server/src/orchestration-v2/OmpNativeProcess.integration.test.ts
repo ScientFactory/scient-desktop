@@ -329,7 +329,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             for (const row of opened) {
               assert.equal(row.cwd, yield* fs.realPath(cwd));
               assert.equal(row.executable, yield* fs.realPath(executable));
-              assert.equal(row.mode, "rpc");
+              assert.equal(row.mode, "rpc-ui");
               assert.equal(row.approvalMode, "yolo");
               assert.equal(row.extensionCount, 2);
               assert.ok(row.root?.startsWith(yield* fs.realPath(config.stateDir)));
