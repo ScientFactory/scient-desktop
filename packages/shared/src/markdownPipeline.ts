@@ -381,7 +381,7 @@ type MarkdownAstNode = {
   children?: MarkdownAstNode[];
 };
 
-function remarkKeepAutolinkSuffixes(): Transformer<Root> {
+export function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   return (tree, file) => {
     const source = String(file);
     const visit = (node: Root | RootContent) => {

@@ -355,7 +355,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
       { args: ["diff-index", "-M", "--numstat", "-z", "HEAD", "--"], lcAll: "C" },
       // Status lookups that run beside `git status` are discarded for a non-repository.
       { args: ["symbolic-ref", "refs/remotes/origin/HEAD"] },
-      { args: ["remote", "get-url", "--", "origin"] },
+      { args: ["remote"] },
       { args: ["rev-parse", "--symbolic-full-name", "HEAD"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));

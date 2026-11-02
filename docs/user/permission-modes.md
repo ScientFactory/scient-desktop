@@ -36,6 +36,9 @@ unattended until it finishes or asks a question of its own.
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
 
+An administrator can cap the modes available on a machine with a
+[managed policy](./managed-policy.md#permission-modes); modes above the cap show who manages them.
+
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
 there. Subagent approval requests appear in the parent conversation with the subagent's name, so
 you can respond without switching threads.

@@ -5841,6 +5841,9 @@ function captureRootRunTermination(input: {
           attemptId: ids.attemptId,
           providerTurnOrdinal: 1,
           shouldFinalizeRun: input.shouldFinalizeRun,
+          ...(input.loadRunInterruptReason === undefined
+            ? {}
+            : { loadRunInterruptReason: input.loadRunInterruptReason }),
           ...(input.shouldStartProviderTurn === undefined
             ? {}
             : { shouldStartProviderTurn: input.shouldStartProviderTurn }),

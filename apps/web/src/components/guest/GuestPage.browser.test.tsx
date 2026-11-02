@@ -312,11 +312,15 @@ describe("GuestPage", () => {
     await expect.element(screen.getByText("Reply 11")).toBeInTheDocument();
     const scroller = () =>
       screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
+    // The opening settles over the first second or so while rows measure.
     const expectAtEnd = () =>
-      vi.waitFor(() => {
-        const node = scroller();
-        expect(node.scrollHeight - node.scrollTop - node.clientHeight).toBeLessThan(2);
-      });
+      vi.waitFor(
+        () => {
+          const node = scroller();
+          expect(node.scrollHeight - node.scrollTop - node.clientHeight).toBeLessThan(2);
+        },
+        { timeout: 5_000 },
+      );
     await expectAtEnd();
 
     // SCIENT-FORK:START — reading back comes first (it also ends the opening's positioning), and a

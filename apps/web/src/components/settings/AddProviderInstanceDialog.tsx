@@ -209,7 +209,10 @@ export function AddProviderInstanceDialog({
   const acpRegistryAllowed = isManagedDriverAllowed(managedPolicy, ACP_REGISTRY_DRIVER_KIND);
   const [driver, setDriver] = useState<ProviderDriverKind>(
     () =>
-      (featuredDriverOptions[0] ?? moreDriverOptions[0])?.driverKind ??
+      // SCIENT-FORK: Scient's first listed driver is not its default one.
+      (isManagedDriverAllowed(managedPolicy, DEFAULT_DRIVER_KIND)
+        ? DEFAULT_DRIVER_KIND
+        : (featuredDriverOptions[0] ?? moreDriverOptions[0])?.driverKind) ??
       (acpRegistryAllowed ? ACP_REGISTRY_DRIVER_KIND : DEFAULT_DRIVER_KIND),
   );
   const [identityByDriver, setIdentityByDriver] = useState<Record<string, ProviderIdentityDraft>>(

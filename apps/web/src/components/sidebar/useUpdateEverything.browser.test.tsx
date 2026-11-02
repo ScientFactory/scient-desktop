@@ -65,6 +65,7 @@ vi.mock("@effect/atom-react", () => ({
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: testState.environments }),
   useEnvironmentProviders: () => new Map(),
+  usePrimaryEnvironmentId: () => null,
 }));
 vi.mock("~/state/session", async () => {
   const { environmentAtomList } = await import("~/state/environmentAtomList");

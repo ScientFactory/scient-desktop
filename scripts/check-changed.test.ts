@@ -48,6 +48,10 @@ function setup() {
     NodeFS.readFileSync(new URL("./check-changed.ts", import.meta.url), "utf8"),
   );
   write(
+    "scripts/check-changed-command.ts",
+    NodeFS.readFileSync(new URL("./check-changed-command.ts", import.meta.url), "utf8"),
+  );
+  write(
     ".github/scripts/ci-changes.cjs",
     NodeFS.readFileSync(new URL("../.github/scripts/ci-changes.cjs", import.meta.url), "utf8"),
   );
@@ -520,7 +524,7 @@ function launcherFixture() {
       'vitePlusCommand(args, "win32")',
     ),
   );
-  for (const name of ["effect", "@effect/platform-node", "@t3tools/shared"]) {
+  for (const name of ["effect", "@effect/platform-node", "@t3tools/shared", "typescript-legacy"]) {
     const dest = NodePath.join(root, "node_modules", name);
     NodeFS.mkdirSync(NodePath.dirname(dest), { recursive: true });
     NodeFS.symlinkSync(

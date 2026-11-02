@@ -270,6 +270,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(result).toEqual({
           relativePath: "src/index.ts",
           contents: "export const answer = 42;\n",
+          revision: expect.any(String),
           byteLength: 26,
           truncated: false,
         });
@@ -288,6 +289,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* files.readFile({ cwd, relativePath: "short.txt" })).toEqual({
           relativePath: "short.txt",
           contents,
+          revision: expect.any(String),
           byteLength: Buffer.byteLength(contents),
           truncated: false,
         });

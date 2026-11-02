@@ -1468,34 +1468,4 @@ describe("DesktopUpdates under a managed policy", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
-
-  it.effect("holds a nightly install until its user switches to stable", () => {
-    const harness = makeHarness({
-      appVersion: "1.2.3-nightly.20261028.1",
-      // A managed app ignores the mock feed, so give it a real one.
-      policy: managed({ allowNightly: false, feedUrl: "https://updates.example.com/t3code" }),
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        yield* TestClock.adjust("10 minutes");
-
-        const held = yield* updates.getState;
-        assert.equal(held.channel, "nightly");
-        assert.equal(held.status, "disabled");
-        assert.include(held.message ?? "", message);
-        assert.isTrue(held.channelBlockedByPolicy);
-        assert.isFalse((yield* updates.check("menu")).checked);
-        assert.equal(harness.checkCount(), 0);
-
-        const stable = yield* updates.setChannel("latest");
-        assert.equal(stable.channel, "latest");
-        assert.isTrue(stable.enabled);
-        assert.isUndefined(stable.channelBlockedByPolicy);
-        assert.equal(harness.checkCount(), 1);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
 });

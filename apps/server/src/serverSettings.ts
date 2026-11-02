@@ -1385,14 +1385,6 @@ const make = Effect.gen(function* () {
           });
         }
         const updated = yield* update(current);
-        const deferredInstance = newlyRequestedCodexSubscriptionSharing(current, updated);
-        if (deferredInstance !== undefined)
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "normalize",
-            providerInstanceId: deferredInstance,
-            cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
-          });
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1421,6 +1413,17 @@ const make = Effect.gen(function* () {
             managedBy: managedPolicy?.organization,
           });
         }
+        const deferredInstance = newlyRequestedCodexSubscriptionSharing(
+          current,
+          vettedProviders.settings,
+        );
+        if (deferredInstance !== undefined)
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "normalize",
+            providerInstanceId: deferredInstance,
+            cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
+          });
         const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>

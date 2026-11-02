@@ -167,7 +167,7 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.isNull(result.targetThread.activeOrderKey);
     assert.isNull(result.targetThread.autoSettleDisabledAt);
     assert.isUndefined(result.targetThread.delegatedFrom);
-    assert.equal(result.targetThread.historyOrigin, "v1_import");
+    assert.equal(result.targetThread.historyOrigin, "scient_fork");
     assert.deepEqual(result.targetThread.linkOrigin, linkOrigin);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
     assert.equal(result.targetThread.providerInstanceId, sourceThread.providerInstanceId);

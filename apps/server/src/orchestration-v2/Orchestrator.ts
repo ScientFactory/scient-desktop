@@ -233,7 +233,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
+import { ProviderSwitchPlanError, ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -277,6 +277,7 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 }
 
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
+const isProviderSwitchPlanError = Schema.is(ProviderSwitchPlanError);
 const isProviderAdapterRegistryLookupError = Schema.is(ProviderAdapterRegistryLookupError);
 export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
   "OrchestratorThreadAlreadyExistsError",
@@ -362,7 +363,10 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
 function runtimePolicyCeilingCause(error: unknown) {
   let current = error;
-  while (isOrchestratorDispatchError(current)) current = current.cause;
+  // SCIENT-FORK: a turn's policy resolves inside the provider switch plan here.
+  while (isOrchestratorDispatchError(current) || isProviderSwitchPlanError(current)) {
+    current = current.cause;
+  }
   return isRuntimePolicyAboveCeilingError(current) ? current : undefined;
 }
 

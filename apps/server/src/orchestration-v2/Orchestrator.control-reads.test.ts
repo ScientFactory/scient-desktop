@@ -760,9 +760,11 @@ it.effect("keeps the store's read failure as the cause when a command projection
       VALUES ('request:unreadable', ${unreadableRequest}, 'node:unreadable', 'user-input', 'pending', ${now}, '{}')`;
     for (const command of [
       {
-        type: "queue.resume",
-        commandId: CommandId.make("resume-unreadable"),
+        // SCIENT-FORK: Scient's queue.resume reads no messages; cancelling a queued run does.
+        type: "queued-run.cancel",
+        commandId: CommandId.make("cancel-unreadable"),
         threadId: unreadableMessage,
+        runId: RunId.make("run:unreadable"),
       },
       {
         type: "thread.user-input.dismiss",

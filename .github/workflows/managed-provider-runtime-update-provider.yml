@@ -277,6 +277,9 @@ jobs:
             exit 1
           fi
           if [[ "$PROVIDER" == antigravityAcp ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/src/policy \
+            packages/tailscale \
+            packages/provider-fx \
             apps/server/src/provider/AntigravityInstallation.ts \
             apps/server/src/provider/runtimeFilesystem.ts \
             apps/server/src/provider/antigravityRelease.ts \
@@ -342,6 +345,9 @@ jobs:
           # whole tree; the quoted pattern is matched by git in both commits, so a
           # server module added on main counts too.
           if [[ "$PROVIDER" == droid ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/src/policy \
+            packages/tailscale \
+            packages/provider-fx \
             package.json \
             vite.config.ts \
             apps/server/vite.config.ts \
@@ -419,6 +425,9 @@ jobs:
 
           # Scient qualification runs the same isolated activation check used by Desktop.
           if [[ "$PROVIDER" == scient ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/src/policy \
+            packages/tailscale \
+            packages/provider-fx \
             apps/server/scripts/qualifyScientAgentManagedRuntime.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
@@ -519,6 +528,10 @@ jobs:
             apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/serverSettings.ts \
+            apps/server/src/policy \
+            apps/server/src/auth/utils.ts \
+            packages/tailscale \
+            packages/provider-fx \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/settingsDirectoryWatch.ts \

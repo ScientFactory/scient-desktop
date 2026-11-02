@@ -169,14 +169,19 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 ) {
   // SCIENT-FORK:START — method-specific setup guidance without changing native authentication.
   const usesBrowser = antigravityAuthUsesBrowser(settings.authMethod);
-  const signInMessage = usesBrowser
-    ? "Sign in with Google to use Antigravity."
-    : "Connect with the credentials in the Antigravity provider settings.";
-  const authUncheckedMessage =
-    antigravityAuthConfigIssue(settings) ??
-    (usesBrowser
-      ? "Antigravity is installed. Google account access is not checked yet."
-      : "Antigravity is installed. Configured credentials have not been checked yet.");
+  const usesCredentials =
+    options.auth?.type === "gemini-api-key" || options.auth?.type === "agent-platform";
+  const signInMessage = usesCredentials
+    ? `Connect with ${options.auth.label} to use Antigravity and load models.`
+    : usesBrowser
+      ? "Sign in with Google to use Antigravity."
+      : "Connect with the credentials in the Antigravity provider settings.";
+  const authUncheckedMessage = usesCredentials
+    ? `Antigravity is installed. Connect with ${options.auth.label} to load models.`
+    : (antigravityAuthConfigIssue(settings) ??
+      (usesBrowser
+        ? "Antigravity is installed. Google account access is not checked yet."
+        : "Antigravity is installed. Configured credentials have not been checked yet."));
   // SCIENT-FORK:END
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
@@ -440,7 +445,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           authRevision: state.authRevision + 1,
           draft: {
             ...state.draft,
-            auth: { status: "unauthenticated" },
+            auth: {
+              status: "unauthenticated",
+              ...(usesCredentials ? options.auth : {}),
+            },
             status: settings.enabled ? "warning" : "disabled",
             message: signInMessage,
             checkedAt: updatedAt,

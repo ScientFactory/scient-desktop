@@ -44,6 +44,31 @@ it.effect("the disabled adapter retains Scient consent controls without collecti
 );
 
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+  it.effect("a managed policy turns analytics off over the environment", () =>
+    Effect.gen(function* () {
+      const service = yield* AnalyticsService.make;
+      assert.deepEqual(yield* service.status, { available: false, consent: "off" });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { telemetry: false },
+          }),
+          ServerConfig.ServerConfig.layerTest(process.cwd(), {
+            prefix: "scient-analytics-policy-",
+          }),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { SCIENT_ANALYTICS_ENABLED: "true", SCIENT_ANALYTICS_CONSENT: "product" },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("does not read server paths when the master gate is off", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

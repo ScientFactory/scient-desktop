@@ -315,7 +315,12 @@ describe("t3 pair", () => {
         });
 
         const error = yield* provideCliTestLayers(
-          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+          Command.runWith(cli, { version: "0.0.0" })([
+            "pair",
+            "--base-dir",
+            baseDir,
+            "--tailscale",
+          ]).pipe(
             Effect.provideService(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),

@@ -3,7 +3,7 @@
 A managed policy lets an administrator configure Scient for every user on a machine. It sets
 defaults and locks for settings, and limits such as the broadest permission mode or which
 providers may run. The Scient server on the machine enforces it for every app that connects:
-the desktop app, a browser, or the mobile app.
+the desktop app or a browser.
 
 ## Roll out a policy
 

@@ -811,6 +811,7 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.vcsDriverRegistry,
     });
     const serverSettingsLayer = Layer.mock(ServerSettings.ServerSettingsService)({
+      managedPolicy: undefined,
       start: Effect.void,
       ready: Effect.void,
       getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -13154,7 +13155,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       ]);
       assert.deepEqual(
         fetchWorktreeBaseCommit.mock.calls,
-        hasOrigin ? [[{ cwd: fixture.root, refName: "main" }]] : [],
+        hasOrigin
+          ? [
+              [
+                {
+                  cwd: fixture.root,
+                  refName: "main",
+                  remote: { remoteName: "origin", branchName: "main" },
+                },
+              ],
+            ]
+          : [],
       );
       assert.deepEqual(fixture.createWorktree.mock.calls[0]?.[0], {
         cwd: fixture.root,

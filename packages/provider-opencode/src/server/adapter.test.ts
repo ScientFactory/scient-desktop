@@ -2545,6 +2545,7 @@ describe("OpenCodeAdapterV2", () => {
   it.effect("steers with the turn's agent, reasoning variant and system instructions", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
+      let permission: unknown;
       const promptInputs: Array<{ agent?: string; variant?: string; system?: string }> = [];
       const harness = yield* makeOpenCodeRuntimeHarness(
         "steer-agent",
@@ -2553,7 +2554,13 @@ describe("OpenCodeAdapterV2", () => {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({
+              data: { id: "root", permission, time: { created: 1, updated: 1 } },
+            }),
+            update: async (input: { permission: unknown }) => {
+              permission = input.permission;
+              return { data: { id: "root", time: { created: 1, updated: 2 } } };
+            },
             messages: async () => ({ data: [] }),
             promptAsync: async (input: { agent?: string; variant?: string; system?: string }) => {
               promptInputs.push(input);
