@@ -5,17 +5,21 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
 /**
- * Scient keeps conversations in its own state folder and passes `--session-dir`,
- * but the agent's stats dashboard reads `<root>/agent/sessions`. A link lets the
- * dashboard count them. A junction needs no privilege on Windows; other systems
- * ignore the type. Without the link the dashboard is empty and nothing else changes.
+ * The agent's dashboard reads `<root>/agent/sessions`; Scient keeps conversations elsewhere, so a
+ * link (a junction on Windows, which needs no privilege) lets the dashboard count them. Returns the
+ * link when it leads to `sessionsRoot`, since the dashboard accepts files only through it.
  */
 export const linkScientAgentSessions = (input: {
   readonly agentRoot: string;
   readonly sessionsRoot: string;
-}): Effect.Effect<void> =>
+}): Effect.Effect<string | undefined> =>
   Effect.tryPromise(async () => {
     const link = NodePath.join(input.agentRoot, "agent", "sessions");
     await NodeFSP.mkdir(NodePath.dirname(link), { recursive: true, mode: 0o700 });
-    await NodeFSP.symlink(input.sessionsRoot, link, "junction");
-  }).pipe(Effect.ignore);
+    await NodeFSP.symlink(input.sessionsRoot, link, "junction").catch(() => undefined);
+    const [reached, sessions] = await Promise.all([
+      NodeFSP.realpath(link),
+      NodeFSP.realpath(input.sessionsRoot),
+    ]);
+    return reached === sessions ? link : undefined;
+  }).pipe(Effect.orElseSucceed(() => undefined));

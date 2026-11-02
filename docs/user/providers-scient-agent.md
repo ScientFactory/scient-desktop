@@ -54,9 +54,9 @@ more and applies to the conversation's next message.
 Type `/` in the composer for the agent's reports: `/jobs` (background work), `/usage` (account
 limits), `/context` (what fills the conversation), `/tools`, `/todo`, `/memory`, `/dirs`, `/plugins`
 and `/changelog`. `/stats` starts the agent's dashboard of requests, costs and tools across your
-conversations, and `/trace` shows this conversation in it. Their links open in Scient's browser. The
-dashboard runs inside the conversation's agent, so it stops when that agent does; run `/stats` again
-to bring it back.
+conversations, and `/trace` shows this conversation in it. Both open in the conversation's browser.
+The dashboard runs inside the conversation's agent, so it stops when that agent does; run `/stats`
+again to bring it back.
 
 **Compact** shows its progress in the conversation. If a turn stops because the session reached a
 spending cap or the account hit a usage limit, the conversation says so, and the next message is

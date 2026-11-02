@@ -35,6 +35,13 @@ import type { OmpRpcFrameTrace, OmpRpcNotification } from "effect-omp-rpc/client
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
+import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import {
+  ompDashboardThroughLink,
+  ompDashboardUrl,
+  ompOpensDashboard,
+} from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
   assertReadableOmpSessionFile,
@@ -162,6 +169,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
   options: OmpAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  // SCIENT-FORK: the conversation's browser shows the pages the agent's dashboard commands start.
+  const previewBroker = yield* Effect.serviceOption(PreviewAutomationBroker);
+  const serverEnvironment = yield* Effect.serviceOption(ServerEnvironment);
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const target = options.target ?? ompTarget;
   const locks = makeOmpSessionLockRegistry();
@@ -259,8 +269,12 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         yield* fs.makeDirectory(sessionRoot, { recursive: true, mode: 0o700 });
         const root = yield* fs.realPath(sessionRoot);
         const agentRoot = options.environment?.SCIENT_AGENT_ROOT;
-        if (target.driverKind === "scient" && agentRoot)
-          yield* linkScientAgentSessions({ agentRoot, sessionsRoot: path.dirname(root) });
+        const sessionsLink =
+          target.driverKind === "scient" && agentRoot
+            ? yield* linkScientAgentSessions({ agentRoot, sessionsRoot: path.dirname(root) })
+            : undefined;
+        const dashboardSessions =
+          sessionsLink === undefined ? undefined : { root: path.dirname(root), link: sessionsLink };
         const stateRoot = yield* fs.realPath(options.serverConfig.stateDir);
         if (!sessionFileInsideRoot(stateRoot, root))
           return yield* new NativeSessionOperationError({
@@ -480,6 +494,32 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         let processLossDescription = `${target.name} process lost.`;
         // compact's response owns its item; its notification can arrive after that response.
         let manualCompaction = false;
+        // `/stats` and `/trace` answer with a local page, which opens beside the conversation.
+        let dashboardRequested = false;
+        const openDashboard = (url: string) =>
+          Option.isNone(previewBroker) || Option.isNone(serverEnvironment)
+            ? Effect.void
+            : serverEnvironment.value.getEnvironmentId.pipe(
+                Effect.flatMap((environmentId) =>
+                  previewBroker.value.invoke({
+                    // The user's own command: its tab stays apart from the agent's browsing.
+                    scope: {
+                      environmentId,
+                      threadId: input.threadId,
+                      providerSessionId: `dashboard:${input.threadId}`,
+                      providerInstanceId: options.instanceId,
+                      capabilities: new Set(["preview"] as const),
+                      issuedAt: 0,
+                    },
+                    operation: "open",
+                    input: { url, open: true, reuseExistingTab: true },
+                  }),
+                ),
+                Effect.tapError((cause) =>
+                  Effect.logWarning("OmpAdapterV2.openDashboard", { cause }),
+                ),
+                Effect.ignore,
+              );
         let activeModel = decodeOmpModelSlug(input.modelSelection.model);
         let processLossPublished: Effect.Effect<void> | undefined;
         const publishProcessLoss = Effect.fn("OmpAdapterV2.publishProcessLoss")(function* (
@@ -976,12 +1016,24 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               return refreshUsage(false).pipe(
                 Effect.andThen(onUpdate({ type: "background", pending: false })),
               );
-            case "command-output":
+            case "command-output": {
+              const delta = dashboardRequested
+                ? ompDashboardThroughLink(update.delta, dashboardSessions)
+                : update.delta;
+              const pageUrl = dashboardRequested ? ompDashboardUrl(delta) : undefined;
+              if (pageUrl !== undefined) dashboardRequested = false;
               return onUpdate({
                 type: "text",
                 id: "command-output",
-                delta: client.redaction.text(ompCommandOutputText(update.delta)),
-              });
+                delta: client.redaction.text(ompCommandOutputText(delta)),
+              }).pipe(
+                Effect.andThen(
+                  pageUrl === undefined
+                    ? Effect.void
+                    : openDashboard(pageUrl).pipe(Effect.forkIn(scope), Effect.asVoid),
+                ),
+              );
+            }
             case "background-result":
               return update.detail
                 ? onUpdate({
@@ -1498,6 +1550,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           send: Effect.fn("OmpAdapterV2.send")(
             function* (turnInput, nativeTurnId) {
               manualCompaction = false;
+              dashboardRequested = ompOpensDashboard(turnInput.message.text);
               const refusal = commandRefusal(turnInput.message.text);
               if (refusal !== undefined) {
                 yield* onUpdate({ type: "offered", nativeTurnId });
