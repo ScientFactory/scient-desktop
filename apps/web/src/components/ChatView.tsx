@@ -4724,6 +4724,7 @@ function ChatViewContent(props: ChatViewProps) {
                                       trailing: (
                                         // SCIENT-FORK:START — the strip button opens its own Permissions card.
                                         <ComposerContextPermissions
+                                          environmentId={environmentId}
                                           runtimeMode={runtimeMode}
                                           supportedRuntimeModes={
                                             activeProviderStatus?.supportedRuntimeModes

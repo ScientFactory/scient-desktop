@@ -160,7 +160,7 @@ A few settings need care:
         }
       }
     },
-    "updates": { "mode": "auto", "feedUrl": "https://updates.example.com/t3code/" }
+    "updates": { "mode": "auto", "feedUrl": "https://updates.example.com/scient/" }
   }
 }
 ```

@@ -1,10 +1,11 @@
-import type { RuntimeMode } from "@t3tools/contracts";
+import { managedRuntimeModeDenial, type EnvironmentId, type RuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 // SCIENT-FORK:START — the strip button opens its own Permissions card.
 import { useRef, useState } from "react";
 // SCIENT-FORK:END
 
 import { shortcutLabelForCommand } from "../keybindings";
+import { useManagedPolicy } from "../state/managedPolicy";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { ComposerControl } from "./chat/ComposerControl";
 // SCIENT-FORK:START — the strip button opens its own Permissions card.
@@ -18,6 +19,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /** The new-thread strip names the permissions the first send will use; clicking opens them. */
 export function ComposerContextPermissions(props: {
+  environmentId: EnvironmentId;
   runtimeMode: RuntimeMode;
   // SCIENT-FORK:START — the strip button opens its own Permissions card.
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
@@ -36,7 +38,16 @@ export function ComposerContextPermissions(props: {
     props.runtimeMode,
     props.supportedRuntimeModes,
   );
-  const options = modes.map((option) => ({ mode: option, ...runtimeModeConfig[option] }));
+  // Modes above an administrator's ceiling stay listed, disabled with the reason.
+  const managedPolicy = useManagedPolicy(props.environmentId);
+  const options = modes.map((option) => {
+    const disabledReason = managedRuntimeModeDenial(managedPolicy, option);
+    return {
+      mode: option,
+      ...runtimeModeConfig[option],
+      ...(disabledReason === undefined ? {} : { disabledReason }),
+    };
+  });
   const { icon: Icon, label } = runtimeModeConfig[mode];
   return (
     <Menu
