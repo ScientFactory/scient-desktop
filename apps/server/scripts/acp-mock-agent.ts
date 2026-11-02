@@ -641,7 +641,7 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         return {
           protocolVersion: 2,
-          info: { name: "antigravity-acp", version: "mock" },
+          info: { name: "antigravity-acp", version: process.env.T3_ACP_AGENT_VERSION ?? "mock" },
           capabilities: {
             session: { prompt: { image: {}, embeddedContext: {} } },
           },
@@ -665,7 +665,7 @@ const program = Effect.gen(function* () {
               : undefined;
       return {
         protocolVersion: 2,
-        info: { name: "t3-acp-mock-agent", version: "0.0.0" },
+        info: { name: "t3-acp-mock-agent", version: process.env.T3_ACP_AGENT_VERSION ?? "0.0.0" },
         ...(authMethods
           ? {
               authMethods: authMethods.map((method) => ({

@@ -127,6 +127,62 @@ Off response stays cached until explicit settings refresh or a new connection;
 changing consent from a different client therefore does not silently wake this
 renderer. No missed actions are replayed.
 
+Provider send and completion counts need not match. `provider.turn.completed`
+is one provider turn, and `segment` says what started it: the run's first
+attempt (`initial`), a `steering_restart`, a provider `continuation` such as a
+Codex goal turn, or a `native_child` subagent. `createdBy`, `creationSource`,
+`scheduled`, and `subagent` describe the run's starting message, and `childKind`
+separates native subagents from T3-managed child threads. Use this event for
+per-turn measurements, not for counting requests.
+
+`provider.request.completed` is one run, recorded when the run settles in the
+server process that ran it. It adds each root turn once, so continuations,
+steering, and replayed provider events do not add rows. `requestKind: "user"`
+counts what people asked for. Native subagent turns are summed apart from the
+root (`childUsageStatus`, `childInputTokens`); T3-managed child threads report
+their own requests as `t3_child`. A child still running at settlement is never
+added later, and the summary sets `childrenRunning`. A server restart loses the
+summary of a run in progress. A run that continues after a restart reports its
+own usage with `restartContinuation` and `lifecycleObserved: false`; it cannot
+recover the original request's count or kind. A run whose provider session never
+opens has no summary, and a start the provider rejects reports
+`providerTurns: 0`. A Stop that lands while a steering restart is starting ends
+the run without a summary. Collection is best effort, with no scan or backfill of
+provider history.
+
+Counts cover the main agent. `otherInputTokens` and `otherOutputTokens` are what
+a provider's own ledger recorded beyond it during the turn: Claude's per-process
+`modelUsage` growth, which covers native subagents, compaction, and helper
+calls. They need a baseline from the same process, so they stay absent when it
+is unknown or the ledger goes backwards, and background work that ends between
+turns lands in the next one. Claude subagents have no turns of their own, so
+this never overlaps child turns.
+
+`model` and `effort` are what the run selected. `observedModel` and
+`mixedModels` appear only when the provider reported the models for the counted
+work (Codex thread settings and reroutes, Claude root messages, OpenCode steps).
+`mixedModels: false` without `reportVersion` was never checked. Model labels
+come from the bundled model manifest and the Cursor and Grok catalogs, also for
+routed ids such as `anthropic/claude-opus-5-5`, and efforts come from a closed
+list, so user-configured names stay out.
+
+Status and counters answer different questions. `usageReported: false` means
+the adapter attached no usage; a harness where every row says so is unsupported,
+not idle. `partial` keeps valid counts that cannot establish a whole-turn total,
+such as an OpenCode step that ended without a report, an OpenCode stream
+reconnect, or an interrupted segment.
+Explicit zeros are sent and unknown counts stay absent. `localCommand` marks a
+provider-local command such as Claude's `/compact`, whose result counters are not
+model work. Reasoning tokens are a subset of output.
+
+Charts built on these events should say "output tokens per measured provider
+completion", compare matching provider, observed model, effort, interaction mode,
+and terminal status, and show eligible and measured counts by harness, origin,
+and status so unknown models and unsupported adapters stay in the denominator.
+Divide summed totals for output/input ratios; averaging per-turn ratios lets
+small-input turns dominate. Rows without `reportVersion` keep their missing
+fields unknown; a missing origin is never a person.
+
 UI export operations require a cached, positive status with an ephemeral
 `collectionContext`. The server derives that context from its current consent
 epoch and a random value; consent controls, deletion and a new server/HTTP

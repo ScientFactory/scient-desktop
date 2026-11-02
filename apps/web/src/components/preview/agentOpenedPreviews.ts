@@ -78,7 +78,7 @@ export function revealServerTabs(
           !current?.surfaces.includes(surface)
         )
           return;
-        useRightPanelStore.getState().activateSurface(threadRef, surface.id);
+        useRightPanelStore.getState().revealSurface(threadRef, surface.id);
       });
       // SCIENT-FORK:END
     } else if (!surface) {

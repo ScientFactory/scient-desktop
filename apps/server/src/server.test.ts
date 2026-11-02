@@ -147,6 +147,7 @@ import {
   resolveFileManagerRevealKindForConfig,
 } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -1239,6 +1240,7 @@ const buildAppUnderTest = (options?: {
             Layer.mock(TriageService.TriageService)({}),
           ),
         ),
+        Layer.provide(Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({})),
         Layer.provide(
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
             getTurnDiff: () =>
