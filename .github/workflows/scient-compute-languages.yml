@@ -82,6 +82,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install ${{ matrix.group }}
+        env:
+          # Looks up each tool's newest release without meeting GitHub's limit for anonymous reads.
+          GH_TOKEN: ${{ github.token }}
         run: node apps/server/scripts/install-run-languages.ts ${{ matrix.group }}
 
       - name: Run a real file in each

@@ -32,23 +32,28 @@ const ELAN_UNIX =
 // `-File` cannot pass a true switch value, so this calls the script from `-Command`.
 const ELAN_WINDOWS =
   "curl -sSfLo elan-init.ps1 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 && powershell -ExecutionPolicy Bypass -Command './elan-init.ps1 -NoPrompt 1 -DefaultToolchain stable'";
-/** Runs a downloaded Windows installer silently, then lists where it went for the log. */
-const windowsInstaller = (url: string) => silentInstaller(url, "/S");
-/** Inno Setup installers, which take their own silent flag. */
-const innoInstaller = (url: string) =>
-  silentInstaller(url, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART");
-/** Each installer gets its own file, since one still running keeps its file locked. */
-const silentInstaller = (url: string, flags: string) => {
-  const file = `${url
-    .replace(/\/download$/u, "")
-    .split("/")
-    .pop()!
-    .replace(/\.exe$/iu, "")}.exe`;
-  return [
-    `curl -sSfLo "${file}" "${url}"`,
-    `{ MSYS_NO_PATHCONV=1 "./${file}" ${flags} || { echo "installer exited $?"; false; }; }`,
+/**
+ * Versions are looked up at install time, so none go stale and the test meets today's download:
+ * `github_asset OWNER/REPO PATTERN` is a file in the latest GitHub release, `github_version
+ * OWNER/REPO` that release's version, and `newest URL PATTERN` the highest match on a file list.
+ */
+const LOOKUPS = [
+  'github() { if [ -n "${GH_TOKEN:-}" ]; then curl -sSfL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$1/releases/latest"; else curl -sSfL "https://api.github.com/repos/$1/releases/latest"; fi; }',
+  'github_asset() { github "$1" | grep -oE "https://[^\\"]*/$2\\"" | tr -d \'"\' | head -1; }',
+  'github_version() { github "$1" | grep -oE \'"tag_name": *"v?[^"]+"\' | sed -E \'s/.*"v?([^"]+)"$/\\1/\'; }',
+  'newest() { curl -sSfL "$1" | grep -oE "$2" | sort -uV | tail -1; }',
+].join("\n");
+/** A Windows installer, run unattended; its own file, since one still running keeps it locked. */
+const windowsInstaller = (url: string, flags = "/S") =>
+  [
+    `url=${url}`,
+    'file=$(basename "${url%/download}")',
+    'curl -sSfLo "$file" "$url"',
+    `{ MSYS_NO_PATHCONV=1 "./$file" ${flags} || { echo "installer exited $?"; false; }; }`,
   ].join(" && ");
-};
+/** Inno Setup installers, which take their own unattended flag. */
+const innoInstaller = (url: string) =>
+  windowsInstaller(url, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART");
 /** Adds a folder to the user's saved PATH, as a person following an unzip guide would. */
 const addToUserPath = (folder: string) =>
   `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';${folder}', 'User')"`;
@@ -58,10 +63,12 @@ const CLOJURE_LINUX =
   "curl -sSfLO https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh && chmod +x linux-install.sh && sudo ./linux-install.sh";
 const NEXTFLOW_UNIX =
   "curl -sSfL https://get.nextflow.io | bash && sudo mv nextflow /usr/local/bin/";
-/** The workflow sets up a plain Python first, so pip installs into it. */
-// A named version downloads directly; asking for the latest goes through GitHub's API and its limit.
+/**
+ * The workflow sets up a plain Python first, so pip installs into it. The version is looked up with
+ * the workflow's token, since cmdstanpy's own lookup has none and meets GitHub's limit.
+ */
 const CMDSTAN =
-  "python -m pip install cmdstanpy && python -m cmdstanpy.install_cmdstan --version 2.40.0 --cores 4 --verbose";
+  'python -m pip install cmdstanpy && python -m cmdstanpy.install_cmdstan --version "$(github_version stan-dev/cmdstan)" --cores 4';
 
 const NO_WINDOWS = (name: string) => ({
   skip: `${name} has no Windows build; people run it through WSL, which is Linux`,
@@ -108,7 +115,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     apl: {
       // Ubuntu has no GNU APL package, so this builds the GNU release.
       linux:
-        "curl -sSfL https://ftp.gnu.org/gnu/apl/apl-2.0.tar.gz | tar -xz && cd apl-2.0 && ./configure -q && make -s -j4 && sudo make -s install",
+        'curl -sSfL "https://ftp.gnu.org/gnu/apl/$(newest https://ftp.gnu.org/gnu/apl/ "apl-[0-9.]+[0-9][.]tar[.]gz")" | tar -xz && cd apl-*/ && ./configure -q && make -s -j4 && sudo make -s install',
       darwin: brew("gnu-apl"),
       win32: { skip: "GNU APL has no Windows build, and Dyalog needs a sign-up to download" },
     },
@@ -123,7 +130,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       linux: CLOJURE_LINUX,
       darwin: brew("clojure"),
       win32: [
-        "curl -sSfLo bb.zip https://github.com/babashka/babashka/releases/download/v1.13.229/babashka-1.13.229-windows-amd64.zip",
+        'curl -sSfLo bb.zip "$(github_asset babashka/babashka "babashka-[0-9.]+-windows-amd64[.]zip")"',
         'unzip -q bb.zip -d "$LOCALAPPDATA/babashka"',
         `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';' + \\$env:LOCALAPPDATA + '\\babashka', 'User')"`,
       ].join(" && "),
@@ -153,7 +160,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     gap: {
       linux: apt("gap"),
       darwin:
-        'curl -sSfL https://github.com/gap-system/gap/releases/download/v4.16.1/gap-4.16.1.tar.gz | tar -xz -C "$HOME" && cd "$HOME/gap-4.16.1" && ./configure -q && make -s -j4 && sudo ln -s "$HOME/gap-4.16.1/gap" /usr/local/bin/gap',
+        'curl -sSfL "$(github_asset gap-system/gap "gap-[0-9.]+[0-9][.]tar[.]gz")" | tar -xz -C "$HOME" && cd "$HOME"/gap-*/ && ./configure -q && make -s -j4 && sudo ln -s "$PWD/gap" /usr/local/bin/gap',
       win32: NO_WINDOWS("GAP"),
     },
     macaulay2: {
@@ -172,7 +179,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       linux: apt("coq"),
       darwin: brew("rocq"),
       win32: windowsInstaller(
-        "https://github.com/rocq-prover/platform/releases/download/2026.07.0/signed_Rocq-Platform-release-2026.07.0-version.9.1-Windows-x86_64.exe",
+        '"$(github_asset rocq-prover/platform "signed_Rocq-Platform-[^/]*-Windows-x86_64[.]exe")"',
       ),
     },
     lean: { linux: ELAN_UNIX, darwin: ELAN_UNIX, win32: ELAN_WINDOWS },
@@ -191,7 +198,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       linux: apt("octave"),
       darwin: brew("octave"),
       win32: windowsInstaller(
-        "https://ftp.gnu.org/gnu/octave/windows/octave-11.3.0-w64-installer.exe",
+        '"https://ftp.gnu.org/gnu/octave/windows/$(newest https://ftp.gnu.org/gnu/octave/windows/ "octave-[0-9.]+-w64-installer[.]exe")"',
       ),
     },
     gnuplot: { linux: apt("gnuplot-nox"), darwin: brew("gnuplot"), win32: choco("gnuplot") },
@@ -199,7 +206,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       linux: apt("minizinc"),
       darwin: cask("minizincide"),
       win32: innoInstaller(
-        "https://github.com/MiniZinc/MiniZincIDE/releases/download/2.10.1/MiniZincIDE-2.10.1-x86_64-windows-setup.exe",
+        '"$(github_asset MiniZinc/MiniZincIDE "MiniZincIDE-[0-9.]+-x86_64-windows-setup[.]exe")"',
       ),
     },
     verilog: { linux: apt("iverilog"), darwin: brew("icarus-verilog"), win32: choco("iverilog") },
@@ -208,10 +215,10 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       linux: apt("ghdl"),
       darwin:
         // Unpacked whole, since GHDL finds its libraries beside its own folder.
-        "curl -sSfL https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-llvm-6.0.0-macos15-aarch64.tar.gz | sudo tar -xz -C /usr/local --strip-components 1",
+        'curl -sSfL "$(github_asset ghdl/ghdl "ghdl-llvm-[0-9.]+-macos15-aarch64[.]tar[.]gz")" | sudo tar -xz -C /usr/local --strip-components 1',
       "darwin-x64": { skip: "GHDL publishes no Intel Mac build, and Homebrew disabled its own" },
       win32: [
-        "curl -sSfLo ghdl.zip https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-mcode-6.0.0-ucrt64.zip",
+        'curl -sSfLo ghdl.zip "$(github_asset ghdl/ghdl "ghdl-mcode-[0-9.]+-ucrt64[.]zip")"',
         "unzip -q ghdl.zip -d /c/ghdl",
         addToUserPath("C:\\\\ghdl\\\\bin"),
       ].join(" && "),
@@ -220,8 +227,9 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     jags: {
       linux: apt("jags"),
       darwin: brew("jags"),
+      // The newest major version's folder, then its newest installer.
       win32: windowsInstaller(
-        "https://sourceforge.net/projects/mcmc-jags/files/JAGS/4.x/Windows/JAGS-4.3.1.exe/download",
+        '"$(j=https://sourceforge.net/projects/mcmc-jags/files/JAGS; m=$(newest "$j/" "JAGS/[0-9]+[.]x/"); f=$(newest "https://sourceforge.net/projects/mcmc-jags/files/${m}Windows/" "JAGS-[0-9.]+[0-9][.]exe"); echo "https://sourceforge.net/projects/mcmc-jags/files/${m}Windows/$f/download")"',
       ),
     },
     spss: {
@@ -261,7 +269,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     isabelle: {
       linux:
         // The Cambridge mirror, since the main server does not answer GitHub's computers.
-        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2026_linux.tar.gz" | tar -xz -C "$HOME"',
+        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/$(newest https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/ "Isabelle20[0-9]{2}(-[0-9]+)?_linux[.]tar[.]gz")" | tar -xz -C "$HOME"',
     },
     sage: {
       linux:
@@ -278,7 +286,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
     netlogo: {
       linux:
-        'curl -sSfL "https://downloads.netlogo.org/6.4.0/NetLogo-6.4.0-64.tgz" | tar -xz -C "$HOME"',
+        'curl -sSfL "$(github_asset NetLogo/NetLogo "NetLogo-[0-9.]+-64[.]tgz")" | tar -xz -C "$HOME"',
     },
     modelica: {
       linux: [
@@ -333,7 +341,7 @@ for (const [languageId, ways] of Object.entries(languages)) {
     continue;
   }
   console.log(`::group::Install ${languageId}`);
-  const result = NodeChildProcess.spawnSync("bash", ["-c", way], {
+  const result = NodeChildProcess.spawnSync("bash", ["-c", `${LOOKUPS}\n${way}`], {
     stdio: "inherit",
     // The slowest install that works takes about six minutes; a stuck installer stops here.
     timeout: 15 * 60_000,

@@ -112,9 +112,10 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string, string?]>> = {
   ],
   // A JAGS script needs a model and data to do anything more; starting it is what Run promises.
   jags: ["a.jags", "exit\n", "JAGS"],
+  // The smallest model with a saved experiment, which reports one value.
   netlogo: [
     "a.nlogo",
-    'to setup\n  output-print "scient-ran"\nend\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\nNetLogo 6.4.0\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n',
+    'to setup\n  clear-all\n  reset-ticks\nend\nto go\n  tick\nend\n@#$#@#$#@\nGRAPHICS-WINDOW\n210\n10\n647\n448\n-1\n-1\n13.0\n1\n10\n1\n1\n1\n0\n1\n1\n1\n-16\n16\n-16\n16\n0\n0\n1\nticks\n30.0\n\n@#$#@#$#@\n@#$#@#$#@\ndefault\ntrue\n0\nPolygon -7500403 true true 150 5 40 250 150 205 260 250\n\n@#$#@#$#@\nNetLogo 6.4.0\n@#$#@#$#@\n@#$#@#$#@\n@#$#@#$#@\n<experiments>\n  <experiment name="run" repetitions="1" runMetricsEveryStep="false">\n    <setup>setup</setup>\n    <go>go</go>\n    <timeLimit steps="1"/>\n    <metric>"scient-ran"</metric>\n  </experiment>\n</experiments>\n@#$#@#$#@\n@#$#@#$#@\ndefault\n0.0\n-0.2 0 0.0 1.0\n0.0 1 1.0 0.0\n0.2 0 0.0 1.0\nlink direction\ntrue\n0\nLine -7500403 true 150 150 90 180\nLine -7500403 true 150 150 210 180\n@#$#@#$#@\n0\n@#$#@#$#@\n',
   ],
   agda: ["a.agda", "module a where\n", ""],
   // The apostrophe proves the path reaches sqlite3 whole.
