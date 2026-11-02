@@ -120,6 +120,15 @@ export async function keepFileVersion(input: {
   const partial = NodePath.join(folder, `.${input.now}.${NodeCrypto.randomUUID()}.partial`);
   try {
     await NodeFSP.copyFile(input.target, partial);
+    // The caller replaces the original next, so the copy must survive a power loss first. The
+    // copy is Scient's own, so a read-only original can't keep it from being opened to flush.
+    await NodeFSP.chmod(partial, 0o600);
+    const copy = await NodeFSP.open(partial, "r+");
+    try {
+      await copy.sync();
+    } finally {
+      await copy.close();
+    }
     const revision = await revisionOf(partial);
     if (revision === newest?.revision) return true;
     const extension = NodePath.extname(input.target);
@@ -127,13 +136,6 @@ export async function keepFileVersion(input: {
       /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt"
     }`;
     const kept = NodePath.join(folder, name);
-    // The caller replaces the original next, so the copy must survive a power loss first.
-    const copy = await NodeFSP.open(partial, "r+");
-    try {
-      await copy.sync();
-    } finally {
-      await copy.close();
-    }
     await NodeFSP.rename(partial, kept);
     await syncFolder(folder);
     if (created !== undefined) await syncFolder(input.directory);

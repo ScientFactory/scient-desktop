@@ -1313,12 +1313,12 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       callerBindingId,
       stillAuthorized: stillOwner,
     });
-    return result._tag === "done" &&
-      recovered !== null &&
-      Exit.isSuccess(recovered) &&
-      recovered.value._tag === "recovered"
-      ? { ...result, finishedInterruptedSync: true }
-      : result;
+    if (result._tag !== "done") return result;
+    return {
+      ...result,
+      finishedInterruptedSync:
+        recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered",
+    };
   });
 
   /**
