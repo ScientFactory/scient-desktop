@@ -1279,15 +1279,12 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const controls = targetControls(target);
                 if (!controls) return yield* missing();
-                const baseDecision = authorizationDecision(state.agentAccess, controls, {
-                  ...scope,
-                  unattended: false,
-                });
-                const decision =
-                  baseDecision.decision === "ask" &&
-                  conversationGrants.has(grantKey(scope.threadId, target))
-                    ? { decision: "allowed" as const }
-                    : authorizationDecision(state.agentAccess, controls, scope);
+                const decision = authorizationDecision(
+                  state.agentAccess,
+                  controls,
+                  scope,
+                  conversationGrants.has(grantKey(scope.threadId, target)),
+                );
                 const audit = {
                   target,
                   action,

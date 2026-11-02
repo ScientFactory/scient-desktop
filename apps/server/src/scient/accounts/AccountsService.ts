@@ -41,6 +41,7 @@ import type {
   VaultSecretRef,
   ConnectorId,
 } from "@t3tools/contracts";
+import type { AccountAuthorization } from "@t3tools/shared/scientAccountAuthorization";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
@@ -78,12 +79,7 @@ export interface SessionAccounts {
   readonly profileChoices?: BrowserProfileChoices | undefined;
 }
 
-export type AccountAuthorization =
-  | { readonly decision: "allowed" }
-  | {
-      readonly decision: "denied";
-      readonly reason: "off" | "declined" | "out-of-scope" | "timed-out";
-    };
+export type { AccountAuthorization };
 
 export interface AccountsServiceShape {
   readonly setHandoff: (

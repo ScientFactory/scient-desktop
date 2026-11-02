@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import type { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
@@ -69,7 +70,7 @@ export const findProfiles = Effect.fn("AccountsAgent.findProfiles")(function* (
     if (
       profile.incognito ||
       profile.id === INCOGNITO_BROWSER_PROFILE_ID ||
-      record.access !== "allowed" ||
+      authorizationDecision(session.agentAccess, record, scope).decision !== "allowed" ||
       profiles.length >= 8
     ) {
       skipped.push(profile.name);

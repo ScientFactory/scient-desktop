@@ -7,6 +7,10 @@
       "types": "./src/scientAccountSecretRequest.ts",
       "import": "./src/scientAccountSecretRequest.ts"
     },
+    "./scientAccountAuthorization": {
+      "types": "./src/scientAccountAuthorization.ts",
+      "import": "./src/scientAccountAuthorization.ts"
+    },
     "./scientSignInPage": {
       "types": "./src/scientSignInPage.ts",
       "import": "./src/scientSignInPage.ts"

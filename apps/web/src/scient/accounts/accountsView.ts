@@ -28,6 +28,7 @@ import {
   type BrowserImportSource,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
 import ACCOUNT_ICONS from "./accountIcons.json";
 
 export function siteMatchesUrl(site: string, url: string): boolean {
@@ -103,13 +104,10 @@ export function agentMayUse(
   projectId: ProjectId | null | undefined,
 ): boolean {
   return (
-    agentAccess &&
-    (controls.scope.type === "all-projects" ||
-      (projectId != null && controls.scope.projectIds.includes(projectId))) &&
-    (controls.access === "allowed" ||
-      (controls.access === "ask" &&
-        projectId != null &&
-        controls.allowedProjects?.includes(projectId) === true))
+    authorizationDecision(agentAccess, controls, {
+      projectId: projectId ?? undefined,
+      unattended: false,
+    }).decision === "allowed"
   );
 }
 
