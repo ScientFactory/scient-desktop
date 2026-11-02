@@ -2996,7 +2996,7 @@ describe("PreviewManager", () => {
         const download = (guid: string) => {
           debuggerMessage?.(
             { preventDefault: () => undefined, defaultPrevented: false },
-            "Browser.downloadWillBegin",
+            "Page.downloadWillBegin",
             { guid },
             "",
           );
@@ -3018,6 +3018,8 @@ describe("PreviewManager", () => {
           method: "Browser.setDownloadBehavior",
           params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
         });
+        // The relay records the folder after the page answers, before its own reply.
+        yield* Effect.yieldNow;
 
         // Chrome's PDF viewer saves from a frame the guest preload never sees,
         // so a download with no recent agent input must count as the person's.

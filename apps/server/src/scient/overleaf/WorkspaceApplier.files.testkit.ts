@@ -25,6 +25,8 @@ export const makeApplierFiles = Effect.fn("WorkspaceApplier.makeApplierFiles")(f
   readonly root: string;
   readonly helper: string | undefined;
   readonly retainedHooks: RetainedMutationHooks;
+  /** For tests of records an older build left. */
+  readonly nativeSaves?: boolean;
 }) {
   const { root, helper, retainedHooks } = input;
   const fileSystem = yield* FileSystem.FileSystem,
@@ -59,6 +61,8 @@ export const makeApplierFiles = Effect.fn("WorkspaceApplier.makeApplierFiles")(f
     workspaceEntries: entries,
     readFile,
     retainedHooks,
+    fileHistoryDirectory: NodePath.join(root, "file-history"),
+    nativeSaves: input.nativeSaves ?? false,
     ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
     resolveRetentionStorageDirectory: async () => NodePath.join(root, "shared-retention"),
     retentionDirectoryFor: async (_root, parent) => {

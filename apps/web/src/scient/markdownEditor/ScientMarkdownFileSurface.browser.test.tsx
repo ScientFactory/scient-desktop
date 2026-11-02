@@ -192,6 +192,7 @@ describe("ScientMarkdownFileSurface", () => {
       refresh: () => coordinator.refresh(),
       resolveWithLocal: (revision: string) => coordinator.resolveWithLocal(revision),
       resolveWithDisk: () => coordinator.resolveWithDisk(),
+      resolveRestoredDraft: async () => false,
       restoreRecovery: () => coordinator.restoreRecovery(),
       recreateMissingCurrent: () => coordinator.recreateMissingCurrent(),
       noteMutationFailure: (error: unknown, mutationId?: string) =>

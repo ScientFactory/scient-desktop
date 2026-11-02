@@ -479,6 +479,14 @@ it.effect.each([
           }),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getProviderControlContext: () =>
+              Effect.succeed({
+                providerThread: undefined,
+                providerTurn: undefined,
+                attempt: undefined,
+                message: undefined,
+                run: undefined,
+              }),
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),

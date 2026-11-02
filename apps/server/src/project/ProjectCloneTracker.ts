@@ -5,6 +5,7 @@ import type {
   ProjectCloneStartInput,
   ProjectCloneStartResult,
   ProjectId,
+  SourceControlCloneProtocol,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import {
@@ -83,11 +84,9 @@ interface TrackedClone {
   readonly input: {
     /** What git is given; may carry credentials and never leaves the server. */
     readonly cloneUrl: string;
-    // SCIENT-FORK:START tracked-clone-protocol
-    readonly protocol?: ProjectCloneStartInput["protocol"];
-    // SCIENT-FORK:END tracked-clone-protocol
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
+    readonly protocol: SourceControlCloneProtocol;
   };
 }
 
@@ -222,9 +221,7 @@ export const make = Effect.gen(function* () {
       {
         remoteUrl: tracked.input.cloneUrl,
         destinationPath: tracked.input.destinationPath,
-        // SCIENT-FORK:START tracked-clone-protocol
-        ...(tracked.input.protocol === undefined ? {} : { protocol: tracked.input.protocol }),
-        // SCIENT-FORK:END tracked-clone-protocol
+        protocol: tracked.input.protocol,
       },
       {
         onProgress: (update) =>
@@ -307,6 +304,7 @@ export const make = Effect.gen(function* () {
             // SCIENT-FORK:END tracked-clone-protocol
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
+            protocol: input.protocol ?? "auto",
           },
         });
         return [true, next] as const;

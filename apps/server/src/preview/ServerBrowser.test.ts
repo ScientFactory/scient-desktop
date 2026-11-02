@@ -1624,6 +1624,49 @@ it.live("closing a tab while a viewer is still opening it does not leave its pag
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* Effect.promise(() => page.goto("https://example.com/first"));
+      const failing = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+      };
+      page.emit("request", failing);
+      page.emit("requestfailed", failing);
+      heldTitle.resolve("Held");
+      // A load at the same await depth reports after the held one, so its Success marks the end.
+      page.emit("load");
+
+      const statuses: Array<string> = [];
+      while (!statuses.at(-1)?.startsWith("Success")) {
+        const event = yield* PubSub.take(events);
+        if (event.type === "failed" && event.tabId === tabId) {
+          statuses.push(`LoadFailed ${event.url}`);
+        } else if (event.type === "navigated" && event.tabId === tabId) {
+          const status = event.snapshot.navStatus;
+          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        }
+      }
+      expect(statuses).toEqual([
+        "Loading https://example.com/missing",
+        "LoadFailed https://example.com/missing",
+        "Success test page",
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each([
   {
     name: "hover burst before a click",
@@ -2101,6 +2144,51 @@ it.live("reports an empty tab when Back leaves a page that's still loading", () 
 
       page.emit("framenavigated", page);
       expect(yield* nextStatus).toEqual({ _tag: "Idle" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("keeps the empty page when Back cancels a page that was still loading", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* browserHostReady;
+      const opened = yield* manager.open({ threadId: scope.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const page = contexts[0]!.page;
+      const slow = {
+        isNavigationRequest: () => true,
+        frame: () => page,
+        url: () => "https://slow.test/report.pdf",
+        method: () => "GET",
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      };
+      page.emit("request", slow);
+      page.emit("requestfailed", slow);
+      page.emit("framenavigated", page);
+
+      // Back left the page, so it's no download for the empty tab to show or fail on: a file it
+      // still sends is offered like any other.
+      const saved = yield* Queue.unbounded<string>();
+      const written = Promise.withResolvers<void>();
+      page.emit("download", {
+        failure: async () => null,
+        delete: async () => {},
+        saveAs: (path: string) => {
+          Queue.offerUnsafe(saved, path);
+          return written.promise;
+        },
+        suggestedFilename: () => "report.pdf",
+        url: () => slow.url(),
+      });
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(yield* Queue.take(saved), "%PDF");
+      written.resolve();
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
+      expect(offered).toMatchObject({ _tag: "download", fileName: "report.pdf" });
     }),
   ).pipe(Effect.provide(layer)),
 );

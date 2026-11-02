@@ -653,8 +653,10 @@ const make = Effect.gen(function* () {
     // SCIENT-FORK:END
     // Chromium's error page loads after `requestfailed` and must not clear LoadFailed.
     if (url.startsWith("chrome-error://")) return;
+    // A navigation that starts and fails during the title read leaves the URL unchanged.
+    const generation = tab.navigationGeneration;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
-    if (tab.loading || tab.page.url() !== url) return;
+    if (tab.navigationGeneration !== generation || tab.loading || tab.page.url() !== url) return;
     report(tab, {
       _tag: "Success",
       url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
@@ -977,6 +979,8 @@ const make = Effect.gen(function* () {
         if (tab.navigationGeneration > 0) {
           tab.loading = false;
           tab.leftBlank = true;
+          // A page Back cancelled is no download to wait for; the empty page stays empty.
+          clearAbortedNavigation(tab);
         }
       }
       // SCIENT-FORK:END

@@ -65,7 +65,7 @@ export function CliCommandSettingsRow() {
             <Button
               size="sm"
               variant="outline"
-              disabled={pending || query.isPending}
+              disabled={pending || query.isPending || Boolean(state.shadowedBy)}
               onClick={() => change("install")}
             >
               Install scient

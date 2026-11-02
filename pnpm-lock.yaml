@@ -371,7 +371,7 @@ patchedDependencies:
   '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
   '@legendapp/list@3.3.5': 6cbdacd8c380d9a5afb9f73d4198dc2cc44be6ef28a955b1183c781469307896
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
-  '@pierre/diffs@1.6.1': 3dd261dc9475994d263ffc0890c16dd4f96449caf2dee2b7cc2f459d025e8399
+  '@pierre/diffs@1.6.1': 01cd5d4fba20da6a9a9a4d7a2500d40379c8ed0982cfcdbbf38d3f94d7e3b2f8
   '@pierre/trees@1.0.0-beta.6': 89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': 910ec1bf22aa85a96fcf12299cd823bc30f702dd9b2d77b564d10b9ed709f7f6
@@ -582,7 +582,7 @@ importers:
         version: 1.9.1
       '@pierre/diffs':
         specifier: 1.6.1
-        version: 1.6.1(patch_hash=3dd261dc9475994d263ffc0890c16dd4f96449caf2dee2b7cc2f459d025e8399)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.6.1(patch_hash=01cd5d4fba20da6a9a9a4d7a2500d40379c8ed0982cfcdbbf38d3f94d7e3b2f8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/highlights':
         specifier: 'catalog:'
         version: 0.2.0
@@ -989,6 +989,9 @@ importers:
       fast-xml-parser:
         specifier: 5.8.0
         version: 5.8.0
+      ffi-rs:
+        specifier: 1.3.2
+        version: 1.3.2
       hyparquet:
         specifier: 1.31.5
         version: 1.31.5
@@ -1199,7 +1202,7 @@ importers:
         version: 1.8.0
       '@pierre/diffs':
         specifier: 1.6.1
-        version: 1.6.1(patch_hash=3dd261dc9475994d263ffc0890c16dd4f96449caf2dee2b7cc2f459d025e8399)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.6.1(patch_hash=01cd5d4fba20da6a9a9a4d7a2500d40379c8ed0982cfcdbbf38d3f94d7e3b2f8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/theme':
         specifier: 1.1.0
         version: 1.1.0
@@ -1735,7 +1738,7 @@ importers:
     dependencies:
       '@pierre/diffs':
         specifier: 1.6.1
-        version: 1.6.1(patch_hash=3dd261dc9475994d263ffc0890c16dd4f96449caf2dee2b7cc2f459d025e8399)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.6.1(patch_hash=01cd5d4fba20da6a9a9a4d7a2500d40379c8ed0982cfcdbbf38d3f94d7e3b2f8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2593,6 +2596,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      ffi-rs:
+        specifier: 1.3.2
+        version: 1.3.2
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -17672,7 +17678,7 @@ snapshots:
       tslib: 2.8.1
       webcrypto-core: 1.9.2
 
-  '@pierre/diffs@1.6.1(patch_hash=3dd261dc9475994d263ffc0890c16dd4f96449caf2dee2b7cc2f459d025e8399)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@pierre/diffs@1.6.1(patch_hash=01cd5d4fba20da6a9a9a4d7a2500d40379c8ed0982cfcdbbf38d3f94d7e3b2f8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@pierre/highlights': 0.2.0
       '@pierre/theme': 2.0.0

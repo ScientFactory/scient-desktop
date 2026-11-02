@@ -38,6 +38,7 @@ import {
   layerSettingsWatcher,
 } from "./ProviderInstanceRegistryHydration.ts";
 import * as Mutator from "./ProviderInstanceRegistryMutator.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
 
@@ -91,6 +92,7 @@ it.effect.each(["remove", "disable"] as const)(
         ).pipe(Layer.provideMerge(NodeServices.layer));
         const settingsLayer = Settings.layer.pipe(
           Layer.provideMerge(secretLayer),
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provideMerge(base),
           Layer.provide(
             Layer.mergeAll(

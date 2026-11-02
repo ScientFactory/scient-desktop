@@ -36,6 +36,7 @@ export * from "./settings.ts";
 export * from "./scientForkSettings.ts";
 // SCIENT-FORK: one-time resets of saved client preferences.
 export * from "./scientClientSettingsResets.ts";
+export * from "./managedPolicy.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";

@@ -135,6 +135,7 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 // SCIENT-FORK:END
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
 import * as EventStore from "./orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
@@ -651,7 +652,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
 
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
-  ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+  ServerSettings.layer.pipe(
+    Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+  ),
 ).pipe(
   Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
   Layer.provideMerge(
@@ -915,7 +918,7 @@ it.effect.each(["pending", "cached"] as const)(
       const expectedSettings = [duringDiscovery, latestSettings].map(
         ServerSettings.redactServerSettingsForClient,
       );
-      const expectedKeybindings = [duringAck, latestKeybindings];
+      const expectedKeybindings = [duringAck.keybindings, latestKeybindings.keybindings];
       // The two sources can interleave, but each must retain its own publication order.
       for (let i = 0; i < 4; i++) {
         const event = yield* Queue.take(responses);
@@ -943,7 +946,7 @@ it.effect.each(["pending", "cached"] as const)(
           resolved.config.settings,
           ServerSettings.redactServerSettingsForClient(latestSettings),
         );
-        assert.deepEqual(resolved.config.keybindings, latestKeybindings);
+        assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
         yield* acknowledge;
       }
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });

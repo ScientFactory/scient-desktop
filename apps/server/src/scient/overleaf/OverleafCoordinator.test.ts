@@ -652,7 +652,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
         expect(listed.map((copy) => copy.kept.split("/").pop()).sort()).toEqual([
           "provisional",
-          HostProcess.Platform.defaultValue() === "win32" ? "retained" : "slot",
+          "retained",
         ]);
         // The extra version restores like the main one.
         const extra = listed.find((copy) => copy.kept.endsWith("/provisional"))!;
@@ -1327,10 +1327,9 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         });
         const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
         expect(listed).toHaveLength(2);
-        // A damaged record is unknown authority to the file layer: the file waits for
-        // explicit review before anything, a restore included, writes to it.
+        // A damaged record is only a lost note: nothing about the file waits on it.
         const extra = listed.find((copy) => copy.kept.endsWith("/provisional"))!;
-        const refused = yield* Effect.exit(
+        const restored = yield* Effect.exit(
           w.coordinator.restoreKept({
             connectionId: CONNECTION,
             requestId: "restore-1",
@@ -1340,8 +1339,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: extra.currentRevision,
           }),
         );
-        expect(String(refused)).toContain("needs explicit review");
-        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        expect(restored._tag).toBe("Success");
       }),
     ),
   );
