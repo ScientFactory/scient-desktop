@@ -199,16 +199,16 @@ export default function FileBrowserPanel({
             ...(await fileActions.withOpenWith(item.path, fileMenuItems)),
             // SCIENT-FORK:END
             // SCIENT-FORK:START — files that open rendered by default can open as source;
-            // then new items (start a document in, or connect, this folder), and edit
+            // then Add to chat, new items (start a document in, or connect, this folder), and edit
             ...(shouldOpenInBrowserByDefault(relativePath)
               ? ([{ id: "open-source", label: "Open source" }] as const)
               : []),
+            { id: "add-to-chat", label: "Add to chat", separatorBefore: true },
+            // Copy mention sits under Copy when Files manages entries.
+            ...(manageItems.copiesMention ? [] : [{ id: "copy-mention", label: "Copy mention" }]),
             ...manageItems.create,
             ...folderActions.menuItems(item.path),
             ...manageItems.edit,
-            // Copy mention sits under Copy when Files manages entries.
-            ...(manageItems.copiesMention ? [] : [{ id: "copy-mention", label: "Copy mention" }]),
-            { id: "add-to-chat", label: "Add to chat", separatorBefore: manageItems.copiesMention },
             // SCIENT-FORK:END
             // SCIENT-FORK:START — Move to Trash last, set apart
             ...manageItems.trash,

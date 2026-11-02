@@ -377,7 +377,7 @@ describe("Files panel search", () => {
         button: 2,
       }),
     );
-    // SCIENT-FORK:START — Copy mention sits under Copy, after Files' own items
+    // SCIENT-FORK:START — Copy mention sits under Copy; Add to chat opens the menu
     const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
     await expect.element(copy).toBeVisible();
     await userEvent.click(copy);
@@ -391,7 +391,7 @@ describe("Files panel search", () => {
     row.focus();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
     await expect
-      .element(page.getByRole("menuitem", { name: "New File", exact: true }))
+      .element(page.getByRole("menuitem", { name: "Add to chat", exact: true }))
       .toHaveFocus();
     // SCIENT-FORK:END
     await userEvent.keyboard("{Escape}");
