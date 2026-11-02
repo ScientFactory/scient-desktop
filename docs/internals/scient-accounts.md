@@ -625,8 +625,11 @@ provider environment. The existing proxy redacts reflected values in responses.
   domain `sites` already covers, so a saved password can only ever go where the person already
   signed in and the export guard knows the address; directory data never authorizes that. The sign-in counts once the hidden check agrees; it
   then continues waiting papers. A check that can't tell keeps the last known state and its date.
-  `scient_account_browser_session` refuses those learned sign-in origins and, for OpenAthens
-  universities, `*.openathens.net`: that session also opens the university's other services.
+  While any university is connected, `scient_account_browser_session` refuses every sign-in or
+  identity page (`isLoginPlace`, `isIdentityPage`), `*.openathens.net`, and the learned sign-in
+  origins: that session also opens the university's other services, and the guard doesn't depend
+  on what the bounded `sites` list still holds. Sign-in tabs are tracked with the account they
+  sign in, so one university never takes over another's.
   Quiet keep-alive visits use `my.openathens.net/check` for OpenAthens universities.
 - **Browsing access**: `accounts.universities.browse` (`universityBrowsing.ts`) runs 2.5 s after a
   tab settles on an `https` address, only for a university signed in and living in that tab's

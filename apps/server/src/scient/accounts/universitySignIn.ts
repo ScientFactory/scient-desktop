@@ -11,7 +11,6 @@ import {
   signInReturn,
   universityDetails,
   universitySignInLink,
-  usesOpenAthens,
 } from "@t3tools/shared/scientPaperLinks";
 import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import * as Effect from "effect/Effect";
@@ -32,8 +31,8 @@ const MOST_SITES = 16;
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
 
-/** Tabs Scient opened for a sign-in, which it may reuse or close. */
-const signInTabs = new Set<string>();
+/** Tabs Scient opened for a sign-in, each with the account it signs in, which it may reuse or close. */
+const signInTabs = new Map<string, AccountSummary["accountId"]>();
 
 /** The tab each sign-in is happening in, so pressing Sign in again brings it back. */
 const underWay = new Map<AccountSummary["accountId"], { threadId: string; tabId: PreviewTabId }>();
@@ -44,17 +43,25 @@ const onOpenAthens = (url: string) =>
   (new URL(url).hostname === "openathens.net" || new URL(url).hostname.endsWith(".openathens.net"));
 
 /**
- * A university's own sign-in service: the addresses Scient learned from the person's sign-in, and
- * OpenAthens for a university that signs in there.
+ * A sign-in service whose session a script must not take while a university is connected: any
+ * sign-in or identity page, the addresses learned from the person's own sign-in, and OpenAthens.
+ * It doesn't depend on what the account's list of sites still holds, so a full list can't open
+ * a gap.
  */
-export const isUniversitySignInService = (accounts: ReadonlyArray<AccountSummary>, url: string) =>
-  accounts.some(({ details }) => {
+export const isUniversitySignInService = (accounts: ReadonlyArray<AccountSummary>, url: string) => {
+  if (!URL.canParse(url)) return false;
+  const page = new URL(url);
+  return accounts.some(({ details }) => {
     const university = universityDetails(details);
     if (!university) return false;
-    if (university.institution && usesOpenAthens(university.institution) && onOpenAthens(url))
-      return true;
-    return matchesAccountOrigin(url, signInOrigins(university.sites));
+    return (
+      onOpenAthens(url) ||
+      isLoginPlace(page) ||
+      isIdentityPage(page) ||
+      matchesAccountOrigin(url, signInOrigins(university.sites))
+    );
   });
+};
 
 /** OpenAthens' own sign-in pages, on the way to the university's. */
 const isOpenAthensSignIn = (url: string) => {
@@ -76,7 +83,13 @@ const signInOrigins = (sites: ReadonlyArray<string>) =>
  * never one.
  */
 export const isSignInTab = (
-  details: { readonly sites: ReadonlyArray<string>; readonly profileId?: string | undefined },
+  account: {
+    readonly accountId?: AccountSummary["accountId"];
+    readonly details: {
+      readonly sites: ReadonlyArray<string>;
+      readonly profileId?: string | undefined;
+    };
+  },
   tab: {
     readonly tabId?: string;
     readonly url: string | null;
@@ -84,9 +97,12 @@ export const isSignInTab = (
   },
 ) => {
   if (typeof tab.url !== "string" || !URL.canParse(tab.url) || signInReturn(tab.url)) return false;
+  const { details } = account;
   if (tab.profileId !== (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID)) return false;
-  if ((tab.tabId !== undefined && signInTabs.has(tab.tabId)) || isOpenAthensSignIn(tab.url))
-    return true;
+  const owner = tab.tabId === undefined ? undefined : signInTabs.get(tab.tabId);
+  // Another university's sign-in in progress is theirs.
+  if (owner !== undefined) return owner === account.accountId;
+  if (isOpenAthensSignIn(tab.url)) return true;
   // After a restart, a tab is known by the page it shows: a sign-in page at a learned address.
   const page = new URL(tab.url);
   return (
@@ -201,7 +217,7 @@ const finish = Effect.fn("University.finish")(function* <R>(
   const details = current && universityDetails(current.details);
   if (!current || !details) return;
   const sites = withSignInService(details.sites, asked);
-  if (sites.length !== details.sites.length)
+  if (sites.join("\n") !== details.sites.join("\n"))
     yield* accounts.save({
       accountId: current.accountId,
       name: current.name,
@@ -224,7 +240,11 @@ const finish = Effect.fn("University.finish")(function* <R>(
     signInOutcome: "signed-in",
     outcome: "ok",
   });
-  yield* closeLeftovers(invoke, { ...details, sites }, tabId);
+  yield* closeLeftovers(
+    invoke,
+    { accountId: current.accountId, details: { ...details, sites } },
+    tabId,
+  );
   yield* afterSignIn;
 });
 
@@ -233,12 +253,12 @@ type Invoke = Effect.Success<ReturnType<typeof invokeIn>>;
 
 const closeLeftovers = Effect.fn("University.closeLeftovers")(function* (
   invoke: Invoke,
-  details: { readonly sites: ReadonlyArray<string>; readonly profileId?: string | undefined },
+  account: Parameters<typeof isSignInTab>[0],
   keep?: PreviewTabId,
 ) {
   const status = yield* invoke<PreviewAutomationStatus>("status", {}).pipe(Effect.option);
   const leftovers = Option.isSome(status)
-    ? (status.value.tabs ?? []).filter((tab) => tab.tabId !== keep && isSignInTab(details, tab))
+    ? (status.value.tabs ?? []).filter((tab) => tab.tabId !== keep && isSignInTab(account, tab))
     : [];
   yield* Effect.forEach(
     leftovers,
@@ -300,7 +320,7 @@ export const startUniversitySignIn = Effect.fn("University.startSignIn")(functio
   // A tab left on the university's page from an earlier press is the one to use.
   const status = yield* invoke<PreviewAutomationStatus>("status", {}).pipe(Effect.option);
   const leftover = Option.isSome(status)
-    ? status.value.tabs?.find((tab) => isSignInTab(details, tab))
+    ? status.value.tabs?.find((tab) => isSignInTab({ accountId: input.accountId, details }, tab))
     : undefined;
   const reused = leftover
     ? yield* invoke("navigate", { url: link }, leftover.tabId).pipe(
@@ -329,7 +349,7 @@ export const startUniversitySignIn = Effect.fn("University.startSignIn")(functio
       reason: "unavailable",
       message: "No browser tab is available for the sign-in.",
     });
-  signInTabs.add(tabId);
+  signInTabs.set(tabId, input.accountId);
   underWay.set(input.accountId, { threadId: input.threadId, tabId });
   yield* followSignIn(input, environmentId, tabId, afterSignIn).pipe(
     Effect.ensuring(

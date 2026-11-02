@@ -229,7 +229,7 @@ it("leaves unreadable saved data for the decoder to report", () => {
 it("knows a tab left on the university's sign-in, and never a course page or another profile", () => {
   const details = { sites: ["huji.ac.il", "https://idp.cc.huji.ac.il"], profileId: "default" };
   const at = (url: string | null, profileId = "default") =>
-    isSignInTab(details, { url, profileId });
+    isSignInTab({ details }, { url, profileId });
   expect(at("https://idp.cc.huji.ac.il/simplesaml/login")).toBe(true);
   expect(at("https://login.openathens.net/saml/2/sso")).toBe(true);
   expect(at("https://my.openathens.net/auth?targetURL=%2Fapp")).toBe(true);
@@ -238,10 +238,16 @@ it("knows a tab left on the university's sign-in, and never a course page or ano
   // A learned address serves other pages too; only its sign-in pages count.
   const portal = { sites: ["example.edu", "https://portal.example.edu"], profileId: "default" };
   expect(
-    isSignInTab(portal, { url: "https://portal.example.edu/login", profileId: "default" }),
+    isSignInTab(
+      { details: portal },
+      { url: "https://portal.example.edu/login", profileId: "default" },
+    ),
   ).toBe(true);
   expect(
-    isSignInTab(portal, { url: "https://portal.example.edu/courses/42", profileId: "default" }),
+    isSignInTab(
+      { details: portal },
+      { url: "https://portal.example.edu/courses/42", profileId: "default" },
+    ),
   ).toBe(false);
   expect(at("https://idp.cc.huji.ac.il/simplesaml/login", "work")).toBe(false);
   expect(at(null)).toBe(false);
@@ -260,7 +266,13 @@ it("keeps OpenAthens out of scripts for a university that signs in there", () =>
     } as AccountSummary["details"],
   };
   expect(isUniversitySignInService([openAthens], "https://my.openathens.net/app")).toBe(true);
-  expect(isUniversitySignInService([university()], "https://my.openathens.net/app")).toBe(false);
+  // Any sign-in page stays in the browser while a university is connected, learned or not.
+  expect(isUniversitySignInService([university()], "https://idp.example.edu/profile/SAML2")).toBe(
+    true,
+  );
+  expect(isUniversitySignInService([university()], "https://login.example.org/")).toBe(true);
+  expect(isUniversitySignInService([university()], "https://moodle.example.edu/my")).toBe(false);
+  expect(isUniversitySignInService([], "https://login.example.org/")).toBe(false);
 });
 
 it.live("uses the tab an earlier press left on the university's page instead of a new one", () =>
@@ -323,5 +335,55 @@ it.live("uses the tab an earlier press left on the university's page instead of 
       expect.objectContaining({ operation: "navigate", tabId: "tab-left" }),
     );
     expect(operations.some((item) => item.operation === "open" && item.url)).toBe(false);
+  }),
+);
+
+it.live("never takes over another university's sign-in in progress", () =>
+  Effect.gen(function* () {
+    const other = AccountId.make("acc_university2");
+    const second: AccountSummary = {
+      ...university(["example.edu", "https://idp.example.edu"]),
+      accountId: other,
+      name: "Second University",
+    };
+    const tabsFor: Record<string, ReadonlyArray<unknown>> = {};
+    let opened = 0;
+    const navigated: Array<string> = [];
+    const broker = PreviewAutomationBroker.of({
+      connect: () => Effect.succeed(Stream.empty),
+      focusHost: () => Effect.void,
+      respond: () => Effect.void,
+      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+        Effect.sync(() => {
+          if (request.operation === "navigate" && request.tabId) navigated.push(request.tabId);
+          if (request.operation === "status")
+            return { available: true, tabs: tabsFor["current"] ?? [] } as unknown as A;
+          if (request.operation === "open") {
+            opened += 1;
+            return { tabId: request.tabId ?? `tab-${opened}` } as A;
+          }
+          return {} as A;
+        }),
+    });
+    const fake = fakeAccounts({
+      accounts: [university(["example.edu", "https://idp.example.edu"]), second],
+    });
+    const start = (accountId: AccountId) =>
+      startUniversitySignIn(
+        { accountId, threadId: ThreadId.make("thread-beside") },
+        EnvironmentId.make("env-fixture"),
+        Effect.void,
+      ).pipe(
+        Effect.provideService(AccountsService, fake.service),
+        Effect.provideService(PreviewAutomationBroker, broker),
+      );
+    // The first university's sign-in opens its tab, which then waits on its login page.
+    const first = yield* start(ID);
+    tabsFor["current"] = [
+      { tabId: first.tabId, url: "https://idp.example.edu/login", profileId: "default" },
+    ];
+    const next = yield* start(other);
+    expect(next.tabId).not.toBe(first.tabId);
+    expect(navigated).not.toContain(first.tabId);
   }),
 );
