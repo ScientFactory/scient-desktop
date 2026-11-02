@@ -23,7 +23,6 @@ import type {
   AccountSaveInput,
   AccountSaveResult,
   AccountSetControlsInput,
-  AccountsError,
   AccountsSnapshot,
   AccountStoresStatus,
   AccountSummary,
@@ -41,6 +40,7 @@ import type {
   VaultSecretRef,
   ConnectorId,
 } from "@t3tools/contracts";
+import { AccountsError } from "@t3tools/contracts";
 import type { AccountAuthorization } from "@t3tools/shared/scientAccountAuthorization";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -80,6 +80,10 @@ export interface SessionAccounts {
 }
 
 export type { AccountAuthorization };
+
+/** An Accounts error with its reason and a message written for the agent or the user. */
+export const fail = (reason: AccountsError["reason"], message: string) =>
+  new AccountsError({ reason, message });
 
 export interface AccountsServiceShape {
   readonly setHandoff: (

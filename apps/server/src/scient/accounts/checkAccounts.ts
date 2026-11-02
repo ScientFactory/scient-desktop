@@ -19,6 +19,7 @@ import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { automaticSignInOnHold, isGoogleSessionRow } from "./AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
+import { browserFailure, previewInvoker } from "./agent/broker.ts";
 import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./agent/profileDetection.ts";
@@ -106,28 +107,10 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
     listed;
   const broker = yield* PreviewAutomationBroker;
   const scope = yield* AgentInvocationContext;
-  const invoke = <A>(
-    operation: Parameters<typeof broker.invoke>[0]["operation"],
-    input: unknown,
-    tabId?: PreviewTabId,
-  ) =>
-    broker
-      .invoke<A>({
-        scope,
-        operation,
-        input,
-        ...(tabId === undefined ? {} : { tabId }),
-        updateCurrentTab: false,
-      })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new AccountsError({
-              reason: "unavailable",
-              message: error.message || "The browser could not open this site.",
-            }),
-        ),
-      );
+  const invoke = previewInvoker(broker, scope, {
+    updateCurrentTab: false,
+    mapError: browserFailure("The browser could not open this site."),
+  });
   // A tab without a profile is a throwaway session, so name the one the account lives in.
   const browser = yield* invoke<PreviewAutomationStatus>("status", {});
   const opened = yield* invoke<PreviewAutomationStatus>("open", {

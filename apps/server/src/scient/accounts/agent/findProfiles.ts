@@ -1,23 +1,20 @@
 import {
   INCOGNITO_BROWSER_PROFILE_ID,
-  AccountsError,
   type BrowserProfileId,
   type PreviewAutomationStatus,
-  type PreviewTabId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { authorizationDecision } from "../AccountDecisions.ts";
-import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
+import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import type { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { withAccountUse } from "./accountUse.ts";
+import { previewInvoker } from "./broker.ts";
 import { classifyProfilePage, type ProfileResult } from "./profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./profileDetection.ts";
 
 const decodeProfileDetection = Schema.decodeUnknownEffect(ProfileDetection);
-const fail = (reason: AccountsError["reason"], message: string) =>
-  new AccountsError({ reason, message });
 
 export const findProfiles = Effect.fn("AccountsAgent.findProfiles")(function* (
   scope: AccountSessionScope,
@@ -36,20 +33,10 @@ export const findProfiles = Effect.fn("AccountsAgent.findProfiles")(function* (
     return yield* fail("invalid-input", "Choose an HTTPS URL without credentials.");
   const accounts = yield* AccountsService;
   const broker = yield* PreviewAutomationBroker;
-  const invoke = <A>(
-    operation: Parameters<typeof broker.invoke>[0]["operation"],
-    data: unknown,
-    tabId?: PreviewTabId,
-  ) =>
-    broker
-      .invoke<A>({
-        scope: invocation,
-        operation,
-        input: data,
-        ...(tabId === undefined ? {} : { tabId }),
-        updateCurrentTab: false,
-      })
-      .pipe(Effect.mapError(() => fail("unavailable", "The profile could not be checked.")));
+  const invoke = previewInvoker(broker, invocation, {
+    updateCurrentTab: false,
+    mapError: () => fail("unavailable", "The profile could not be checked."),
+  });
   const status = yield* invoke<PreviewAutomationStatus>("status", {});
   const session = yield* accounts.forSession(
     scope,

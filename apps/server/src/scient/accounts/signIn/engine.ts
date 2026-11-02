@@ -14,6 +14,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
+import { browserFailure, previewInvoker } from "../agent/broker.ts";
 import { authorizePreviewProfile, recordProfileUse } from "../agent/previewProfileAccess.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import {
@@ -64,23 +65,9 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
     });
   const broker = yield* PreviewAutomationBroker;
   const accounts = yield* AccountsService;
-  const invoke = <A>(
-    operation: Parameters<typeof broker.invoke>[0]["operation"],
-    input: unknown,
-    target?: PreviewTabId,
-  ) =>
-    broker
-      .invoke<A>({ scope, operation, input, ...(target === undefined ? {} : { tabId: target }) })
-      .pipe(
-        // Browser errors are written for agents (a full tab limit, a closed tab); keep them.
-        Effect.mapError(
-          (error) =>
-            new AccountsError({
-              reason: "unavailable",
-              message: error.message || "The browser sign-in could not be completed.",
-            }),
-        ),
-      );
+  const invoke = previewInvoker(broker, scope, {
+    mapError: browserFailure("The browser sign-in could not be completed."),
+  });
   const status = yield* invoke<PreviewAutomationStatus>("status", {}, tabId);
   const current = status.tabs?.find((tab) => tab.tabId === (tabId ?? status.tabId));
   const onSite = current?.url ? matchesAccountOrigin(current.url, details.sites) : false;

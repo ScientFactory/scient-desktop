@@ -9,7 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
+import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
@@ -26,14 +26,13 @@ import { fillField } from "./fillField.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
+import { previewInvoker } from "./broker.ts";
 import { getPaper } from "../../papers/getPaper.ts";
 import { signInCodes } from "./signInCodes.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
 
-const fail = (reason: AccountsError["reason"], message: string) =>
-  new AccountsError({ reason, message });
 const getAccount = Effect.fn("AccountsAgent.getAccount")(function* (
   scope: AccountSessionScope,
   accountId: AccountId,
@@ -263,22 +262,10 @@ export const accountAgentOperations = {
     const profileId =
       input.profileId ??
       (account && "profileId" in account.details ? account.details.profileId : undefined);
-    const invoke = <A>(
-      operation: Parameters<typeof broker.invoke>[0]["operation"],
-      data: unknown,
-      tabId?: PreviewTabId,
-    ) =>
-      broker
-        .invoke<A>({
-          scope: invocation,
-          operation,
-          input: data,
-          ...(tabId === undefined ? {} : { tabId }),
-          updateCurrentTab: false,
-        })
-        .pipe(
-          Effect.mapError(() => fail("unavailable", "The browser session could not be exported.")),
-        );
+    const invoke = previewInvoker(broker, invocation, {
+      updateCurrentTab: false,
+      mapError: () => fail("unavailable", "The browser session could not be exported."),
+    });
     const status = yield* invoke<PreviewAutomationStatus>("status", {});
     const open = {
       ...(profileId === undefined ? {} : { profileId }),
