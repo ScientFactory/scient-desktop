@@ -59,6 +59,7 @@ import {
 import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ServerSettings from "../serverSettings.ts";
 
 const isProviderWorkDeferredError = Schema.is(OrchestratorProviderWorkDeferredError);
 
@@ -138,6 +139,7 @@ const withInitiatedWork = <A, E, R>(
             );
       const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
       const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+        Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
         Layer.provide(
           Layer.mergeAll(
             projectsLayer,

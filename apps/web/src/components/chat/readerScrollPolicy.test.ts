@@ -27,6 +27,7 @@ function message(
       streaming: false,
     },
     showAssistantMeta: false,
+    showAssistantTimestamp: false,
     showAssistantCopyButton: false,
     assistantCopyStreaming: false,
   };

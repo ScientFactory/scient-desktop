@@ -4,7 +4,10 @@ import remarkGfm from "remark-gfm";
 
 import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
 import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
-import { remarkKeepWindowsPathDestinations } from "@t3tools/shared/markdownPipeline";
+import {
+  remarkKeepAutolinkSuffixes,
+  remarkKeepWindowsPathDestinations,
+} from "@t3tools/shared/markdownPipeline";
 import { remarkScientMath, remarkScientMathRefinements } from "../math/remarkScientMath";
 import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";
 
@@ -22,6 +25,7 @@ export const SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS: RemarkPlugins = [
   remarkScientMath,
   remarkScientSingleDollarMath,
   remarkScientMathRefinements,
+  remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,

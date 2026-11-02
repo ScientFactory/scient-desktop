@@ -18,6 +18,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import type { AnalyticsService } from "./AnalyticsService.ts";
 
@@ -141,7 +142,10 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
 /** @public */
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
-  if (!analyticsConfig.enabled) {
+  // A managed policy can switch analytics off over the environment, never on.
+  const policyAllows =
+    ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
+  if (!analyticsConfig.enabled || !policyAllows) {
     return disabledAnalyticsService;
   }
   const serverConfig = yield* ServerConfig.ServerConfig;

@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const factory = vi.hoisted(() => vi.fn());
 const executable = vi.hoisted(() => ({ active: false }));
@@ -275,6 +276,7 @@ function testLayer(
   >,
 ) {
   return Layer.mergeAll(
+    ManagedPolicy.layerTest(),
     ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "scient-analytics-controls-" }),
     ConfigProvider.layer(
       ConfigProvider.fromEnv({

@@ -109,6 +109,7 @@ import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
 import * as ScientSkillPolicy from "../scient/skills/ScientSkillPolicy.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import { toSkillReleaseRef } from "@scientfactory/scient-skills";
+import * as ServerSettings from "../serverSettings.ts";
 
 const promotionMcpRegistryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
@@ -610,6 +611,7 @@ const withNativeQueue = <A, E, R>(
                   // Use the production worktree/project resolver for relocation
                   // witnesses instead of the fixture's fixed cwd override.
                   runtimePolicyLayer: RuntimePolicy.layerFromProjectStore.pipe(
+                    Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
                     Layer.provide(
                       Layer.mergeAll(
                         Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
@@ -4087,6 +4089,7 @@ it.live(
           Layer.provide(NodeServices.layer),
         );
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
@@ -4625,6 +4628,7 @@ it.live(
         );
         const serverConfigLayer = Layer.succeed(ServerConfig, yield* makeReplayServerConfig(name));
         const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
           Layer.provide(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),

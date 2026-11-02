@@ -8,9 +8,11 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 
 const settingsLayer = ServerSettingsModule.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
   Layer.provideMerge(
     Layer.fresh(

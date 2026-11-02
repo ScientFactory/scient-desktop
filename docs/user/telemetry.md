@@ -31,3 +31,6 @@ wider local history stays on your computer.
 
 There is no setting for this in the app. To stop sending usage data, set
 `SCIENT_ANALYTICS_ENABLED=false` in the environment before starting Scient.
+
+An administrator can turn it off for every user on a machine with a
+[managed policy](./managed-policy.md#other-capabilities).

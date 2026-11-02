@@ -312,11 +312,15 @@ describe("GuestPage", () => {
     await expect.element(screen.getByText("Reply 11")).toBeInTheDocument();
     const scroller = () =>
       screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
+    // The opening settles over the first second or so while rows measure.
     const expectAtEnd = () =>
-      vi.waitFor(() => {
-        const node = scroller();
-        expect(node.scrollHeight - node.scrollTop - node.clientHeight).toBeLessThan(2);
-      });
+      vi.waitFor(
+        () => {
+          const node = scroller();
+          expect(node.scrollHeight - node.scrollTop - node.clientHeight).toBeLessThan(2);
+        },
+        { timeout: 5_000 },
+      );
     await expectAtEnd();
 
     // SCIENT-FORK:START — reading back comes first (it also ends the opening's positioning), and a
@@ -357,8 +361,17 @@ describe("GuestPage", () => {
     };
     send({ type: "view", view: { ...view, messages: [waiting] } });
     await expect.element(screen.getByText(waiting.text)).toBeInTheDocument();
-    await expectAtEnd();
-    // SCIENT-FORK:START — nor is the owner's reply to it followed as it streams (see above).
+    // SCIENT-FORK:START — their message lands in view. The reply still appearing above it goes on
+    // pushing it down and is not followed, so the exact end holds for a frame or two at most.
+    await vi.waitFor(
+      () => {
+        const message = screen.getByText(waiting.text).element();
+        expect(message.getBoundingClientRect().bottom).toBeLessThan(
+          scroller().getBoundingClientRect().bottom,
+        );
+      },
+      { timeout: 5_000 },
+    );
     // SCIENT-FORK:END
   });
 });

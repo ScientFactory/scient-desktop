@@ -36,6 +36,11 @@ export const OrchestrationV2ProviderRuntimePolicy = Schema.Struct({
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   reasoningEffort: Schema.optional(Schema.String),
+  /**
+   * The administrator's ceiling, when a managed policy sets one. `runtimeMode` is already under
+   * it; adapters use it to refuse native mode choices a user makes beside Scient's own.
+   */
+  maxRuntimeMode: Schema.optional(RuntimeMode),
 });
 export type OrchestrationV2ProviderRuntimePolicy = typeof OrchestrationV2ProviderRuntimePolicy.Type;
 

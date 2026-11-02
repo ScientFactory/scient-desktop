@@ -1,4 +1,5 @@
 import { isOrchestrationV2WorkActive, type ThreadId } from "@t3tools/contracts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -22,8 +23,10 @@ export const subscribeDelegatedChildSettlements = Effect.fnUntraced(function* <E
           case "subagent.updated":
           case "provider-turn.updated":
             return !isOrchestrationV2WorkActive(event.payload.status);
-          case "provider-thread.updated":
-            return event.payload.pendingBackgroundTasks?.length === 0;
+          case "provider-thread.updated": {
+            const tasks = event.payload.pendingBackgroundTasks;
+            return tasks !== undefined && !backgroundWorkHoldsCompletion(tasks);
+          }
           default:
             return false;
         }
