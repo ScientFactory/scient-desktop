@@ -16,6 +16,9 @@ export class ExecutionProcess extends Context.Service<ExecutionProcess, Executio
   "t3/scient/execution/LocalExecutionProcess/ExecutionProcess",
 ) {}
 
+/** Enough to drain what an exited program wrote, short enough that nobody waits on it. */
+const OUTPUT_AFTER_EXIT = "2 seconds";
+
 function processError(
   operation: ExecutionProcessError["operation"],
   message: string,
@@ -49,6 +52,11 @@ const make = Effect.gen(function* () {
       ).pipe(
         Stream.mapError((cause) =>
           processError("output", "Unable to read execution process output.", cause),
+        ),
+        // A helper the program leaves behind, such as .NET's build server, can hold its output
+        // open for good. Once the program exits, read what it wrote, then stop waiting.
+        Stream.interruptWhen(
+          child.exitCode.pipe(Effect.ignore, Effect.andThen(Effect.sleep(OUTPUT_AFTER_EXIT))),
         ),
       );
       // Run tree cleanup even after zero exit because descendants may survive. Missing-tree errors

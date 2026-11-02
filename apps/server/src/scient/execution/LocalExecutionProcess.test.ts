@@ -184,4 +184,30 @@ describe("LocalExecutionProcess", () => {
       expect(processExists(childPid)).toBe(false);
     }).pipe(Effect.provide(Live), TestClock.withLive),
   );
+  it.effect("finishes when a helper it leaves behind keeps its output open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processes = yield* ExecutionProcess;
+        // Like .NET's build server: a helper in its own session that inherits the output.
+        const handle = yield* processes.start({
+          runId: ExecutionRunId.make("helper-holds-output-test"),
+          executable: NodeProcess.execPath,
+          args: [
+            "-e",
+            `const helper = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { detached: true, stdio: ["ignore", "inherit", "inherit"] });
+helper.unref();
+console.log("helper " + helper.pid);`,
+          ],
+          cwd: NodeProcess.cwd(),
+          environment: {},
+        });
+        const output = yield* Effect.forkScoped(Stream.runCollect(handle.output));
+        expect(yield* handle.exitCode).toBe(0);
+        const text = Array.from(yield* Fiber.join(output), (chunk) => chunk.text).join("");
+        const helper = Number(/helper (\d+)/u.exec(text)?.[1]);
+        expect(helper).toBeGreaterThan(0);
+        NodeProcess.kill(helper);
+      }),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
 });
