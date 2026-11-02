@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { durationBucket, modelKey, normalizeInheritedEvent } from "./contract.ts";
+import { durationBucket, modelKey, normalizedKeys, normalizeInheritedEvent } from "./contract.ts";
 import { ANALYTICS_CONTRACT_REVISION, eventContractViolation } from "./wireContract.ts";
 
 const context = {
@@ -193,6 +193,21 @@ describe("Scient analytics contract", () => {
       contractRevision: ANALYTICS_CONTRACT_REVISION,
     });
     expect(normalizeInheritedEvent("Not An Event", {}, context)).toBeNull();
+  });
+
+  it("names the fields a normalizer uses; the rest pass through as recorded", () => {
+    const properties = { provider: "codex", model: "gpt-5.6-sol", durationMs: 1200, requests: 3 };
+    expect([...normalizedKeys("provider.turn.completed", properties, context)].toSorted()).toEqual([
+      "durationMs",
+      "model",
+      "provider",
+    ]);
+    expect(
+      normalizeInheritedEvent("provider.turn.completed", properties, context)?.properties,
+    ).toMatchObject({ provider: "codex", modelKey: "gpt-5.6-sol", requests: 3 });
+    expect([...normalizedKeys("chatgpt.sign_in.completed", { outcome: "ok" }, context)]).toEqual(
+      [],
+    );
   });
 
   it("never sends free text, paths, links, email addresses or nested objects", () => {
