@@ -303,6 +303,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
+      "anchor": "[WS_METHODS.accountsSave]: () => use(\"accounts.save\")",
+      "purpose": "Count Accounts and paper actions as Scient feature use in analytics, with no account details."
+    },
+    {
       "path": "apps/web/src/scient/browser/BrowserHome.tsx",
       "anchor": "~/scient/accounts/useAccounts",
       "purpose": "Show a university's Moodle on the empty tab from the addresses a profile signs in with."
@@ -386,11 +391,6 @@
       "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
       "anchor": "\"scient_accounts_list\",",
       "purpose": "Include the account tools in the eager schema inventory."
-    },
-    {
-      "path": "packages/scient-analytics/src/wireContract.ts",
-      "anchor": "\"accounts\",",
-      "purpose": "Accept Accounts as a settings section in analytics events."
     },
     {
       "path": "apps/server/src/server.test.ts",

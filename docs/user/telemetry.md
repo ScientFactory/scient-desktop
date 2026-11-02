@@ -9,8 +9,12 @@ it.
 
 ## What is collected
 
-- Which features and Settings pages you use, and whether they work.
-- Which providers and models you use, how long turns take, and how they end.
+- Which features and Settings pages you use, and whether they work. This
+  includes Scient's own features, whether you use them or an agent does: Compute
+  and the language you run, notebooks, LaTeX, Overleaf sync, Sources, papers,
+  Accounts, extensions, skills, exports and the thread queue.
+- Which providers and models you use, by name, how long turns take, and how they
+  end.
 - Token counts reported by your providers. Missing counts stay unknown.
 - Whether a turn was started by you, an agent or a schedule.
 - Which agent tools run, how long they take and whether they succeed.
@@ -23,9 +27,10 @@ it.
 
 ## What is never collected
 
-Prompts, responses, file contents, file names and paths, URLs, research results,
-credentials, raw provider events and private custom model names. The Usage page's
-wider local history stays on your computer.
+Prompts, responses, file contents, file names and paths, URLs, email addresses,
+research results, credentials and raw provider events. Scient drops any value that
+looks like a path, link or email address before it leaves your computer. The Usage
+page's wider local history stays on your computer.
 
 ## Turning it off
 

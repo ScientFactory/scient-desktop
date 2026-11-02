@@ -33,6 +33,7 @@ import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import { wordDiagramRequestBodyLayer } from "./scient/pandoc/wordDiagramBodyLimit.ts";
+import { scientFeatureUsageLayer } from "./telemetry/ScientFeatureUsage.ts";
 import {
   guardHttpResponseWriteErrors,
   rejectRequestsUntilServing,
@@ -868,6 +869,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     Ws.layer,
     conversationImportUploadRouteLayer,
     wordDiagramRequestBodyLayer,
+    scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
   ),
   McpHttpServer.layer.pipe(

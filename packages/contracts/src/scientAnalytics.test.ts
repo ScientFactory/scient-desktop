@@ -30,7 +30,11 @@ describe("Scient UI analytics compatibility", () => {
     expect(() => status({ available: true, consent: "product", collectionContext: "" })).toThrow();
     expect(() => event({ ...input, collectionContext: "x".repeat(97) })).toThrow();
   });
-  it("does not authorize arbitrary new UI event names", () => {
-    expect(() => event({ name: "raw.error", properties: { message: "private error" } })).toThrow();
+  it("accepts any UI event name of a valid shape, as T3 does", () => {
+    expect(event({ name: "compute.table.sorted", properties: {} }).name).toBe(
+      "compute.table.sorted",
+    );
+    expect(() => event({ name: "Raw Error", properties: {} })).toThrow();
+    expect(() => event({ name: "x".repeat(81), properties: {} })).toThrow();
   });
 });
