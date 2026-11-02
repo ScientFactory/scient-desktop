@@ -89,7 +89,17 @@ function tool(
   return { displayName, labels, icon, summaryAction };
 }
 
-const T3_MCP_SERVER_ALIASES = new Set(["scient", "t3-code", "t3_code", "t3code"]);
+// Codex registers "scient-direct" for Scient tools kept out of Code Mode.
+const T3_MCP_SERVER_ALIASES = new Set([
+  "scient",
+  "scient-direct",
+  "scient_direct",
+  "t3-code",
+  "t3_code",
+  "t3code",
+  "t3-code-direct",
+  "t3_code_direct",
+]);
 
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   link_pull_request: tool(
@@ -402,7 +412,9 @@ export function resolveT3McpToolName(
   }
 
   const namespaceMatch =
-    /^(?<server>scient|t3-code|t3_code|t3code)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(label);
+    /^(?<server>scient[-_]direct|scient|t3[-_]code[-_]direct|t3-code|t3_code|t3code)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(
+      label,
+    );
   if (namespaceMatch?.groups) {
     const tool = namespaceMatch.groups.tool;
     return tool !== undefined && knownToolNames.has(tool) ? tool : null;

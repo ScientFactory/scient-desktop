@@ -665,7 +665,7 @@ const program = Effect.gen(function* () {
               : undefined;
       return {
         protocolVersion: 2,
-        info: { name: "t3-acp-mock-agent", version: "0.0.0" },
+        info: { name: "t3-acp-mock-agent", version: process.env.T3_ACP_AGENT_VERSION ?? "0.0.0" },
         ...(authMethods
           ? {
               authMethods: authMethods.map((method) => ({
