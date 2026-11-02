@@ -175,6 +175,17 @@ come from the bundled model manifest and the Cursor and Grok catalogs, also for
 routed ids such as `anthropic/claude-opus-5-5`, and efforts come from a closed
 list. Like T3, a user-configured model name is sent when it looks like a model id.
 
+Which providers report token counts: Claude, Codex, OpenCode, Muse, Antigravity from runtime
+1.4.5, ACP Registry's GLM agent, and, through the shared native adapter, Scient Agent and Oh My Pi.
+Pi and Cursor report them from their own adapters. Each counts every model request the agent
+reports during the turn. Where an agent reports them, a turn also carries the per-request facts
+Scient Agent's /stats shows: `requests`, `failedRequests`, `estimatedCostUsd` (the agent's own
+price estimate; an unpriced request leaves the total unknown), `modelDurationMs` and
+`firstTokenMs`; `provider.request.completed` sums them per run. Grok, Droid, fx and the legacy
+Antigravity path do not report usage yet: Grok's counts arrive on a separate notification, and
+Droid's and fx's protocols have no verified per-turn source. `OmpTurnUsage.native.live.test.ts`
+proves the installed agent's report end to end (`OMP_QUALIFY_BINARY`).
+
 Status and counters answer different questions. `usageReported: false` means
 the adapter attached no usage; a harness where every row says so is unsupported,
 not idle. `partial` keeps valid counts that cannot establish a whole-turn total,
@@ -557,6 +568,13 @@ features the way T3's `FeatureUsage` records T3's:
   export, Overleaf, papers, sources, accounts, projects, skills) record `mcp.tool.invoked` on
   success too. Read, list and status tools stay failure-only, as in T3.
 - **Compute language:** `compute-run` operations from interactive Compute carry `language`.
+
+- **Messages people send:** `client.turn.requested` carries the message's length (`messageChars`,
+  `messageWords`) and Scient Agent's /stats frustration signals (`yelling`, `profanity`,
+  `anguish`, `negation`, `repetition`, `blame`), for every provider. They come from
+  [`UserMessageSignals.ts`](../../apps/server/src/telemetry/UserMessageSignals.ts), copied from
+  Scient Agent's `user-metrics.ts`; only the counts leave it, never the text. /stats's optional
+  model judge is not run.
 
 Each entry names an action someone chose, never a read, refresh or subscription. Builds, source
 imports and code runs keep their existing operation events, so they are not counted twice. To

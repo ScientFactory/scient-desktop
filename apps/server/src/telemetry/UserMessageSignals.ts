@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/no-low-value-comments -- copied as is from Scient Agent to stay in step with it */
 // Copied from Scient Agent (packages/stats/src/user-metrics.ts), which computes the same signals for
 // its /stats dashboard. MIT License: Copyright (c) 2025-2026 Can Bölük; Copyright (c) 2026 Stencil Labs, Inc.
 // Keep in step with that file; only counts leave this module, never the message text.

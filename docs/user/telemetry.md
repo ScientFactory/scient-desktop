@@ -15,7 +15,12 @@ it.
   Accounts, extensions, skills, exports and the thread queue.
 - Which providers and models you use, by name, how long turns take, and how they
   end.
-- Token counts reported by your providers. Missing counts stay unknown.
+- Token counts reported by your providers, with how many model requests a turn
+  made, how long they took and the provider's cost estimate. Missing counts stay
+  unknown.
+- For each message you send, its length and counts of signs of frustration, such
+  as all-caps sentences, swearing or "no, that's not what I asked". Only the
+  counts are sent, never the message.
 - Whether a turn was started by you, an agent or a schedule.
 - Which agent tools run, how long they take and whether they succeed.
 - How many threads and projects you have. Only the numbers, never their names.
