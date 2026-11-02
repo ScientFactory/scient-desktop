@@ -4,6 +4,7 @@ import * as NodeNet from "node:net";
 import * as NodeModule from "node:module";
 import type * as Undici from "undici";
 import { type ApiKeyAuth, AccountsError } from "@t3tools/contracts";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { isPublicAddress } from "../../extensions/connectors/ConnectorOutbound.ts";
 import {
   credentialSet,
@@ -11,7 +12,6 @@ import {
   redactString,
   REDACTED,
 } from "../../extensions/connectors/ConnectorRedaction.ts";
-import { matchesAccountOrigin } from "../signIn/origin.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
 const failure = () =>
@@ -34,7 +34,7 @@ export function checkAccountRequest(
 ) {
   const refuse = (message: string) => new AccountsError({ reason: "denied", message });
   if (!URL.canParse(url)) throw refuse("The request URL is invalid.");
-  if (!matchesAccountOrigin(url, sites))
+  if (!anySiteMatches(sites, url))
     throw refuse(`This account may only be used on ${sites.join(", ")}.`);
   if (readOnly && !["GET", "HEAD"].includes(method.toUpperCase()))
     throw refuse("This account is read-only: only GET and HEAD requests are allowed.");

@@ -341,6 +341,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
+      "anchor": "[WS_METHODS.computeStartSession]",
+      "purpose": "Count Compute, data table and Run File actions as Scient feature use in analytics, with the language only."
+    },
+    {
       "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
       "anchor": "expectedRevision",
       "purpose": "Compose Scient's retained save hook (upstream removed it for fileSaveSessions) with Scient revision-checked writes and explicit conflict recovery."

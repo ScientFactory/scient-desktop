@@ -36,10 +36,10 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { TOTP, URI } from "otpauth";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import {
   AccountsService,
+  fail,
   type AccountKeyConsumer,
   type AccountSessionScope,
   type AccountAuthorization,
@@ -73,10 +73,9 @@ import {
 import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
+import { parseTotp } from "./signIn/totp.ts";
 
-const failure = (reason: AccountsError["reason"], message: string) =>
-  new AccountsError({ reason, message });
-const missing = () => failure("not-found", "The account no longer exists.");
+const missing = () => fail("not-found", "The account no longer exists.");
 
 /** A removed profile's sign-ins ended with it; a saved password stays, free of the profile. */
 const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId: string) =>
@@ -344,16 +343,16 @@ export const layer = Layer.effect(
       for (const name of names) yield* persistence.remove(name).pipe(Effect.ignore);
     });
     const readValue = Effect.fn("AccountsService.readValue")(function* (name: string | undefined) {
-      if (!name) return yield* failure("unavailable", "Stored account value is missing.");
+      if (!name) return yield* fail("unavailable", "Stored account value is missing.");
       const stored = yield* persistence.read(name);
       if (Option.isNone(stored))
-        return yield* failure("unavailable", "Stored account value is missing.");
+        return yield* fail("unavailable", "Stored account value is missing.");
       return Redacted.make(new TextDecoder().decode(Redacted.value(stored.value)));
     });
     const getOnePasswordClient = Effect.gen(function* () {
       if (onePasswordClient) return onePasswordClient;
       const config = state.onePassword;
-      if (!config) return yield* failure("unavailable", "1Password is not connected.");
+      if (!config) return yield* fail("unavailable", "1Password is not connected.");
       const input =
         config.mode === "desktop"
           ? config
@@ -428,10 +427,7 @@ export const layer = Layer.effect(
               .map((variable) => variable.name)
           : ACCOUNT_SECRET_FIELDS[input.details.kind];
       if (Object.keys(input.secrets).some((field) => !permitted.includes(field)))
-        return yield* failure(
-          "invalid-input",
-          "This secret field is not valid for the account kind.",
-        );
+        return yield* fail("invalid-input", "This secret field is not valid for the account kind.");
       const timestamp = yield* now;
       const accountId =
         existing?.summary.accountId ?? AccountId.make(`acc_${NodeCrypto.randomUUID()}`);
@@ -599,16 +595,16 @@ export const layer = Layer.effect(
               ? sources.writeKeychain(destination, value).pipe(Effect.as(destination))
               : Effect.gen(function* () {
                   if (vaultInfo?.readOnly)
-                    return yield* failure("denied", "1Password vault is read-only.");
+                    return yield* fail("denied", "1Password vault is read-only.");
                   const client = yield* getOnePasswordClient;
                   if ("reference" in destination) {
                     if (!client.write)
-                      return yield* failure("unsupported", "1Password writes are unavailable.");
+                      return yield* fail("unsupported", "1Password writes are unavailable.");
                     yield* client.write(destination.reference, value);
                     return destination;
                   }
                   if (!client.createLogin)
-                    return yield* failure("unsupported", "1Password writes are unavailable.");
+                    return yield* fail("unsupported", "1Password writes are unavailable.");
                   return yield* client.createLogin({
                     vaultId: destination.vaultId,
                     copyId: `${accountId}:${field}`,
@@ -724,14 +720,14 @@ export const layer = Layer.effect(
         const reveal = yield* locked(
           Effect.sync(() => (handoffs.has(handoffId) ? handoffReveals.get(handoffId) : undefined)),
         );
-        if (!reveal) return yield* failure("not-found", "The sign-in is no longer waiting.");
+        if (!reveal) return yield* fail("not-found", "The sign-in is no longer waiting.");
         yield* reveal;
       }),
       cancelHandoff: Effect.fn("AccountsService.cancelHandoff")((handoffId) =>
         locked(
           Effect.gen(function* () {
             if (!handoffs.has(handoffId))
-              return yield* failure("not-found", "The sign-in is no longer waiting.");
+              return yield* fail("not-found", "The sign-in is no longer waiting.");
             cancelledHandoffs.add(handoffId);
             handoffs.delete(handoffId);
             yield* publish(false);
@@ -757,7 +753,7 @@ export const layer = Layer.effect(
       save: Effect.fn("AccountsService.saveInput")((input) =>
         locked(
           decodeSave(input).pipe(
-            Effect.mapError(() => failure("invalid-input", "Account input is invalid.")),
+            Effect.mapError(() => fail("invalid-input", "Account input is invalid.")),
             Effect.flatMap(save),
           ),
         ),
@@ -982,9 +978,9 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const entry = pending.get(approvalId);
             if (!entry || (yield* Deferred.isDone(entry.answer)))
-              return yield* failure("not-found", "The approval is no longer pending.");
+              return yield* fail("not-found", "The approval is no longer pending.");
             if (decision === "project" && entry.scope.projectId === undefined)
-              return yield* failure("invalid-input", "This approval has no project.");
+              return yield* fail("invalid-input", "This approval has no project.");
             const controls = targetControls(entry.approval.target);
             if (
               controls &&
@@ -1082,7 +1078,7 @@ export const layer = Layer.effect(
               const parsed = yield* Effect.try({
                 try: () => parsePasswordImport(input.content, input.format),
                 catch: () =>
-                  failure("invalid-input", "The password export is not a supported CSV file."),
+                  fail("invalid-input", "The password export is not a supported CSV file."),
               });
               const result = { created: 0, updated: 0, skipped: parsed.skipped };
               for (const entry of parsed.entries) {
@@ -1156,7 +1152,7 @@ export const layer = Layer.effect(
         locked(
           Effect.gen(function* () {
             const input = yield* decodeMatch(raw).pipe(
-              Effect.mapError(() => failure("invalid-input", "Sign-in input is invalid.")),
+              Effect.mapError(() => fail("invalid-input", "Sign-in input is invalid.")),
             );
             const candidates = state.accounts
               .filter(
@@ -1210,7 +1206,7 @@ export const layer = Layer.effect(
             if (!account) return yield* missing();
             const details = account.summary.details;
             if (details.kind !== "website" || !siteMatches(details.sites, origin))
-              return yield* failure("denied", "The page does not match this account's sites.");
+              return yield* fail("denied", "The page does not match this account's sites.");
             const values = yield* resolve(accountId, ["password", "totp"]);
             let otp: string | undefined;
             if (values.totp) {
@@ -1225,14 +1221,9 @@ export const layer = Layer.effect(
                     (source?.type === "1password" && source.reference.endsWith("?attribute=otp"))
                   )
                     return value;
-                  const generator = value.startsWith("otpauth://")
-                    ? URI.parse(value)
-                    : new TOTP({ secret: value.replace(/\s/g, "") });
-                  if (!(generator instanceof TOTP))
-                    throw failure("invalid-input", "The one-time password setup is invalid.");
-                  return generator.generate({ timestamp });
+                  return parseTotp(value).generate({ timestamp });
                 },
-                catch: () => failure("unavailable", "A one-time password could not be generated."),
+                catch: () => fail("unavailable", "A one-time password could not be generated."),
               });
             }
             yield* commit(
@@ -1288,15 +1279,12 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const controls = targetControls(target);
                 if (!controls) return yield* missing();
-                const baseDecision = authorizationDecision(state.agentAccess, controls, {
-                  ...scope,
-                  unattended: false,
-                });
-                const decision =
-                  baseDecision.decision === "ask" &&
-                  conversationGrants.has(grantKey(scope.threadId, target))
-                    ? { decision: "allowed" as const }
-                    : authorizationDecision(state.agentAccess, controls, scope);
+                const decision = authorizationDecision(
+                  state.agentAccess,
+                  controls,
+                  scope,
+                  conversationGrants.has(grantKey(scope.threadId, target)),
+                );
                 const audit = {
                   target,
                   action,
@@ -1385,7 +1373,7 @@ export const layer = Layer.effect(
             const { origin } = consumer;
             const accountId = boundAccountId(ref);
             if (Option.isNone(accountId))
-              return yield* failure("invalid-input", "The account reference is invalid.");
+              return yield* fail("invalid-input", "The account reference is invalid.");
             const account = findAccount(accountId.value);
             if (!account) return yield* missing();
             const { details, controls } = account.summary;
@@ -1402,11 +1390,11 @@ export const layer = Layer.effect(
                   decision: "denied",
                   ...consumerActivity(consumer),
                 }).pipe(Effect.ignore);
-              return yield* failure("denied", "The account is unavailable for this service.");
+              return yield* fail("denied", "The account is unavailable for this service.");
             }
             const values = yield* resolve(accountId.value, ["token"]);
             if (values.token === undefined)
-              return yield* failure("not-found", "The account key is missing.");
+              return yield* fail("not-found", "The account key is missing.");
             return values.token;
           }),
         ).pipe(

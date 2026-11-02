@@ -118,6 +118,49 @@ describe("native OMP persisted background work", () => {
       }),
     ).pipe(Effect.provide(dependencies)),
   );
+  it.live("counts a woken agent's requests, including those made before the wake's turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.run(({ waitFor, send }) =>
+          Effect.gen(function* () {
+            yield* send("Work in the background");
+            yield* waitFor((p) => p.providerTurns.some((t) => t.nativeAcceptance === "accepted"));
+            yield* f.emit([{ type: "agent_start" }]);
+            yield* f.finish(false);
+            yield* waitFor((p) => p.runs.some((r) => r.status === "completed"));
+            const request = (messageId: string, input: number, output: number) => ({
+              type: "message_end",
+              messageId,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: messageId }],
+                usage: { input, output },
+              },
+            });
+            // The first request ends before Scient gives the wake a turn.
+            yield* f.emit([{ type: "agent_start" }, request("before-admission", 100, 20)]);
+            yield* waitFor((p) => p.runs.length === 2 && p.runs[1]?.status === "running");
+            yield* f.emit([
+              request("after-admission", 50, 10),
+              { type: "agent_end", messages: [] },
+              { type: "session_settled" },
+            ]);
+            const settled = yield* waitFor(
+              (p) => p.runs.length === 2 && p.runs.every((r) => r.status === "completed"),
+            );
+            const wakeTurn = settled.providerTurns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+            expect(wakeTurn?.turnTokenUsage).toMatchObject({
+              inputTokens: 150,
+              outputTokens: 30,
+              requests: 2,
+            });
+          }),
+        );
+      }),
+    ).pipe(Effect.provide(dependencies)),
+  );
+
   it.live("persists an unnamed native monitor and admits its visible continuation and Steer", () =>
     Effect.scoped(
       Effect.gen(function* () {

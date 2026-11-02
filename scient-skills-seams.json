@@ -290,6 +290,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
+      "anchor": "[WS_METHODS.skillsSetProjectPreference]",
+      "purpose": "Count skill settings changes and agents loading skills as Scient feature use in analytics, without skill names."
+    },
+    {
       "path": "apps/web/src/scient/presentation/traceIcons.ts",
       "anchor": "isScientSkillTool",
       "purpose": "Give Scient skill tool rows the skill trace icon in the conversation timeline (traceIcons.test.ts)."

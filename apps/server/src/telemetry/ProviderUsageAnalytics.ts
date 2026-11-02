@@ -168,6 +168,13 @@ function counters(usage: TurnTokenUsage | undefined): Properties {
     cacheCreationTokens: usage?.cacheCreationTokens,
     outputTokens: usage?.outputTokens,
     reasoningTokens: usage?.reasoningTokens,
+    // SCIENT-FORK:START — per-request facts some agents report
+    requests: usage?.requests,
+    failedRequests: usage?.failedRequests,
+    estimatedCostUsd: usage?.estimatedCostUsd,
+    modelDurationMs: usage?.modelDurationMs,
+    firstTokenMs: usage?.firstTokenMs,
+    // SCIENT-FORK:END
   });
 }
 
@@ -221,7 +228,13 @@ function sumOf(
     | "cachedInputTokens"
     | "cacheCreationTokens"
     | "outputTokens"
-    | "reasoningTokens",
+    | "reasoningTokens"
+    // SCIENT-FORK:START — per-request facts some agents report
+    | "requests"
+    | "failedRequests"
+    | "estimatedCostUsd"
+    | "modelDurationMs",
+  // SCIENT-FORK:END
   requireAll: boolean,
 ): number | undefined {
   const values = usages.map((usage) => usage[field]);
@@ -347,6 +360,12 @@ export class RequestUsageLedger {
       cacheCreationTokens: sumOf(measuredRoot, "cacheCreationTokens", true),
       outputTokens: sumOf(measuredRoot, "outputTokens", rootComplete),
       reasoningTokens: sumOf(measuredRoot, "reasoningTokens", true),
+      // SCIENT-FORK:START — per-request facts some agents report
+      requests: sumOf(measuredRoot, "requests", true),
+      failedRequests: sumOf(measuredRoot, "failedRequests", true),
+      estimatedCostUsd: sumOf(measuredRoot, "estimatedCostUsd", true),
+      modelDurationMs: sumOf(measuredRoot, "modelDurationMs", true),
+      // SCIENT-FORK:END
       localCommand: measuredRoot.some((usage) => usage.localCommand === true) ? true : undefined,
       otherInputTokens: allOtherKnown
         ? otherUsage.reduce((sum, usage) => sum + (usage?.inputTokens ?? 0), 0)

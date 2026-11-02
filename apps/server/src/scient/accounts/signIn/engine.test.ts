@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { fakeAccounts } from "../agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "../Accounts.testkit.ts";
 import { signIn } from "./engine.ts";
 
 it.effect("handles sequential login steps and bounds retries without returning filled values", () =>

@@ -36,11 +36,11 @@ import {
   mergeProfiles,
   mergeSourceProfiles,
   secretFields,
-  siteMatchesUrl,
   matchExistingProfile,
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
   return {

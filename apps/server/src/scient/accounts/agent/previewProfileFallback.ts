@@ -2,7 +2,6 @@ import type {
   BrowserProfileId,
   PreviewAutomationOpenInput,
   PreviewAutomationStatus,
-  PreviewTabId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -11,6 +10,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { scientInvocationForMcp } from "../../../mcp/ScientMcpInvocation.ts";
 import type { AccountSessionScope } from "../AccountsService.ts";
 import { withAccountUse } from "./accountUse.ts";
+import { previewInvoker } from "./broker.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { classifyProfilePage, isAutomaticSignInPage } from "./profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./profileDetection.ts";
@@ -37,11 +37,7 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
   return yield* Effect.gen(function* () {
     const invocation = scientInvocationForMcp(yield* requireThreadMcpCapability("preview"));
     const broker = yield* PreviewAutomationBroker;
-    const invoke = <A>(
-      operation: Parameters<typeof broker.invoke>[0]["operation"],
-      input: unknown,
-      tabId: PreviewTabId,
-    ) => broker.invoke<A>({ scope: invocation, operation, input, tabId, updateCurrentTab: false });
+    const invoke = previewInvoker(broker, invocation, { updateCurrentTab: false });
     yield* invoke("accountWaitForLoad", {}, tabId);
     const raw = yield* invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId);
     const page = yield* decodeDetection(raw);
