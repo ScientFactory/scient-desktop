@@ -554,8 +554,11 @@ describe("DesktopLinuxUrlHandler", () => {
           }
           assert.deepEqual(
             recorded.commands.map(({ command }) => command),
-            // SCIENT-FORK: conversation files add three xdg-mime steps after the URL scheme.
-            ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
+            // SCIENT-FORK: conversation files add three xdg-mime steps after the URL scheme, which
+            // a stalled URL scheme step never reaches.
+            stalledHelper === "xdg-mime"
+              ? ["update-desktop-database", "xdg-mime"]
+              : ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
           );
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
