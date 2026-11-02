@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- CI helper that installs test tools, not app code.
 /**
  * CI only: installs one group of languages as a person would, `node <this> <group>`. The test must
- * find and run each one it names in SCIENT_TEST_RUN_TABLE_EXPECT. One that fails to install fails
- * the job at the end, so coverage is never lost silently.
+ * find and run each one it names in SCIENT_TEST_RUN_TABLE_EXPECT. One that fails to install is a
+ * warning and a row in the job summary, so lost coverage shows without failing on a package site.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -33,13 +33,12 @@ const ELAN_UNIX =
 const ELAN_WINDOWS =
   "curl -sSfLo elan-init.ps1 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 && powershell -ExecutionPolicy Bypass -Command './elan-init.ps1 -NoPrompt 1 -DefaultToolchain stable'";
 /** Runs a downloaded Windows installer silently, then lists where it went for the log. */
-const windowsInstaller = (url: string, ...places: ReadonlyArray<string>) =>
-  silentInstaller(url, "/S", places);
+const windowsInstaller = (url: string) => silentInstaller(url, "/S");
 /** Inno Setup installers, which take their own silent flag. */
-const innoInstaller = (url: string, ...places: ReadonlyArray<string>) =>
-  silentInstaller(url, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", places);
+const innoInstaller = (url: string) =>
+  silentInstaller(url, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART");
 /** Each installer gets its own file, since one still running keeps its file locked. */
-const silentInstaller = (url: string, flags: string, places: ReadonlyArray<string>) => {
+const silentInstaller = (url: string, flags: string) => {
   const file = `${url
     .replace(/\/download$/u, "")
     .split("/")
@@ -47,9 +46,7 @@ const silentInstaller = (url: string, flags: string, places: ReadonlyArray<strin
     .replace(/\.exe$/iu, "")}.exe`;
   return [
     `curl -sSfLo "${file}" "${url}"`,
-    `echo "downloaded ${file}, $(wc -c < "${file}") bytes"`,
     `{ MSYS_NO_PATHCONV=1 "./${file}" ${flags} || { echo "installer exited $?"; false; }; }`,
-    `{ ls -d ${places.join(" ")} 2>/dev/null || true; }`,
   ].join(" && ");
 };
 /** Adds a folder to the user's saved PATH, as a person following an unzip guide would. */
@@ -150,7 +147,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     maxima: {
       linux: apt("maxima"),
       darwin: brew("maxima"),
-      win32: `${choco("maxima")} && { ls -d /c/maxima-*/bin /c/Program\\ Files*/Maxima*/bin 2>/dev/null || true; }`,
+      win32: choco("maxima"),
     },
     // Homebrew has no GAP, so this builds the release the way GAP's own guide says.
     gap: {
@@ -176,9 +173,6 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("rocq"),
       win32: windowsInstaller(
         "https://github.com/rocq-prover/platform/releases/download/2026.07.0/signed_Rocq-Platform-release-2026.07.0-version.9.1-Windows-x86_64.exe",
-        "/c/Rocq*/bin",
-        "/c/Coq*/bin",
-        "/c/Program\\ Files*/Rocq*/bin",
       ),
     },
     lean: { linux: ELAN_UNIX, darwin: ELAN_UNIX, win32: ELAN_WINDOWS },
@@ -198,8 +192,6 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("octave"),
       win32: windowsInstaller(
         "https://ftp.gnu.org/gnu/octave/windows/octave-11.3.0-w64-installer.exe",
-        "/c/Program\\ Files*/GNU\\ Octave/*",
-        "$LOCALAPPDATA/Programs/GNU\\ Octave/*",
       ),
     },
     gnuplot: { linux: apt("gnuplot-nox"), darwin: brew("gnuplot"), win32: choco("gnuplot") },
@@ -208,7 +200,6 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: cask("minizincide"),
       win32: innoInstaller(
         "https://github.com/MiniZinc/MiniZincIDE/releases/download/2.10.1/MiniZincIDE-2.10.1-x86_64-windows-setup.exe",
-        "/c/Program\\ Files*/MiniZinc*",
       ),
     },
     verilog: { linux: apt("iverilog"), darwin: brew("icarus-verilog"), win32: choco("iverilog") },
@@ -222,7 +213,6 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       win32: [
         "curl -sSfLo ghdl.zip https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-mcode-6.0.0-ucrt64.zip",
         "unzip -q ghdl.zip -d /c/ghdl",
-        "ls /c/ghdl /c/ghdl/*",
         addToUserPath("C:\\\\ghdl\\\\bin"),
       ].join(" && "),
     },
@@ -232,7 +222,6 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("jags"),
       win32: windowsInstaller(
         "https://sourceforge.net/projects/mcmc-jags/files/JAGS/4.x/Windows/JAGS-4.3.1.exe/download",
-        "/c/Program\\ Files*/JAGS/*/x64/bin",
       ),
     },
     spss: {
@@ -285,7 +274,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
     "imagej-macro": {
       linux:
-        'curl -sSfLo fiji.zip https://downloads.imagej.net/fiji/latest/fiji-latest-linux64-jdk.zip && unzip -q fiji.zip -d "$HOME" && ls "$HOME"/Fiji* | head -20',
+        'curl -sSfLo fiji.zip https://downloads.imagej.net/fiji/latest/fiji-latest-linux64-jdk.zip && unzip -q fiji.zip -d "$HOME"',
     },
     netlogo: {
       linux:
@@ -390,7 +379,6 @@ const added = [...new Set(paths)].filter(
   (place) =>
     !current.has(key(place)) && !/\\WindowsApps\\?$/iu.test(place) && NodeFS.existsSync(place),
 );
-console.log(`Added to PATH:\n${added.join("\n")}`);
 append("GITHUB_PATH", `${added.join("\n")}\n`);
 append("GITHUB_ENV", `SCIENT_TEST_RUN_TABLE_EXPECT=${installed.join(",")}\n`);
 append("GITHUB_ENV", `SCIENT_RUN_LANGUAGES_NOT_INSTALLED=${failed.join(",")}\n`);

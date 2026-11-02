@@ -1,9 +1,16 @@
 name: Scient Compute Languages
 
 # Installs every language Run starts that anyone can install, on each kind of computer, and runs a
-# real file in each through Run. A language that is installed but does not run fails the job.
+# real file in each through Run. A language that is installed but does not run fails the job; one
+# that could not be installed is a warning, since package sites break for reasons not Scient's.
 on:
+  # A full run is 17 machines, so a pull request runs it only while it has the compute-languages
+  # label. GitHub matches paths against the whole pull request, so a path filter alone would rerun
+  # it on every push.
   pull_request:
+    types: [labeled, synchronize]
+  push:
+    branches: [main]
     paths:
       - "packages/contracts/src/scient/computeRunTable.ts"
       - "apps/server/src/scient/analysis/RunTableAdapter.ts"
@@ -22,13 +29,18 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: scient-compute-languages-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   languages:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'compute-languages') ||
+      (github.event.action == 'synchronize' &&
+        contains(github.event.pull_request.labels.*.name, 'compute-languages'))
     name: ${{ matrix.group }} / ${{ matrix.runner }}
+    # On the job, so a run for another label, which skips it, cancels nothing.
+    concurrency:
+      group: scient-compute-languages-${{ github.ref }}-${{ matrix.group }}-${{ matrix.runner }}
+      cancel-in-progress: true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -78,10 +90,7 @@ jobs:
           SCIENT_TEST_RUN_TABLE: "1"
         run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1
 
-      - name: Every language installed
-        if: ${{ !cancelled() }}
+      - name: Languages not installed
+        if: ${{ !cancelled() && env.SCIENT_RUN_LANGUAGES_NOT_INSTALLED != '' }}
         run: |
-          if [ -n "${SCIENT_RUN_LANGUAGES_NOT_INSTALLED:-}" ]; then
-            echo "::error::Could not install: ${SCIENT_RUN_LANGUAGES_NOT_INSTALLED}"
-            exit 1
-          fi
+          echo "::warning::Not tested, could not install: ${SCIENT_RUN_LANGUAGES_NOT_INSTALLED}"
