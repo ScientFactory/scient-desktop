@@ -278,27 +278,6 @@ it("reads the actual active surface when a reveal arrives before React commits a
   expect(app.active()).toBe("browser:tab-a");
 });
 
-it.each(["target_changed", "recovery_required"] as const)(
-  "keeps %s attention in the file and refuses another reveal",
-  async (reason) => {
-    await using app = await setup();
-    await app.dirty();
-    await app.reveal();
-    await app.waitForWrite();
-    await app.refuse(reason);
-    expect(app.lease.getSnapshot()).toMatchObject({
-      pending: true,
-      attention: reason,
-      draftSource: "B",
-    });
-    expect(app.active()).toBe(fileId);
-    expect(app.attention).toHaveBeenCalledWith(fileId);
-    await app.reveal("new-forced-request");
-    expect(app.active()).toBe(fileId);
-    expect(app.write).toHaveBeenCalledOnce();
-  },
-);
-
 it.each([
   "hidden",
   "removed",

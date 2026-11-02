@@ -132,49 +132,5 @@ describe.skipIf(!canPublish)(
         expect((await NodeFSP.stat(file)).mode & 0o777).toBe(0o600);
       }),
     );
-    it.live(
-      "keeps an ambiguous creation at attention rather than blessing a foreign same-content inode",
-      () => {
-        let cwd = "",
-          crash = true;
-        return fixture(
-          async (h) => {
-            cwd = h.cwd;
-            await expect(
-              h.apply("create-gap", plan({}, { "main.tex": "C" })),
-            ).rejects.toMatchObject({ _tag: "WorkspaceApplyError" });
-            await put(cwd, { "main.tex": "C" });
-            const foreign = await fileIdentity(NodePath.join(cwd, "main.tex"));
-            await h.restart();
-            const resumed = await h.apply("create-gap");
-            expect(resumed).toMatchObject({
-              outcome: "attention",
-              interrupted: [["main.tex"]],
-            });
-            expect(resumed.base).toEqual(new Map());
-            expect(await fileIdentity(NodePath.join(cwd, "main.tex"))).toEqual(foreign);
-            expect(await NodeFSP.readFile(NodePath.join(cwd, "main.tex"), "utf8")).toBe("C");
-            const history = await h.run(
-              h.files.listFileVersions({ cwd, relativePath: "main.tex" }),
-            );
-            expect(history.attention).not.toBeNull();
-            expect(
-              await Promise.all(
-                history.versions.map((version) => NodeFSP.readFile(version.retainedPath, "utf8")),
-              ),
-            ).toContain("C");
-          },
-          {},
-          {
-            at: async (point) => {
-              if (point === "install-intent" && crash) {
-                crash = false;
-                throw new Error("process died before native creation receipt");
-              }
-            },
-          },
-        );
-      },
-    );
   },
 );

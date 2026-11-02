@@ -835,6 +835,7 @@ export const make = Effect.gen(function* () {
     resolveRetentionStorageDirectory,
     retentionDirectoryFor,
     retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
+    fileHistoryDirectory: path.join(config.baseDir, "file-history"),
     // Sources' content-addressed files are shared by every attachment with their bytes.
     isProtectedPath: async (absolutePath) =>
       isInSourceFileStore(absolutePath) || (await isInGitFolder(absolutePath)),
