@@ -29,6 +29,7 @@ import {
   type OmpTurnState,
 } from "./OmpTurnMachine.ts";
 import type { OmpTarget } from "./OmpTarget.ts";
+import { type OmpAskQuestion, ompAskQuestions } from "./OmpAsk.ts";
 import { classifyOmpTurnOutcome, clipOmpErrorMessage } from "./OmpTurnOutcome.ts";
 
 const OMP_DRAIN_RETRY_LIMIT = 20;
@@ -55,8 +56,10 @@ const ompDrainRetry = (attempt: number, busy: boolean): "confirm" | "retry" | "g
 };
 
 export interface OmpPendingQuestion {
-  readonly method: "select" | "confirm" | "input" | "editor";
+  readonly method: "select" | "confirm" | "input" | "editor" | "ask";
   readonly allowedValues?: ReadonlyArray<string>;
+  /** `ask` only: every question of the call. */
+  readonly questions?: ReadonlyArray<OmpAskQuestion>;
 }
 
 export interface OmpQuestionOption {
@@ -75,6 +78,8 @@ export type OmpSessionUpdate =
       readonly detail?: string;
       /** `"length"` on a truncated completion; `"error"` or `"abort"` on a model failure. */
       readonly stopReason?: "length" | "error" | "abort";
+      /** A failure the user has to act on, such as a spending cap or a usage limit. */
+      readonly failureClass?: "usage_limit";
       readonly requestId?: string;
       /**
        * `command`: the prompt command itself was rejected, which the sender
@@ -113,6 +118,7 @@ export type OmpSessionUpdate =
       readonly title: string;
       readonly message: string;
       readonly options: ReadonlyArray<OmpQuestionOption>;
+      readonly questions?: ReadonlyArray<OmpAskQuestion>;
       readonly allowCustomAnswer?: boolean;
       readonly initialAnswer?: string;
       readonly timeout?: number;
@@ -127,6 +133,9 @@ export type OmpSessionUpdate =
     }
   // SCIENT-FORK: preserve native observations for shared desktop items.
   | { readonly type: "observation"; readonly event: OmpRpcEvent }
+  | { readonly type: "compaction-started" }
+  /** A compaction that began ended without a result. */
+  | { readonly type: "compaction-stopped"; readonly skippedReason?: string }
   | { readonly type: "compacted"; readonly result?: unknown }
   /**
    * OMP 18.3+: nothing live, queued or running in the background can wake the
@@ -155,6 +164,8 @@ interface InboxItem {
   readonly agentInvoked?: boolean;
   readonly mode?: "prompt" | "steer";
   readonly notification?: OmpRpcNotification;
+  /** An acceptance returned to the inbox after the events queued before it. */
+  readonly eventsFlushed?: boolean;
 }
 
 export interface OmpSessionRuntime {
@@ -361,7 +372,6 @@ const turnIsOpen = (state: OmpTurnState): boolean =>
 const ignoredLifecycleEvents = new Set([
   "turn_start",
   "turn_end",
-  "auto_compaction_start",
   "retry_fallback_applied",
   "retry_fallback_succeeded",
   "config_update",
@@ -382,6 +392,8 @@ interface TurnEvidence {
   assistantEnded?: boolean;
   promptStatus?: string | undefined;
   promptError?: string | undefined;
+  promptErrorCode?: string | undefined;
+  promptHttpStatus?: number | undefined;
   retryExhausted?: boolean;
   retryFinalError?: string | undefined;
 }
@@ -419,6 +431,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   readonly onNativeNotification?: (notification: OmpRpcNotification) => Effect.Effect<void>;
 }): Effect.fn.Return<OmpSessionRuntime, never, Scope.Scope> {
   const inbox = yield* Queue.bounded<InboxItem>(OMP_INBOX_CAPACITY);
+  const localAcceptances: Array<InboxItem> = [];
   let catalog = emptyOmpCommandCatalog();
   let turn = initialOmpTurnState;
   let activeTurnId: string | undefined;
@@ -599,7 +612,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       };
     }
     if (verdict.outcome === "failed") {
-      return { outcome: "failed", detail: verdict.errorMessage, stopReason: verdict.stopReason };
+      return {
+        outcome: "failed",
+        detail: verdict.errorMessage,
+        stopReason: verdict.stopReason,
+        ...(verdict.failureClass ? { failureClass: verdict.failureClass } : {}),
+      };
     }
     if (verdict.outcome === "completed" && verdict.stopReason) {
       return { outcome: "completed", stopReason: verdict.stopReason };
@@ -877,7 +895,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
     if (
       !id ||
-      (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
+      (method !== "select" &&
+        method !== "confirm" &&
+        method !== "input" &&
+        method !== "editor" &&
+        method !== "ask")
     ) {
       // Notification-style extension UI methods do not expect a response.
       // In particular, do not acknowledge setWidget/setTitle/open_url as if
@@ -888,6 +910,26 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     // extension's waiting promise. Otherwise the adapter buffers it as before.
     if (paused && !turnIsOpen(turn)) {
       yield* cancelStaleQuestion(event);
+      return;
+    }
+    if (method === "ask") {
+      const questionSet = ompAskQuestions(event.questions);
+      // A malformed request must not leave the agent's tool waiting forever.
+      if (questionSet.length === 0) {
+        yield* input.client.extensionUiResponse({ id, cancelled: true });
+        return;
+      }
+      questions.set(id, { method, questions: questionSet });
+      yield* publish({
+        type: "question",
+        id,
+        method,
+        title: input.target.name,
+        message: questionSet[0]!.question,
+        options: [],
+        questions: questionSet,
+        ...(event.timeout === undefined ? {} : { timeout: event.timeout }),
+      });
       return;
     }
     const options = Array.isArray(event.options)
@@ -1025,6 +1067,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       evidence.promptStatus = event.status;
       evidence.promptError = event.promptError?.message;
+      evidence.promptErrorCode = event.promptError?.code;
+      evidence.promptHttpStatus = event.promptError?.httpStatus;
       if (typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",
@@ -1081,10 +1125,28 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       });
       return;
     }
+    if (event.type === "auto_compaction_start" || event.type === "manual_compaction_start") {
+      yield* publish({ type: "compaction-started" });
+      return;
+    }
+    if (event.type === "manual_compaction_end") {
+      // The compact command reports a failure; this closes the progress row and
+      // says when "failed" only means there was nothing to do.
+      if (event.result === undefined)
+        yield* publish({
+          type: "compaction-stopped",
+          ...(event.skipped === true
+            ? { skippedReason: clip(event.errorMessage) ?? "Nothing to compact." }
+            : {}),
+        });
+      return;
+    }
     if (event.type === "auto_compaction_end" || event.type === "compaction_end") {
       // A failed compaction reports errorMessage and must not read as
       // success; a skipped one changed nothing and reports nothing.
       const failure = clip(event.errorMessage);
+      if (failure || event.aborted === true || event.skipped === true || event.willRetry === true)
+        yield* publish({ type: "compaction-stopped" });
       if (failure) {
         yield* publish({
           type: "warning",
@@ -1492,6 +1554,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         rememberSettledPrompt(item.requestId);
         return;
       }
+      // A local command's output precedes this reply on the wire, but runs through
+      // the event queue. Settling first would drop it, so settle after that queue.
+      if (item.agentInvoked === false && !item.eventsFlushed) {
+        localAcceptances.push({ ...item, eventsFlushed: true });
+        yield* input.client.flushEvents();
+        return;
+      }
       if (item.mode === "steer") {
         yield* applySignal({ type: "steer-accepted" });
       } else if (!turnIsOpen(turn)) {
@@ -1536,6 +1605,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
     if (item.type === "event" && item.notification) {
       if (item.notification._tag === "Drain") {
+        const acceptance = localAcceptances.shift();
+        if (acceptance) yield* Queue.offer(inbox, acceptance);
         yield* confirmIdle;
         return;
       }

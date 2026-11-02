@@ -332,6 +332,7 @@ const degradedProjection = (
               ...pick(error, "provider", isString),
               ...pick(error, "model", isString),
               ...pick(error, "httpStatus", isFiniteNumber),
+              ...pick(error, "code", isString),
             },
           }
         : {}),

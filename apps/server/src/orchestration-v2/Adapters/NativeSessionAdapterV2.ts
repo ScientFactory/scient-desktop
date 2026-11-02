@@ -128,10 +128,23 @@ export type NativeSessionUpdate =
   | {
       readonly type: "question";
       readonly id: string;
-      readonly method: "confirm" | "select" | "input" | "editor";
+      readonly method: "confirm" | "select" | "input" | "editor" | "ask";
       readonly title: string;
       readonly message: string;
       readonly options: ReadonlyArray<{ label: string; description: string; value: string }>;
+      /** `ask`: several questions answered together, each keyed by its own id. */
+      readonly questions?: ReadonlyArray<{
+        readonly id: string;
+        readonly header?: string;
+        readonly question: string;
+        readonly options: ReadonlyArray<{
+          label: string;
+          description: string;
+          value: string;
+          preview?: string;
+        }>;
+        readonly multiSelect: boolean;
+      }>;
       readonly allowCustomAnswer?: boolean;
       readonly initialAnswer?: string;
       readonly timeout?: number;
@@ -1266,7 +1279,20 @@ export function makeNativeSessionAdapterV2(
                           title: update.title,
                           status: "waiting",
                           requestId,
-                          questions: [
+                          questions: update.questions?.map((question, index) => ({
+                            id: question.id,
+                            header: question.header ?? update.title,
+                            question:
+                              index === 0 && update.timeout !== undefined
+                                ? `${question.question}\n\nTimeout: ${update.timeout / 1000} seconds.`
+                                : question.question,
+                            options: question.options.map((option) => ({
+                              ...option,
+                              description: option.description || option.label,
+                            })),
+                            multiSelect: question.multiSelect,
+                            allowCustomAnswer: true,
+                          })) ?? [
                             {
                               id: update.id,
                               header: update.title,

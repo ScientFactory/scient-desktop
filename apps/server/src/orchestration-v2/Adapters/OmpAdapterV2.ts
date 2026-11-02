@@ -8,7 +8,10 @@ import {
   type ModelSelection,
   type OmpSettings,
 } from "@t3tools/contracts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+} from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
@@ -75,6 +78,7 @@ import {
   type OmpSessionUpdate,
 } from "../../provider/omp/OmpSessionRuntime.ts";
 import {
+  ompCommandOutputText,
   ompMessageUsage,
   ompStatsUsage,
   ompTodoSteps,
@@ -82,6 +86,9 @@ import {
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import type { OmpProcessFactory } from "../../provider/OmpProvider.ts";
 import { formatOmpBytes, planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
+import { ompAskAnswers } from "../../provider/omp/OmpAsk.ts";
+import { ompUsageLimitNotice } from "../../provider/omp/OmpUsageLimit.ts";
+import { linkScientAgentSessions } from "../../provider/scient/ScientAgentSessionsLink.ts";
 import {
   browserActionUrl,
   browserActionText,
@@ -251,6 +258,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         );
         yield* fs.makeDirectory(sessionRoot, { recursive: true, mode: 0o700 });
         const root = yield* fs.realPath(sessionRoot);
+        const agentRoot = options.environment?.SCIENT_AGENT_ROOT;
+        if (target.driverKind === "scient" && agentRoot)
+          yield* linkScientAgentSessions({ agentRoot, sessionsRoot: path.dirname(root) });
         const stateRoot = yield* fs.realPath(options.serverConfig.stateDir);
         if (!sessionFileInsideRoot(stateRoot, root))
           return yield* new NativeSessionOperationError({
@@ -536,9 +546,12 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               : {}),
           });
         });
+        let todosShown = false;
         const publishTodos = (phases: unknown) => {
           const steps = ompTodoSteps(phases);
-          return steps === undefined
+          // An agent reports an empty list on every state read; it only matters once cleared.
+          if (steps !== undefined && steps.length > 0) todosShown = true;
+          return steps === undefined || (steps.length === 0 && !todosShown)
             ? Effect.void
             : onUpdate({
                 type: "item",
@@ -550,10 +563,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 },
               });
         };
-        const refreshTodos = Effect.fn("OmpAdapterV2.refreshTodos")(function* () {
+        let usageLimitNotice: string | undefined;
+        // SCIENT-FORK: todos and the usage limit have no event of their own past a settled run.
+        const refreshSettledState = Effect.fn("OmpAdapterV2.refreshSettledState")(function* () {
           const state = yield* client.getState().pipe(Effect.option);
-          if (Option.isSome(state) && state.value.todoPhases !== undefined)
-            yield* publishTodos(state.value.todoPhases);
+          if (Option.isNone(state)) return;
+          if (state.value.todoPhases !== undefined) yield* publishTodos(state.value.todoPhases);
+          const usageLimit = ompUsageLimitNotice(state.value.usageLimit);
+          if (usageLimit !== undefined && usageLimit !== usageLimitNotice)
+            yield* notice(usageLimit);
+          usageLimitNotice = usageLimit;
         });
         let nextWarningOrdinal = 0;
         let retrySequence = 0;
@@ -582,6 +601,21 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           });
 
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
+        let compactionOrdinal = 0;
+        let runningCompaction: string | undefined;
+        // A refused compaction starts and ends within a millisecond and shows no row.
+        let compactionRowShown = false;
+        let manualCompactionStopped: Deferred.Deferred<string | undefined> | undefined;
+        const compactionItemId = () => {
+          runningCompaction ??= `native-compaction-${++compactionOrdinal}`;
+          return runningCompaction;
+        };
+        const finishedCompactionId = () => {
+          const id = compactionItemId();
+          runningCompaction = undefined;
+          compactionRowShown = false;
+          return id;
+        };
         const publishCompaction = (resultValue: unknown) => {
           const result = isRecord(resultValue) ? resultValue : {};
           const counter = (value: unknown) =>
@@ -592,7 +626,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           const after = counter(result.estimatedTokensAfter);
           return onUpdate({
             type: "item",
-            id: "compaction",
+            id: finishedCompactionId(),
             status: "completed",
             item: {
               type: "compaction",
@@ -748,7 +782,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   Effect.andThen(
                     details && ompTodoSteps(details.phases) !== undefined
                       ? publishTodos(details.phases)
-                      : refreshTodos(),
+                      : refreshSettledState(),
                   ),
                 );
               }
@@ -764,6 +798,19 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   label: client.redaction.text(option.label),
                   description: client.redaction.text(option.description),
                 })),
+                ...(update.questions === undefined
+                  ? {}
+                  : {
+                      questions: update.questions.map((question) => ({
+                        ...question,
+                        question: client.redaction.text(question.question),
+                        options: question.options.map((option) => ({
+                          ...option,
+                          label: client.redaction.text(option.label),
+                          description: client.redaction.text(option.description),
+                        })),
+                      })),
+                    }),
                 ...(update.initialAnswer === undefined
                   ? {}
                   : { initialAnswer: client.redaction.text(update.initialAnswer) }),
@@ -833,6 +880,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                         : {}
                       : { detail: client.redaction.text(update.detail) }),
                     ...(update.outcome === "unknown" ? { failureClass: "unknown" as const } : {}),
+                    ...(update.failureClass === undefined
+                      ? {}
+                      : { failureClass: update.failureClass }),
                     ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
                     broken,
                   }),
@@ -845,7 +895,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               );
               return broken
                 ? publishProcessLoss(publish)
-                : refreshUsage().pipe(Effect.andThen(refreshTodos()), Effect.andThen(publish));
+                : refreshUsage().pipe(
+                    Effect.andThen(refreshSettledState()),
+                    Effect.andThen(publish),
+                  );
             }
             case "process-exited":
               return publishProcessLoss(
@@ -927,7 +980,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               return onUpdate({
                 type: "text",
                 id: "command-output",
-                delta: client.redaction.text(update.delta),
+                delta: client.redaction.text(ompCommandOutputText(update.delta)),
               });
             case "background-result":
               return update.detail
@@ -939,6 +992,40 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     output: client.redaction.text(update.detail),
                   })
                 : Effect.void;
+            case "compaction-started": {
+              const id = compactionItemId();
+              return Effect.sleep("250 millis").pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    if (runningCompaction !== id) return Effect.void;
+                    compactionRowShown = true;
+                    return onUpdate({
+                      type: "item",
+                      id,
+                      status: "running",
+                      item: { type: "compaction" },
+                    });
+                  }),
+                ),
+                Effect.forkIn(scope),
+                Effect.asVoid,
+              );
+            }
+            case "compaction-stopped": {
+              const shown = compactionRowShown;
+              const id = runningCompaction === undefined ? undefined : finishedCompactionId();
+              return (
+                shown && id !== undefined
+                  ? onUpdate({ type: "item", id, status: "failed", item: { type: "compaction" } })
+                  : Effect.void
+              ).pipe(
+                Effect.andThen(
+                  manualCompactionStopped
+                    ? Deferred.succeed(manualCompactionStopped, update.skippedReason)
+                    : Effect.void,
+                ),
+              );
+            }
             case "compacted":
               return manualCompaction ? Effect.void : publishCompaction(update.result);
             case "open-url": {
@@ -1005,6 +1092,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           yield* client
             .setEventFilter(OMP_KNOWN_EVENT_TYPES, { messageUpdates: "delta" })
             .pipe(Effect.catchTags({ OmpRpcCommandError: () => Effect.void }));
+        // SCIENT-FORK: one dialog for all of an `ask` call's questions. An agent without
+        // the command asks them one at a time through select and input requests.
+        yield* client
+          .command({ type: "set_ask_dialog", enabled: true })
+          .pipe(Effect.catchTags({ OmpRpcCommandError: () => Effect.void }));
         const ensureFresh = Effect.fn("OmpAdapterV2.ensureFresh")(
           function* () {
             if (fresh) return;
@@ -1117,18 +1209,25 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           | undefined;
         const commands = yield* client.getCommands();
         runtime.replaceCatalog(commands.commands);
+        // SCIENT-FORK: a refused command is an answer to the user, not a failed turn.
+        const commandRefusal = (text: string) => {
+          const decision = ompCommandDecision(text, runtime.catalog());
+          if (decision === "unavailable")
+            return `That command is unavailable in this ${target.name} conversation.`;
+          if (decision !== "mutator") return undefined;
+          return /^\/fast\b/.test(text.trimStart())
+            ? "Use the Standard and Fast switch in the model menu."
+            : `This ${target.name} command changes provider configuration; use the provider settings instead.`;
+        };
         const payload = Effect.fn("OmpAdapterV2.payload")(function* (
           message: ProviderAdapter.ProviderAdapterV2TurnMessage,
           selected?: { provider: string; id: string },
         ) {
-          const decision = ompCommandDecision(message.text, runtime.catalog());
-          if (decision === "mutator")
+          const refusal = commandRefusal(message.text);
+          if (refusal !== undefined)
             return yield* new NativeSessionOperationError({
-              detail: `This ${target.name} command changes provider configuration; use the provider settings instead.`,
-            });
-          if (decision === "unavailable")
-            return yield* new NativeSessionOperationError({
-              detail: `That command is unavailable in this ${target.name} conversation.`,
+              detail: refusal,
+              breaksSession: false,
             });
           const imageFiles: Array<{ path: string; size: number; mimeType: string }> = [];
           const attachmentPaths = new Map<ChatAttachment, string>();
@@ -1347,7 +1446,23 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               });
             yield* onUpdate({ type: "offered", nativeTurnId });
             manualCompaction = true;
+            const stopped = yield* Deferred.make<string | undefined>();
+            manualCompactionStopped = stopped;
             const response = yield* client.compact().pipe(
+              // SCIENT-FORK: nothing to compact refuses the command, but no turn failed.
+              Effect.catchTags({
+                OmpRpcCommandError: (cause) =>
+                  compareSemverVersions(client.runtimeVersion, "18.13.3") < 0
+                    ? Effect.fail(cause)
+                    : Deferred.await(stopped).pipe(
+                        Effect.timeoutOption("1 second"),
+                        Effect.flatMap((reason) =>
+                          Option.isSome(reason) && reason.value !== undefined
+                            ? Effect.succeed(reason.value)
+                            : Effect.fail(cause),
+                        ),
+                      ),
+              }),
               Effect.mapError(
                 (cause) =>
                   new NativeSessionOperationError({
@@ -1357,7 +1472,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               ),
             );
             yield* onUpdate({ type: "accepted", nativeTurnId });
-            yield* publishCompaction(response.data);
+            if (typeof response === "string") yield* notice(response);
+            else yield* publishCompaction(response.data);
             yield* onUpdate({ type: "terminal", status: "completed" });
           }),
           getModelContextWindow: (selection) => {
@@ -1382,6 +1498,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           send: Effect.fn("OmpAdapterV2.send")(
             function* (turnInput, nativeTurnId) {
               manualCompaction = false;
+              const refusal = commandRefusal(turnInput.message.text);
+              if (refusal !== undefined) {
+                yield* onUpdate({ type: "offered", nativeTurnId });
+                yield* onUpdate({ type: "accepted", nativeTurnId });
+                yield* notice(refusal);
+                yield* onUpdate({ type: "terminal", status: "completed" });
+                return;
+              }
               activeModel = decodeOmpModelSlug(turnInput.modelSelection.model);
               if (
                 turnInput.runtimePolicy.runtimeMode !== "full-access" ||
@@ -1525,6 +1649,23 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     detail: `${target.name} reported an invalid model identity.`,
                   });
                 yield* onUpdate({ type: "model", model: appliedSlug });
+                // SCIENT-FORK: the turn runs either way; the agent says when a tier is unavailable.
+                const fastMode =
+                  getModelSelectionBooleanOptionValue(turnInput.modelSelection, "fastMode") ===
+                  true;
+                if (applied.fastModeEnabled !== undefined && applied.fastModeEnabled !== fastMode)
+                  yield* client.command({ type: "set_fast_mode", enabled: fastMode }).pipe(
+                    Effect.catchTags({
+                      OmpRpcCommandError: (error) =>
+                        onUpdate({
+                          type: "tool",
+                          id: `${nativeTurnId}:fast-mode-warning`,
+                          name: `${target.name} fast mode`,
+                          status: "completed",
+                          output: client.redaction.text(error.detail),
+                        }),
+                    }),
+                  );
                 if (!unchanged && selected !== undefined && applied.thinkingLevel !== selected)
                   yield* onUpdate({
                     type: "tool",
@@ -1636,6 +1777,15 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 return yield* new NativeSessionOperationError({
                   detail: `The ${target.name} dialog is no longer pending.`,
                 });
+              if (question.method === "ask") {
+                const answers =
+                  response.answers && ompAskAnswers(question.questions ?? [], response.answers);
+                yield* client.extensionUiResponse(
+                  answers ? { id, answers } : { id, cancelled: true },
+                );
+                runtime.removeQuestion(id);
+                return;
+              }
               const answer = response.answers?.[id];
               const value = typeof answer === "string" ? answer : undefined;
               if (

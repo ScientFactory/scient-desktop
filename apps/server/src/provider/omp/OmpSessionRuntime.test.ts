@@ -1672,6 +1672,20 @@ describe("Oh My Pi session runtime background work", () => {
   );
 });
 
+describe("Oh My Pi local commands", () => {
+  it.effect("keeps a command's output that is still queued when its reply is handled", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("local-turn");
+      yield* h.wire.send({ type: "command_output", text: "No background jobs running." });
+      yield* h.runtime.accepted("local-request", false);
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(produced.map((update) => update.type)).toContain("command-output");
+    }),
+  );
+});
+
 describe("Oh My Pi session runtime compaction", () => {
   it.effect.each(
     (
@@ -1679,17 +1693,30 @@ describe("Oh My Pi session runtime compaction", () => {
         [
           "a failed compaction is a warning, not a compaction",
           { type: "auto_compaction_end", errorMessage: "Summarization failed: 500" },
-          [{ type: "warning", message: "Oh My Pi compaction failed: Summarization failed: 500" }],
+          [
+            { type: "compaction-stopped" },
+            { type: "warning", message: "Oh My Pi compaction failed: Summarization failed: 500" },
+          ],
         ],
         [
           "a skipped compaction reports nothing",
           { type: "auto_compaction_end", skipped: true },
-          [],
+          [{ type: "compaction-stopped" }],
         ],
         [
           "a successful compaction is reported",
           { type: "auto_compaction_end", result: { summary: "done" } },
           [{ type: "compacted", result: { summary: "done" } }],
+        ],
+        [
+          "a manual compaction shows progress",
+          { type: "manual_compaction_start" },
+          [{ type: "compaction-started" }],
+        ],
+        [
+          "a manual compaction with nothing to do says so",
+          { type: "manual_compaction_end", aborted: false, skipped: true },
+          [{ type: "compaction-stopped", skippedReason: "Nothing to compact." }],
         ],
       ] as const
     ).map(([label, frame, expected]) => ({ caseTitle: label, label, frame, expected })),

@@ -657,7 +657,7 @@ labels, editor dialogs retain their initial text, and the existing dialog text s
 the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No only.
 
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
-  qualified. Launch arguments are `--mode rpc` and
+  qualified. Launch arguments are `--mode rpc-ui` (the only mode with the agent's `ask` tool) and
   `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can
   install the qualified private binary on every approved target (below); otherwise Scient uses an
   executable the user installed.

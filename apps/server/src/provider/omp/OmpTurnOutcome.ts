@@ -21,6 +21,10 @@ export interface OmpTurnEvidence {
   readonly promptStatus?: string | undefined;
   /** `prompt_result.error.message`. */
   readonly promptError?: string | undefined;
+  /** `prompt_result.error.code`. */
+  readonly promptErrorCode?: string | undefined;
+  /** `prompt_result.error.httpStatus`. */
+  readonly promptHttpStatus?: number | undefined;
   /** The last assistant `message_end` of this turn. */
   readonly stopReason?: string | undefined;
   readonly errorMessage?: string | undefined;
@@ -34,6 +38,7 @@ export type OmpTurnVerdict =
       readonly outcome: "failed";
       readonly stopReason: "abort" | "error";
       readonly errorMessage: string;
+      readonly failureClass?: "usage_limit";
     }
   | { readonly outcome: "completed"; readonly stopReason?: "length" }
   | { readonly outcome: "unknown" };
@@ -93,6 +98,10 @@ export const classifyOmpTurnOutcome = (
         target,
         firstText(evidence.retryFinalError, evidence.errorMessage, evidence.promptError),
       ),
+      // A spending cap or a provider's 429 needs the user, not another attempt.
+      ...(evidence.promptErrorCode === "cost_cap" || evidence.promptHttpStatus === 429
+        ? { failureClass: "usage_limit" as const }
+        : {}),
     };
   }
   return evidence.stopReason === "length"

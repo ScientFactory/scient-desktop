@@ -13,6 +13,21 @@ const terminal = { settlement: "terminal" } as const;
 
 const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> = [
   [
+    "a spending cap needs the user, not a retry",
+    {
+      ...terminal,
+      promptStatus: "error",
+      promptError: "Session cost cap reached",
+      promptErrorCode: "cost_cap",
+    },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "Session cost cap reached",
+      failureClass: "usage_limit",
+    },
+  ],
+  [
     "an unconfirmed drain is uncertain, even after a model error",
     { settlement: "unconfirmed", stopReason: "error" },
     { outcome: "unknown" },
