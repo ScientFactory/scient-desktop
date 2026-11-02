@@ -35,7 +35,6 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { TOTP, URI } from "otpauth";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import {
   AccountsService,
@@ -71,6 +70,7 @@ import {
 import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
+import { parseTotp } from "./signIn/totp.ts";
 
 const failure = (reason: AccountsError["reason"], message: string) =>
   new AccountsError({ reason, message });
@@ -1216,12 +1216,7 @@ export const layer = Layer.effect(
                     (source?.type === "1password" && source.reference.endsWith("?attribute=otp"))
                   )
                     return value;
-                  const generator = value.startsWith("otpauth://")
-                    ? URI.parse(value)
-                    : new TOTP({ secret: value.replace(/\s/g, "") });
-                  if (!(generator instanceof TOTP))
-                    throw failure("invalid-input", "The one-time password setup is invalid.");
-                  return generator.generate({ timestamp });
+                  return parseTotp(value).generate({ timestamp });
                 },
                 catch: () => failure("unavailable", "A one-time password could not be generated."),
               });

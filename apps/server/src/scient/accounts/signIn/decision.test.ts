@@ -193,6 +193,14 @@ describe("account sign-in decisions", () => {
     for (const value of ["not:a:key", "otpauth://hotp/example?secret=GEZDGNBV&counter=1", ""])
       expect(() => parseTotp(value)).toThrow("The account's two-factor setup is invalid.");
   });
+  it("reads a TOTP secret written in lowercase, with spaces or padding", () => {
+    for (const setup of [
+      "gezdgnbvgy3tqojqgezdgnbvgy3tqojq",
+      "GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ",
+      "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ====",
+    ])
+      expect(parseTotp(setup).generate({ timestamp: 59_000 })).toBe("287082");
+  });
 });
 
 describe("sign-in submission guard", () => {
