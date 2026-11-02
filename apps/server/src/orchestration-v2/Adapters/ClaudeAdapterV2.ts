@@ -52,7 +52,14 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
+import {
+  addClaudeLedgerUsage,
+  claudeLedgerDelta,
+  claudeModelLedger,
+  normalizeClaudeTurnTokenUsage,
+  type ClaudeLedgerUsage,
+  type ClaudeModelLedger,
+} from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
   type CanUseTool,
@@ -189,6 +196,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
@@ -209,7 +217,6 @@ import {
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 // SCIENT-FORK:START Scient instruction owners
 import {
   SCIENT_CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS,
@@ -4271,6 +4278,9 @@ interface ActiveClaudeTurnContext {
   compactionFailure: { readonly message: string | undefined } | null;
   // Steers end segments whose usage is excluded from the final result; bill them too, oldest first.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  // Ledger growth of the steered segments; undefined once any segment's growth is unknown.
+  steeredLedgerUsage: ClaudeLedgerUsage | undefined;
+  readonly rootModels: Set<string>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly promptUuid: string | null;
@@ -4339,6 +4349,8 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // The SDK's per-process model ledger at the last result; a new process starts at zero.
+  modelLedger: ClaudeModelLedger | undefined;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
@@ -5038,6 +5050,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (pendingStart !== generation || (yield* Ref.get(queryContext))?.stopCloseReserved)
             return yield* refuseQueryOwnership("Claude native start lost query ownership.");
         });
+        // Wake buffers replay result frames, so ledger growth is measured once on arrival.
+        const resultLedgerUsage = new WeakMap<SDKMessage, ClaudeLedgerUsage>();
         // A worktree handoff changes the project settings even within one session.
         let bypassCache: { cwd: string | null; availability: ClaudeBypassAvailability } | null =
           null;
@@ -8017,6 +8031,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       input.context.subagentsByToolUseId.size > 0,
                     input.status,
                     input.context.steeredSegmentUsage,
+                    {
+                      rootModels: input.context.rootModels,
+                      ...(input.result === undefined
+                        ? {}
+                        : {
+                            ledger: addClaudeLedgerUsage(
+                              input.context.steeredLedgerUsage,
+                              resultLedgerUsage.get(input.result),
+                            ),
+                          }),
+                    },
                   ),
                 },
               }),
@@ -9035,6 +9060,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "assistant" && input.replayed !== true) {
             if (message.parent_tool_use_id === null) {
+              // CLI notices and API errors arrive as assistant messages from "<synthetic>".
+              if (message.message.model && message.message.model !== "<synthetic>") {
+                context.rootModels.add(message.message.model);
+              }
               // API-error snapshots and synthetic ids are presentation, not
               // inclusive native fork boundaries. Held replay cannot move it.
               if (
@@ -9960,6 +9989,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
               context.steeredSegmentUsage.push(message.usage);
+              context.steeredLedgerUsage = addClaudeLedgerUsage(
+                context.steeredLedgerUsage,
+                resultLedgerUsage.get(message),
+              );
               return;
             }
             yield* Ref.update(steeredTurns, (current) => {
@@ -11027,6 +11060,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   (subagent) => subagent.task.status === "running",
                 ),
               ),
+              modelLedger: new Map(),
               taskOutputRoot: claudeTaskOutputRoot(
                 adapterOptions.environment,
                 path,
@@ -11077,6 +11111,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         ),
                       );
                     // SCIENT-FORK:END
+                    if (message.type === "result") {
+                      const ledger = claudeModelLedger(message.modelUsage);
+                      const growth = claudeLedgerDelta(context.modelLedger, ledger);
+                      if (growth !== undefined) resultLedgerUsage.set(message, growth);
+                      // A ledger that went backwards cannot anchor the next turn's growth.
+                      context.modelLedger =
+                        growth === undefined && context.modelLedger !== undefined
+                          ? undefined
+                          : ledger;
+                    }
                     yield* handleSdkMessage({ query: querySession, message });
                     // SCIENT-FORK:START Scient Extensions turn-end MCP status sample: servers
                     // that were pending at init settle during the turn. Bounded and off the
@@ -11334,6 +11378,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     rateLimitResetTimes: new Map(),
                     latestAssistantRateLimit: null,
                     steeredSegmentUsage: [],
+                    steeredLedgerUsage: { inputTokens: 0, outputTokens: 0 },
+                    rootModels: new Set(),
                     subagentsByTaskId: new Map(),
                     subagentsByToolUseId: new Map(),
                     promptUuid,
@@ -12657,7 +12703,11 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+    const baseEnvironment = yield* mergeClaudeProcessEnvironment(
+      config,
+      environment,
+      hostEnvironment,
+    );
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;

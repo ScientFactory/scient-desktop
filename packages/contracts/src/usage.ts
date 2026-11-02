@@ -201,6 +201,23 @@ export const UsageAccountingSummary = Schema.Struct({
 });
 export type UsageAccountingSummary = typeof UsageAccountingSummary.Type;
 
+/**
+ * Matches a provider's original model ID, before usage model aliases apply. Omit provider to
+ * match any; a string provider lets older clients carry selectors for providers they lack.
+ */
+export const UsageModelSelector = Schema.Struct({
+  provider: Schema.optional(TrimmedNonEmptyString),
+  model: TrimmedNonEmptyString,
+});
+export type UsageModelSelector = typeof UsageModelSelector.Type;
+
+/** Keeps records matching `include` (all when omitted) and not matching `exclude`. */
+export const UsageModelFilter = Schema.Struct({
+  include: Schema.optional(Schema.Array(UsageModelSelector)),
+  exclude: Schema.optional(Schema.Array(UsageModelSelector)),
+});
+export type UsageModelFilter = typeof UsageModelFilter.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   sinceDay: UsageDay,
   untilDay: UsageDay,
@@ -212,6 +229,7 @@ export const UsageSummaryInput = Schema.Struct({
   /** Opt-in because provider billing may require bounded external API calls. */
   includeAccounting: Schema.optional(Schema.Boolean),
   awaitRefresh: Schema.optional(Schema.Boolean),
+  modelFilter: Schema.optional(UsageModelFilter),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -227,6 +245,8 @@ export const UsageSummary = Schema.Struct({
   /** Optional for version-skew compatibility with servers before v6. */
   accounting: Schema.optional(UsageAccountingSummary),
   scanDurationMs: NonNegativeInt,
+  /** The filter the server applied; absent means unfiltered, including servers that predate filters. */
+  modelFilter: Schema.optional(UsageModelFilter),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

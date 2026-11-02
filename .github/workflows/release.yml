@@ -327,6 +327,8 @@ jobs:
               - --filter=t3...
       - name: Build Linux x64 node-pty for WSL
         shell: bash
+        env:
+          PREVIEW: ${{ inputs.channel == 'preview' }}
         run: |
           set -euo pipefail
           pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"

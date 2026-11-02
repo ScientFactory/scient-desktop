@@ -24,6 +24,8 @@ it("recognizes owned and historical tools across provider prefixes and completio
     const presentation = resolveT3McpToolPresentation(tool);
     for (const prefix of [
       "mcp__scient__",
+      "mcp__scient_direct__",
+      "scient-direct.",
       "scient.",
       "scient/",
       "mcp_scient_",

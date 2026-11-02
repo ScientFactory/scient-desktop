@@ -57,6 +57,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
@@ -1701,13 +1702,24 @@ it.effect("ingests new member threads of an owned child after the root turn term
     const subagentNodeId = NodeId.make("node:run-execution-late-child:subagent");
     const childMessageIngested = yield* Deferred.make<void>();
     const order = yield* Ref.make<ReadonlyArray<string>>([]);
-    const origins = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([]);
+    const origins = yield* Ref.make<ReadonlyArray<readonly [string, unknown, unknown]>>([]);
+    const requests = yield* Ref.make<ReadonlyArray<string>>([]);
     const testLayer = RunExecutionService.layer.pipe(
       Layer.provide(threadCommandExecutorLayer),
       Layer.provide(McpAppModelContext.layerEmpty),
       Layer.provide(PreviewAgentActivity.layer),
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
+            runStarted: (input) =>
+              Ref.update(requests, (current) => [...current, `started:${input.runId}`]),
+            turnCompleted: () => Effect.void,
+            runSettled: (input) =>
+              Ref.update(requests, (current) => [
+                ...current,
+                `settled:${input.runId}:${input.status}:children-running=${input.childrenRunning}`,
+              ]),
+          }),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
           Layer.mock(EventSink.EventSinkV2)({
@@ -1732,7 +1744,11 @@ it.effect("ingests new member threads of an owned child after the root turn term
                 const eventType = input.event.type;
                 yield* Ref.update(origins, (current) => [
                   ...current,
-                  [eventType, input.analyticsContext?.origin] as const,
+                  [
+                    eventType,
+                    input.analyticsContext?.origin,
+                    input.analyticsContext?.segment,
+                  ] as const,
                 ]);
                 if (
                   input.event.type === "app_thread.created" &&
@@ -1892,6 +1908,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
         attempt: {
           id: attemptId,
           providerTurnId: rootProviderTurnId,
+          reason: "initial",
         } as OrchestrationV2RunAttempt,
         attemptId,
         providerTurnOrdinal: 1,
@@ -1924,7 +1941,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
     assert.deepEqual(yield* Ref.get(order), ["root-finalized", "member-thread", "child-message"]);
     // The run's message started the root; the parent agent started the child's turn.
     const recorded = yield* Ref.get(origins);
-    assert.deepEqual(recorded[0], [
+    assert.deepEqual(recorded[0]?.slice(0, 2), [
       "app_thread.created",
       { createdBy: "user", creationSource: "web", scheduled: false, subagent: false },
     ]);
@@ -1933,8 +1950,14 @@ it.effect("ingests new member threads of an owned child after the root turn term
       [
         "provider_turn.updated",
         { createdBy: "agent", creationSource: "provider", scheduled: false, subagent: true },
+        "native_child",
       ],
     );
+    // The child outlives the root, so the request summary says its later turns are missing.
+    assert.deepEqual(yield* Ref.get(requests), [
+      `started:${runId}`,
+      `settled:${runId}:completed:children-running=true`,
+    ]);
   }),
 );
 

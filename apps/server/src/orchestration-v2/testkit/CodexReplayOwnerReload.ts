@@ -4,6 +4,8 @@ import * as Predicate from "effect/Predicate";
 const CODEX_OWNER_RELOAD_FIXTURES = new Set([
   "subagent_continue",
   "multi_turn",
+  // The multi_turn recording with a reroute notification added.
+  "codex_model_reroute",
   "queued_turn",
   "thread_rollback",
   "thread_rollback_after_restart",
