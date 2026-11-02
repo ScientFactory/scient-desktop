@@ -320,6 +320,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
+  [WS_METHODS.projectsChangeEntries]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthFilesystemReadScope,

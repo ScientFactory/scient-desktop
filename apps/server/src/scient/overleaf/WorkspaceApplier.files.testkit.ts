@@ -81,5 +81,7 @@ export const makeApplierFiles = Effect.fn("WorkspaceApplier.makeApplierFiles")(f
     readFile,
     viewFile: readFile,
     watchFile: () => Stream.empty,
+    resolveEntryPath: () =>
+      Effect.die("resolveEntryPath is not used by the workspace applier fixture"),
   });
 });

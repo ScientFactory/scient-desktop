@@ -573,6 +573,12 @@ import {
   WsEditorsFlushRespondRpc,
 } from "./scient/editorFlushRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Files panel entry changes.
+import {
+  SCIENT_WORKSPACE_ENTRY_WS_METHODS,
+  WsProjectsChangeEntriesRpc,
+} from "./scient/workspaceEntryChanges.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   projectsListDirectory: "projects.listDirectory",
@@ -623,6 +629,9 @@ export const WS_METHODS = {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush methods.
   ...SCIENT_EDITOR_FLUSH_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Files panel entry changes.
+  ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
   // SCIENT-FORK:END
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -2464,6 +2473,9 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsEditorsFlushLeaveRpc,
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Files panel entry changes.
+  WsProjectsChangeEntriesRpc,
   // SCIENT-FORK:END
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,

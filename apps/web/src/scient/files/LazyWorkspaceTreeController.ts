@@ -141,6 +141,58 @@ export class LazyWorkspaceTreeController {
     }
   }
 
+  /**
+   * Follows a move the tree already shows: a drop or an in-place rename moves
+   * the row before the disk changes. A refresh afterwards then compares
+   * against what the tree shows, and settles the disk's answer either way.
+   */
+  noteMoved(from: string, to: string): void {
+    if (this.#destroyed || from === to) return;
+    const renamePath = (path: string) =>
+      path === from || path.startsWith(`${from}/`) ? to + path.slice(from.length) : path;
+    const moved = this.#entries.get(from);
+    for (const [path, entry] of Array.from(this.#entries)) {
+      const next = renamePath(path);
+      if (next === path) continue;
+      this.#entries.delete(path);
+      this.#entries.set(next, { ...entry, relativePath: next, name: next.split("/").at(-1)! });
+    }
+    for (const [path, branch] of Array.from(this.#branches)) {
+      const next = renamePath(path);
+      const children = new Set([...branch.children].map(renamePath));
+      if (next !== path) this.#branches.delete(path);
+      this.#branches.set(next, { ...branch, children });
+      // A listing still on its way answers for the old name.
+      if (next !== path)
+        this.#requestVersions.set(path, (this.#requestVersions.get(path) ?? 0) + 1);
+    }
+    for (const path of Array.from(this.#unloadedDirectories)) {
+      const next = renamePath(path);
+      if (next === path) continue;
+      this.#unloadedDirectories.delete(path);
+      this.#unloadedDirectories.add(next);
+    }
+    const oldParent = this.#branches.get(parentDirectory(from));
+    if (oldParent) {
+      const children = new Set(oldParent.children);
+      children.delete(to);
+      children.delete(from);
+      this.#branches.set(parentDirectory(from), { ...oldParent, children });
+    }
+    const newParent = this.#branches.get(parentDirectory(to));
+    if (newParent?.status === "loaded") {
+      this.#branches.set(parentDirectory(to), {
+        ...newParent,
+        children: new Set([...newParent.children, to]),
+      });
+    } else if (moved) {
+      // Into a folder not listed yet: its listing brings the item.
+      this.#forgetSubtree(to);
+      this.#model.remove(treePath({ ...moved, relativePath: to }), { recursive: true });
+    }
+    this.#emit();
+  }
+
   retry(relativeDirectory: string): Promise<boolean> {
     return this.load(relativeDirectory, true);
   }

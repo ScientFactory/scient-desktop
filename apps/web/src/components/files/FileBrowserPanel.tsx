@@ -13,6 +13,9 @@ import * as Cause from "effect/Cause";
 // SCIENT-FORK:START — expand and collapse all moved into the Files menu
 // SCIENT-FORK:END
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+// SCIENT-FORK:START — the file actions receive the tree model before paint
+import { useLayoutEffect } from "react";
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — the Files bar's buttons and their icons come from Scient's toolbar
 // SCIENT-FORK:END
@@ -50,6 +53,9 @@ import {
 import type { OpenFileOptions } from "~/rightPanelStore";
 import type { ScientToolbarSlot } from "~/scient/files/FileBrowserToolbarActions";
 import { useScientFolderActions } from "~/scient/files/useScientFolderActions";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — file management: new, rename, cut/copy/paste, drag to move, Trash, undo
+import { useScientFileActions } from "~/scient/files/useScientFileActions";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Overleaf: Connect for a folder, and the mark on linked folders
 import { useOverleafTreeMarks } from "~/scient/overleaf/useOverleafFolderConnect";
@@ -143,6 +149,13 @@ export default function FileBrowserPanel({
     hostFolder,
     onOpenFileSource,
   });
+  const fileActions = useScientFileActions({
+    environmentId,
+    cwd,
+    hostFolder,
+    treeEntries: treeEntriesRef,
+    treeController: treeControllerRef,
+  });
   // SCIENT-FORK:END
   const searchSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
@@ -167,27 +180,36 @@ export default function FileBrowserPanel({
         : { x: anchorRect.left, y: anchorRect.bottom };
       const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      // SCIENT-FORK:START — the file management groups around the upstream items
+      const manageItems = fileActions.menuItems(item.path);
+      // SCIENT-FORK:END
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
-            // SCIENT-FORK:START — files that open rendered by default can open as source
+            // SCIENT-FORK:START — files that open rendered by default can open as source;
+            // then new items (start a document in, or connect, this folder), edit, and paths
             ...(shouldOpenInBrowserByDefault(relativePath)
               ? ([{ id: "open-source", label: "Open source" }] as const)
               : []),
+            ...manageItems.create,
+            ...folderActions.menuItems(item.path),
+            ...manageItems.edit,
+            ...manageItems.paths,
             // SCIENT-FORK:END
             { id: "copy-mention", label: "Copy mention" },
             { id: "add-to-chat", label: "Add to chat" },
-            // SCIENT-FORK:START — start a document in, or connect, this folder
-            ...folderActions.menuItems(item.path),
+            // SCIENT-FORK:START — Move to Trash last, set apart
+            ...manageItems.trash,
             // SCIENT-FORK:END
           ],
           position,
         );
         if (clicked === null) return;
         // SCIENT-FORK:START
+        if (fileActions.handleMenuChoice(clicked)) return;
         if (folderActions.handleMenuChoice(clicked, relativePath)) return;
         // SCIENT-FORK:END
         // Open-with submenu ids are absent from the top-level item list.
@@ -261,7 +283,9 @@ export default function FileBrowserPanel({
         },
       },
     },
-    dragAndDrop: { canDrop: () => false },
+    // SCIENT-FORK:START — drag to move (⌥ to copy) and rename in place
+    ...fileActions.treeOptions,
+    // SCIENT-FORK:END
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: false,
@@ -304,6 +328,11 @@ export default function FileBrowserPanel({
     loadingDirectoriesRef.current = next;
     model.setComposition(model.getComposition());
   }, [model, treeSnapshot.loadingDirectories]);
+  // SCIENT-FORK:START — file management acts on the tree it configured
+  const attachFileActionsModel = fileActions.attachModel;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the tree model to the file actions, whose options the model was built from
+  useLayoutEffect(() => attachFileActionsModel(model), [attachFileActionsModel, model]);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Overleaf's mark on linked folders, redrawn when links change
   const redrawRowMarks = useStableCallback(() => model.setComposition(model.getComposition()));
   useOverleafTreeMarks({
@@ -480,6 +509,10 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
+      // SCIENT-FORK:START — file shortcuts in the tree, and ⌥ while dragging to copy
+      onKeyDown={fileActions.onKeyDown}
+      onDragOverCapture={fileActions.onDragOver}
+      // SCIENT-FORK:END
     >
       <div
         className="@container/file-browser-header flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
@@ -536,6 +569,7 @@ export default function FileBrowserPanel({
         {/* SCIENT-FORK:START */}
       </ScientFileTreeSurface>
       {folderActions.dialog}
+      {fileActions.dialog}
       {/* SCIENT-FORK:END */}
     </div>
   );
