@@ -128,6 +128,7 @@ import {
 } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -252,6 +253,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
+import { userMessageSignals } from "./telemetry/UserMessageSignals.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -1421,7 +1423,11 @@ export const layerWsRpc = (
         return Effect.all(
           [
             command.type === "message.dispatch"
-              ? analytics.record("client.turn.requested", originProps)
+              ? analytics.record("client.turn.requested", {
+                  ...originProps,
+                  // SCIENT-FORK: the message's length and frustration signals, never its text.
+                  ...userMessageSignals(command.text),
+                })
               : Effect.void,
             usage === undefined
               ? Effect.void
@@ -1472,6 +1478,7 @@ export const layerWsRpc = (
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -2336,6 +2343,8 @@ export const layerWsRpc = (
           threadManagement.forceStopThread(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
+        [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
+          nativeChildWork.getNativeChildWork(input),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
             Effect.mapError(
@@ -2511,7 +2520,11 @@ export const layerWsRpc = (
                             Effect.andThen(
                               input.initialMessage === undefined
                                 ? Effect.void
-                                : analytics.record("client.turn.requested", originProps),
+                                : analytics.record("client.turn.requested", {
+                                    ...originProps,
+                                    // SCIENT-FORK: the message's length and frustration signals.
+                                    ...userMessageSignals(input.initialMessage.text),
+                                  }),
                             ),
                             Effect.ignore,
                           ),
@@ -3964,6 +3977,7 @@ export const layerWsRpc = (
             observeRpcStream,
             check: accountUserRuns.check,
             paperForSource: accountUserRuns.paperForSource,
+            papers: accountUserRuns.papers,
             plainKeys: accountPlainKeys,
             linkKey: linkAccountKey,
           }),

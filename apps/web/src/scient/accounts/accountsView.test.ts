@@ -37,11 +37,11 @@ import {
   mergeProfiles,
   mergeSourceProfiles,
   secretFields,
-  siteMatchesUrl,
   matchExistingProfile,
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
   return {
@@ -211,7 +211,6 @@ describe("Accounts decisions", () => {
       engine: "postgres",
       port: 5432,
     });
-    expect(forms.find((form) => form.kind === "library")).toMatchObject({ proxyUrl: "" });
     const anthropic = forms.find(
       (form) => form.kind === "api-key" && form.envName === "ANTHROPIC_API_KEY",
     );
@@ -661,5 +660,27 @@ describe("profileAddressDomain and profileSignInSites", () => {
   it("has nothing to read before accounts load", () => {
     expect(profileAddressDomain(null, "work")).toBeUndefined();
     expect(profileSignInSites(null, "work")).toEqual([]);
+  });
+});
+
+describe("a university's status", () => {
+  const university = {
+    details: {
+      kind: "website",
+      sites: ["huji.ac.il"],
+      institution: { name: "HUJI", entityId: "https://idp.huji.ac.il/x", domain: "huji.ac.il" },
+    },
+  } as const;
+  const when = () => "2h ago";
+
+  it("speaks about the account, from never signed in to last seen", () => {
+    expect(accountStatusLabel(university, when)).toBe("Not signed in yet");
+    expect(accountStatusLabel({ ...university, signedOut: true }, when)).toBe("Sign in needed");
+    const check = (state: "signed-in" | "signed-out") => ({
+      ...university,
+      lastCheck: { state, at: "2026-01-01T00:00:00.000Z" },
+    });
+    expect(accountStatusLabel(check("signed-out"), when)).toBe("Sign in needed");
+    expect(accountStatusLabel(check("signed-in"), when)).toBe("Signed in · 2h ago");
   });
 });

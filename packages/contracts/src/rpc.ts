@@ -237,6 +237,7 @@ import {
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationV2GetNativeChildWorkError,
   OrchestrationV2StopWorkflowError,
   OrchestrationV2ForceStopThreadError,
   OrchestrationV2DispatchCommandError,
@@ -516,6 +517,12 @@ import {
   WsAccountsSetCodeSourcesRpc,
   WsAccountsLinkKeyRpc,
   WsAccountsPaperForSourceRpc,
+  WsAccountsPapersContinueRpc,
+  WsAccountsPapersListRpc,
+  WsAccountsPapersRequestRpc,
+  WsAccountsUniversitySignInRpc,
+  WsAccountsUniversityBrowseRpc,
+  WsAccountsUniversitySearchRpc,
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
@@ -2105,6 +2112,15 @@ const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetNativeChildWorkRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
+  {
+    payload: OrchestrationV2RpcSchemas.getNativeChildWork.input,
+    success: OrchestrationV2RpcSchemas.getNativeChildWork.output,
+    error: Schema.Union([OrchestrationV2GetNativeChildWorkError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
   payload: OrchestrationV2RpcSchemas.getTurnItem.input,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
@@ -2268,6 +2284,7 @@ const WsSubscribeDocumentBindingChangesRpc = Rpc.make(WS_METHODS.subscribeDocume
 export const WsConversationRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
+  WsOrchestrationV2GetNativeChildWorkRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
@@ -2615,6 +2632,12 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsSetCodeSourcesRpc,
   WsAccountsLinkKeyRpc,
   WsAccountsPaperForSourceRpc,
+  WsAccountsPapersContinueRpc,
+  WsAccountsPapersListRpc,
+  WsAccountsPapersRequestRpc,
+  WsAccountsUniversitySignInRpc,
+  WsAccountsUniversityBrowseRpc,
+  WsAccountsUniversitySearchRpc,
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,

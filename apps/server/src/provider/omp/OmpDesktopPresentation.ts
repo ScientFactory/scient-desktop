@@ -1,3 +1,5 @@
+import * as NodeUtil from "node:util";
+
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
@@ -5,6 +7,7 @@ import type {
   OrchestrationV2ProviderTurnTokenUsage,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
+import type { NativeRequestUsage } from "@t3tools/provider-core/server/turnUsage";
 
 // SCIENT-FORK: optional RPC observations are validated independently of turn routing.
 const Counter = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
@@ -65,6 +68,46 @@ export const ompMessageUsage = (
   };
 };
 
+// One assistant message is one model request, with the facts Scient Agent's /stats aggregates.
+const RequestMessage = Schema.Struct({
+  role: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  stopReason: Schema.optional(Schema.String),
+  duration: Schema.optional(Counter),
+  ttft: Schema.optional(Counter),
+  usage: Schema.Struct({
+    input: Schema.optional(Counter),
+    output: Schema.optional(Counter),
+    cacheRead: Schema.optional(Counter),
+    cacheWrite: Schema.optional(Counter),
+    reasoningTokens: Schema.optional(Counter),
+    cost: Schema.optional(Schema.Struct({ total: Schema.optional(Counter) })),
+  }),
+});
+const decodeRequestMessage = Schema.decodeUnknownOption(RequestMessage);
+
+/** The model request an assistant message reports, or undefined for other messages. */
+export const ompRequestUsage = (message: unknown): NativeRequestUsage | undefined => {
+  const decoded = Option.getOrUndefined(decodeRequestMessage(message));
+  if (!decoded || (decoded.role !== undefined && decoded.role !== "assistant")) return;
+  const { usage } = decoded;
+  if (usage.input === undefined && usage.output === undefined) return;
+  const cacheRead = usage.cacheRead ?? 0;
+  const cacheWrite = usage.cacheWrite ?? 0;
+  return {
+    inputTokens: (usage.input ?? 0) + cacheRead + cacheWrite,
+    outputTokens: usage.output ?? 0,
+    cachedInputTokens: cacheRead,
+    cacheCreationTokens: cacheWrite,
+    ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
+    ...(decoded.model === undefined ? {} : { model: decoded.model }),
+    ...(usage.cost?.total === undefined ? {} : { costUsd: usage.cost.total }),
+    ...(decoded.duration === undefined ? {} : { durationMs: decoded.duration }),
+    ...(decoded.ttft === undefined ? {} : { firstTokenMs: decoded.ttft }),
+    failed: decoded.stopReason === "error",
+  };
+};
+
 export const ompStatsUsage = (
   value: unknown,
   previous?: ThreadTokenUsageSnapshot,
@@ -110,4 +153,15 @@ export const ompTodoSteps = (
       ];
     }),
   );
+};
+
+/**
+ * A slash command's report as chat text. Reports are written for a terminal:
+ * colors are dropped, and a table or meter keeps its columns in a code block.
+ */
+export const ompCommandOutputText = (output: string): string => {
+  const text = NodeUtil.stripVTControlCharacters(output);
+  return !text.includes("```") && /[█░]|^ {2,}\S/mu.test(text)
+    ? `\n\`\`\`text\n${text.trimEnd()}\n\`\`\`\n`
+    : `${text}\n\n`;
 };

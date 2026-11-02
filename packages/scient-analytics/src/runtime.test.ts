@@ -289,19 +289,21 @@ describe("Scient analytics background runtime", () => {
     await runtime.close();
   });
 
-  it("persists and delivers only the bounded normalized contract", async () => {
+  it("persists and delivers the normalized event with new fields but no paths", async () => {
     const server = await ingestionServer();
     const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
 
     expect(
       runtime.record("provider.turn.sent", {
         provider: "codex",
-        model: "gpt-5.6-private-model-name",
+        model: "gpt-6.1-luna",
         interactionMode: "plan",
         runtimeMode: "full-access",
         attachmentCount: 4,
         hasInput: true,
+        serviceTier: "fast",
         projectPath: "/private/project",
+        prompt: "PRIVATE-CONTENT",
       }),
     ).toBe(true);
     expect(await runtime.flush()).toBe(1);
@@ -309,8 +311,8 @@ describe("Scient analytics background runtime", () => {
 
     const payload = server.bodies[0];
     expect(server.installationTokens).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/)]);
-    expect(JSON.stringify(payload)).not.toContain("gpt-5.6-private-model-name");
     expect(JSON.stringify(payload)).not.toContain("/private/project");
+    expect(JSON.stringify(payload)).not.toContain("PRIVATE-CONTENT");
     expect(payload).toMatchObject({
       schema_version: 1,
       source: "desktop",
@@ -324,10 +326,13 @@ describe("Scient analytics background runtime", () => {
             buildChannel: "development",
             provider: "codex",
             modelFamily: "openai",
+            modelKey: "gpt-6.1-luna",
             interactionMode: "plan",
             runtimeMode: "full-access",
             attachmentCountBucket: "4-10",
             hasInput: true,
+            serviceTier: "fast",
+            contractRevision: "10",
           },
         },
       ],

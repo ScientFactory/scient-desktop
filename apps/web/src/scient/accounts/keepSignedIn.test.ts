@@ -70,3 +70,25 @@ it("visits sooner after a session ended, never closer than six hours", () => {
   expect(afterVisit(afterVisit(halved, true, 0), true, 0).gapMs).toBe(6 * HOUR);
   expect(afterVisit(halved, false, 0).gapMs).toBe(12 * HOUR);
 });
+
+it("keeps a connected university's session used, without judging it from a quiet answer", () => {
+  const university: AccountSummary = {
+    ...account("uni", "huji.ac.il", "signed-in"),
+    details: {
+      kind: "website",
+      sites: ["huji.ac.il"],
+      profileId: "work",
+      institution: {
+        name: "Hebrew University",
+        entityId: "https://idp.huji.ac.il/openathens",
+        domain: "huji.ac.il",
+      },
+    },
+  };
+  // OpenAthens keeps the session; the request starts no sign-in and visits no journal.
+  expect(nextQuietVisit([university], {}, 100 * HOUR)).toMatchObject({
+    accountId: university.accountId,
+    url: "https://my.openathens.net/check",
+    tellsSessionState: false,
+  });
+});

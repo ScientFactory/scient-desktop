@@ -3,6 +3,14 @@ import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import type { AnalyticsService } from "./AnalyticsService.ts";
 
+// The server records these operations itself; a UI copy would count them twice.
+const SERVER_OBSERVED_OPERATIONS: ReadonlySet<string> = new Set([
+  "compute-run",
+  "compute-artifact",
+  "latex-build",
+  "source-import",
+]);
+
 /** Fence delayed UI outcomes across consent changes and server restarts.
  * The random context never reaches the event contract, queue or gateway.
  */
@@ -47,9 +55,7 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
       if (
         event.collectionContext === undefined ||
         event.collectionContext !== current.collectionContext ||
-        (event.properties.operationKind !== "pdf-export" &&
-          event.properties.operationKind !== "document-export" &&
-          event.properties.operationKind !== "latex-visual-edit")
+        SERVER_OBSERVED_OPERATIONS.has(String(event.properties.operationKind))
       )
         return { accepted: false } as const;
     }

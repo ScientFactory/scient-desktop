@@ -6,6 +6,7 @@ import { AgentInvocationContext } from "../../operations/AgentInvocationContext.
 import { accountSessionScope } from "./scope.ts";
 import {
   AccountsError,
+  type BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
   type PreviewTabId,
@@ -15,7 +16,11 @@ import {
 import * as Effect from "effect/Effect";
 import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import { authorizationDecision } from "../AccountDecisions.ts";
-import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
+import {
+  AccountsService,
+  type AccountSessionScope,
+  type SessionAccounts,
+} from "../AccountsService.ts";
 
 const profileIds = (status: PreviewAutomationStatus) => [
   ...new Set([
@@ -23,6 +28,28 @@ const profileIds = (status: PreviewAutomationStatus) => [
     ...(status.tabs?.flatMap((tab) => (tab.profileId ? [tab.profileId] : [])) ?? []),
   ]),
 ];
+
+/** Hidden: no profile, an Off or out-of-scope one, or any while agent access is off. */
+const profileVisible = (session: SessionAccounts) => (id: string | undefined) =>
+  session.agentAccess &&
+  session.profiles.some((profile) => profile.profileId === id && profile.access !== "off");
+
+/** Which of these profiles the session may see, as a predicate. */
+export const visibleProfiles = Effect.fn("AccountsAgent.visibleProfiles")(function* (
+  scope: AccountSessionScope,
+  ids: ReadonlyArray<BrowserProfileId>,
+) {
+  const accounts = yield* AccountsService;
+  return profileVisible(yield* accounts.forSession(scope, ids));
+});
+
+/** The refusal for a hidden profile or its tabs. */
+export const profileUnavailable = () =>
+  new AccountsError({
+    reason: "denied",
+    message:
+      "This browser profile is unavailable to this session. Change its access in Settings → Accounts & secrets.",
+  });
 
 export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab")(function* (
   scope: AccountSessionScope,
@@ -32,18 +59,7 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
   const accounts = yield* AccountsService;
   const session = yield* accounts.forSession(scope, profileIds(status));
   const tab = status.tabs?.find((item) => item.tabId === (tabId ?? status.tabId));
-  if (
-    !session.agentAccess ||
-    !tab?.profileId ||
-    !session.profiles.some(
-      (profile) => profile.profileId === tab.profileId && profile.access !== "off",
-    )
-  )
-    return yield* new AccountsError({
-      reason: "denied",
-      message:
-        "This browser profile is unavailable to this session. Change its access in Settings → Accounts & secrets.",
-    });
+  if (!tab || !profileVisible(session)(tab.profileId)) return yield* profileUnavailable();
   // Autofill fills every tab for the user; a tab holding a sign-in this agent may not use stays
   // closed to it while it shows that site (a page may change its address without clearing the
   // form), so the agent cannot read the filled password.
@@ -70,11 +86,7 @@ export const filterPreviewProfiles = Effect.fn("AccountsAgent.filterPreviewProfi
   scope: AccountSessionScope,
   status: PreviewAutomationStatus,
 ) {
-  const accounts = yield* AccountsService;
-  const session = yield* accounts.forSession(scope, profileIds(status));
-  const allowed = (id: string | undefined) =>
-    session.agentAccess &&
-    session.profiles.some((profile) => profile.profileId === id && profile.access !== "off");
+  const allowed = yield* visibleProfiles(scope, profileIds(status));
   const profiles = status.profiles?.filter((profile) => allowed(profile.id));
   const tabs = status.tabs?.filter((tab) => allowed(tab.profileId));
   const { defaultProfileId, ...rest } = status;
@@ -139,7 +151,14 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
                 ? [item.id]
                 : [];
             }),
-            signIns: profileSignIns(known.accounts),
+            // Only sign-ins the agent may use steer the pick.
+            signIns: profileSignIns(
+              known.accounts.filter(
+                (account) =>
+                  authorizationDecision(known.agentAccess, account.controls, scope).decision !==
+                  "denied",
+              ),
+            ),
             choices: known.profileChoices,
             defaultProfileId: status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
           }).profileId
@@ -151,12 +170,7 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
           "The browser profile could not be resolved. Read preview_status and choose an available profile.",
       });
     const decision = yield* accounts.authorize(scope, { type: "profile", profileId }, action);
-    if (decision.decision === "denied")
-      return yield* new AccountsError({
-        reason: "denied",
-        message:
-          "This browser profile is unavailable to this session. Change its access in Settings → Accounts & secrets.",
-      });
+    if (decision.decision === "denied") return yield* profileUnavailable();
     const session = yield* accounts.forSession(
       scope,
       status.profiles?.map((profile) => profile.id),

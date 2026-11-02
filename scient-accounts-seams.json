@@ -16,6 +16,9 @@
     "packages/contracts/src/clientRpcPermissions.scient.test.ts",
     "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
     "packages/shared/src/scientAccountSecretRequest.ts",
+    "packages/shared/src/scientAccountAuthorization.ts",
+    "packages/shared/src/scientSiteMatch.ts",
+    "packages/shared/src/scientLoginFields.ts",
     "packages/shared/src/scientBrowserProfileChoice.ts",
     "packages/shared/src/scientSignInPage.ts",
     "apps/mobile/src/state/accounts.ts",
@@ -299,9 +302,24 @@
       "path": "apps/web/src/components/preview/openTerminalLinkInPreview.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/previewControls/handlers.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: hide and protect tabs in profiles this session may not see.",
+      "purpose": "List and close only tabs in browser profiles the agent session may see, by the same rule as preview_status."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/previewControls/tools.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a hidden profile's tab is refused with a safe denial.",
+      "purpose": "Let the preview control tools return an Accounts denial for a hidden profile's tab."
     }
   ],
   "scientMounts": [
+    {
+      "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
+      "anchor": "[WS_METHODS.accountsSave]: () => use(\"accounts.save\")",
+      "purpose": "Count Accounts and paper actions as Scient feature use in analytics, with no account details."
+    },
     {
       "path": "apps/web/src/scient/browser/BrowserHome.tsx",
       "anchor": "~/scient/accounts/useAccounts",
@@ -386,11 +404,6 @@
       "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
       "anchor": "\"scient_accounts_list\",",
       "purpose": "Include the account tools in the eager schema inventory."
-    },
-    {
-      "path": "packages/scient-analytics/src/wireContract.ts",
-      "anchor": "\"accounts\",",
-      "purpose": "Accept Accounts as a settings section in analytics events."
     },
     {
       "path": "apps/server/src/server.test.ts",

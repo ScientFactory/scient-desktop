@@ -56,8 +56,15 @@ export function parseScientSubagent(
     fullText(progress.task) ??
     fullText(result.task);
   const role = text(payload.agent) ?? text(observed.agent);
+  // Every plain worker's role is "task"; the agent's own id tells two of them apart.
+  const agentId = role === "task" ? (text(payload.id) ?? text(observed.id)) : undefined;
   const title = label(
-    text(payload.description) ?? text(observed.description) ?? role ?? text(event.title) ?? prompt,
+    text(payload.description) ??
+      text(observed.description) ??
+      agentId ??
+      role ??
+      text(event.title) ??
+      prompt,
   );
   const recentTools = Array.isArray(progress.recentTools) ? progress.recentTools : [];
   const lastTool = recentTools.at(-1);

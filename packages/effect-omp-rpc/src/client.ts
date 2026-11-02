@@ -312,6 +312,9 @@ const degradedProjection = (
         ...pick(message, "errorMessage", isString),
         ...pick(message, "errorId", isFiniteNumber),
         ...pick(message, "errorStatus", isFiniteNumber),
+        // SCIENT-FORK: request timing for usage analytics.
+        ...pick(message, "duration", isFiniteNumber),
+        ...pick(message, "ttft", isFiniteNumber),
       },
     };
   }
@@ -332,6 +335,7 @@ const degradedProjection = (
               ...pick(error, "provider", isString),
               ...pick(error, "model", isString),
               ...pick(error, "httpStatus", isFiniteNumber),
+              ...pick(error, "code", isString),
             },
           }
         : {}),

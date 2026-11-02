@@ -42,6 +42,12 @@ import {
 } from "./NativeEventQueueBudget.ts";
 import * as Exit from "effect/Exit";
 import { makeNativeEventQueue, type NativeEventQueueStorage } from "./NativeEventQueue.ts";
+import {
+  addRequestUsage,
+  nativeTurnTokenUsage,
+  type NativeRequestUsage,
+  type NativeTurnUsage,
+} from "@t3tools/provider-core/server/turnUsage";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -74,6 +80,8 @@ export type NativeSessionUpdate =
       readonly type: "usage";
       readonly tokenUsage?: Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
       readonly contextUsage?: ThreadTokenUsageSnapshot;
+      // SCIENT-FORK: one model request's counts, added up into the turn's usage.
+      readonly request?: NativeRequestUsage;
     }
   | {
       readonly type: "item";
@@ -128,10 +136,23 @@ export type NativeSessionUpdate =
   | {
       readonly type: "question";
       readonly id: string;
-      readonly method: "confirm" | "select" | "input" | "editor";
+      readonly method: "confirm" | "select" | "input" | "editor" | "ask";
       readonly title: string;
       readonly message: string;
       readonly options: ReadonlyArray<{ label: string; description: string; value: string }>;
+      /** `ask`: several questions answered together, each keyed by its own id. */
+      readonly questions?: ReadonlyArray<{
+        readonly id: string;
+        readonly header?: string;
+        readonly question: string;
+        readonly options: ReadonlyArray<{
+          label: string;
+          description: string;
+          value: string;
+          preview?: string;
+        }>;
+        readonly multiSelect: boolean;
+      }>;
       readonly allowCustomAnswer?: boolean;
       readonly initialAnswer?: string;
       readonly timeout?: number;
@@ -281,6 +302,9 @@ export function makeNativeSessionAdapterV2(
               turn: OrchestrationV2ProviderTurn;
               nextOrdinal: number;
               interrupted: boolean;
+              // SCIENT-FORK: model requests reported during this turn.
+              usage?: NativeTurnUsage;
+              usedSubagents?: boolean;
             }
           | undefined;
         let lastTurn: typeof active;
@@ -553,7 +577,21 @@ export function makeNativeSessionAdapterV2(
               },
             });
           }
-          running.turn = { ...running.turn, status, completedAt };
+          running.turn = {
+            ...running.turn,
+            status,
+            completedAt,
+            // SCIENT-FORK: the requests the native agent reported during the turn.
+            ...(running.usage === undefined
+              ? {}
+              : {
+                  turnTokenUsage: nativeTurnTokenUsage(
+                    running.usage,
+                    status,
+                    running.usedSubagents === true,
+                  ),
+                }),
+          };
           turns.set(running.turn.id, running.turn);
           yield* emit({
             type: "provider_turn.updated",
@@ -753,6 +791,18 @@ export function makeNativeSessionAdapterV2(
                       driver,
                       providerThread: thread,
                     });
+                  }
+                  // SCIENT-FORK: per-request counts become the turn's usage when it ends. A
+                  // request the agent made after waking on its own waits for that wake's turn.
+                  if (active && update.request)
+                    active.usage = addRequestUsage(active.usage, update.request);
+                  else if (update.request && thread && wake.length > 0 && !budget.closed) {
+                    const pending: NativeSessionUpdate = { type: "usage", request: update.request };
+                    yield* budget.admit(pending, false, 1, (charge) =>
+                      Effect.sync(() => {
+                        wake.push({ update: pending, charge });
+                      }),
+                    );
                   }
                   if (active && update.tokenUsage) {
                     active.turn = {
@@ -1058,6 +1108,8 @@ export function makeNativeSessionAdapterV2(
                     completedAt: update.status === "running" ? null : now,
                   };
                 } else if (update.type === "subagent") {
+                  // SCIENT-FORK: a turn's own usage leaves out its subagents' requests.
+                  running.usedSubagents = true;
                   const previousSubagent = subagents.get(nativeId);
                   const reopened =
                     previousSubagent !== undefined &&
@@ -1266,7 +1318,20 @@ export function makeNativeSessionAdapterV2(
                           title: update.title,
                           status: "waiting",
                           requestId,
-                          questions: [
+                          questions: update.questions?.map((question, index) => ({
+                            id: question.id,
+                            header: question.header ?? update.title,
+                            question:
+                              index === 0 && update.timeout !== undefined
+                                ? `${question.question}\n\nTimeout: ${update.timeout / 1000} seconds.`
+                                : question.question,
+                            options: question.options.map((option) => ({
+                              ...option,
+                              description: option.description || option.label,
+                            })),
+                            multiSelect: question.multiSelect,
+                            allowCustomAnswer: true,
+                          })) ?? [
                             {
                               id: update.id,
                               header: update.title,

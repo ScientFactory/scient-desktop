@@ -7,6 +7,22 @@
       "types": "./src/scientAccountSecretRequest.ts",
       "import": "./src/scientAccountSecretRequest.ts"
     },
+    "./scientAccountAuthorization": {
+      "types": "./src/scientAccountAuthorization.ts",
+      "import": "./src/scientAccountAuthorization.ts"
+    },
+    "./scientLoginFields": {
+      "types": "./src/scientLoginFields.ts",
+      "import": "./src/scientLoginFields.ts"
+    },
+    "./scientSiteMatch": {
+      "types": "./src/scientSiteMatch.ts",
+      "import": "./src/scientSiteMatch.ts"
+    },
+    "./scientPaperLinks": {
+      "types": "./src/scientPaperLinks.ts",
+      "import": "./src/scientPaperLinks.ts"
+    },
     "./scientSignInPage": {
       "types": "./src/scientSignInPage.ts",
       "import": "./src/scientSignInPage.ts"
