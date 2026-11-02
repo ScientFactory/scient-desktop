@@ -8,6 +8,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /** Scient's own autosaves are kept this far apart. A change from elsewhere is always kept. */
 const KEEP_OWN_SAVES_EVERY_MS = 5 * 60 * 1000;
@@ -57,6 +58,17 @@ const sizeOf = (path: string) =>
     },
   );
 
+const syncFolder = async (folder: string) => {
+  // Windows has no supported way to flush a folder; the copy itself is flushed first.
+  if (HostProcess.Platform.defaultValue() === "win32") return;
+  const handle = await NodeFSP.open(folder, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
+
 const revisionOf = async (path: string) => {
   const hash = NodeCrypto.createHash("sha256");
   for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk as Buffer);
@@ -98,7 +110,7 @@ export async function keepFileVersion(input: {
 }): Promise<boolean> {
   const limit = input.totalBytes ?? FILE_HISTORY_TOTAL_BYTES;
   const folder = folderFor(input.directory, input.target);
-  await NodeFSP.mkdir(folder, { recursive: true, mode: 0o700 });
+  const created = await NodeFSP.mkdir(folder, { recursive: true, mode: 0o700 });
   const versions = await versionsIn(folder);
   const newest = versions[0];
   if (newest?.revision === input.revision) return true;
@@ -115,7 +127,16 @@ export async function keepFileVersion(input: {
       /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt"
     }`;
     const kept = NodePath.join(folder, name);
+    // The caller replaces the original next, so the copy must survive a power loss first.
+    const copy = await NodeFSP.open(partial, "r+");
+    try {
+      await copy.sync();
+    } finally {
+      await copy.close();
+    }
     await NodeFSP.rename(partial, kept);
+    await syncFolder(folder);
+    if (created !== undefined) await syncFolder(input.directory);
     for (const old of versions.slice(VERSIONS_PER_FILE - 1))
       await NodeFSP.rm(old.path, { force: true });
     await limitTotal(input.directory, limit, kept);
