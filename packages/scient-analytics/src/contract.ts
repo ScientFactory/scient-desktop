@@ -2,6 +2,7 @@ export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
 import {
   ANALYTICS_CONTRACT_REVISION,
+  EVENT_NAME_PATTERN,
   isContentKey,
   isPrivateLooking,
   isWirePrimitive,
@@ -1252,6 +1253,34 @@ function propertiesBytes(properties: Readonly<Record<string, WireValue>>): numbe
   return new TextEncoder().encode(JSON.stringify(properties)).byteLength;
 }
 
+function normalizeReading(
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+  context: NormalizationContext,
+): { readonly normalized: NormalizedEvent | null; readonly read: ReadonlySet<string> } {
+  const read = new Set<string>();
+  readKeys = read;
+  try {
+    return { normalized: normalizeEvent(name, input, context), read };
+  } finally {
+    readKeys = undefined;
+  }
+}
+
+/**
+ * The fields of `properties` that the event's Scient normalizer reads or sets. Every other field
+ * passes through unchanged, so `normalizeInheritedEvent` sends it as recorded.
+ */
+export function normalizedKeys(
+  name: string,
+  properties: Readonly<Record<string, unknown>>,
+  context: NormalizationContext,
+): ReadonlySet<string> {
+  const { normalized, read } = normalizeReading(name, properties, context);
+  const set = normalized?.properties ?? {};
+  return new Set(Object.keys(properties).filter((key) => read.has(key) || Object.hasOwn(set, key)));
+}
+
 /**
  * Shapes an event for the wire. A Scient normalizer, where one exists, decides the fields it
  * reads; every other field is sent as recorded, as in T3, after the shape and privacy checks.
@@ -1261,16 +1290,9 @@ export function normalizeInheritedEvent(
   rawProperties: Readonly<Record<string, unknown>> | undefined,
   context: NormalizationContext,
 ): NormalizedEvent | null {
-  if (!/^[a-z][a-z0-9_.-]{0,79}$/u.test(name)) return null;
+  if (!EVENT_NAME_PATTERN.test(name)) return null;
   const input = rawProperties ?? {};
-  const read = new Set<string>();
-  readKeys = read;
-  let normalized: NormalizedEvent | null;
-  try {
-    normalized = normalizeEvent(name, input, context);
-  } finally {
-    readKeys = undefined;
-  }
+  const { normalized, read } = normalizeReading(name, input, context);
   if (normalized === null) return null;
 
   const envelope = {
