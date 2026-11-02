@@ -41,9 +41,27 @@ Updates wait for running work before activating the verified replacement. A fail
 the previous release in place. Removing the managed executable preserves model sign-ins,
 conversations, projects, and other agent installations.
 
-Scient starts one `scient-agent --mode rpc --approval-mode yolo` process for each conversation.
+Scient starts one `scient-agent --mode rpc-ui --approval-mode yolo` process for each conversation.
 **Full access** is the only runtime mode. It is not an operating-system sandbox: the agent's
 shell and code can reach whatever your user account can.
+
+When the agent needs a decision it asks in the composer: one panel holds every question of that
+call, with its choices, a recommended option, and room for your own answer.
+
+**Fast Mode** appears beside the reasoning level for models with a priority service tier. It costs
+more and applies to the conversation's next message.
+
+Type `/` in the composer for the agent's reports: `/jobs` (background work), `/usage` (account
+limits), `/context` (what fills the conversation), `/tools`, `/todo`, `/memory`, `/dirs`, `/plugins`
+and `/changelog`. `/stats` starts the agent's dashboard of requests, costs and tools across your
+conversations, and `/trace` shows this conversation in it. Their links open in Scient's browser. The
+dashboard runs inside the conversation's agent, so it stops when that agent does; run `/stats` again
+to bring it back.
+
+**Compact** shows its progress in the conversation. If a turn stops because the session reached a
+spending cap or the account hit a usage limit, the conversation says so, and the next message is
+refused until the cap is raised or the limit resets. When an account is past its usage limit but is
+still being served, a notice says until when.
 
 ## Models
 

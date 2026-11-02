@@ -1156,7 +1156,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           input === undefined ? "Couldn't verify image support" : "does not support images",
         );
         assert.lengthOf(h.peer.state.prompts, 0);
-        assert.isFalse(h.peer.state.log.some((entry) => entry.startsWith("set_")));
+        assert.isFalse(h.peer.state.log.some((entry) => /^set_(model|thinking)/.test(entry)));
         assert.deepEqual(h.peer.state.model, { provider: "test", id: "initial" });
         yield* h.takeUntil((event) => event.type === "turn.terminal");
         yield* h.send(2, "Text still works", []);
@@ -1330,7 +1330,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           assert.include(failure?.message ?? "", scenario.error);
           if (scenario.name !== "auth-401" && scenario.name !== "provider-model-not-found")
             assert.equal(failure?.message, scenario.error);
-          assert.equal(failure?.class, "provider_error");
+          assert.equal(
+            failure?.class,
+            scenario.name === "retry-exhausted" ? "usage_limit" : "provider_error",
+          );
           assert.equal(h.terminal[0]?.threadDisposition, "reusable");
           assert.equal(h.runtime.providerSession.lastError, failure?.message);
           assert.equal(h.runtime.providerSession.status, "ready");
@@ -1635,7 +1638,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* modelHarness();
-        yield* h.start(1, "vendor/b", "low", command).pipe(Effect.flip);
+        yield* h.start(1, "vendor/b", "low", command);
         assert.deepEqual(h.mutations(), []);
         assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
         assert.equal(h.peer.state.prompts.length, 0);
