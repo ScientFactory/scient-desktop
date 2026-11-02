@@ -7,6 +7,8 @@ import * as Schema from "effect/Schema";
 
 export const SignInDetection = Schema.Struct({
   origin: Schema.String,
+  /** The whole address, where the path tells a finished sign-in from its start. */
+  url: Schema.optional(Schema.String),
   username: Schema.NullOr(Schema.String),
   password: Schema.NullOr(Schema.String),
   otp: Schema.NullOr(Schema.String),
@@ -110,6 +112,7 @@ export const signInDetectionScript = String.raw`(() => {
     ...(remember ? { remember: path(remember) } : {}),
     ...(stay ? { stay: path(stay) } : {}),
     origin: location.origin,
+    url: location.href,
     username: path(username), password: path(password), otp: path(otp), submit: path(submit),
     challenge: captcha ? "captcha" : /use (a |your )?passkey|touch id|security key/i.test(text) ? "passkey" : push ? "push" : null,
     signedIn: !username && !password && !otp && Array.from(document.querySelectorAll("a, button")).some(element => visible(element) && /^(sign out|log out|logout)$/i.test(element.textContent?.trim() ?? "")),

@@ -213,8 +213,7 @@ export const layer = Layer.effect(
                         title: input.title,
                         category: sdk.ItemCategory.Login,
                         fields: [
-                          ...((input.details.kind === "website" ||
-                            input.details.kind === "library") &&
+                          ...(input.details.kind === "website" &&
                           input.details.username !== undefined
                             ? [
                                 {

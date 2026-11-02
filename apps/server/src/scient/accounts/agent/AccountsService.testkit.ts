@@ -48,6 +48,7 @@ export function fakeAccounts(
         cancelled.delete(id);
       }),
     handoffCancelled: (id) => Effect.sync(() => cancelled.has(id)),
+    setPaperQueue: () => Effect.void,
     showHandoff: () => unavailable,
     cancelHandoff: (id) =>
       Effect.sync(() => {
@@ -81,6 +82,12 @@ export function fakeAccounts(
     recordCheck: (accountId, check) =>
       Effect.sync(() => {
         checks.push({ accountId, ...check });
+        const index = accounts.findIndex((account) => account.accountId === accountId);
+        if (index !== -1)
+          accounts[index] = {
+            ...accounts[index]!,
+            lastCheck: { ...check, at: "2026-01-01T00:00:00.000Z" },
+          };
       }),
     setControls: () => unavailable,
     setAgentAccess: () => unavailable,

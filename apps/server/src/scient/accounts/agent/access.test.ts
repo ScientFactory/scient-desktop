@@ -194,3 +194,37 @@ it.effect("keeps a page autofill filled from agents that may not use its sign-in
     expect((yield* check(site, "https://other.example.org/"))._tag).toBe("Success");
   }),
 );
+
+it.effect("picks a profile only by sign-ins the agent may use", () =>
+  Effect.gen(function* () {
+    const signedIn: AccountSummary = {
+      accountId: AccountId.make("acc_website02"),
+      name: "Example",
+      details: { kind: "website", sites: ["example.com"], profileId: workId },
+      secrets: {},
+      controls: defaultAccountControls("website"),
+      lastSignInOutcome: "signed-in",
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const pick = (account: AccountSummary) =>
+      authorizePreviewProfile(scope, status, {
+        url: "https://example.com/",
+        reuseExistingTab: false,
+      }).pipe(
+        Effect.provideService(
+          AccountsService,
+          fakeAccounts({
+            accounts: [account],
+            profiles: [defaultBrowserProfileRecord(defaultId), defaultBrowserProfileRecord(workId)],
+          }).service,
+        ),
+        Effect.map((picked) => picked.profileId),
+      );
+    expect(yield* pick(signedIn)).toBe(workId);
+    expect(yield* pick({ ...signedIn, controls: { ...signedIn.controls, access: "off" } })).toBe(
+      defaultId,
+    );
+  }),
+);

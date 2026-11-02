@@ -4,7 +4,9 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  BrowserProfileId,
   DEFAULT_SERVER_SETTINGS,
+  defaultBrowserProfileRecord,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -16,11 +18,15 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../../config.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import { AccountsService } from "../../../scient/accounts/AccountsService.ts";
+import { fakeAccounts } from "../../../scient/accounts/agent/AccountsService.testkit.ts";
 import * as Preview from "../../../preview/Manager.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
+import { idleThreadProjection, liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewControlsHandlers from "./handlers.ts";
 import { PreviewControlsToolkit } from "./tools.ts";
@@ -185,6 +191,102 @@ it.effect("close reports why the server browser refused to close a tab", () =>
         _tag: "PreviewAutomationControlInterruptedError",
         reason: "agentMismatch",
       });
+    }),
+  ),
+);
+
+it.effect("list hides and close refuses tabs in profiles this session may not see", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("preview-controls-thread");
+      const workId = BrowserProfileId.make("work");
+      const privateId = BrowserProfileId.make("private");
+      const scope: McpInvocationContext.McpInvocationScope = {
+        environmentId: EnvironmentId.make("preview-controls-environment"),
+        requestNamespace: "preview-controls-provider-session",
+        thread: {
+          threadId,
+          providerSessionId: "preview-controls-provider-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["preview"]),
+        issuedAt: 0,
+      };
+      const manager = yield* Preview.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-controls-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+            NodeCrypto.layer,
+          ),
+        ),
+      );
+      const work = yield* manager.open({
+        threadId,
+        url: "http://localhost:3000",
+        profileId: workId,
+      });
+      const hidden = yield* manager.open({
+        threadId,
+        url: "http://localhost:3001",
+        profileId: privateId,
+      });
+      const tools = (agentAccess: boolean) => {
+        const dependencies = Layer.mergeAll(
+          PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer)),
+          Layer.succeed(Preview.PreviewManager, manager),
+          Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+          McpToolAccessTestkit.liveThreadsLayer,
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              enableAgentBrowserAccess: true,
+            }),
+            committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
+          }),
+          Layer.succeed(
+            AccountsService,
+            fakeAccounts({
+              agentAccess,
+              profiles: [
+                defaultBrowserProfileRecord(workId),
+                { ...defaultBrowserProfileRecord(privateId), access: "off" },
+              ],
+            }).service,
+          ),
+          Layer.mock(ProjectionStoreV2)({
+            getThreadRecords: () => Effect.succeed(idleThreadProjection(liveThreadShell(threadId))),
+          }),
+        );
+        return PreviewControlsToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(PreviewControlsHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+          Effect.map((toolkit) => ({
+            list: toolkit
+              .handle("scient_preview_list", {})
+              .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies)),
+            close: (tabId: string) =>
+              toolkit
+                .handle("scient_preview_close", { tabId })
+                .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies)),
+          })),
+        );
+      };
+      const off = yield* tools(false);
+      expect((yield* off.list).at(-1)?.result).toMatchObject({ sessions: [] });
+      const on = yield* tools(true);
+      expect((yield* on.list).at(-1)?.result).toMatchObject({ sessions: [work], nextCursor: null });
+      expect((yield* on.close(hidden.tabId)).at(-1)?.result).toMatchObject({
+        _tag: "AccountsError",
+        reason: "denied",
+      });
+      expect((yield* on.close(work.tabId)).at(-1)?.result).toEqual({});
+      expect((yield* manager.list({ threadId })).sessions).toEqual([hidden]);
     }),
   ),
 );

@@ -5,6 +5,13 @@ import {
   type AccountKeyLink,
   type AccountPaperForSourceInput,
   type AccountPaperForSourceResult,
+  type PaperItem,
+  type PreviewTabId,
+  type PaperQueueInput,
+  type PaperQueueRequestInput,
+  type Institution,
+  type UniversitySignInInput,
+  type UniversityBrowseInput,
   type AccountPlainKey,
   type AccountPlainKeyInput,
   type AccountsCheckInput,
@@ -13,7 +20,17 @@ import {
 import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
 import { websiteSessionStatus } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
-import { getPaperForSource } from "../papers/getPaper.ts";
+import {
+  continuePapersAsUser,
+  continueWaitingPapers,
+  getPaperForSource,
+  listPapersAsUser,
+  requestPapersAsUser,
+} from "../papers/getPaper.ts";
+import { startUniversitySignIn } from "./universitySignIn.ts";
+import { openThroughUniversity } from "./universityBrowsing.ts";
+import { searchUniversities } from "../papers/universityDirectory.ts";
+import { FetchHttpClient } from "effect/http";
 import { messagesReadable } from "./signIn/messageCodes.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
@@ -29,6 +46,7 @@ export const makeAccountsRpcHandlers = ({
   check,
   linkKey,
   paperForSource,
+  papers,
   plainKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
@@ -39,6 +57,22 @@ export const makeAccountsRpcHandlers = ({
   readonly paperForSource: (
     input: AccountPaperForSourceInput,
   ) => Effect.Effect<typeof AccountPaperForSourceResult.Type, AccountsError>;
+  readonly papers: {
+    readonly request: (input: PaperQueueRequestInput) => Effect.Effect<object, AccountsError>;
+    readonly continue: (input: PaperQueueInput) => Effect.Effect<object, AccountsError>;
+    readonly list: (
+      input: PaperQueueInput,
+    ) => Effect.Effect<ReadonlyArray<PaperItem>, AccountsError>;
+    readonly universitySignIn: (
+      input: UniversitySignInInput,
+    ) => Effect.Effect<{ readonly tabId: PreviewTabId }, AccountsError>;
+    readonly universityBrowse: (
+      input: UniversityBrowseInput,
+    ) => Effect.Effect<{ readonly routed: boolean }, AccountsError>;
+    readonly universities: (
+      query: string,
+    ) => Effect.Effect<ReadonlyArray<Institution>, AccountsError>;
+  };
   readonly plainKeys: {
     readonly find: (
       roots: ReadonlyArray<string>,
@@ -131,6 +165,38 @@ export const makeAccountsRpcHandlers = ({
       ),
     [WS_METHODS.accountsPaperForSource]: (input) =>
       observeRpcEffect(WS_METHODS.accountsPaperForSource, paperForSource(input), attributes),
+    [WS_METHODS.accountsPapersRequest]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsPapersRequest,
+        papers.request(input).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsPapersContinue]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsPapersContinue,
+        papers.continue(input).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsPapersList]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsPapersList, papers.list(input), attributes),
+    [WS_METHODS.accountsUniversitySignIn]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsUniversitySignIn,
+        papers.universitySignIn(input),
+        attributes,
+      ),
+    [WS_METHODS.accountsUniversityBrowse]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsUniversityBrowse,
+        papers.universityBrowse(input),
+        attributes,
+      ),
+    [WS_METHODS.accountsUniversitySearch]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsUniversitySearch,
+        papers.universities(input.query),
+        attributes,
+      ),
     [WS_METHODS.accountsPlainKeys]: (input) =>
       observeRpcEffect(WS_METHODS.accountsPlainKeys, plainKeys.find(input.roots), attributes),
     [WS_METHODS.accountsKeepPlainKey]: (input) =>
@@ -292,6 +358,29 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
           ),
         ),
       ),
+    papers: {
+      universitySignIn: (input: UniversitySignInInput) =>
+        run((environmentId) =>
+          startUniversitySignIn(input, environmentId, continueWaitingPapers(environmentId)),
+        ),
+      universityBrowse: (input: UniversityBrowseInput) =>
+        run((environmentId) =>
+          accounts.snapshot.pipe(
+            Effect.flatMap((snapshot) =>
+              openThroughUniversity(input, environmentId, snapshot.accounts),
+            ),
+            Effect.orElseSucceed(() => ({ routed: false })),
+          ),
+        ),
+      request: (input: PaperQueueRequestInput) =>
+        run((environmentId) => requestPapersAsUser(input, environmentId)),
+      continue: ({ root }: PaperQueueInput) =>
+        run((environmentId) => continuePapersAsUser(root, environmentId)),
+      list: ({ root }: PaperQueueInput) =>
+        run((environmentId) => listPapersAsUser(root, environmentId)),
+      universities: (query: string) =>
+        searchUniversities(query).pipe(Effect.provide(FetchHttpClient.layer)),
+    },
   };
 });
 
@@ -316,6 +405,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         chooseProfile: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
+        setPaperQueue: Effect.fn("AccountsService.setPaperQueue")(() => Effect.void),
         handoffCancelled: Effect.fn("AccountsService.handoffCancelled")(() =>
           Effect.succeed(false),
         ),

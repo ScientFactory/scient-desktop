@@ -27,7 +27,14 @@ import { cn } from "~/lib/utils";
 interface Props {
   // SCIENT-FORK:START — Scient Accounts: the preview owner supplies the native tab identity.
   accountsTab?:
-    | { environmentId: EnvironmentId; threadRef: ScopedThreadRef; tabId: string; profileId: string }
+    | {
+        environmentId: EnvironmentId;
+        threadRef: ScopedThreadRef;
+        tabId: string;
+        /** The tab's id in the conversation's browser, where the server reaches it. */
+        previewTabId: string;
+        profileId: string;
+      }
     | undefined;
   // SCIENT-FORK:END
   url: string;
