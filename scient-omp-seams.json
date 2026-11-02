@@ -196,11 +196,6 @@
       "purpose": "Validate the live native child owner before calling its optional cancellation operation."
     },
     {
-      "path": "packages/scient-analytics/src/wireContract.ts",
-      "anchor": "export const ANALYTICS_PROVIDER_KINDS",
-      "purpose": "Keep external Oh My Pi and Scient Agent as separate bounded provider categories in the shared analytics contract; custom labels remain other."
-    },
-    {
       "path": "packages/scient-analytics/src/conformance.ts",
       "anchor": "[\"scient\", \"omp\", \"muse\", \"acpRegistry\"]",
       "purpose": "Exercise named provider categories across existing content-free prompt, outcome, usage, installation and lifecycle events in the generated gateway corpus."
@@ -219,6 +214,11 @@
       "path": "packages/scient-analytics/fixtures/contract-v9.json",
       "anchor": "\"provider\": \"omp\"",
       "purpose": "Retain external Oh My Pi attribution in the shared generated revision-9 analytics fixture while adding T3's usage events."
+    },
+    {
+      "path": "packages/scient-analytics/fixtures/contract-v10.json",
+      "anchor": "\"provider\": \"omp\"",
+      "purpose": "Retain external Oh My Pi attribution in the shared generated revision-10 analytics fixture, where any provider name is sent as the code passes it."
     },
     {
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",

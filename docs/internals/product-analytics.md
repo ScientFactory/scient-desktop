@@ -21,10 +21,16 @@ gateway revisions. The cross-repository measurement meaning and policy are
 owned by Scient's product-measurement plan; this repository owns these runtime
 and instrumentation guarantees.
 
-When an owner deliberately enables the runtime, events still pass through the strict allowlist in
-[`packages/scient-analytics/src/contract.ts`](../../packages/scient-analytics/src/contract.ts).
-Unknown event names and properties are dropped. Consent level is enforced before queueing, delivery
-uses only Scient's first-party gateway, and failures cannot block normal product behavior.
+Like T3, Scient sends every event its code records; there is no list of event or property names.
+[`contract.ts`](../../packages/scient-analytics/src/contract.ts) shapes each event: a Scient
+normalizer decides the fields it reads (buckets, model keys, closed values), and every other field
+passes through as recorded. [`wireContract.ts`](../../packages/scient-analytics/src/wireContract.ts)
+then checks only shape and privacy: an event name, at most 64 properties of strings up to 256
+characters, finite numbers, booleans or arrays of up to 32 of those, 16 KiB in all, and no free-text
+key (`prompt`, `message`, `error`, `path`, `url`, `email` and the like) or value that looks like a
+path, link or email address. Such fields are dropped before queueing; the gateway rejects them too.
+Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
+failures cannot block normal product behavior.
 
 The Settings privacy section, including its switch, “What’s shared?” panel and
 “Delete data” request, is hidden: `AnalyticsPrivacySettings` is not mounted. The
@@ -79,23 +85,26 @@ arrive without a revision; each one still comes from server code, never user tex
 Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
-Legacy events may omit `contractRevision`; new events carry the bounded revision.
-Unrecognized/custom model and build labels become safe categories, not raw text.
+Revision 10 drops the lists: any event and field of a valid shape is accepted, closed values that
+code passes keep their names even when no list names them yet, and model names are sent as model
+ids (aliases and pinned versions still fold into one key), as in T3. Free text and custom build
+labels still become `other` or `unknown`. New events and fields need no revision and no gateway
+deploy, so desktop and gateway releases no longer have to ship in order.
+Legacy events may omit `contractRevision`; new events carry the revision.
 
 The conformance corpus contains ordinary and hostile-input cases for each
-registered event. Regenerate and compare both repositories from the desktop root:
+event with a normalizer. Regenerate and compare both repositories from the desktop root:
 
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v9.json \
-  /absolute/website/workers/events/fixtures/contract-v9.json
+  packages/scient-analytics/fixtures/contract-v10.json \
+  /absolute/website/workers/events/fixtures/contract-v10.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
-Deploy compatible gateway validation before releasing new producers. Do not
-edit the gateway copy independently or relax unknown-property rejection to make
-an old deployment accept new events.
+Do not edit the gateway copy independently. A change to the shape or privacy
+rule itself must reach the gateway before a desktop release that relies on it.
 
 Visual LaTeX views report only while Visual is displayed (including Split/Visual),
 not when its retained editor is hidden in Source/PDF. Existing visibility and
@@ -158,13 +167,26 @@ is unknown or the ledger goes backwards, and background work that ends between
 turns lands in the next one. Claude subagents have no turns of their own, so
 this never overlaps child turns.
 
-`model` and `effort` are what the run selected. `observedModel` and
+`model`, `effort`, and `serviceTier` are what the run selected. `serviceTier`
+is `standard`, `flex`, `fast`, or `ultrafast`, from Codex's tier option or
+Claude's fast mode, and is absent when the selection does not set one. `observedModel` and
 `mixedModels` appear only when the provider reported the models for the counted
 work (Codex thread settings and reroutes, Claude root messages, OpenCode steps).
 `mixedModels: false` without `reportVersion` was never checked. Model labels
 come from the bundled model manifest and the Cursor and Grok catalogs, also for
 routed ids such as `anthropic/claude-opus-5-5`, and efforts come from a closed
-list, so user-configured names stay out.
+list. Like T3, a user-configured model name is sent when it looks like a model id.
+
+Which providers report token counts: Claude, Codex, OpenCode, Muse, Antigravity from runtime
+1.4.5, ACP Registry's GLM agent, and, through the shared native adapter, Scient Agent and Oh My Pi.
+Pi and Cursor report them from their own adapters. Each counts every model request the agent
+reports during the turn. Where an agent reports them, a turn also carries the per-request facts
+Scient Agent's /stats shows: `requests`, `failedRequests`, `estimatedCostUsd` (the agent's own
+price estimate; an unpriced request leaves the total unknown), `modelDurationMs` and
+`firstTokenMs`; `provider.request.completed` sums them per run. Grok, Droid, fx and the legacy
+Antigravity path do not report usage yet: Grok's counts arrive on a separate notification, and
+Droid's and fx's protocols have no verified per-turn source. `OmpTurnUsage.native.live.test.ts`
+proves the installed agent's report end to end (`OMP_QUALIFY_BINARY`).
 
 Status and counters answer different questions. `usageReported: false` means
 the adapter attached no usage; a harness where every row says so is unsupported,
@@ -203,8 +225,8 @@ The dedicated worker owns SQLite and remote delivery. Limits are 1,000 memory
 events, two in-flight local batches, 10,000 durable events, 50 events per upload,
 three-second upload deadlines, 20 delivery attempts, and 100 metadata-only dead
 letters. Summary events are trimmed before core/critical events. Expired,
-malformed, unknown, or no-longer-valid persisted events cannot bypass the
-allowlist. Local raw events expire after 180 days, diagnostics after 30 days,
+malformed, or no-longer-valid persisted events cannot bypass the shape and
+privacy check. Local raw events expire after 180 days, diagnostics after 30 days,
 and dead-letter metadata after 30 days when maintenance runs. An app that is
 not running cannot execute cleanup; old events are filtered before delivery.
 
@@ -531,19 +553,43 @@ connection method. The server validates those values and can persist the support
 connection management can describe current clients. Invalid or unknown values are ignored and never
 reject a connection.
 
-Upstream also added `client.connected`, `client.turn.requested` and `feature.used` analytics call
-sites. Those names are not registered in Scient's analytics contract and are therefore dropped at the
-Scient boundary.
-They must not be documented as collected or used to build a dashboard unless Scient deliberately
-adds a reviewed, privacy-bounded contract for them.
+Upstream's `client.connected`, `client.turn.requested` and `feature.used` events, and any event
+upstream adds later, are sent as recorded.
+
+## Scient's own features
+
+[`ScientFeatureUsage.ts`](../../apps/server/src/telemetry/ScientFeatureUsage.ts) records Scient's
+features the way T3's `FeatureUsage` records T3's:
+
+- **People:** Scient WebSocket requests (Compute, data tables, Run File, Accounts and papers,
+  extensions, skills, custom models, PDF export) join T3's `feature.used` table, credited to the
+  connecting surface. Scient's HTTP actions (Overleaf, Sources, LaTeX SyncTeX and toolchain,
+  images, thread queue, conversation import/export, Word export) record `feature.used` with
+  `outcome` (`ok` or `error`) and `durationMs` through one router middleware keyed on the path.
+- **Agents:** Scient's working tools (`SCIENT_ACTION_TOOLS`: compute, notebooks, LaTeX, PDF,
+  export, Overleaf, papers, sources, accounts, projects, skills) record `mcp.tool.invoked` on
+  success too. Read, list and status tools stay failure-only, as in T3.
+- **Compute language:** `compute-run` operations from interactive Compute carry `language`.
+
+- **Messages people send:** `client.turn.requested` carries the message's length (`messageChars`,
+  `messageWords`) and Scient Agent's /stats frustration signals (`yelling`, `profanity`,
+  `anguish`, `negation`, `repetition`, `blame`), for every provider. They come from
+  [`UserMessageSignals.ts`](../../apps/server/src/telemetry/UserMessageSignals.ts), copied from
+  Scient Agent's `user-metrics.ts`; only the counts leave it, never the text. /stats's optional
+  model judge is not run.
+
+Each entry names an action someone chose, never a read, refresh or subscription. Builds, source
+imports and code runs keep their existing operation events, so they are not counted twice. To
+measure a new Scient feature, add its method, route or tool to that file; its test fails if a
+route or tool name no longer exists.
 
 ## Privacy invariants
 
 Analytics must never include prompts, responses, file contents or paths, URLs, credential tokens, email
-addresses, provider account identifiers, or user-assigned device names. Provider and model values
-are normalized into bounded families; unrecognized values collapse to safe categories. New inherited
-instrumentation is not automatically authorized by appearing in upstream code: it must either map to
-an existing Scient event or be explicitly reviewed and added to the Scient contract.
+addresses, provider account identifiers, or user-assigned device names. As in T3, this rests on what
+the code records: no call site passes free text. The wire check backs it up by dropping free-text
+keys and any value that looks like a path, link or email address. New upstream instrumentation is
+sent as recorded, so review new `analytics.record` call sites during alignments.
 
 Who an install belongs to is sent as `install.owner_observed`, at most once per
 owner per process. `distinct_id` stays the random installation identifier; owners

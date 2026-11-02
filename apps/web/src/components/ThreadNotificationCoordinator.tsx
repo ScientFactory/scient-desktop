@@ -120,7 +120,6 @@ export function startThreadNotifications(
     setNotificationBadge(0);
   };
 
-  // Completions fire from a timer, so read settings, focus and route when presenting.
   const present = (
     environmentId: EnvironmentId,
     // SCIENT-FORK:START — Account attention can originate in a delegated thread.
@@ -335,7 +334,6 @@ export function startThreadNotifications(
           observeThreads(environmentId, entry, threads);
           return;
         }
-        entry.gate.cancelPending();
         entry.reconnecting = true;
       },
       { immediate: true },
