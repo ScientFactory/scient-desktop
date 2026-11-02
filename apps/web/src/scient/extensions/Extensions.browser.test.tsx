@@ -33,6 +33,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 // The Add-account dialog opens sites in Scient's browser; these tests never do.
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
+vi.mock("../accounts/useScratchThread", () => ({ useScratchThread: () => async () => null }));
 vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
 vi.mock("../../components/ChatMarkdown", () => ({
   default: ({ text }: { text: string }) => <div>{text}</div>,
