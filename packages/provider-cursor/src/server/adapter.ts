@@ -9,6 +9,11 @@ import type {
   ToolCall,
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  addRequestUsage,
+  nativeTurnTokenUsage,
+  type NativeTurnUsage,
+} from "@t3tools/provider-core/server/turnUsage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   isOrchestrationV2WorkActive,
@@ -950,6 +955,8 @@ interface ActiveCursorTurn {
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
   turnEnded: boolean;
+  /** Model turns Cursor reported usage for, added up for usage analytics. */
+  requestUsage?: NativeTurnUsage;
 }
 
 interface CursorLiveAgent {
@@ -2038,6 +2045,20 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           if (update.type === "turn-ended") {
             context.turnEnded = true;
+            // Cursor's counters are separate buckets; input here also counts the cache.
+            if (update.usage !== undefined)
+              context.requestUsage = addRequestUsage(context.requestUsage, {
+                inputTokens:
+                  update.usage.inputTokens +
+                  update.usage.cacheReadTokens +
+                  update.usage.cacheWriteTokens,
+                outputTokens: update.usage.outputTokens,
+                cachedInputTokens: update.usage.cacheReadTokens,
+                cacheCreationTokens: update.usage.cacheWriteTokens,
+                ...(update.usage.reasoningTokens === undefined
+                  ? {}
+                  : { reasoningTokens: update.usage.reasoningTokens }),
+              });
           } else if (
             update.type === "step-started" ||
             update.type === "user-message-appended" ||
@@ -2140,6 +2161,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           acceptedAt: input.context.startedAt,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+          ...(input.completedAt === null || input.context.requestUsage === undefined
+            ? {}
+            : {
+                turnTokenUsage: nativeTurnTokenUsage(
+                  input.context.requestUsage,
+                  input.status,
+                  false,
+                ),
+              }),
         });
 
         const finalizeTurn = Effect.fnUntraced(function* (input: {
