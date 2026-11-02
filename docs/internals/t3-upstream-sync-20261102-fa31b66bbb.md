@@ -48,7 +48,8 @@ Branch `codex/t3-sync-fa31b66bbb-20261102`; the `upstream` push URL remains `DIS
 - **Link cards (#28491).** Upstream's rule for old cards joins `waitsOnUser`.
 - **Managed runtime workflow.** `apps/server/src/policy`, `packages/tailscale` and
   `packages/provider-fx` join the build guards of the runtimes that now import them.
-- **Windows registry reader.** `ffi-rs` is a new native dependency, used only on Windows.
+- **Windows registry reader.** `ffi-rs`, already in the desktop app, becomes a server and shared
+  dependency that reads the policy on Windows.
 
 ## Left out
 
@@ -59,7 +60,7 @@ Branch `codex/t3-sync-fa31b66bbb-20261102`; the `upstream` push URL remains `DIS
   which stays deleted with `useDirectoryEntries`.
 - **Project handler ceiling test.** Upstream's handler code applies; Scient's harness differs, and
   the test was not ported. The orchestrator's ceiling tests cover the refusal.
-- **CLI install row test.** Scient's settings keep their own command row.
+- **CLI install row test (#27286).** Upstream's row applies; its test was not ported.
 - **Nightly and mobile text** in the managed policy guide.
 
 ## Migrations
@@ -69,9 +70,10 @@ None in this range.
 ## Protected seams
 
 `pr-vouch.yml` and the CI scripts took upstream's changes. `managed-provider-runtime-update-provider.yml`
-is Scient's and gains the guards above. New remote addresses are none. New environment names are
-`T3CODE_DEV_MANAGED_POLICY_PATH`, read only on the dev channel so a release cannot be pointed
-elsewhere. The lockfile keeps main's `hasBin` markers.
+is Scient's and gains the guards above. The new `T3CODE_DEV_MANAGED_POLICY_PATH` is read only on the
+dev channel, so a release cannot be pointed elsewhere. All seam manifests, brand, provenance and the
+dropped-upstream audit pass; the audit leaves only marked, absent, renamed or Scient-owned
+differences and the two tests under Left out. The lockfile keeps main's `hasBin` markers.
 
 ## Verification
 
@@ -90,7 +92,7 @@ their message comes into view.
 
 Live on the isolated dev app, with real Haiku and GPT-6 Luna on a throwaway repository:
 
-- A file fix, its diff card, and a reply refusing to invent a missing file.
+- A file fix and its diff card.
 - Three threads at once across both providers.
 - Steer, queue, Send now, and Stop on both providers, which also ended the running command.
 - Approve, Decline and a question card in Supervised.
@@ -99,7 +101,7 @@ Live on the isolated dev app, with real Haiku and GPT-6 Luna on a throwaway repo
 - A restart mid-run: the run reads cancelled, every thread and reply returns, both providers continue.
 - A policy with a mode limit, a Claude-only provider list and a locked setting: modes and Codex
   blocked with the organization's name, the banner and its Switch action, a locked Browser switch
-  and the Sharing & access note. Removing it restored everything.
+  and the Sharing & access note. Removing it and restarting lifted the limits.
 
 The server log held only what the test machine lacks: `glab`, Scient Agent, Antigravity and a remote.
 
