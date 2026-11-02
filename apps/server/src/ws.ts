@@ -253,6 +253,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
+import { userMessageSignals } from "./telemetry/UserMessageSignals.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -1417,7 +1418,11 @@ export const layerWsRpc = (
         return Effect.all(
           [
             command.type === "message.dispatch"
-              ? analytics.record("client.turn.requested", originProps)
+              ? analytics.record("client.turn.requested", {
+                  ...originProps,
+                  // SCIENT-FORK: the message's length and frustration signals, never its text.
+                  ...userMessageSignals(command.text),
+                })
               : Effect.void,
             usage === undefined
               ? Effect.void
@@ -2507,7 +2512,11 @@ export const layerWsRpc = (
                             Effect.andThen(
                               input.initialMessage === undefined
                                 ? Effect.void
-                                : analytics.record("client.turn.requested", originProps),
+                                : analytics.record("client.turn.requested", {
+                                    ...originProps,
+                                    // SCIENT-FORK: the message's length and frustration signals.
+                                    ...userMessageSignals(input.initialMessage.text),
+                                  }),
                             ),
                             Effect.ignore,
                           ),
