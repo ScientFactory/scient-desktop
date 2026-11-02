@@ -25,6 +25,27 @@ The **⋯** Files menu refreshes the tree, expands or collapses every loaded
 folder, and sets file visibility. The tree does not watch the disk, so use
 **Refresh files** after changing files outside Scient.
 
+### Manage files and folders
+
+Right-click a file or folder for **New File**, **New Folder**, **Cut**, **Copy**,
+**Paste**, **Duplicate**, **Rename…**, **Copy Path**, **Copy Relative Path** and
+**Move to Trash**. With several items selected, the menu acts on all of them
+and says how many. Drag files or folders onto a folder to move them into it, or
+onto a file at the top of the tree to move them to the project's top; hold
+`Option` (`Alt`) to copy instead. With the
+tree focused, `mod+c`, `mod+x`, `mod+v`, `mod+backspace` or `Delete`,
+`mod+shift+n` (new folder) and `F2` (rename) work as in Finder or Explorer.
+
+When a name is taken, Scient asks: **Replace** moves the existing item to the
+Trash, and **Keep Both** gives the new one a numbered name. Nothing is deleted
+for good: **Move to Trash** uses the computer's own Trash (the Recycle Bin on
+Windows), so items can also be put back from there.
+`mod+z` in the tree undoes the last change made from Files, and a Trash
+notice offers **Undo** for a few seconds; on Windows, restore from the Recycle
+Bin instead. Open editors are saved before their files move, and open tabs
+follow a renamed or moved file. Scient's own records and tool folders, such as
+`.scient` and `.git`, stay as they are.
+
 The same file list can sit beside other side-panel tabs too, such as a browser
 page, Sources, or a Scientific computing session. Use the folder button at the
 end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
