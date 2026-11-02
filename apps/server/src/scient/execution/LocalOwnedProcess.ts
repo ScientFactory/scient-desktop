@@ -128,8 +128,11 @@ export function makeLocalOwnedProcess(
     shell: false,
     detached: platform !== "win32",
     ...LOCAL_OWNED_PROCESS_KILL_OPTIONS,
-    ...(options?.keepInputOpen === true
-      ? { stdin: { stream: "pipe" as const, endOnDone: false } }
-      : {}),
+    // Nothing types into a run, so its input is closed: a tool that reads input after its file,
+    // as Scilab and GAP do, sees the end and exits instead of waiting for good.
+    stdin:
+      options?.keepInputOpen === true
+        ? { stream: "pipe" as const, endOnDone: false }
+        : ("ignore" as const),
   });
 }

@@ -186,6 +186,25 @@ describe("LocalExecutionProcess", () => {
       expect(processExists(childPid)).toBe(false);
     }).pipe(Effect.provide(Live), TestClock.withLive),
   );
+  it.effect("gives a run closed input, so a program reading it finishes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processes = yield* ExecutionProcess;
+        const handle = yield* processes.start({
+          runId: ExecutionRunId.make("closed-input-test"),
+          executable: NodeProcess.execPath,
+          args: ["-e", "process.stdin.on('end', () => console.log('input closed')).resume()"],
+          cwd: NodeProcess.cwd(),
+          environment: {},
+        });
+        const output = yield* Effect.forkScoped(Stream.runCollect(handle.output));
+        expect(yield* handle.exitCode).toBe(0);
+        const text = Array.from(yield* Fiber.join(output), (chunk) => chunk.text).join("");
+        expect(text).toContain("input closed");
+      }),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
+
   it.effect("keeps everything written before the cutoff for a consumer that was busy", () =>
     Effect.gen(function* () {
       // A pipe that never closes, and a consumer still saving the first chunk when the rest arrive.
