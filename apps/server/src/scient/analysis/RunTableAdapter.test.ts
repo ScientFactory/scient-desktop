@@ -180,12 +180,18 @@ describe("how a file is built", () => {
     expect(step.args).toEqual(["-bail", ":memory:", '.read "/project/a.sql"']);
   });
 
-  it("keeps a sqlite3 script's path whole, whatever it holds", async () => {
+  it("passes a path whole, in the form each tool reads it", async () => {
     const step = await prepare(
       adapterFor("sqlite", [found("sqlite", "sqlite3", "/usr/bin/sqlite3", null)]),
       `O'Brien "x".sql`,
     );
     expect(step.args[2]).toBe(`.read "/project/O'Brien \\"x\\".sql"`);
+    // Isabelle names a theory as an import does, without .thy.
+    const theory = await prepare(
+      adapterFor("isabelle", [found("isabelle", "isabelle", "/usr/bin/isabelle", null)]),
+      "Proofs.thy",
+    );
+    expect(theory.args).toEqual(["process_theories", "-O", "/project/Proofs"]);
   });
 });
 

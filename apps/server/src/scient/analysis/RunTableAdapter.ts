@@ -78,6 +78,7 @@ function fill(args: ReadonlyArray<string>, file: string, output: string): Readon
     arg
       .replaceAll("{file}", file)
       .replaceAll("{quotedFile}", quoted)
+      .replaceAll("{fileNoExtension}", file.replace(/\.[^./\\]+$/u, ""))
       .replaceAll("{output}", output),
   );
 }
