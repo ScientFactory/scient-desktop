@@ -85,6 +85,29 @@ describe("BrowserHistoryDialog", () => {
     });
   });
 
+  it("shows the pages of the profile the tab moves to", async () => {
+    resetServer();
+    const { view } = open();
+    await using screen = await render(view);
+    await expect.element(screenPage.getByText("nature")).toBeVisible();
+    mocks.list.mockResolvedValue(success({ pages: [visit("science")] }));
+    await screen.rerender(
+      <BrowserHistoryDialog
+        threadRef={threadRef}
+        profileId="home"
+        onOpenUrl={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await expect.element(screenPage.getByText("science")).toBeVisible();
+    await expect.element(screenPage.getByText("nature")).not.toBeInTheDocument();
+    expect(mocks.list).toHaveBeenLastCalledWith({
+      environmentId: threadRef.environmentId,
+      input: { profileId: "home" },
+    });
+  });
+
   it("ignores an older search that answers last", async () => {
     resetServer();
     let answerFirst: (value: unknown) => void = () => {};

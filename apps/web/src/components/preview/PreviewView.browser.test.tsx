@@ -414,6 +414,24 @@ describe("PreviewView", () => {
     expect(visits()["science.org"]).toBeUndefined();
     expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
   });
+
+  it("counts a first address under the profile the new tab took, not the toolbar's", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1", profileId: "work" },
+    } as never);
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+    );
+    await submitAddress("nature.com");
+    await vi.waitFor(() =>
+      expect(useBrowserShortcuts.getState().profiles.work?.visits["nature.com"]?.count).toBe(1),
+    );
+    expect(visits()["nature.com"]).toBeUndefined();
+  });
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — restore the original behavior guard.

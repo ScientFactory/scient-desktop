@@ -28,10 +28,9 @@ import { toastManager } from "~/components/ui/toast";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { pagesByDay } from "./browserHistoryDays";
-import { browserHistoryState } from "./browserHistoryState";
+import { browserHistoryState, QUIET_HISTORY } from "./browserHistoryState";
 
 const SEARCH_DELAY_MS = 150;
-const QUIET = { reportFailure: false, reportDefect: false };
 
 /** Every page visited in this profile, newest first. Opening one closes this. */
 export function BrowserHistoryDialog({
@@ -46,9 +45,9 @@ export function BrowserHistoryDialog({
   onClose: () => void;
 }) {
   const { environmentId } = threadRef;
-  const list = useAtomCommand(browserHistoryState.list, QUIET);
-  const remove = useAtomCommand(browserHistoryState.remove, QUIET);
-  const clear = useAtomCommand(browserHistoryState.clear, QUIET);
+  const list = useAtomCommand(browserHistoryState.list, QUIET_HISTORY);
+  const remove = useAtomCommand(browserHistoryState.remove, QUIET_HISTORY);
+  const clear = useAtomCommand(browserHistoryState.clear, QUIET_HISTORY);
 
   const [query, setQuery] = useState("");
   const [search] = useDebouncedValue(query.trim(), { wait: SEARCH_DELAY_MS });
@@ -59,26 +58,32 @@ export function BrowserHistoryDialog({
   const [now] = useState(() => Date.now());
   const latestRequest = useRef(0);
 
-  const load = useEffectEvent(async (text: string, before?: BrowserHistoryCursor) => {
-    const request = ++latestRequest.current;
-    const result = await list({
-      environmentId,
-      input: { profileId, ...(text ? { query: text } : {}), ...(before ? { before } : {}) },
-    });
-    if (request !== latestRequest.current) return;
-    setFailed(result._tag === "Failure");
-    if (result._tag === "Failure") return;
-    setPages((current) =>
-      before ? [...(current ?? []), ...result.value.pages] : result.value.pages,
-    );
-    setNext(result.value.next);
-  });
+  const load = useEffectEvent(
+    async (text: string, profile: string, before?: BrowserHistoryCursor) => {
+      const request = ++latestRequest.current;
+      const result = await list({
+        environmentId,
+        input: {
+          profileId: profile,
+          ...(text ? { query: text } : {}),
+          ...(before ? { before } : {}),
+        },
+      });
+      if (request !== latestRequest.current) return;
+      setFailed(result._tag === "Failure");
+      if (result._tag === "Failure") return;
+      setPages((current) =>
+        before ? [...(current ?? []), ...result.value.pages] : result.value.pages,
+      );
+      setNext(result.value.next);
+    },
+  );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- each search asks the server again
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- each search, in each profile, asks the server again
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- state changes once the server answers
-    void load(search);
-  }, [search]);
+    void load(search, profileId);
+  }, [search, profileId]);
 
   const removePage = async (url: string) => {
     const before = pages;
@@ -131,7 +136,7 @@ export function BrowserHistoryDialog({
               {failed ? (
                 <div className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
                   <p>Could not load your history.</p>
-                  <Button size="sm" variant="outline" onClick={() => void load(search)}>
+                  <Button size="sm" variant="outline" onClick={() => void load(search, profileId)}>
                     Try again
                   </Button>
                 </div>
@@ -169,7 +174,7 @@ export function BrowserHistoryDialog({
                   className="self-center"
                   size="sm"
                   variant="outline"
-                  onClick={() => void load(search, next)}
+                  onClick={() => void load(search, profileId, next)}
                 >
                   Show more
                 </Button>

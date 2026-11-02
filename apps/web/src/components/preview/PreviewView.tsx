@@ -266,27 +266,29 @@ export function PreviewView({
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — Scient: shortcuts and Recently used skip incognito tabs.
-  const incognito =
-    browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
-    "incognito";
-  const countSiteVisit = (visited: string, profileId = activeProfileId) => {
-    if (incognito) return;
+  const isIncognito = (profileId: string) =>
+    browserDefaults.profiles.find((profile) => profile.id === profileId)?.kind === "incognito";
+  const incognito = isIncognito(activeProfileId);
+  /** Counts a page under the profile its tab opened in. */
+  const countSiteVisit = (visited: string, profileId: string) => {
+    if (isIncognito(profileId)) return;
     recordVisitForThread(threadRef, visited);
     recordSiteVisit(profileId, visited);
   };
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — Scient: answers with the profile the page opened in, or null if it didn't.
   const navigateToResolvedUrl = async (resolvedUrl: string, profileId?: string) => {
     if (isServerTab && serverSurfaceRef.current) {
-      if (serverInputDisabled) return false;
+      if (serverInputDisabled) return null;
       serverSurfaceRef.current.navigate(resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      return true;
+      return activeProfileId;
     }
     if (runtimeTabId && previewBridge) {
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      return true;
+      return activeProfileId;
     }
     const result = await openPreviewSession({
       openPreview: open,
@@ -304,8 +306,11 @@ export function PreviewView({
         });
       }
     }
-    return result._tag === "Success";
+    if (result._tag !== "Success") return null;
+    // Without a profile, the tab took the site's, the conversation's or the project's.
+    return result.value.profileId ?? profileId ?? activeProfileId;
   };
+  // SCIENT-FORK:END
 
   const handleSubmitUrl = async (next: string, profileId?: string) => {
     try {
@@ -315,9 +320,8 @@ export function PreviewView({
         /^[a-z][a-z\d+.-]*:\/\//i.test(next.trim()) ? null : { url: resolved, text: next.trim() },
       );
       // SCIENT-FORK:END
-      if (await navigateToResolvedUrl(resolved, profileId)) {
-        countSiteVisit(resolved, profileId);
-      }
+      const openedIn = await navigateToResolvedUrl(resolved, profileId);
+      if (openedIn) countSiteVisit(resolved, openedIn);
     } catch (error) {
       // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
       if (isPageLoadFailure(error)) return;
@@ -340,9 +344,8 @@ export function PreviewView({
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved, profileId)) {
-        countSiteVisit(next, profileId);
-      }
+      const openedIn = await navigateToResolvedUrl(resolved, profileId);
+      if (openedIn) countSiteVisit(next, openedIn);
     } catch (error) {
       // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
       if (isPageLoadFailure(error)) return;
