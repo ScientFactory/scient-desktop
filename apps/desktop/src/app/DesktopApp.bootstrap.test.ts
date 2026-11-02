@@ -13,6 +13,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import { vi } from "vite-plus/test";
 
 import * as DesktopApp from "./DesktopApp.ts";
+import * as DesktopManagedPolicy from "./DesktopManagedPolicy.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
@@ -127,6 +128,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       waitForReady: () => Effect.succeed(false),
     };
     const services = Layer.mergeAll(
+      DesktopManagedPolicy.layerTest(),
       NodeServices.layer,
       Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
       DesktopState.layer,

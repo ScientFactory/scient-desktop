@@ -945,7 +945,18 @@ index bf17cea32f..0f0c5a789a 100644
  	get canUndo() {
  		return (this.#editSession ?? this.#initialState)?.document?.canUndo ?? false;
  	}
-@@ -1214,6 +1232,17 @@ var Editor = class {
+@@ -436,7 +454,9 @@ var Editor = class {
+ 		this.#canMountSelectionAction = false;
+ 		this.#updateSelections(resolvedSelections);
+ 		const primarySelection = resolvedSelections.at(-1);
+-		if (primarySelection !== void 0) this.#revealLineIfCollapsed(getCaretPosition(primarySelection).line);
++		// Clearing keeps the selection while search matches or markers exist; scrolling to it steals focus.
++		if (primarySelection === void 0) return;
++		this.#revealLineIfCollapsed(getCaretPosition(primarySelection).line);
+ 		this.#scrollToPrimaryCaret();
+ 	}
+ 	setMarkers(markers) {
+@@ -1214,6 +1234,17 @@ var Editor = class {
  					this.#cancelEditPrediction(true);
  					return;
  				}
@@ -963,7 +974,7 @@ index bf17cea32f..0f0c5a789a 100644
  				e.preventDefault();
  				this.#handleInput(e.inputType, e.data);
  			}),
-@@ -1903,7 +1932,11 @@ var Editor = class {
+@@ -1903,7 +1934,11 @@ var Editor = class {
  			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
  			documentLineCount: textDocument.lineCount
  		});

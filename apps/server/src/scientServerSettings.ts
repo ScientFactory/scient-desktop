@@ -10,6 +10,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type CustomModelSaveInput,
   type CustomModelsSettings,
+  type ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   type ServerSettings,
@@ -184,10 +185,15 @@ export function makeCustomModelSettingsMethods(
 }
 
 /** Preserve the environment selection when no enabled provider can replace it. */
-export function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
+export function fallbackTextGenerationProvider(
+  settings: ServerSettings,
+  isDriverAllowed: (driver: ProviderDriverKind) => boolean = () => true,
+): ServerSettings {
   const selection = fallbackScientTextGenerationModelSelection(
     settings.providerInstances,
     (instanceId, driver) =>
+      // A default instance id can be configured with another driver.
+      isDriverAllowed(settings.providerInstances[instanceId]?.driver ?? driver) &&
       resolveProviderInstanceEnabled(
         settings.providerInstances[instanceId] ?? { driver, config: {} },
       ),
