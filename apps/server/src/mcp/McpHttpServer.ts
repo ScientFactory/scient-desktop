@@ -49,8 +49,9 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
-// SCIENT-FORK:START — adapt owned tool names and transport results, not analytics policy.
+// SCIENT-FORK:START — adapt owned tool names and transport results; Scient's working tools count every call.
 import { scientMcpAnalyticsInput } from "../telemetry/ScientMcpAnalytics.ts";
+import { SCIENT_ACTION_TOOLS } from "../telemetry/ScientFeatureUsage.ts";
 // SCIENT-FORK:END
 import {
   type AgentThread,
@@ -840,73 +841,78 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
 ) =>
   Layer.effectDiscard(
-    Effect.gen(function* () {
-      for (const tool of Object.values(toolkit.tools)) {
-        if (tool !== scientTools.find((registered) => registered.name === tool.name)) {
-          return yield* Effect.die(new Error(`Unregistered Scient tool definition: ${tool.name}`));
+    // Outermost, so a call the guard refuses is recorded as a failure too, as for T3's tools.
+    withToolAnalytics(
+      Effect.gen(function* () {
+        for (const tool of Object.values(toolkit.tools)) {
+          if (tool !== scientTools.find((registered) => registered.name === tool.name)) {
+            return yield* Effect.die(
+              new Error(`Unregistered Scient tool definition: ${tool.name}`),
+            );
+          }
         }
-      }
-      const server = yield* McpServer.McpServer;
-      const resolver = yield* WorkspaceBindingResolver;
-      const guarded = McpServer.McpServer.of({
-        ...server,
-        addTool: Effect.fn("McpServer.addTool")(function (registration) {
-          const operation = scientOperationCatalog.forTool(registration.tool.name);
-          if (!operation)
-            return Effect.die(new Error(`Unregistered Scient tool: ${registration.tool.name}`));
-          return server.addTool({
-            ...registration,
-            handle: (payload) =>
-              Effect.withFiber((fiber) =>
-                Effect.gen(function* () {
-                  const scope = yield* McpInvocationContext.requireThreadScope(
-                    Context.getUnsafe(fiber.context, McpInvocationContext.McpInvocationContext),
-                    operation.id,
-                  );
-                  const invocation = scientInvocationForMcp(scope);
-                  return yield* dispatchScientOperation(
-                    operation.id,
-                    registration.handle(payload),
-                  ).pipe(
-                    Effect.map(liftScientToolImages),
-                    Effect.provideService(WorkspaceBindingResolver, resolver),
-                    Effect.provideService(AgentInvocationContext, invocation),
-                    Effect.catchTags({
-                      AgentOperationUnavailable: (error) =>
-                        Effect.succeed(
-                          new McpSchema.CallToolResult({
-                            isError: true,
-                            content: [{ type: "text", text: error.message }],
-                          }),
-                        ),
-                      AgentWorkspaceError: (error) =>
-                        Effect.succeed(
-                          new McpSchema.CallToolResult({
-                            isError: true,
-                            content: [{ type: "text", text: error.message }],
-                          }),
-                        ),
-                    }),
-                  );
-                }),
-              ).pipe(
-                Effect.catchTags({
-                  OrchestratorMcpFailure: (error) =>
-                    Effect.succeed(
-                      new McpSchema.CallToolResult({
-                        isError: true,
-                        content: [{ type: "text", text: error.message }],
+        const server = yield* McpServer.McpServer;
+        const resolver = yield* WorkspaceBindingResolver;
+        const guarded = McpServer.McpServer.of({
+          ...server,
+          addTool: Effect.fn("McpServer.addTool")(function (registration) {
+            const operation = scientOperationCatalog.forTool(registration.tool.name);
+            if (!operation)
+              return Effect.die(new Error(`Unregistered Scient tool: ${registration.tool.name}`));
+            return server.addTool({
+              ...registration,
+              handle: (payload) =>
+                Effect.withFiber((fiber) =>
+                  Effect.gen(function* () {
+                    const scope = yield* McpInvocationContext.requireThreadScope(
+                      Context.getUnsafe(fiber.context, McpInvocationContext.McpInvocationContext),
+                      operation.id,
+                    );
+                    const invocation = scientInvocationForMcp(scope);
+                    return yield* dispatchScientOperation(
+                      operation.id,
+                      registration.handle(payload),
+                    ).pipe(
+                      Effect.map(liftScientToolImages),
+                      Effect.provideService(WorkspaceBindingResolver, resolver),
+                      Effect.provideService(AgentInvocationContext, invocation),
+                      Effect.catchTags({
+                        AgentOperationUnavailable: (error) =>
+                          Effect.succeed(
+                            new McpSchema.CallToolResult({
+                              isError: true,
+                              content: [{ type: "text", text: error.message }],
+                            }),
+                          ),
+                        AgentWorkspaceError: (error) =>
+                          Effect.succeed(
+                            new McpSchema.CallToolResult({
+                              isError: true,
+                              content: [{ type: "text", text: error.message }],
+                            }),
+                          ),
                       }),
-                    ),
-                }),
-              ),
-          });
-        }),
-      });
-      yield* withAdvertisedSchemas(toolkit, registerRequestToolkit(toolkit)).pipe(
-        Effect.provideService(McpServer.McpServer, guarded),
-      );
-    }),
+                    );
+                  }),
+                ).pipe(
+                  Effect.catchTags({
+                    OrchestratorMcpFailure: (error) =>
+                      Effect.succeed(
+                        new McpSchema.CallToolResult({
+                          isError: true,
+                          content: [{ type: "text", text: error.message }],
+                        }),
+                      ),
+                  }),
+                ),
+            });
+          }),
+        });
+        yield* withAdvertisedSchemas(toolkit, registerRequestToolkit(toolkit)).pipe(
+          Effect.provideService(McpServer.McpServer, guarded),
+        );
+      }),
+    ),
   );
 // SCIENT-FORK:END
 
@@ -1187,7 +1193,9 @@ const withToolAnalytics =
           const outcome = toolOutcome(result);
           // Agents call status, read, and preview tools in tight loops, so an
           // event per successful call floods analytics. Only failures count there.
-          if (!handoff && outcome.outcome === "ok") return;
+          // SCIENT-FORK:START — Scient's tools that do work count every call
+          if (!handoff && outcome.outcome === "ok" && !SCIENT_ACTION_TOOLS.has(tool)) return;
+          // SCIENT-FORK:END
           // Client credentials (no calling thread) report an unknown caller.
           const invocation = Option.getOrUndefined(
             yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),

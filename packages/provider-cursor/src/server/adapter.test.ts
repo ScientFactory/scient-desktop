@@ -430,6 +430,46 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      reason: "the usage of each model turn Cursor reported",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        {
+          type: "turn-ended",
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 900, cacheWriteTokens: 50 },
+        },
+        { type: "text-delta", text: "Done." },
+        {
+          type: "turn-ended",
+          usage: {
+            inputTokens: 10,
+            outputTokens: 30,
+            cacheReadTokens: 1_000,
+            cacheWriteTokens: 0,
+            reasoningTokens: 5,
+          },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+      turnTokenUsage: {
+        usageScope: "main_agent" as const,
+        usageStatus: "complete" as const,
+        hasSubagents: false,
+        inputTokens: 1_050 + 1_010,
+        outputTokens: 50,
+        cachedInputTokens: 1_900,
+        cacheCreationTokens: 50,
+        requests: 2,
+        failedRequests: 0,
+      },
+    },
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
@@ -444,7 +484,7 @@ describe("CursorAdapterV2", () => {
       failure: null,
       answers: [],
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers }) =>
+  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, turnTokenUsage }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -544,6 +584,16 @@ describe("CursorAdapterV2", () => {
       assert.equal(terminal?.status, failure === null ? "completed" : "failed");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
+      if (turnTokenUsage !== undefined) {
+        const turn = events.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+        );
+        assert.deepStrictEqual(
+          turn?.type === "provider_turn.updated" ? turn.providerTurn.turnTokenUsage : undefined,
+          turnTokenUsage,
+        );
+      }
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>

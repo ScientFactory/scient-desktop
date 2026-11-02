@@ -1,4 +1,7 @@
 import { type OrchestrationV2Command, WS_METHODS } from "@t3tools/contracts";
+// SCIENT-FORK:START — Scient's own features
+import { scientFeatureUsage } from "./ScientFeatureUsage.ts";
+// SCIENT-FORK:END
 
 export interface FeatureUsage {
   readonly feature: string;
@@ -87,5 +90,9 @@ export function commandFeatureUsage(command: OrchestrationV2Command): FeatureUsa
 /** The feature a WebSocket request uses, or undefined when it is not a tracked feature. */
 export function featureUsage(method: string, payload: unknown): FeatureUsage | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
-  return METHOD_FEATURES[method]?.(payload as Payload);
+  // SCIENT-FORK:START — Scient's own features
+  return (
+    METHOD_FEATURES[method]?.(payload as Payload) ?? scientFeatureUsage(method, payload as Payload)
+  );
+  // SCIENT-FORK:END
 }
