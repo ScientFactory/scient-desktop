@@ -47,8 +47,9 @@ push URL remains `DISABLED`.
 ## Analytics
 
 `provider.request.completed` and `provider.turn.completed` gain `serviceTier` in upstream's code.
-Scient's analytics contract does not name it, so it is dropped locally until a contract revision
-and gateway update add it. Nothing new leaves the machine.
+Since main's contract revision 10 (#743), Scient sends fields its normalizers do not read as
+recorded, as T3 does, so `serviceTier` is sent with these events. It is a closed value such as
+`fast` or `standard`.
 
 ## Migrations
 
@@ -57,7 +58,8 @@ None.
 ## Verification
 
 Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state, after merging owned main
-`ca47caf4f7` (#735).
+`ca47caf4f7` (#735). Main's later merges (#738, #740, #743, #745) merged without conflict; after
+them, typecheck and the analytics, Cursor and Claude tests were rerun.
 
 Lockfile `hasBin` markers: 125, as on main. Formatting, lint, `knip:check` and every package's
 typecheck pass. Brand, seam and provenance pass. Server (14,197), web (14,555), desktop (1,477),
