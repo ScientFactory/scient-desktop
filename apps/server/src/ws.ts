@@ -3950,6 +3950,7 @@ export const layerWsRpc = (
             paperForSource: accountUserRuns.paperForSource,
             plainKeys: accountPlainKeys,
             linkKey: linkAccountKey,
+            preview: previewManager,
           }),
         ),
         // SCIENT-FORK:END

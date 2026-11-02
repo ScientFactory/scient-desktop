@@ -153,6 +153,8 @@ default profile when the agent names none (the built-in default if a cold browse
 inventory yet). Existing-tab actions recheck global access, profile Off
 and project scope without prompting; Ask approval is decided at open. Status also omits denied tabs
 and clears current-page metadata when the current tab is denied.
+`scient_preview_list` omits the same tabs, by the same rule.
+`scient_preview_close` refuses a tab in a profile the session may not see.
 
 The server cannot enumerate profiles kept in a client's settings. `forSession(scope, profileIds)`
 accepts the preview inventory's ids so profiles without records receive the same defaults; its

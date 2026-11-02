@@ -18,6 +18,7 @@ import { messagesReadable } from "./signIn/messageCodes.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
+import type { PreviewManager } from "../../preview/Manager.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
 
 const isAccountsError = Schema.is(AccountsError);
@@ -30,6 +31,7 @@ export const makeAccountsRpcHandlers = ({
   linkKey,
   paperForSource,
   plainKeys,
+  preview,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
   readonly check: (
@@ -48,6 +50,8 @@ export const makeAccountsRpcHandlers = ({
       roots: ReadonlyArray<string>,
     ) => Effect.Effect<void, AccountsError>;
   };
+  /** Finds who controls a tab before autofill hands it a password. */
+  readonly preview: Pick<PreviewManager["Service"], "list">;
 }) => {
   const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
@@ -233,7 +237,27 @@ export const makeAccountsRpcHandlers = ({
     [WS_METHODS.accountsFillValues]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsFillValues,
-        accounts.fillValues(input.accountId, input.origin, input.tab),
+        Effect.gen(function* () {
+          // A page an agent controls can read what is filled: refuse when agent access or the
+          // account is off. The user's own tabs fill regardless.
+          const tab = input.tab;
+          if (tab) {
+            const { sessions } = yield* preview.list({ threadId: tab.threadId });
+            const agentTab = sessions.some(
+              (session) => session.tabId === tab.tabId && session.automationOwner !== undefined,
+            );
+            if (agentTab) {
+              const snapshot = yield* accounts.snapshot;
+              const account = snapshot.accounts.find((item) => item.accountId === input.accountId);
+              if (!snapshot.agentAccess || account?.controls.access === "off")
+                return yield* new AccountsError({
+                  reason: "denied",
+                  message: "This account is unavailable to the agent controlling this tab.",
+                });
+            }
+          }
+          return yield* accounts.fillValues(input.accountId, input.origin, input.tab);
+        }),
         attributes,
       ),
   });
