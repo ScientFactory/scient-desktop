@@ -148,6 +148,8 @@ export const AccountSecretSummary = Schema.Struct({
   copies: Schema.optional(Schema.Array(AccountValueSource)),
   /** Last four characters of a token-like value held by Scient; never for passwords. */
   hint: Schema.optional(Schema.String.check(Schema.isMaxLength(4))),
+  /** Passwords only: when a sign-in with this value last worked. A new value starts without it. */
+  verifiedAt: Schema.optional(IsoDateTime),
 });
 export type AccountSecretSummary = typeof AccountSecretSummary.Type;
 

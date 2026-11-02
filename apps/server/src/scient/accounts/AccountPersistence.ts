@@ -130,7 +130,19 @@ const foldSignInFields = (summary: Record<string, unknown>) => {
       : outcome
         ? { state: outcome === "needs-user" ? "needs-you" : outcome, at: rest["updatedAt"] }
         : undefined;
-  return signIn ? { ...rest, signIn } : rest;
+  // A sign-in that worked was a fact about the saved password; it now lives on the password.
+  const secrets = rest["secrets"] as Record<string, object> | undefined;
+  const password = secrets?.["password"];
+  const verified =
+    outcome === "signed-in" && password
+      ? {
+          secrets: {
+            ...secrets,
+            password: { ...password, verifiedAt: check?.at ?? rest["updatedAt"] },
+          },
+        }
+      : {};
+  return signIn ? { ...rest, ...verified, signIn } : { ...rest, ...verified };
 };
 
 /** Older stored shapes, read as today's before decoding. */

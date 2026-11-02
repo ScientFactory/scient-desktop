@@ -4,12 +4,12 @@ import {
   type AccountId,
   type AccountSummary,
 } from "@t3tools/contracts";
+import { signedInMomentsAgo } from "./AccountDecisions.ts";
 
 /**
- * Website sign-ins whose session is gone from the browser's cookies, to be recorded as signed out.
- * Cookie presence is evidence only of a possible session; absence is meaningful after prior use:
- * an account last signed in, or one whose cookies this source was seen to hold while nothing else
- * was known. Once recorded, an account no longer qualifies, so repeated snapshots write nothing.
+ * Sign-ins whose cookies are gone, to record as signed out: one last signed in, or unknown after
+ * this source saw its cookies. A recorded one no longer qualifies. One signed in moments ago is
+ * skipped: the cookies may predate that sign-in, and recording would make it `needs-you`.
  */
 export function endedWebsiteSessions(
   accounts: ReadonlyArray<AccountSummary>,
@@ -59,6 +59,7 @@ export function endedWebsiteSessions(
     const state = account.signIn?.state;
     const ended =
       !sessionPresent &&
+      !signedInMomentsAgo(account, now) &&
       (state === "signed-in" ||
         (sourceId !== undefined &&
           observed.has(key) &&

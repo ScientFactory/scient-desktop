@@ -234,6 +234,18 @@ describe("stored accounts from before one sign-in state", () => {
       updatedAt,
       signIn: { state: "failed", at, detail: "Refused." },
     });
+    const password = { source: { type: "scient" } };
+    expect(
+      fold({
+        secrets: { password },
+        lastSignInOutcome: "signed-in",
+        lastCheck: { state: "signed-out", at },
+      }),
+    ).toEqual({
+      updatedAt,
+      secrets: { password: { ...password, verifiedAt: at } },
+      signIn: { state: "signed-out", at },
+    });
     expect(fold({ lastSignInOutcome: "needs-user" })).toEqual({
       updatedAt,
       signIn: { state: "needs-you", at: updatedAt },

@@ -453,8 +453,9 @@ account with a saved password gets one unattended sign-in, only if the last one 
 tried: one that needed the user or failed would do the same with nobody there. A whole
 run skips imported passwords with no history and stops at 40 accounts.
 
-Autofill submits only on the user's own tab, when the site has one saved sign-in whose state is
-`signed-in` or `signed-out`, at most once per site every 10 minutes, and only a complete form.
+Autofill submits only on the user's own tab, when the site has one saved sign-in whose password
+has worked (`verifiedAt` on the password, set by a sign-in that ended signed in and cleared by a new
+password), at most once per site every 10 minutes, and only a complete form.
 
 Google answers for itself. `googleSessions` (desktop) posts to the account list Chrome reads, with
 the profile's own session and no page, and `watchGoogleSessions`, started by `accountWatchers.ts`, sends the

@@ -101,9 +101,10 @@ export function watchAccountAutofill(
       matches.length === 1 &&
       account.details.kind === "website" &&
       (account.details.profileId ?? form.profileId) === form.profileId &&
-      // Signed in before, by Scient or as last seen, with nothing since but the session ending.
-      (account.signIn?.state === "signed-in" || account.signIn?.state === "signed-out") &&
-      account.secrets.password !== undefined &&
+      account.secrets.password?.verifiedAt !== undefined &&
+      account.signIn?.state !== "password-rejected" &&
+      account.signIn?.state !== "code-rejected" &&
+      account.signIn?.state !== "limited" &&
       isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
     if (submit) signedBackIn.set(form.url, Date.now());

@@ -86,6 +86,12 @@ const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId
     const { profileId: _, ...rest } = details;
     return [{ ...account, summary: { ...account.summary, details: rest } }];
   });
+/** The secrets with the saved password, if any, marked as having just worked. */
+const verifiedPassword = (secrets: AccountSummary["secrets"], at: string) => {
+  const password = secrets["password"];
+  return password ? { ...secrets, password: { ...password, verifiedAt: at } } : secrets;
+};
+
 const valueName = () => `accounts-value-${NodeCrypto.randomUUID()}`;
 const decodeSave = Schema.decodeEffect(AccountSaveInput);
 const decodeMatch = Schema.decodeEffect(AccountMatchSignInInput);
@@ -1448,7 +1454,13 @@ export const layer = Layer.effect(
                     ...account,
                     summary: entry.signInOutcome
                       ? withSignIn(
-                          { ...account.summary, lastUsedAt: at },
+                          {
+                            ...account.summary,
+                            lastUsedAt: at,
+                            ...(entry.signInOutcome === "signed-in"
+                              ? { secrets: verifiedPassword(account.summary.secrets, at) }
+                              : {}),
+                          },
                           {
                             state: outcomeSignInState(entry.signInOutcome),
                             at,

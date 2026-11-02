@@ -14,7 +14,7 @@ const account: AccountSummary = {
   status: "ready",
   createdAt: "2026-10-26T00:00:00.000Z",
   updatedAt: "2026-10-26T00:00:00.000Z",
-  signIn: { state: "signed-in", at: "2026-10-26T00:00:00.000Z" },
+  signIn: { state: "signed-in", at: "1970-01-01T00:00:00.000Z" },
 };
 const now = 2_000_000;
 it("requires metadata for the account profile and excludes expired and unrelated cookies", () => {
@@ -23,6 +23,14 @@ it("requires metadata for the account profile and excludes expired and unrelated
   expect(check([])).toBe(false);
   expect(check([{ profileId: "default", cookies: [] }])).toBe(false);
   expect(check([{ profileId: "work", cookies: [] }])).toBe(true);
+  // Cookies read before a sign-in moments ago say nothing about it.
+  const justSignedIn = {
+    ...account,
+    signIn: { state: "signed-in" as const, at: "1970-01-01T00:32:20.000Z" },
+  };
+  expect(
+    endedWebsiteSessions([justSignedIn], [{ profileId: "work", cookies: [] }], new Set(), now),
+  ).toEqual([]);
   expect(
     check([{ profileId: "work", cookies: [{ domain: "login.example.com", expires: now / 1000 }] }]),
   ).toBe(true);
