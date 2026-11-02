@@ -135,7 +135,7 @@ const passThroughCases = [
   },
   {
     name: "feature.used",
-    properties: { feature: "overleaf.sync", surface: "desktop", outcome: "ok", durationMs: 840 },
+    properties: { feature: "overleaf.sync", outcome: "ok", durationMs: 840 },
   },
   {
     name: "provider.turn.completed",
@@ -160,6 +160,8 @@ const passThroughCases = [
       interactionMode: "default",
       createdBy: "user",
       creationSource: "new",
+      scheduled: false,
+      subagent: false,
     },
   },
   // T3's request summary has no Scient normalizer at all.
@@ -172,6 +174,12 @@ const passThroughCases = [
       terminalStatus: "completed",
       lifecycleObserved: true,
       model: "gpt-5.6-sol",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+      creationSource: "new",
+      scheduled: false,
+      subagent: false,
       providerTurns: 1,
       continuations: 0,
       steeringRestarts: 0,
@@ -184,6 +192,7 @@ const passThroughCases = [
       estimatedCostUsd: 0.0042,
       modelDurationMs: 2300,
       nativeChildTurns: 0,
+      childUsageStatus: "none",
     },
   },
 ] as const;
