@@ -232,7 +232,11 @@ describe("MessagesTimeline work rows", () => {
           ...Array.from({ length: 12 }, (_, index) =>
             message(`Earlier context ${index}`, {}, `context-${index}`),
           ),
-          message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+          // SCIENT-FORK:START — a long answer stays visible in Scient; short progress notes fold.
+          ...Array.from({ length: 40 }, (_, index) =>
+            message(`Progress ${index}`, { role: "assistant", runId }, `progress-${index}`),
+          ),
+          // SCIENT-FORK:END
           message("Done", { role: "assistant", runId }, "final"),
         ]}
       />,

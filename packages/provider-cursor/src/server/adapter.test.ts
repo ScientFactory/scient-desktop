@@ -1955,7 +1955,17 @@ describe("CursorAdapterV2", () => {
       if (Option.isSome(terminal)) assert.equal(terminal.value.status, "completed");
       assert.lengthOf(opened, 1);
       assert.lengthOf(sent, 1);
-      assert.notProperty(sent[0]?.options ?? {}, "mcpServers");
+      // Send-level servers replace only the create-time set (SDK >= 1.0.39), so the
+      // current owned credential rides on each send.
+      if (mode === "present")
+        assert.deepEqual(sent[0]?.options?.mcpServers, {
+          scient: {
+            type: "http",
+            url: sendCredential.endpoint,
+            headers: { Authorization: sendCredential.authorizationHeader },
+          },
+        });
+      else assert.notProperty(sent[0]?.options ?? {}, "mcpServers");
       assert.deepEqual(
         opened[0]?.options.mcpServers,
         mode === "present"
