@@ -474,6 +474,7 @@ describe("IdleCompactionService", () => {
               ...DEFAULT_SERVER_SETTINGS,
               idleCompaction: "beforeCacheExpires",
             }),
+            committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
           }),
         );
         yield* Effect.gen(function* () {

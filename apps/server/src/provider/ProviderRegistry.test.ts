@@ -2949,6 +2949,7 @@ it.layer(
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
               PubSub.subscribe(pubsub),
             ),
+            rebuildInstance: () => Effect.die("Unexpected instance rebuild in this fixture"),
           },
         );
         const writeStarted = yield* Deferred.make<void>();
