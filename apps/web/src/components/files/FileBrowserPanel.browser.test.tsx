@@ -42,7 +42,12 @@ vi.mock("~/state/queries", () => ({
     refresh: files.refresh,
   }),
 }));
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+// SCIENT-FORK:START — the file actions reach modules that read the theme's other exports
+vi.mock("~/hooks/useTheme", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useTheme")>()),
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
+// SCIENT-FORK:END
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
 vi.mock("~/composerHandleContext", () => ({ useComposerHandleContext: () => null }));
 vi.mock("~/fileContextMenu", () => ({
