@@ -652,6 +652,14 @@ statistics commands degrade without preventing ordinary turns on older agents.
 `/compact` uses the native compact command and shared compaction item. Notices, persistence
 errors, extension notifications, retry progress and fallback models use shared notice/error
 items; process loss includes the observed exit code and a bounded, redacted stderr tail.
+Scient tools register with `strict: false`, as the agent's own MCP tools do: a strict grammar makes
+OpenAI models fill optional fields, which turned an empty `session` into an invented one and a `url`
+into a page target. Scient Agent gets `SCIENT_AGENT_HOST_PAGES=1`, so `/stats` reports an address
+instead of opening the system browser, and `<root>/agent/sessions` links to Scient's session folder
+so the dashboard counts its conversations. A local command's output precedes its reply on the wire
+but runs through the event queue, so the turn settles after that queue. An `ask` call is one
+`user_input_request`; a `manual_compaction_end` with `skipped` is a notice, not a failed turn.
+
 Native todo phases project to the shared read-only todo list. Select dialogs accept offered
 labels, editor dialogs retain their initial text, and the existing dialog text shows timeouts;
 the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No only.

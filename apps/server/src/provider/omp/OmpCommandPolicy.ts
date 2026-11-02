@@ -42,6 +42,9 @@ const OMP_QUALIFIED_COMMANDS = [
   "tools",
   "todo",
   "changelog",
+  "memory",
+  "dirs",
+  "plugins",
   // These start the local dashboard and report its address.
   "stats",
   "trace",

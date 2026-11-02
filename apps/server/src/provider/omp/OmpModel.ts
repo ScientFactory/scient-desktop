@@ -33,7 +33,7 @@ export const decodeOmpModelSlug = (
  * Whether `set_fast_mode` can change this model's serving tier. A reported tier
  * list decides; without one the agent still offers it to OpenAI's own providers.
  */
-export const ompModelSupportsFastMode = (model: OmpRpcModel): boolean => {
+const ompModelSupportsFastMode = (model: OmpRpcModel): boolean => {
   if (model.serviceTiers && model.serviceTiers.length > 0)
     return model.serviceTiers.includes("priority");
   return (

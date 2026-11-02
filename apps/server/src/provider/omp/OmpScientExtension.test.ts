@@ -18,6 +18,7 @@ type ToolResult = { readonly content: ReadonlyArray<Content>; readonly details: 
 type RegisteredTool = {
   readonly name: string;
   readonly loadMode?: string;
+  readonly strict?: boolean;
   readonly execute: (id: string, args: unknown) => Promise<ToolResult>;
 };
 type Handler = (event: never) => unknown;
@@ -122,6 +123,7 @@ describe("Scient's Oh My Pi extension", () => {
 
     expect(NodeFS.existsSync(extension.bootstrapPath)).toBe(false);
     expect(host.tools.get("scient_fixture")?.loadMode).toBe("essential");
+    expect(host.tools.get("scient_fixture")?.strict).toBe(false);
     expect(requests[0]?.body.params?.clientInfo?.name).toBe("scient-omp");
     const result = await host.tools.get("scient_fixture")!.execute("call-1", {});
     expect(result.content).toEqual([{ type: "text", text: "ok" }]);
