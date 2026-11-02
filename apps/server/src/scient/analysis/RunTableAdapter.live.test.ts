@@ -142,12 +142,6 @@ describe("the real-file programs", () => {
   });
 });
 
-/**
- * A compiler's first run on a fresh computer: runghc and `dotnet run` take up to two minutes on
- * GitHub's Windows machines, where the project's two-minute ceiling cut them off.
- */
-const FIRST_RUN_MS = 5 * 60_000;
-
 const Live = executionProcessLayer.pipe(Layer.provideMerge(NodeServices.layer));
 
 /** Starts one step the way Run does, and returns its exit code with everything it printed. */
@@ -251,7 +245,6 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           }
           expect(output).toContain(prints);
         }).pipe(Effect.provide(Live)),
-      FIRST_RUN_MS,
     );
   }
 });

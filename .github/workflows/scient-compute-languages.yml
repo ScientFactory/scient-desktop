@@ -91,7 +91,9 @@ jobs:
         working-directory: apps/server
         env:
           SCIENT_TEST_RUN_TABLE: "1"
-        run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1
+        # A compiler's first run on a fresh computer, such as runghc or `dotnet run` on Windows, takes up
+        # to two minutes, the project's ceiling, so real programs get five.
+        run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
 
       - name: Languages not installed
         if: ${{ !cancelled() && env.SCIENT_RUN_LANGUAGES_NOT_INSTALLED != '' }}

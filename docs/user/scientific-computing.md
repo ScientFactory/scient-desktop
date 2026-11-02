@@ -224,6 +224,9 @@ computer came with and a newer one is installed. `JAVA_HOME` chooses Java. A cho
 page outranks all of these. C++ builds to the newest standard your compiler knows and Rust to edition 2021. A file type two languages share goes to the first of them on this computer: `.m` to MATLAB, then
 Octave; `.gp` to gnuplot, then PARI/GP; `.v` to Rocq, then Verilog; and `.pro` to IDL, then Prolog. A
 `.sql` file that uses sqlite3's dot commands, such as `.bail on`, runs with `sqlite3` when it is here.
+A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
+NetLogo runs nothing else without its window; save an experiment in the model to run it. A run gets
+no typed input, so a tool that waits at a prompt after its file exits instead.
 
 The output fills the pane. A file shows only **Run** until it has a result; then **Code**, **Split**
 and **Results** appear, and reopening the file brings its last run back. Each `file:line` in the
