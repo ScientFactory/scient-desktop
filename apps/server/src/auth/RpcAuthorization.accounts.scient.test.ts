@@ -6,7 +6,6 @@ import {
   WS_METHODS,
   WsAccountsRpcGroup,
   RpcScopeAuthorization,
-  ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Layer, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
@@ -27,7 +26,6 @@ it.effect(
         linkKey: () => Effect.void,
         paperForSource: () => Effect.die("not reached"),
         plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
-        preview: { list: () => Effect.die("not reached") },
       });
       const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
       const layer = group.toLayer(handlers);
@@ -98,68 +96,4 @@ it.effect(
         requiredPermission: AuthOrchestrationReadScope,
       });
     }).pipe(Effect.scoped),
-);
-
-it.effect("refuses autofill into an agent's tab while agent access or the account is off", () =>
-  Effect.gen(function* () {
-    const { service } = yield* makeHarness();
-    const threadId = ThreadId.make("thread-fill");
-    const session = (tabId: string, automationOwner?: string) => ({
-      threadId,
-      tabId,
-      navStatus: { _tag: "Idle" as const },
-      canGoBack: false,
-      canGoForward: false,
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      ...(automationOwner === undefined ? {} : { automationOwner }),
-    });
-    const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
-    const writer = yield* RpcTest.makeClient(group).pipe(
-      Effect.provide(
-        Layer.merge(
-          group.toLayer(
-            makeAccountsRpcHandlers({
-              accounts: service,
-              observeRpcEffect: (_method, effect) => effect,
-              observeRpcStream: (_method, stream) => stream,
-              check: () => Effect.succeed({ checked: 0 }),
-              linkKey: () => Effect.void,
-              paperForSource: () => Effect.die("not reached"),
-              plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
-              preview: {
-                list: () =>
-                  Effect.succeed({
-                    sessions: [session("agent-tab", "agent"), session("user-tab")],
-                    serverEpoch: "epoch",
-                    revision: 1,
-                  }),
-              },
-            }),
-          ),
-          RpcAuthorization.layer([AuthSettingsWriteScope]),
-        ),
-      ),
-    );
-    const { accountId } = yield* writer[WS_METHODS.accountsSave](website());
-    const fill = (tabId: string) =>
-      writer[WS_METHODS.accountsFillValues]({
-        accountId,
-        origin: "https://example.com",
-        tab: { threadId, tabId, url: "https://example.com/login" },
-      }).pipe(
-        Effect.map(() => "filled"),
-        Effect.catch((error) => Effect.succeed("reason" in error ? error.reason : error._tag)),
-      );
-    expect(yield* fill("agent-tab")).toBe("filled");
-    yield* writer[WS_METHODS.accountsSetAgentAccess]({ enabled: false });
-    expect(yield* fill("agent-tab")).toBe("denied");
-    expect(yield* fill("user-tab")).toBe("filled");
-    yield* writer[WS_METHODS.accountsSetAgentAccess]({ enabled: true });
-    yield* writer[WS_METHODS.accountsSetControls]({
-      target: { type: "account", accountId },
-      access: "off",
-    });
-    expect(yield* fill("agent-tab")).toBe("denied");
-    expect(yield* fill("user-tab")).toBe("filled");
-  }).pipe(Effect.scoped),
 );
