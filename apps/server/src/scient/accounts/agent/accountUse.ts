@@ -53,7 +53,7 @@ export const accountUsage = (account: AccountSummary) =>
         ...(account.details.kind === "api-key" && account.details.sites.length > 0
           ? ["scient_account_request"]
           : []),
-        ...(["website", "library"].includes(account.details.kind)
+        ...(account.details.kind === "website"
           ? ["scient_account_sign_in", "scient_account_fill", "scient_account_browser_session"]
           : []),
       ];

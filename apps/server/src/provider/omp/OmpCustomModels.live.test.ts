@@ -390,9 +390,12 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
               (file) =>
                 !file.startsWith(ompQualifyLogsDir) &&
                 !(
-                  file.startsWith(
+                  (file.startsWith(
                     NodePath.join("state", `${ompQualifyTarget.stateNamespace}-sessions`),
-                  ) && file.endsWith(".jsonl")
+                  ) ||
+                    // The same transcripts, through the stats dashboard's link.
+                    file.startsWith(NodePath.join("home", "agent", "sessions"))) &&
+                  file.endsWith(".jsonl")
                 ),
             ),
           ).toEqual([]);

@@ -12,6 +12,9 @@ describe("Oh My Pi command policy", () => {
 
   it("advertises useful commands and hides session mutators", () => {
     expect(catalog.advertised.map((command) => command.name)).toEqual(["help", "compact"]);
+    expect(compileOmpCommandCatalog([{ name: "tools", source: "builtin" }]).advertised).toEqual([
+      { name: "tools" },
+    ]);
     expect(ompCommandDecision("/help the patch", catalog)).toBe("allowed");
     expect(ompCommandDecision("/h", catalog)).toBe("allowed");
     expect(ompCommandDecision("/compact", catalog)).toBe("allowed");

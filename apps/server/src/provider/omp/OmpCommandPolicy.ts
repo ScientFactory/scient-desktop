@@ -19,7 +19,6 @@ const OMP_SESSION_MUTATOR_COMMANDS = [
   "provider",
   "thinking",
   "fast",
-  "tools",
   "config",
   "settings",
   "permissions",
@@ -31,7 +30,24 @@ const OMP_SESSION_MUTATOR_COMMANDS = [
  * Discovery is not permission: an extension, skill, or user command is not
  * trusted merely because OMP reports it.
  */
-const OMP_QUALIFIED_COMMANDS = ["help", "status", "compact"] as const;
+const OMP_QUALIFIED_COMMANDS = [
+  "help",
+  "status",
+  "compact",
+  // Read-only reports, verified over RPC against Scient Agent 0.1.4 (Oh My Pi 18.15.0).
+  "jobs",
+  "usage",
+  "context",
+  "tools",
+  "todo",
+  "changelog",
+  "memory",
+  "dirs",
+  "plugins",
+  // These start the local dashboard and report its address.
+  "stats",
+  "trace",
+] as const;
 
 const mutators = new Set<string>(OMP_SESSION_MUTATOR_COMMANDS);
 const qualified = new Set<string>(OMP_QUALIFIED_COMMANDS);

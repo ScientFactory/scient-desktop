@@ -619,6 +619,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`30654b3e91a51937d1dba18fc83af19d8003f5ca` is recorded in
+[the 2026-11-02 30654b3e91 receipt](docs/internals/t3-upstream-sync-20261102-30654b3e91.md).
+Literal merge `139e5d022ca11bc89ea6467a6b8f3200b5618643` has owned base
+`2b4a4d046df9780c45eaac97bff76613c03a876e` (#736's head) and the frozen official target as parents,
+retaining the 26 official commits after `fa31b66bbb`. Codex's direct thread wait uses Scient's
+server and tool names, Claude identifies itself as Scient, and the managed Antigravity runtime
+moves to 1.4.5. T3's migration 77 lands as 81. Release remains separate.
+
+The previous committed alignment through
 `fa31b66bbb2ae5234205a8628a78e038d917202f` is recorded in
 [the 2026-11-02 fa31b66bbb receipt](docs/internals/t3-upstream-sync-20261102-fa31b66bbb.md).
 Literal merge `7518e02f8c3e20d5460b8383179f7898bb59bd6d` has owned base
@@ -627,7 +636,7 @@ retaining the 144 official commits after `3fd2b855c5`. Upstream's managed policy
 locations and reaches Scient's analytics and new-thread Permissions menu. No migrations. Release
 remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `3fd2b855c5c6b9169cdfe3733b34011c1c5ed4b7` is recorded in
 [the 2026-11-01 3fd2b855c5 receipt](docs/internals/t3-upstream-sync-20261101-3fd2b855c5.md).
 Literal merge `0d9cd9f9230386269d31f16a76e7e451f60e0ec8` has owned base

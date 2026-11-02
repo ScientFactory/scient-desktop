@@ -1,250 +1,224 @@
 import {
   AccountsError,
-  ThreadId,
   type AccountPaperForSourceInput,
   type EnvironmentId,
+  type PaperAsked,
+  type PaperItemState,
+  type PreviewAutomationStatus,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Random from "effect/Random";
-import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
+import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../operations/AgentWorkspaceScope.ts";
+import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
+import { authorizationDecision } from "../accounts/AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
-import { userRunInvocation } from "../accounts/checkAccounts.ts";
-import { attachSourcePdf } from "../sources/ScientSourcesCoordinator.ts";
-import { withAccountUse } from "../accounts/agent/accountUse.ts";
+import { authorize } from "../accounts/agent/accountUse.ts";
+import { authorizePreviewProfile } from "../accounts/agent/previewProfileAccess.ts";
 import { accountSessionScope } from "../accounts/agent/scope.ts";
-import { fetchThroughLibrary } from "./libraryFetch.ts";
-import { lookUpPaper, openAccessPdf, paperFileName, type Paper } from "./paperLookup.ts";
+import { universitiesOf, universityDetails } from "@t3tools/shared/scientPaperLinks";
+import {
+  continuePapers,
+  listPapers,
+  paperQueueRunning,
+  requestPapers,
+  resumePapers,
+  waitForPaper,
+  waitingPaperRoots,
+  type PaperRequester,
+} from "./paperQueue.ts";
+
+/** Long enough for a paper at a free publisher; a slower one stays queued and is reported later. */
+const ONE_PAPER_WAIT = "150 seconds";
+
+const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 
 /**
- * Libraries suspend access that looks like bulk downloading, so library fetches run one at a
- * time on this server, a short random pause apart, and at most this many a day.
+ * An agent's request is decided here, once: its session's access to the browser profile and to
+ * each saved sign-in. What it may use travels with its papers, which keep going after its turn.
  */
-const LIBRARY_DAILY_LIMIT = 100;
-const LIBRARY_PAUSE_MS = { min: 10_000, max: 20_000 };
-const library = Semaphore.makeUnsafe(1);
-const isAccountsError = Schema.is(AccountsError);
-const GET_PDF_THREAD = ThreadId.make("scient-paper-get");
-const userRunScope: AccountSessionScope = {
-  threadId: GET_PDF_THREAD,
-  projectId: undefined,
-  unattended: true,
-};
-let lastLibraryFetch = 0;
-const fetchesByDay = new Map<string, number>();
+const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
+  const scope: AccountSessionScope = yield* accountSessionScope();
+  const invocation = yield* AgentInvocationContext;
+  const accounts = yield* AccountsService;
+  const broker = yield* PreviewAutomationBroker;
+  const session = yield* accounts.forSession(scope);
+  const allowed = session.accounts.filter(
+    (account) =>
+      authorizationDecision(session.agentAccess, account.controls, scope).decision !== "denied",
+  );
+  const browserStatus =
+    session.agentAccess && invocation.capabilities.has("preview")
+      ? yield* broker
+          .invoke<PreviewAutomationStatus>({ scope: invocation, operation: "status", input: {} })
+          .pipe(Effect.option)
+      : Option.none<PreviewAutomationStatus>();
+  /** Reaching a page follows the browser profile; signing in follows the account. */
+  const mayBrowse = (profileId: string | undefined) =>
+    Option.isSome(browserStatus)
+      ? authorizePreviewProfile(scope, browserStatus.value, {
+          url: "https://doi.org/",
+          reuseExistingTab: false,
+          open: false,
+          ...(profileId === undefined ? {} : { profileId }),
+        }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        )
+      : Effect.succeed(false);
+  const universities = yield* Effect.filter(universitiesOf(allowed), (account) =>
+    mayBrowse(universityDetails(account.details)?.profileId).pipe(
+      Effect.flatMap((allowedHere) =>
+        allowedHere
+          ? authorize(scope, { type: "account", accountId: account.accountId }, "sign-in").pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            )
+          : Effect.succeed(false),
+      ),
+    ),
+  );
+  for (const university of universities)
+    yield* accounts.recordUse({
+      target: { type: "account", accountId: university.accountId },
+      action: "sign-in",
+      threadId: scope.threadId,
+      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
+      outcome: "ok",
+    });
+  const reachable = new Set(universities.map((account) => account.accountId));
+  return {
+    environmentId: invocation.environmentId,
+    threadId: scope.threadId,
+    browser: universities.length > 0 || (yield* mayBrowse(undefined)),
+    accounts:
+      universities.length > 0
+        ? allowed
+            .filter(
+              ({ accountId, details }) => !universityDetails(details) || reachable.has(accountId),
+            )
+            .map((account) => account.accountId)
+        : [],
+  } satisfies PaperRequester;
+});
 
-const savePdf = Effect.fn("Papers.save")(
-  function* (root: string, paper: Paper, bytes: Uint8Array) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const folder = path.join(root, "papers");
-    yield* fs.makeDirectory(folder, { recursive: true });
-    const name = paperFileName(paper);
-    for (let copy = 1; ; copy += 1) {
-      const file = copy === 1 ? name : name.replace(/\.pdf$/u, `-${copy}.pdf`);
-      const target = path.join(folder, file);
-      // Exclusive, so two saves of different papers can't take the same name.
-      const created = yield* fs.writeFile(target, bytes, { flag: "wx" }).pipe(
-        Effect.as(true),
-        Effect.catchIf(
-          (error) => error.reason._tag === "AlreadyExists",
-          () => Effect.succeed(false),
-        ),
-      );
-      if (created) return `papers/${file}`;
-      // The same paper again reuses its file.
-      if (Buffer.from(yield* fs.readFile(target)).equals(Buffer.from(bytes)))
-        return `papers/${file}`;
-    }
-  },
-  Effect.mapError((error) =>
-    isAccountsError(error)
-      ? error
-      : new AccountsError({
-          reason: "unavailable",
-          message: "The PDF could not be saved in the project.",
-        }),
-  ),
+const agentRoot = consumeAgentWorkspace().pipe(
+  Effect.map((workspace) => workspace.binding.canonicalRoot),
+  Effect.mapError((error) => unavailable(error.message)),
 );
 
-const firstPdf = Effect.fn("Papers.firstPdf")(function* (copies: Paper["openAccess"]) {
-  for (const copy of copies) {
-    const bytes = yield* openAccessPdf(copy);
-    if (bytes) return bytes;
-  }
-  return undefined;
-});
-
-/**
- * A paper's PDF by DOI or link: the published free copy, then the user's library
- * access in the browser, then any other free copy (an accepted manuscript or preprint).
- * `userRun` is the user's own request, which agent access doesn't govern.
- */
-const fetchPaper = Effect.fn("Papers.fetch")(function* (
-  input: { readonly doi?: string | undefined; readonly url?: string | undefined },
-  scope: AccountSessionScope,
-  userRun: boolean,
-) {
-  const paper = yield* lookUpPaper(input);
-  if (!paper?.landingUrl)
-    return {
-      status: "not-found" as const,
-      message: userRun
-        ? "This source has no DOI or link to find the paper by."
-        : "Pass the paper's DOI or a link to it; find the DOI with a web search if you have only a citation.",
-    };
-  const found = (bytes: Uint8Array, route: "open-access" | "library", published: boolean) => ({
-    status: "found" as const,
-    paper,
-    bytes,
-    route,
-    published,
-  });
-  const published = yield* firstPdf(paper.openAccess.filter((copy) => copy.published));
-  if (published) return found(published, "open-access", true);
-
-  const accounts = yield* AccountsService;
-  const invocation = yield* AgentInvocationContext;
-  const session = userRun
-    ? { agentAccess: true, accounts: (yield* accounts.snapshot).accounts }
-    : yield* accounts.forSession(scope);
-  const account =
-    session.agentAccess && invocation.capabilities.has("preview")
-      ? session.accounts.find(
-          (item) => item.details.kind === "library" && (userRun || item.controls.access !== "off"),
-        )
-      : undefined;
-  let note:
-    | {
-        status: "needs-sign-in" | "no-access" | "limit";
-        message: string;
-        openUrl?: string;
-        profileId?: string;
-      }
-    | undefined;
-  if (account) {
-    // The count, the pause and the fetch are one step, so parallel requests can't pass the cap.
-    const fetch = Effect.gen(function* () {
-      const day = DateTime.formatIsoDate(yield* DateTime.now);
-      const used = fetchesByDay.get(day) ?? 0;
-      if (used >= LIBRARY_DAILY_LIMIT)
-        return {
-          status: "limit" as const,
-          message: `Today's ${LIBRARY_DAILY_LIMIT} library downloads are used, to keep the library's access safe. Try again tomorrow.`,
-        };
-      const pause = yield* Random.nextBetween(LIBRARY_PAUSE_MS.min, LIBRARY_PAUSE_MS.max);
-      const wait = lastLibraryFetch + pause - (yield* Clock.currentTimeMillis);
-      if (wait > 0) yield* Effect.sleep(wait);
-      fetchesByDay.clear();
-      fetchesByDay.set(day, used + 1);
-      return yield* fetchThroughLibrary(scope, account, paper.landingUrl, userRun).pipe(
-        Effect.ensuring(
-          Clock.currentTimeMillis.pipe(
-            Effect.map((now) => {
-              lastLibraryFetch = now;
-            }),
-          ),
-        ),
-      );
-    }).pipe(library.withPermits(1));
-    // A refused library use still leaves any free copy to find.
-    const result = yield* (
-      userRun
-        ? fetch
-        : withAccountUse(
-            scope,
-            { type: "account", accountId: account.accountId },
-            "sign-in",
-            fetch,
-            (done) => done?.status === "saved",
-          )
-    ).pipe(
-      Effect.catchTags({
-        AccountsError: (error) =>
-          Effect.succeed({ status: "no-access" as const, message: error.message }),
-      }),
-    );
-    if (result?.status === "saved") return found(result.bytes, "library", true);
-    if (result) note = result;
-  }
-  const other = yield* firstPdf(paper.openAccess.filter((copy) => !copy.published));
-  if (other) return found(other, "open-access", false);
-  return {
-    ...(note ?? {
-      status: "no-access" as const,
-      message: account
-        ? "No free copy, and the library did not reach the PDF."
-        : "No free copy. Add your library in Settings ▸ Accounts & secrets to get it through your institution.",
-    }),
-    landingUrl: note?.openUrl ?? paper.landingUrl,
-  };
-});
-
+/** One paper, waited for: it goes through the same queue as a list of them. */
 export const getPaper = Effect.fn("Papers.get")(function* (input: {
   readonly doi?: string | undefined;
   readonly url?: string | undefined;
 }) {
-  const result = yield* fetchPaper(input, yield* accountSessionScope(), false);
-  if (result.status !== "found") return result;
-  const { paper, route, published } = result;
-  const workspace = yield* consumeAgentWorkspace().pipe(
-    Effect.mapError(
-      (error) => new AccountsError({ reason: "unavailable", message: error.message }),
-    ),
-  );
+  if (!input.doi && !input.url)
+    return {
+      status: "not-found" as const,
+      message: "Pass the paper's DOI or a link to it; find the DOI with a web search if needed.",
+    };
+  const root = yield* agentRoot;
+  const [item] = yield* requestPapers(root, [input], yield* agentRequester());
+  if (!item) return yield* unavailable("The paper could not be queued.");
+  const done = yield* waitForPaper(root, item.itemId, ONE_PAPER_WAIT);
+  if (done?.state === "saved" && done.path && done.route)
+    return {
+      status: "saved" as const,
+      path: done.path,
+      route: done.route,
+      published: done.published ?? true,
+      ...(done.title ? { title: done.title } : {}),
+      ...(done.doi ? { doi: done.doi } : {}),
+    };
   return {
-    status: "saved" as const,
-    path: yield* savePdf(workspace.binding.canonicalRoot, paper, result.bytes),
-    route,
-    published,
-    ...(paper.title ? { title: paper.title } : {}),
-    ...(paper.doi ? { doi: paper.doi } : {}),
+    status: done?.state === "saved" || !done ? ("waiting" as const) : done.state,
+    message:
+      done?.message ?? "Still in the queue. Carry on and read scient_papers_status for the result.",
   };
 }, Effect.provide(FetchHttpClient.layer));
 
-/** The user's Get PDF on a source: same routes as an agent's, saved and attached to the source. */
-export const getPaperForSource = Effect.fn("Papers.getForSource")(
-  function* (input: AccountPaperForSourceInput, _environmentId: EnvironmentId) {
-    const { root, sourceId, expectedRevision, doi, url } = input;
-    const result = yield* fetchPaper({ doi, url }, userRunScope, true);
-    if (result.status !== "found") return result;
-    const relative = yield* savePdf(root, result.paper, result.bytes);
-    const path = yield* Path.Path;
-    const attached = yield* Effect.tryPromise({
-      try: () =>
-        attachSourcePdf({
-          root,
-          sourceId,
-          expectedRevision,
-          pdfPath: path.join(root, relative),
-          fileName: path.basename(relative),
-        }),
-      catch: () =>
-        new AccountsError({
-          reason: "unavailable",
-          message: `The PDF is in ${relative}, but it could not be attached to this source.`,
-        }),
-    });
-    return attached.outcome === "stale"
-      ? {
-          status: "no-access" as const,
-          message: `The PDF is in ${relative}. This source changed meanwhile; attach it from there.`,
-        }
-      : { status: "attached" as const, published: result.published };
-  },
-  (effect, _input, environmentId: EnvironmentId) =>
-    effect.pipe(
-      Effect.provideService(
-        AgentInvocationContext,
-        userRunInvocation(GET_PDF_THREAD, environmentId),
-      ),
-      Effect.provide(FetchHttpClient.layer),
-    ),
-);
+export const queuePapers = Effect.fn("Papers.queue")(function* (input: {
+  readonly papers: ReadonlyArray<PaperAsked>;
+}) {
+  const root = yield* agentRoot;
+  const items = yield* requestPapers(root, input.papers, yield* agentRequester());
+  return { queued: items.length };
+}, Effect.provide(FetchHttpClient.layer));
+
+export const paperStatus = Effect.fn("Papers.status")(function* (input: {
+  readonly state?: PaperItemState | undefined;
+  readonly offset?: number | undefined;
+}) {
+  const root = yield* agentRoot;
+  const items = yield* listPapers(root);
+  // A restart interrupted this list and nobody has opened Sources since.
+  if (items.some((item) => item.state === "waiting") && !paperQueueRunning(root))
+    yield* resumePapers(root, yield* agentRequester());
+  const count = (state: PaperItemState) => items.filter((item) => item.state === state).length;
+  const offset = input.offset ?? 0;
+  const chosen = input.state ? items.filter((item) => item.state === input.state) : items;
+  return {
+    waiting: count("waiting"),
+    saved: count("saved"),
+    needsYou: count("needs-you"),
+    notFound: count("not-found"),
+    noAccess: count("no-access"),
+    items: chosen.slice(offset, offset + 100).map(({ itemId: _, source: __, ...item }) => item),
+    ...(chosen.length > offset + 100 ? { nextOffset: offset + 100 } : {}),
+  };
+}, Effect.provide(FetchHttpClient.layer));
+
+const userRequester = (environmentId: EnvironmentId): PaperRequester => ({
+  environmentId,
+  browser: true,
+  accounts: "all",
+});
+
+/** The user's Get PDF on a source: the same queue, saved and attached to the source. */
+export const getPaperForSource = Effect.fn("Papers.getForSource")(function* (
+  input: AccountPaperForSourceInput,
+  environmentId: EnvironmentId,
+) {
+  const { root, sourceId, expectedRevision, doi, url } = input;
+  const asked = {
+    ...(doi ? { doi } : {}),
+    ...(url ? { url } : {}),
+    source: { sourceId, expectedRevision },
+  };
+  const [item] = yield* requestPapers(root, [asked], userRequester(environmentId));
+  if (!item) return yield* unavailable("The paper could not be queued.");
+  const done = yield* waitForPaper(root, item.itemId, ONE_PAPER_WAIT);
+  if (done?.state === "saved")
+    return { status: "attached" as const, published: done.published ?? true };
+  return {
+    status: done?.state ?? ("waiting" as const),
+    message: done?.message ?? "Still fetching. It will appear on the source when it arrives.",
+  };
+}, Effect.provide(FetchHttpClient.layer));
+
+export const requestPapersAsUser = (
+  input: { readonly root: string; readonly papers: ReadonlyArray<PaperAsked> },
+  environmentId: EnvironmentId,
+) =>
+  requestPapers(input.root, input.papers, userRequester(environmentId)).pipe(
+    Effect.as({}),
+    Effect.provide(FetchHttpClient.layer),
+  );
+
+export const listPapersAsUser = (root: string, environmentId: EnvironmentId) =>
+  resumePapers(root, userRequester(environmentId)).pipe(Effect.provide(FetchHttpClient.layer));
+
+export const continuePapersAsUser = (root: string, environmentId: EnvironmentId) =>
+  continuePapers(root, userRequester(environmentId)).pipe(
+    Effect.as({}),
+    Effect.provide(FetchHttpClient.layer),
+  );
+
+/** A sign-in just finished, so every paper that waited for one goes again. */
+export const continueWaitingPapers = (environmentId: EnvironmentId) =>
+  Effect.forEach(
+    waitingPaperRoots(),
+    (root) => continuePapers(root, userRequester(environmentId)),
+    { discard: true },
+  ).pipe(Effect.ignore, Effect.provide(FetchHttpClient.layer));
