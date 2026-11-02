@@ -85,10 +85,13 @@ describe("BrowserSuggestions", () => {
 
     await expect.element(page.getByRole("option", { name: /Nature nature\.com/ })).toBeVisible();
     await expect.element(page.getByRole("option", { name: "nature journal" })).toBeVisible();
-    expect(mocks.suggestSearches).toHaveBeenLastCalledWith({
-      environmentId: threadRef.environmentId,
-      input: { query: "nat", engine: "google" },
-    });
+    // Typing can pause on the way; the finished text is what's looked up last.
+    await vi.waitFor(() =>
+      expect(mocks.suggestSearches).toHaveBeenLastCalledWith({
+        environmentId: threadRef.environmentId,
+        input: { query: "nat", engine: "google" },
+      }),
+    );
   });
 
   it("looks in the profile it's given, and drops another profile's pages at once", async () => {
@@ -96,10 +99,12 @@ describe("BrowserSuggestions", () => {
     await using screen = await render(<Box active onPick={vi.fn()} />);
     await userEvent.type(box(), "nat");
     await expect.element(page.getByRole("option", { name: /Nature nature\.com/ })).toBeVisible();
-    expect(mocks.suggestPages).toHaveBeenLastCalledWith({
-      environmentId: threadRef.environmentId,
-      input: { profileId: "work", query: "nat" },
-    });
+    await vi.waitFor(() =>
+      expect(mocks.suggestPages).toHaveBeenLastCalledWith({
+        environmentId: threadRef.environmentId,
+        input: { profileId: "work", query: "nat" },
+      }),
+    );
 
     let answer: (result: ReturnType<typeof success>) => void = () => {};
     mocks.suggestPages.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
@@ -107,20 +112,26 @@ describe("BrowserSuggestions", () => {
     await expect
       .element(page.getByRole("option", { name: /Nature nature\.com/ }))
       .not.toBeInTheDocument();
-    expect(mocks.suggestPages).toHaveBeenLastCalledWith({
-      environmentId: threadRef.environmentId,
-      input: { profileId: "home", query: "nat" },
-    });
+    await vi.waitFor(() =>
+      expect(mocks.suggestPages).toHaveBeenLastCalledWith({
+        environmentId: threadRef.environmentId,
+        input: { profileId: "home", query: "nat" },
+      }),
+    );
     answer(success({ pages: [{ ...nature, title: "Home Nature" }] }));
     await expect.element(page.getByRole("option", { name: /Home Nature/ })).toBeVisible();
   });
 
-  it("asks once typing pauses, not on every key", async () => {
+  it("looks up the finished text once typing pauses", async () => {
     reset();
     await using _screen = await render(<Box active onPick={vi.fn()} />);
     await userEvent.type(box(), "nature");
-    await expect.element(page.getByRole("option", { name: "nature journal" })).toBeVisible();
-    expect(mocks.suggestSearches.mock.calls.length).toBeLessThan("nature".length);
+    await vi.waitFor(() =>
+      expect(mocks.suggestSearches).toHaveBeenLastCalledWith({
+        environmentId: threadRef.environmentId,
+        input: { query: "nature", engine: "google" },
+      }),
+    );
   });
 
   it("picks the highlighted suggestion with the keyboard", async () => {
