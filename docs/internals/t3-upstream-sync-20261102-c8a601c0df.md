@@ -56,9 +56,24 @@ None.
 
 ## Verification
 
-Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state.
+Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state, after merging owned main
+`ca47caf4f7` (#735).
 
 Lockfile `hasBin` markers: 125, as on main. Formatting, lint, `knip:check` and every package's
-typecheck pass. Focused suites for the changed areas pass: server CLI, Claude home, delegated
-delivery, projection store and recovery, usage analytics (319), Cursor provider (145), client
-runtime (1,864), and the notification and timeline browser tests.
+typecheck pass. Brand, seam and provenance pass. Server (14,197), web (14,555), desktop (1,477),
+scripts and the other packages pass. What still fails locally: `LatexRealEngine` and
+`packages/ssh` (1), as on main, and the ACP registry's large tar listing, which times out at 5 s on
+main's code too; this range does not touch that package. Three `scripts` tests that timed out under
+the full run pass on their own.
+
+Live on the isolated dev app, with real Claude Haiku on a throwaway repository, launched from a
+Claude Code session:
+
+- The thread's shell sees only its own Claude process's session variables (its own PID and session
+  id, not the launching session's), and `CLAUDE_CODE_ENTRYPOINT=scient`. The file fix landed.
+- Expanding "Worked for" keeps the heading at the same height.
+- A `delegate_task` child added a docstring, and its result started the parent's next run on its
+  own.
+
+Not run live: Cursor, mobile, audible alerts and packaged builds. Exact-head hosted CI qualifies the
+repository-wide test aggregate; owner visual acceptance and release remain separate steps.
