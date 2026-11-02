@@ -18,6 +18,7 @@
     "packages/shared/src/scientAccountSecretRequest.ts",
     "packages/shared/src/scientAccountAuthorization.ts",
     "packages/shared/src/scientSiteMatch.ts",
+    "packages/shared/src/scientLoginFields.ts",
     "packages/shared/src/scientBrowserProfileChoice.ts",
     "packages/shared/src/scientSignInPage.ts",
     "apps/mobile/src/state/accounts.ts",

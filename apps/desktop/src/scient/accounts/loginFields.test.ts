@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { detectLoginFields, type LoginField } from "./loginFields.ts";
+import { detectLoginFields, type LoginField } from "@t3tools/shared/scientLoginFields";
 
 const field = (type: string, autocomplete = "", usable = true): LoginField => ({
   type,
