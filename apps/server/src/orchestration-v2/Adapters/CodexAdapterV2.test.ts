@@ -362,6 +362,16 @@ describe("CodexAdapterV2 process spawning", () => {
             http_headers: {
               Authorization: "Bearer secret-codex-token",
             },
+            disabled_tools: ["scient_thread_wait"],
+          },
+          "mcp_servers.scient-direct": {
+            url: "http://127.0.0.1:43123/mcp",
+            tool_timeout_sec: 3_900,
+            http_headers: {
+              Authorization: "Bearer secret-codex-token",
+            },
+            enabled_tools: ["scient_thread_wait"],
+            omit_tools_from: ["code_mode", "deferred"],
           },
         },
       },
@@ -408,6 +418,14 @@ describe("CodexAdapterV2 process spawning", () => {
           url: "http://127.0.0.1:43123/mcp",
           tool_timeout_sec: 3_900,
           http_headers: { Authorization: "Bearer secret-codex-token" },
+          disabled_tools: ["scient_thread_wait"],
+        },
+        "mcp_servers.scient-direct": {
+          url: "http://127.0.0.1:43123/mcp",
+          tool_timeout_sec: 3_900,
+          http_headers: { Authorization: "Bearer secret-codex-token" },
+          enabled_tools: ["scient_thread_wait"],
+          omit_tools_from: ["code_mode", "deferred"],
         },
         "mcp_servers.linear": {
           url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",

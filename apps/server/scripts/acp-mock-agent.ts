@@ -641,7 +641,7 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         return {
           protocolVersion: 2,
-          info: { name: "antigravity-acp", version: "mock" },
+          info: { name: "antigravity-acp", version: process.env.T3_ACP_AGENT_VERSION ?? "mock" },
           capabilities: {
             session: { prompt: { image: {}, embeddedContext: {} } },
           },
