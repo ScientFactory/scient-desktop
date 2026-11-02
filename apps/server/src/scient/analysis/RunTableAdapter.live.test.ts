@@ -14,8 +14,12 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "@effect/vitest";
 
-import { makeNodeRuntimeDiscoveryHost } from "../compute/RuntimeDiscovery.ts";
-import { groupTools, toolScanSteps } from "../compute/ToolScan.ts";
+import {
+  makeNodeRuntimeDiscoveryHost,
+  type DiscoveryContext,
+} from "../compute/RuntimeDiscovery.ts";
+import { LANGUAGE_TOOLS } from "../compute/ToolCatalog.ts";
+import { expandPlace, groupTools, toolScanSteps } from "../compute/ToolScan.ts";
 import {
   ExecutionProcess,
   layer as executionProcessLayer,
@@ -182,17 +186,27 @@ const runStep = (step: {
     }),
   );
 
-/** Where this computer's PATH finds a language's commands, to explain a scan that missed them. */
-const whereIs = (languageId: string) => {
+/**
+ * Where PATH finds a language's commands, and what its known folders hold, to explain a scan that
+ * missed them.
+ */
+const whereIs = (languageId: string, context: DiscoveryContext) => {
   const route = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === languageId);
   const lookup = NodeProcess.platform === "win32" ? "where" : "which";
-  const found = (route?.commands ?? []).flatMap(({ command }) => {
+  const onPath = (route?.commands ?? []).flatMap(({ command }) => {
     const result = NodeChildProcess.spawnSync(lookup, [command], { encoding: "utf8" });
     return result.status === 0 ? [result.stdout.trim()] : [];
   });
-  return found.length === 0
-    ? "PATH finds none of its commands."
-    : `PATH finds ${found.join(", ")}.`;
+  const places = LANGUAGE_TOOLS[languageId]?.places?.[NodeProcess.platform as "win32"] ?? [];
+  const held = places.map((place) => {
+    const folder = place.split("*", 1)[0]!.replace(/[\\/][^\\/]*$/u, "");
+    const expanded = folder.replace(
+      /%([^%]+)%/gu,
+      (_match, name: string) => context.environment[name] ?? "",
+    );
+    return `${place} matches [${expandPlace(context, place).join(", ")}]; ${expanded} holds [${context.host.readDirectory(expanded, 40).join(", ")}]`;
+  });
+  return [`PATH finds [${onPath.join(", ")}]`, ...held].join(". ");
 };
 
 describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", () => {
@@ -228,7 +242,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         Effect.gen(function* () {
           expect(
             tools.has(languageId),
-            `${languageId} is installed, but the scan did not find it. ${whereIs(languageId)}`,
+            `${languageId} is installed, but the scan did not find it. ${whereIs(languageId, context)}`,
           ).toBe(true);
           const profile = yield* Effect.promise(() =>
             adapter.inspect({

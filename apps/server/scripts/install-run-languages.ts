@@ -29,7 +29,15 @@ const ELAN_WINDOWS =
   "curl -sSfLo elan-init.ps1 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 && powershell -ExecutionPolicy Bypass -Command './elan-init.ps1 -NoPrompt 1 -DefaultToolchain stable'";
 /** Runs a downloaded Windows installer silently, then lists where it went for the log. */
 const windowsInstaller = (url: string, ...places: ReadonlyArray<string>) =>
-  `curl -sSfLo setup.exe "${url}" && MSYS_NO_PATHCONV=1 ./setup.exe /S && { ls -d ${places.join(" ")} 2>/dev/null || true; }`;
+  silentInstaller(url, "/S", places);
+/** Inno Setup installers, which take their own silent flag. */
+const innoInstaller = (url: string, ...places: ReadonlyArray<string>) =>
+  silentInstaller(url, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", places);
+const silentInstaller = (url: string, flags: string, places: ReadonlyArray<string>) =>
+  `curl -sSfLo setup.exe "${url}" && MSYS_NO_PATHCONV=1 ./setup.exe ${flags} && { ls -d ${places.join(" ")} 2>/dev/null || true; }`;
+/** Adds a folder to the user's saved PATH, as a person following an unzip guide would. */
+const addToUserPath = (folder: string) =>
+  `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';${folder}', 'User')"`;
 const SCALA_LINUX =
   "curl -sSfL https://github.com/VirtusLab/scala-cli/releases/latest/download/scala-cli-x86_64-pc-linux.gz | gzip -d > scala-cli && chmod +x scala-cli && sudo mv scala-cli /usr/local/bin/";
 const CLOJURE_LINUX =
@@ -164,13 +172,45 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
   },
   lab: {
-    octave: { linux: apt("octave"), darwin: brew("octave"), win32: choco("octave.portable") },
+    // Chocolatey's Octave points at a download GNU no longer serves.
+    octave: {
+      linux: apt("octave"),
+      darwin: brew("octave"),
+      win32: windowsInstaller(
+        "https://ftp.gnu.org/gnu/octave/windows/octave-11.3.0-w64-installer.exe",
+        "/c/Program\\ Files*/GNU\\ Octave/*",
+        "$LOCALAPPDATA/Programs/GNU\\ Octave/*",
+      ),
+    },
     gnuplot: { linux: apt("gnuplot-nox"), darwin: brew("gnuplot"), win32: choco("gnuplot") },
-    minizinc: { linux: apt("minizinc"), darwin: cask("minizincide"), win32: choco("minizinc") },
+    minizinc: {
+      linux: apt("minizinc"),
+      darwin: cask("minizincide"),
+      win32: innoInstaller(
+        "https://github.com/MiniZinc/MiniZincIDE/releases/download/2.10.1/MiniZincIDE-2.10.1-x86_64-windows-setup.exe",
+        "/c/Program\\ Files*/MiniZinc*",
+      ),
+    },
     verilog: { linux: apt("iverilog"), darwin: brew("icarus-verilog"), win32: choco("iverilog") },
-    vhdl: { linux: apt("ghdl"), darwin: brew("ghdl"), win32: choco("ghdl") },
+    vhdl: {
+      linux: apt("ghdl"),
+      darwin: brew("ghdl"),
+      win32: [
+        "curl -sSfLo ghdl.zip https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-mcode-6.0.0-ucrt64.zip",
+        "unzip -q ghdl.zip -d /c/ghdl",
+        "ls /c/ghdl /c/ghdl/*",
+        addToUserPath("C:\\\\ghdl\\\\bin"),
+      ].join(" && "),
+    },
     scilab: { linux: apt("scilab-cli"), darwin: cask("scilab"), win32: choco("scilab") },
-    jags: { linux: apt("jags"), darwin: brew("jags"), win32: choco("jags") },
+    jags: {
+      linux: apt("jags"),
+      darwin: brew("jags"),
+      win32: windowsInstaller(
+        "https://sourceforge.net/projects/mcmc-jags/files/JAGS/4.x/Windows/JAGS-4.3.1.exe/download",
+        "/c/Program\\ Files*/JAGS/*/x64/bin",
+      ),
+    },
     spss: { linux: apt("pspp"), darwin: brew("pspp"), win32: choco("pspp") },
     nextflow: {
       linux: NEXTFLOW_UNIX,
@@ -182,7 +222,11 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("snakemake"),
       win32: "pipx install snakemake",
     },
-    idl: { linux: apt("gnudatalanguage"), darwin: brew("gnudatalanguage"), win32: choco("gdl") },
+    idl: {
+      linux: apt("gnudatalanguage"),
+      darwin: brew("gnudatalanguage"),
+      win32: { skip: "GDL publishes no Windows build, and IDL needs a license" },
+    },
     stan: { linux: CMDSTAN, darwin: CMDSTAN, win32: CMDSTAN },
   },
   // Each is hundreds of megabytes or more, so they run on one computer. Their routes are the same
