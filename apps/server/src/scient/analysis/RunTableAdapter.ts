@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- a built program and its pictures are host files.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -72,15 +73,36 @@ function chooseTool(
     : { command, executable: tool.executable, version: tool.version };
 }
 
+/** The first experiment a NetLogo model saves, since headless NetLogo runs only those. */
+function firstExperiment(file: string): string | null {
+  try {
+    const name = /<experiment\b[^>]*\bname="([^"]*)"/u.exec(NodeFS.readFileSync(file, "utf8"))?.[1];
+    return name === undefined
+      ? null
+      : name
+          .replaceAll("&quot;", '"')
+          .replaceAll("&lt;", "<")
+          .replaceAll("&gt;", ">")
+          .replaceAll("&amp;", "&");
+  } catch {
+    return null;
+  }
+}
+
 function fill(args: ReadonlyArray<string>, file: string, output: string): ReadonlyArray<string> {
   const quoted = file.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  return args.map((arg) =>
+  const filled = args.map((arg) =>
     arg
       .replaceAll("{file}", file)
       .replaceAll("{quotedFile}", quoted)
       .replaceAll("{fileNoExtension}", file.replace(/\.[^./\\]+$/u, ""))
       .replaceAll("{output}", output),
   );
+  const at = filled.indexOf("{netlogoExperiment}");
+  if (at === -1) return filled;
+  const experiment = firstExperiment(file);
+  // A model without one runs as given, so NetLogo itself says what it needs.
+  return experiment === null ? filled.toSpliced(at - 1, 2) : filled.toSpliced(at, 1, experiment);
 }
 
 /** Windows starts a batch file only through its command interpreter. */

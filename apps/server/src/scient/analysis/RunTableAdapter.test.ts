@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- writes a real model file for NetLogo to read.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { ExecutionRunId } from "@scientfactory/execution";
 import {
   COMPUTE_LANGUAGE_CATALOG,
@@ -192,6 +197,34 @@ describe("how a file is built", () => {
       "Proofs.thy",
     );
     expect(theory.args).toEqual(["process_theories", "-O", "/project/Proofs"]);
+  });
+
+  it("runs a NetLogo model's first saved experiment, which is all NetLogo runs headless", async () => {
+    const adapter = adapterFor("netlogo", [
+      found("netlogo", "netlogo-headless", "/opt/NetLogo/netlogo-headless.sh", null),
+    ]);
+    const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-netlogo-"));
+    const model = NodePath.join(folder, "Flock.nlogo");
+    NodeFS.writeFileSync(
+      model,
+      'to go end\n@#$#@#$#@\n<experiments><experiment name="Wind &amp; rain" repetitions="1"/></experiments>\n',
+    );
+    const step = adapter.prepare({
+      runId: ExecutionRunId.make("run"),
+      projectId: "project",
+      runtime: await inspect(adapter),
+      source: { cwd: folder, relativePath: "Flock.nlogo", revision: "1" as never },
+      absoluteSourcePath: model,
+      artifactStagingDirectory: "/staging",
+    });
+    expect(step.args).toEqual(["--model", model, "--experiment", "Wind & rain", "--table", "-"]);
+    // Without one, NetLogo is left to say what it needs.
+    expect((await prepare(adapter, "Empty.nlogo")).args).toEqual([
+      "--model",
+      "/project/Empty.nlogo",
+      "--table",
+      "-",
+    ]);
   });
 });
 

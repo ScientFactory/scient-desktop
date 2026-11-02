@@ -1,7 +1,7 @@
 /**
  * One way to run a file. `{file}` is the source, `{quotedFile}` the same for inside double quotes
- * read with backslash escapes, `{fileNoExtension}` the source without its extension, and
- * `{output}` a built program.
+ * read with backslash escapes, `{fileNoExtension}` the source without its extension,
+ * `{netlogoExperiment}` the first experiment a NetLogo model saves, and `{output}` a built program.
  */
 export interface ComputeRunCommand {
   /** The tool's name, as the scan reports it. */
@@ -233,10 +233,17 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   { languageId: "ampl", extensions: [".mod"], commands: [file("ampl")] },
   { languageId: "gams", extensions: [".gms"], commands: [file("gams")] },
   { languageId: "jags", extensions: [".jags"], commands: [file("jags")] },
+  // Without its window NetLogo runs only an experiment saved in the model, so Run runs the first
+  // and prints its table. NetLogo 7 saves .nlogox.
   {
     languageId: "netlogo",
-    extensions: [".nlogo"],
-    commands: [{ command: "netlogo-headless", args: ["--model", "{file}"] }],
+    extensions: [".nlogo", ".nlogox"],
+    commands: [
+      {
+        command: "netlogo-headless",
+        args: ["--model", "{file}", "--experiment", "{netlogoExperiment}", "--table", "-"],
+      },
+    ],
   },
   { languageId: "agda", extensions: [".agda"], commands: [file("agda")] },
   // SQL runs on DuckDB in a session. This is for a script written for sqlite3's own commands.
