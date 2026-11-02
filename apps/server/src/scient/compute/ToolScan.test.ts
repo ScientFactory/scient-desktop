@@ -149,12 +149,19 @@ describe("the tool scan", () => {
 
   it("names a tool in a known place by the command it answers to", () => {
     const tools = scan(
-      computer(["C:\\Program Files\\JAGS\\JAGS-4.3.1\\x64\\bin\\jags-terminal.exe"], {
-        platform: "win32",
-        environment: { Path: "C:\\none", ProgramFiles: "C:\\Program Files" },
-      }),
+      computer(
+        [
+          "C:\\Program Files\\JAGS\\JAGS-4.3.1\\x64\\bin\\jags-terminal.exe",
+          "C:\\Program Files\\scilab-2026.1.0\\bin\\WScilex-cli.exe",
+        ],
+        {
+          platform: "win32",
+          environment: { Path: "C:\\none", ProgramFiles: "C:\\Program Files" },
+        },
+      ),
     );
     expect(tools.get("jags")?.[0]?.name).toBe("jags");
+    expect(tools.get("scilab")?.[0]?.name).toBe("WScilex-cli");
   });
 
   it("reads Windows variables in any case, as Git Bash passes them on", () => {

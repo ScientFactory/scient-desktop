@@ -136,7 +136,12 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   { languageId: "gap", extensions: [".g", ".gap"], commands: [file("gap", "-q")] },
   { languageId: "macaulay2", extensions: [".m2"], commands: [file("M2", "--script")] },
   { languageId: "singular", extensions: [".sing"], commands: [file("Singular", "-q")] },
-  { languageId: "maxima", extensions: [".mac"], commands: [file("maxima", "-b")] },
+  // Maxima reads the path inside batch("..."), so backslashes on Windows must be escaped.
+  {
+    languageId: "maxima",
+    extensions: [".mac"],
+    commands: [{ command: "maxima", args: ["-b", "{quotedFile}"] }],
+  },
   { languageId: "maple", extensions: [".mpl"], commands: [file("maple", "-q")] },
   { languageId: "nextflow", extensions: [".nf"], commands: [file("nextflow", "run")] },
   {
@@ -216,8 +221,11 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "scilab",
     extensions: [".sce"],
-    // Without -quit Scilab waits at its prompt after the file.
-    commands: ["scilab-cli", "scilab"].map((name) => file(name, "-nb", "-quit", "-f")),
+    // Without -quit Scilab waits at its prompt after the file. WScilex-cli is the console Scilab on
+    // Windows, where scilab.bat opens its window instead.
+    commands: ["WScilex-cli", "scilab-cli", "scilab"].map((name) =>
+      file(name, "-nb", "-quit", "-f"),
+    ),
   },
   { languageId: "minizinc", extensions: [".mzn"], commands: [file("minizinc")] },
   { languageId: "ampl", extensions: [".mod"], commands: [file("ampl")] },

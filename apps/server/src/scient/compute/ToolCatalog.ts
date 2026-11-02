@@ -202,7 +202,11 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   gp: { commands: ["gp"], places: { win32: ["%ProgramFiles%\\PARI*\\gp*.exe"] } },
   coq: {
     commands: ["rocq", "coqc"],
-    places: { darwin: ["/Applications/Coq-Platform*.app", "/Applications/Rocq-Platform*.app"] },
+    places: {
+      darwin: ["/Applications/Coq-Platform*.app", "/Applications/Rocq-Platform*.app"],
+      // The Rocq Platform installer's default, such as C:\Rocq-Platform~9.1~2026.01.
+      win32: ["C:\\Rocq-Platform*\\bin\\rocq.exe", "C:\\Coq-Platform*\\bin\\coqc.exe"],
+    },
   },
   sage: { commands: ["sage"], places: { darwin: ["/Applications/SageMath-*.app"] } },
   singular: { commands: ["Singular"] },
@@ -272,7 +276,7 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
     },
   },
   scilab: {
-    commands: ["scilab-cli", "scilab"],
+    commands: ["WScilex-cli", "scilab-cli", "scilab"],
     places: {
       darwin: ["/Applications/scilab-*.app/Contents/bin/scilab-cli"],
       win32: ["%ProgramFiles%\\scilab-*\\bin\\WScilex-cli.exe"],
