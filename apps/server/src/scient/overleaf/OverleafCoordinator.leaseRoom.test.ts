@@ -7,11 +7,17 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { CONNECTION, canApply, read, run, world } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+} from "./OverleafCoordinator.testkit.ts";
 
 /** Folders deep enough that a write there needs more than one lease can bind. */
 
-describe.skipIf(!canApply)("Overleaf apply and native leases", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf apply and native leases", () => {
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
     "refuses a host path budget before linking an apply",
     () =>

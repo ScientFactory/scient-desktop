@@ -18,6 +18,8 @@ const JOBS = [
   ...Object.keys(GATED),
   ...REPORTERS,
 ];
+// Evidence only: these run beside the gate and never block a merge.
+const ADVISORY = ["overleaf_macos"];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];
@@ -57,7 +59,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
   return errors;
 }
 
-module.exports = { GATED, JOBS, jobFailures };
+module.exports = { ADVISORY, GATED, JOBS, jobFailures };
 if (require.main === module) {
   const needs = JSON.parse(process.env.RESULTS);
   for (const [job, { result }] of Object.entries(needs)) console.log(`${job}: ${result}`);

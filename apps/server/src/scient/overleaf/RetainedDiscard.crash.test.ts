@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/** Discard of a kept version after real process death (current and legacy records):
- * a fresh file layer finishes a marked discard on its next settled read. A kept
- * copy that is a folder goes only while empty; a non-empty one is refused/left
- * listed without failing anything else. */
+/** Discard of a kept version an older build left (current and legacy records), killed
+ * mid-way: the upgraded file layer, with plain saves, finishes it on its next settled
+ * read and saves again. A kept copy that is a folder goes only while empty; a non-empty
+ * one is refused/left listed without failing anything else. */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -38,10 +38,21 @@ const exists = (path: string) =>
     () => false,
   );
 
-/** Discards of the records an older build left, which upgraded folders still hold. */
+/** Records made as an older build made them, with native saves. */
 const fixture = (...[body, hooks, retainedHooks]: Parameters<typeof applierFixture>) =>
   applierFixture(body, hooks, retainedHooks, true);
 type Harness = Parameters<Parameters<typeof fixture>[0]>[0];
+/** A fresh file layer, as after a restart: plain saves, as every build since saves. */
+const restarted = (
+  h: Harness,
+  helper: string,
+  { nativeSaves = false, retainedHooks = {} }: Partial<Parameters<typeof makeApplierFiles>[0]> = {},
+) =>
+  h.run(
+    makeApplierFiles({ root: h.root, helper, retainedHooks, nativeSaves }).pipe(
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 const previous = "earlier\n".repeat(8192);
 
 /** A kept version of `main.tex` from a save, its record journal version 2. */
@@ -148,23 +159,20 @@ const markDiscard = async (kind: "current" | "legacy", kept: Kept) => {
     generation: record.generation + 1,
   });
 };
-/** A fresh file layer, as after a restart, and the work that must go on beside a kept folder. */
+let besides = 0;
+/** After a restart, the work that must go on beside a kept folder. */
 const goesOn = async (h: Harness, helper: string) => {
-  const fresh = await h.run(
-    makeApplierFiles({ root: h.root, helper, retainedHooks: {}, nativeSaves: true }).pipe(
-      Effect.provide(NodeServices.layer),
-    ),
-  );
+  const fresh = await restarted(h, helper);
   await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
   await h.run(fresh.getMutationEpoch({ cwd: h.cwd }));
   const listed = await h.run(fresh.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }));
   await h.run(
     fresh.writeFile({
       cwd: h.cwd,
-      relativePath: `beside-${listed.versions.length}.tex`,
+      relativePath: `beside-${++besides}.tex`,
       contents: "new\n",
       createOnly: true,
-      mutationId: `beside-${listed.versions.length}`,
+      mutationId: `beside-${besides}`,
     }),
   );
   expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
@@ -173,19 +181,18 @@ const goesOn = async (h: Harness, helper: string) => {
 const kinds = ["current", "legacy"] as const;
 
 describe.skipIf(!canPublish)("a discard after real process death", () => {
-  it.live.each(
-    (["current", "legacy"] as const).flatMap((kind) =>
-      (
-        [
-          { point: "before the copy goes", file: "copy", when: "before" },
-          { point: "between the copy and its view", file: "copy", when: "after" },
-          { point: "after both, before the sync", file: "view", when: "after" },
-        ] as const
-      ).map((crash) => ({ kind, ...crash })),
-    ),
-  )(
-    "of a $kind record is finished by the next settled read, killed $point",
-    ({ kind, file, when }) =>
+  const crashes = [
+    { point: "before the copy goes", file: "copy", when: "before" },
+    { point: "between the copy and its view", file: "copy", when: "after" },
+    { point: "after both, before the sync", file: "view", when: "after" },
+  ] as const;
+  it.live.each([
+    ...kinds.flatMap((kind) => crashes.map((crash) => ({ kind, ...crash, nativeSaves: false }))),
+    // Native saves still exist; one restart into them per kind keeps that path honest.
+    ...kinds.map((kind) => ({ kind, ...crashes[1], nativeSaves: true })),
+  ])(
+    "of a $kind record is finished by the next settled read, killed $point, native saves: $nativeSaves",
+    ({ kind, file, when, nativeSaves }) =>
       fixture(async (h) => {
         const helper = (await filePublicationTestHelper())!;
         const version = kind === "current" ? await savedVersion(h) : await legacyVersion(h, helper);
@@ -214,12 +221,8 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
         if (kind === "current")
           expect(await readRetainedRecord(directory)).toMatchObject({ discarding: [leaf] });
         else expect(await exists(NodePath.join(directory, `discard-${leaf}.json`))).toBe(true);
-        // A fresh file layer, as after a restart: its next settled read finishes it.
-        const fresh = await h.run(
-          makeApplierFiles({ root: h.root, helper, retainedHooks: {}, nativeSaves: true }).pipe(
-            Effect.provide(NodeServices.layer),
-          ),
-        );
+        // After a restart, the next settled read finishes it.
+        const fresh = await restarted(h, helper, { nativeSaves });
         await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
         expect(await exists(copy)).toBe(false);
         expect(await exists(view)).toBe(false);
@@ -233,6 +236,16 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
           version.versionId,
         );
         expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
+        await h.run(
+          fresh.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents: "later\n",
+            expectedRevision: bytesRevision(Buffer.from("now\n")),
+            mutationId: "after-restart",
+          }),
+        );
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("later\n");
       }),
   );
 
@@ -279,21 +292,16 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
         if (action === "settle")
           await markDiscard(kind, { versionId: version.versionId, directory, leaf, copy });
         let swapped = false;
-        const fresh = await h.run(
-          makeApplierFiles({
-            root: h.root,
-            helper,
-            nativeSaves: true,
-            retainedHooks: {
-              removal: async (when, path) => {
-                if (swapped || when !== "before" || path !== NodePath.join(directory, name)) return;
-                swapped = true;
-                await NodeFSP.rename(moved, held);
-                await NodeFSP.symlink(h.cwd, moved);
-              },
+        const fresh = await restarted(h, helper, {
+          retainedHooks: {
+            removal: async (when, path) => {
+              if (swapped || when !== "before" || path !== NodePath.join(directory, name)) return;
+              swapped = true;
+              await NodeFSP.rename(moved, held);
+              await NodeFSP.symlink(h.cwd, moved);
             },
-          }).pipe(Effect.provide(NodeServices.layer)),
-        );
+          },
+        });
         try {
           await h.run(
             (action === "discard"
@@ -336,7 +344,9 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
             await NodeFSP.rename(held, moved);
           }
         }
-        await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
+        // Plain saves finish an older build's work once per start: the next start does.
+        const next = await restarted(h, helper);
+        await h.run(next.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
         expect(await exists(copy)).toBe(false);
         expect(await exists(NodePath.join(directory, `view-${leaf}.tex`))).toBe(false);
         if (kind === "current")

@@ -19,10 +19,9 @@ import * as OverleafRepository from "./OverleafRepository.ts";
 import { buildOverleafReview, overleafConflictKey, type OverleafReview } from "./OverleafReview.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 import { fixture } from "./WorkspaceApplier.testkit.ts";
-import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
+import { privateFoldersAndIdentityHost } from "../workspace/fileExchange.testkit.ts";
 
-/** The applier writes only through native publication; elsewhere it refuses before writing. */
-const canApply = await nativePublicationHost();
+const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
 
 const paragraphs = (...values: ReadonlyArray<string>) =>
   `${["\\section{Intro}", ...values.flatMap((value) => ["", "", "", value]), "", "", "", "\\end"].join("\n")}\n`;
@@ -131,7 +130,7 @@ const targetContents = (built: OverleafReview) =>
     [...built.applyPlan.target].map(([path, file]) => [path, new TextDecoder().decode(file.bytes)]),
   );
 
-describe.skipIf(!canApply)("a review's plan, applied", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("a review's plan, applied", () => {
   it.live("leaves the folder exactly as reviewed after a two-way merge with a rename", () =>
     withRepos((repos, root) =>
       fixture(async (h) => {

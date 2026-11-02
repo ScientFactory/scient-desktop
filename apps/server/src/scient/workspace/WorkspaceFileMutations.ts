@@ -4676,7 +4676,17 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         recordsUnderRoot(root),
         NodeTimersPromises.setTimeout(OLDER_RECORDS_SCAN_MS, []),
       ]);
-      if (records.some(({ record }) => record?.version === 2 && record.phase !== "done"))
+      // A discard a crash cut short is unfinished too, or its kept copy would stay for good.
+      let unfinished = false;
+      for (const { directory, record } of records) {
+        if (record?.version === 2)
+          unfinished = record.phase !== "done" || (record.discarding ?? []).length > 0;
+        else if (record?.version === 1)
+          for (const leaf of retainedFileNames)
+            unfinished ||= await legacyDiscardPending(directory, record.target, leaf);
+        if (unfinished) break;
+      }
+      if (unfinished)
         await Promise.race([
           runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore)),
           // Saves are never held for ever by work that may never finish.

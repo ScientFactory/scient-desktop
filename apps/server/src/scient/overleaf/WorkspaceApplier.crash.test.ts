@@ -16,14 +16,14 @@ import * as Effect from "effect/Effect";
 import {
   filePublicationTestHelper,
   filePublicationProbeHelper,
-  nativePublicationHost,
+  privateFoldersAndIdentityHost,
 } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision, type MutationPoint } from "../workspace/RetainedFileMutation.ts";
 import type { CrashJob } from "./WorkspaceApplier.crash-child.ts";
 import type { WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 
-const canPublish = await nativePublicationHost();
+const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
 const child = NodePath.join(import.meta.dirname, "WorkspaceApplier.crash-child.ts");
 const revisions = (files: Record<string, string>) =>
   Object.fromEntries(
@@ -131,7 +131,7 @@ type Harness = Parameters<Parameters<typeof fixture>[0]>[0];
 const editorReads = (h: Harness) =>
   h.run(h.files.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
 
-describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real process death", () => {
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "recovers an unpublished destination stage after real process death",
     () =>
@@ -310,9 +310,8 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
   );
 
   // Settling a step killed before staging closes it without its bytes; the apply
-  // tries it again from its plan. One killed just before or after its native call
-  // goes on from what the call left.
-  it.live.each(["intent", "prepared", "checked", "called", "displaced"] as const)(
+  // tries it again from its plan. One killed after its bytes landed goes on from there.
+  it.live.each(["intent", "prepared", "checked", "displaced"] as const)(
     "finishes the unit after a crash at %s when nothing else changed",
     (point) =>
       fixture(async (h) => {
@@ -321,6 +320,34 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
         expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
         expect(await read(h.cwd, "a.tex")).toBe("remote");
       }),
+  );
+
+  // Inside a plain save: its temporary file just opened, or written but not yet renamed in.
+  it.live.each([
+    { moment: "its temporary file was opened", operation: "open", suffix: ".scient-tmp" },
+    { moment: "its temporary file was renamed in", operation: "rename", suffix: "/a.tex" },
+  ] as const)("finishes the unit after a crash before $moment, leaving no temporary file", (kill) =>
+    fixture(async (h) => {
+      await crashAt(h, "done", edit, 99, kill);
+      expect(await read(h.cwd, "a.tex")).toBe("base");
+      await h.restart();
+      expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
+      expect(await read(h.cwd, "a.tex")).toBe("remote");
+      expect(await read(h.cwd, "guard.tex")).toBe("guard");
+    }),
+  );
+
+  // A file with another name can't be replaced, so it is written in place, through that name too.
+  it.live("finishes writing a hard-linked file in place after a crash as it was opened", () =>
+    fixture(async (h) => {
+      await put(h.cwd, edit.captured);
+      await NodeFSP.link(NodePath.join(h.cwd, "a.tex"), NodePath.join(h.root, "other-name"));
+      await crashAt(h, "done", edit, 99, { operation: "open", suffix: "/a.tex", writing: true });
+      expect(await read(h.cwd, "a.tex")).toBe("base");
+      await h.restart();
+      expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
+      expect(await read(h.root, "other-name")).toBe("remote");
+    }),
   );
 
   // Already visible: the group is reported, the base stays, and the later edit survives.
@@ -469,7 +496,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     target: { "a.tex": "remote A", "b.tex": "remote B" },
   };
   it.live.each(
-    (["intent", "prepared", "checked", "called", "displaced"] as const).flatMap((point) =>
+    (["intent", "prepared", "checked", "displaced"] as const).flatMap((point) =>
       [1, 2].flatMap((occurrence) =>
         [false, true].map((editorFirst) => ({ point, occurrence, editorFirst })),
       ),

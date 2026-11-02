@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { canApply } from "./OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity } from "./OverleafCoordinator.testkit.ts";
 import {
   linkedPaper as linked,
   OTHER_PROJECT,
@@ -21,7 +21,7 @@ import {
   write,
 } from "./OverleafSync.testkit.ts";
 
-describe.skipIf(!canApply)("a link and its folder", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("a link and its folder", () => {
   it.live("can be unlinked after its folder was deleted", () =>
     run(
       Effect.gen(function* () {

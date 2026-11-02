@@ -15,7 +15,7 @@ import type {
 } from "./OverleafConnectionState.ts";
 import {
   CONNECTION,
-  canApply,
+  hasPrivateFoldersAndIdentity,
   read,
   revision,
   run,
@@ -68,7 +68,7 @@ const sentTwoFiles = (options: Pick<Parameters<typeof world>[0], "at" | "limits"
     return w;
   });
 
-describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, undo", () => {
   it.live("undoes a send that changed, added, deleted and renamed files; a sync sends it", () =>
     run(
       Effect.gen(function* () {

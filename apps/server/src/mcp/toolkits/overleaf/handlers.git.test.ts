@@ -12,7 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import { canApply } from "../../../scient/overleaf/OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity } from "../../../scient/overleaf/OverleafCoordinator.testkit.ts";
 import { OverleafSync } from "../../../scient/overleaf/OverleafSync.ts";
 import {
   overleafSyncWorld,
@@ -70,7 +70,7 @@ const connectedPaper = Effect.gen(function* () {
   return { w, as, folder, connectionId };
 });
 
-describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf tools over real Git", () => {
   it.live("stops for a conflict, then settles it with the reviewed choice", () =>
     runOverleafSync(
       Effect.gen(function* () {

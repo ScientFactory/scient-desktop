@@ -23,7 +23,8 @@ const { decide, readWorkspace } = require("../.github/scripts/ci-changes.cjs") a
     outputs: Record<string, string | boolean>;
   };
 };
-const { jobFailures } = require("../.github/scripts/ci-check.cjs") as {
+const { ADVISORY, jobFailures } = require("../.github/scripts/ci-check.cjs") as {
+  ADVISORY: ReadonlyArray<string>;
   jobFailures: (
     needs: Record<string, JobResult>,
     options: { eventName: string; qualifyingPr: boolean },
@@ -105,8 +106,9 @@ function simulate(
     }
     if (!advanced) throw new Error("Workflow has a dependency cycle or missing job");
   }
-  const gateNeeds = { ...needs };
-  delete gateNeeds.check;
+  // The gate sees only the jobs it needs.
+  const gated = workflow.jobs.check!.needs as string[];
+  const gateNeeds = Object.fromEntries(Object.entries(needs).filter(([id]) => gated.includes(id)));
   return {
     needs,
     gateNeeds,
@@ -193,7 +195,7 @@ describe("CI workflow decisions", () => {
     expect(workflow.jobs.check).toMatchObject({ name: "Check", if: "${{ always() }}" });
     expect([...(workflow.jobs.check!.needs as string[])].sort()).toEqual(
       Object.keys(workflow.jobs)
-        .filter((id) => id !== "check")
+        .filter((id) => id !== "check" && !ADVISORY.includes(id))
         .sort(),
     );
     expect(workflow.jobs.lint!.name).toBe("Lint");
@@ -351,14 +353,14 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 19],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 25],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 19],
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 45],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 28],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 20],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 26],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 20],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 46],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 29],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 20],
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
-    ["main push", "docs/operations/development.md", "push", false, 44],
+    ["main push", "docs/operations/development.md", "push", false, 45],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

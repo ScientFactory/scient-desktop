@@ -769,12 +769,54 @@ jobs:
           git config --global core.attributesFile "$env:RUNNER_TEMP/overleaf-global-attributes"
           Set-Content "$env:RUNNER_TEMP/overleaf-global-attributes" '* text eol=crlf' -Encoding utf8
           git config --global credential.helper '!exit 91'
+      # Every test file reuses this build instead of compiling its own.
+      - name: Build the file publication helper once
+        run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers="${{ runner.temp }}/scient-file-publication"
       - name: Require every Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
-      # Each case must finish its sync; 300 files is left to the Linux performance lane.
-      - name: Time real Overleaf syncs on Windows
+      # Each case must finish its sync; 300 files runs in Test Server shard 1's test:performance.
+      - name: Time a one-file Overleaf sync each way on Windows
         working-directory: apps/server
-        run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=600000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (1|10|50)$"
+        run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=300000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) 1$"
+      - name: Time 10- and 50-file Overleaf syncs on Windows
+        if: github.ref == 'refs/heads/main'
+        timeout-minutes: 15
+        working-directory: apps/server
+        run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=600000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (10|50)$"
+  # SCIENT-FORK:END
+
+  # SCIENT-FORK:START — tests only macOS can run (its Git, cloud-file flags, disk images, file
+  # identity, lease room); not a required check.
+  overleaf_macos:
+    name: Overleaf macOS
+    needs: [release_notes]
+    # Nothing waits on it in the merge queue, so it runs on pull requests and main only.
+    if: github.event_name != 'merge_group'
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - name: Install
+        run: vp install
+      - name: Test the platform report check
+        run: node --test .github/scripts/overleaf-platform-tests.test.cjs
+      - name: Build the file publication helper once
+        run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers="${{ runner.temp }}/scient-file-publication"
+      - name: Require every macOS Overleaf platform file without skips
+        run: node .github/scripts/overleaf-platform-tests.cjs
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — native qualification stays under the same required gate.

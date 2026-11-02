@@ -1,5 +1,5 @@
-import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
-const canPublish = await nativePublicationHost();
+import { privateFoldersAndIdentityHost } from "../workspace/fileExchange.testkit.ts";
+const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -12,7 +12,7 @@ const revisions = (files: Readonly<Record<string, string>>) =>
 const sorted = (tree: ReadonlyMap<string, string>) =>
   [...tree].sort(([a], [b]) => a.localeCompare(b));
 for (const model of modelCases) {
-  it.live.skipIf(!canPublish)(
+  it.live.skipIf(!hasPrivateFoldersAndIdentity)(
     `matches independent checker base: ${model.action} crash=${model.crash}`,
     () => {
       let stop = model.crash,
