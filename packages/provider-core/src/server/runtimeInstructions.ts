@@ -1,4 +1,5 @@
-const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
+/** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
+export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 Link each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools do not link for you. If linking fails, say so. Skip PRs you only read or review, and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.
 </pull_request_linking>`;
 
@@ -9,6 +10,8 @@ export interface RuntimeInstructionsInput {
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
   readonly productName?: string | undefined;
+  /** False when the session's system prompt already carries the linking instructions. */
+  readonly pullRequestLinking?: boolean;
 }
 // SCIENT-FORK:END
 
@@ -26,8 +29,11 @@ export function buildRuntimeInstructions(runtime: RuntimeInstructionsInput): str
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
   // SCIENT-FORK:START — host product name.
-  return `<runtime_info>In case you're asked: you are running in ${productName} through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images, video, and audio in your response using Markdown image syntax with absolute file paths. Link any other file you produce using its absolute path so the user can open it in ${productName}'s files viewer.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  const runtimeInfo = `<runtime_info>In case you're asked: you are running in ${productName} through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images, video, and audio in your response using Markdown image syntax with absolute file paths. Link any other file you produce using its absolute path so the user can open it in ${productName}'s files viewer.</runtime_info>`;
   // SCIENT-FORK:END
+  return runtime.pullRequestLinking === false
+    ? runtimeInfo
+    : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
 }
 
 function toSingleLine(value: string): string {
