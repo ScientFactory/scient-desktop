@@ -10,6 +10,7 @@ on:
       - "apps/server/src/scient/analysis/RunTableAdapter.live.test.ts"
       - "apps/server/src/scient/compute/ToolScan.ts"
       - "apps/server/src/scient/compute/ToolCatalog.ts"
+      - "apps/server/src/scient/compute/RuntimeDiscovery.ts"
       - "apps/server/src/scient/execution/**"
       - "apps/server/scripts/install-run-languages.ts"
       - ".github/workflows/scient-compute-languages.yml"
@@ -36,7 +37,7 @@ jobs:
       max-parallel: 8
       matrix:
         runner: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
-        group: [compiled, scripts, functional, math, lab]
+        group: [compiled, scripts, math, lab]
         include:
           - runner: ubuntu-24.04
             group: heavy
@@ -61,7 +62,9 @@ jobs:
             args:
               - --filter=t3...
 
+      # CmdStan installs through pip, so the lab tools need a plain Python.
       - name: Setup Python
+        if: ${{ matrix.group == 'lab' }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"

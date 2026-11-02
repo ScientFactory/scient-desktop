@@ -7,19 +7,24 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
 type Platform = "linux" | "darwin" | "win32";
 /** A shell command that installs it, `true` for what GitHub's computers already have, or why not. */
 type Install = string | { readonly skip: string };
-type Language = Partial<Record<Platform, Install>>;
+/** By platform, with `darwin-x64` for what differs on Intel Macs. */
+type Language = Partial<Record<Platform | "darwin-x64", Install>>;
 
 const apt = (...names: ReadonlyArray<string>) =>
   `sudo apt-get install -y --no-install-recommends ${names.join(" ")}`;
 const brew = (...names: ReadonlyArray<string>) => `brew install ${names.join(" ")}`;
 const cask = (name: string) => `brew install --cask ${name}`;
-const choco = (...names: ReadonlyArray<string>) =>
-  `choco install -y --no-progress ${names.join(" ")}`;
+/** Chocolatey's site fails now and then, as it did with a 503, so one more try after a pause. */
+const choco = (...names: ReadonlyArray<string>) => {
+  const install = `choco install -y --no-progress ${names.join(" ")}`;
+  return `${install} || { sleep 30 && ${install}; }`;
+};
 const ALREADY = "true";
 
 const ELAN_UNIX =
@@ -96,8 +101,6 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: brew("gnu-apl"),
       win32: { skip: "GNU APL has no Windows build, and Dyalog needs a sign-up to download" },
     },
-  },
-  functional: {
     haskell: { linux: apt("ghc"), darwin: brew("ghc"), win32: choco("ghc") },
     ocaml: {
       linux: apt("ocaml-nox"),
@@ -192,9 +195,12 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       ),
     },
     verilog: { linux: apt("iverilog"), darwin: brew("icarus-verilog"), win32: choco("iverilog") },
+    // Homebrew disabled its GHDL, and GHDL builds for Apple Silicon only.
     vhdl: {
       linux: apt("ghdl"),
-      darwin: brew("ghdl"),
+      darwin:
+        'curl -sSfL https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-llvm-6.0.0-macos15-aarch64.tar.gz | tar -xz -C "$HOME" && ls "$HOME"/ghdl* && sudo ln -s "$HOME"/ghdl*/bin/ghdl /usr/local/bin/ghdl',
+      "darwin-x64": { skip: "GHDL publishes no Intel Mac build, and Homebrew disabled its own" },
       win32: [
         "curl -sSfLo ghdl.zip https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-mcode-6.0.0-ucrt64.zip",
         "unzip -q ghdl.zip -d /c/ghdl",
@@ -211,7 +217,11 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
         "/c/Program\\ Files*/JAGS/*/x64/bin",
       ),
     },
-    spss: { linux: apt("pspp"), darwin: brew("pspp"), win32: choco("pspp") },
+    spss: {
+      linux: apt("pspp"),
+      darwin: { skip: "PSPP for macOS comes only through MacPorts, and SPSS needs a license" },
+      win32: choco("pspp"),
+    },
     nextflow: {
       linux: NEXTFLOW_UNIX,
       darwin: brew("nextflow"),
@@ -224,7 +234,14 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
     idl: {
       linux: apt("gnudatalanguage"),
-      darwin: brew("gnudatalanguage"),
+      // Homebrew has no GDL; its own weekly build is a disk image.
+      darwin: [
+        'curl -sSfLo gdl.dmg "https://github.com/gnudatalanguage/gdl/releases/download/weekly-release/gdl-macOS-$(uname -m)-headless.dmg"',
+        "hdiutil attach -nobrowse -mountpoint /Volumes/gdl gdl.dmg",
+        "ls -R /Volumes/gdl | head -40",
+        "sudo cp -R /Volumes/gdl/*.app /Applications/",
+        "hdiutil detach /Volumes/gdl",
+      ].join(" && "),
       win32: { skip: "GDL publishes no Windows build, and IDL needs a license" },
     },
     stan: { linux: CMDSTAN, darwin: CMDSTAN, win32: CMDSTAN },
@@ -283,11 +300,20 @@ if (platform === "linux") {
   NodeChildProcess.execSync("sudo apt-get update -q", { stdio: "inherit" });
 }
 
+// Every download retries what fails for a moment, and gives up on a server that never answers.
+const curlHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "curl-"));
+NodeFS.writeFileSync(
+  NodePath.join(curlHome, ".curlrc"),
+  "retry = 3\nretry-all-errors\nconnect-timeout = 30\n",
+);
+
 const installed: Array<string> = [];
 const failed: Array<string> = [];
 const rows: Array<string> = [];
 for (const [languageId, ways] of Object.entries(languages)) {
-  const way = ways[platform];
+  const way =
+    (platform === "darwin" && NodeProcess.arch === "x64" ? ways["darwin-x64"] : undefined) ??
+    ways[platform];
   if (way === undefined) {
     rows.push(`| ${languageId} | Tested on another computer |`);
     continue;
@@ -297,18 +323,16 @@ for (const [languageId, ways] of Object.entries(languages)) {
     continue;
   }
   console.log(`::group::Install ${languageId}`);
-  const install = () =>
-    NodeChildProcess.spawnSync("bash", ["-c", way], {
-      stdio: "inherit",
-      timeout: 25 * 60_000,
-      env: { ...NodeProcess.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" },
-    });
-  let result = install();
-  // Package sites fail now and then, as Chocolatey's did with a 503. One more try, a minute later.
-  if (result.status !== 0) {
-    NodeChildProcess.spawnSync("sleep", ["60"]);
-    result = install();
-  }
+  const result = NodeChildProcess.spawnSync("bash", ["-c", way], {
+    stdio: "inherit",
+    timeout: 25 * 60_000,
+    env: {
+      ...NodeProcess.env,
+      CURL_HOME: curlHome,
+      HOMEBREW_NO_AUTO_UPDATE: "1",
+      HOMEBREW_NO_INSTALL_CLEANUP: "1",
+    },
+  });
   console.log("::endgroup::");
   if (result.status === 0) {
     installed.push(languageId);
