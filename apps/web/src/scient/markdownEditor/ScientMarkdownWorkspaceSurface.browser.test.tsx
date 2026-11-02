@@ -101,6 +101,7 @@ function ScientMarkdownWorkspaceSurface(props: TestSurfaceProps) {
     refresh: () => coordinator.refresh(),
     resolveWithLocal: (revision) => coordinator.resolveWithLocal(revision),
     resolveWithDisk: () => coordinator.resolveWithDisk(),
+    resolveRestoredDraft: async () => false,
     restoreRecovery: () => coordinator.restoreRecovery(),
     holdForRename: () => coordinator.holdForRename(),
     registerExternalProjection: () => () => {},

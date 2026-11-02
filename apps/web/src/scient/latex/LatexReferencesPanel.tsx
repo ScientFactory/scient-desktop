@@ -95,7 +95,7 @@ function BibliographyFile(props: {
   const apply = useStableCallback(async (expected: string, next: string) => {
     if (lease === null) return false;
     const current = lease.getSnapshot();
-    if (current.editingBlocked || current.error !== null || current.conflict !== null) return false;
+    if (current.editingBlocked || current.conflict !== null) return false;
     const merged = mergeBibliographySourceEdit(expected, next, current.draftSource, "bibtex");
     if (merged === null) return false;
     if (

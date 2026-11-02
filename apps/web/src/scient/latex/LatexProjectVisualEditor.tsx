@@ -283,7 +283,7 @@ function ProjectFileSession(props: {
       ? notLive
       : () => {
           const current = sourceLease.getSnapshot();
-          return current.editingBlocked || current.error !== null || current.conflict !== null
+          return current.editingBlocked || current.conflict !== null
             ? null
             : {
                 contents: current.draftSource,
@@ -299,7 +299,6 @@ function ProjectFileSession(props: {
           const current = sourceLease.getSnapshot();
           if (
             current.editingBlocked ||
-            current.error !== null ||
             current.conflict !== null ||
             sourceLease.documentId !== edit.documentId
           )

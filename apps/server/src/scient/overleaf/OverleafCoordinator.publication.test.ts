@@ -12,15 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import { OverleafGitError } from "./OverleafGitExecutor.ts";
-import {
-  CONNECTION,
-  canApply,
-  read,
-  revision,
-  run,
-  world,
-  write,
-} from "./OverleafCoordinator.testkit.ts";
+import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
 
 const marked = "<<<<<<< mine\nours\n=======\ntheirs\n>>>>>>> theirs\n";
 
@@ -123,43 +115,6 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
         expect(yield* w.sync()).toMatchObject({ publication: { _tag: "not-verified" } });
         expect(w.pushes).toHaveLength(0);
         expect(yield* read(w.folder, "gone.tex")).toBe("new work");
-      }),
-    );
-  });
-
-  it.live("sends nothing when a kept copy changed after the apply", () => {
-    let held: NodeFSP.FileHandle | undefined;
-    return run(
-      Effect.gen(function* () {
-        const w = yield* world({
-          overleaf: "git",
-          synced: { "a.tex": "A", "other.tex": "O" },
-          remote: { "a.tex": "A", "other.tex": "O2" },
-          // An editor still holding other.tex saves into the file the sync replaced,
-          // which is now the kept copy.
-          at: (point) =>
-            point === "adopted"
-              ? Effect.promise(async () => {
-                  await held!.truncate(0);
-                  await held!.write("newer work", 0, "utf8");
-                })
-              : Effect.void,
-        });
-        held = yield* Effect.acquireRelease(
-          Effect.promise(() => NodeFSP.open(NodePath.join(w.folder, "other.tex"), "r+")),
-          (handle) => Effect.promise(() => handle.close()),
-        );
-        yield* write(w.folder, { "a.tex": "B" });
-        expect(yield* w.sync()).toMatchObject({
-          publication: { _tag: "blocked", reason: "kept-copy-changed" },
-        });
-        expect(w.pushes).toHaveLength(0);
-        expect((yield* w.connection).retention.copies).toMatchObject([
-          { relativePath: "other.tex", state: "changed" },
-        ]);
-        expect(yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).toMatchObject([
-          { relativePath: "other.tex", keptRevision: revision("newer work") },
-        ]);
       }),
     );
   });

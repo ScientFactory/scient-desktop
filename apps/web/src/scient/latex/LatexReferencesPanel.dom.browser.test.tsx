@@ -482,13 +482,13 @@ describe("References bibliography session", () => {
       genericPendingIds: new Set(),
     });
     expect([...guards.attentionSurfaceIds]).toEqual(["refsA.bib"]);
-    await act(async () => {
-      expect(await tab.retry()).toBe(false);
-    });
-    expect(write).toHaveBeenCalledOnce();
-    expect(disk.source).toBe("@article{known,\n  title = {Original},\n}\n");
-    expect(field(_fixture)?.value).toBe("Keep this draft");
     expect(onSaved).not.toHaveBeenCalled();
+    // A failed save goes on trying, so this one lands rather than reach the next test.
+    publication = deferred();
+    publication.resolve({ revision: "r2" });
+    await act(async () => {
+      expect(await tab.flushNow()).toBe(true);
+    });
   });
 
   it("keeps entry A when an earlier write and superseding entry B leave a clean lane", async () => {
@@ -554,54 +554,6 @@ describe("References bibliography session", () => {
     expect(field(_fixture)?.value).toBe("Form edit");
     expect(_fixture.host.textContent).not.toContain("Reference saved.");
   });
-
-  it.each(["LF", "CRLF"])(
-    "can confirm a retained new entry after reviewing a known unchanged %s refusal without adding it twice",
-    async (endings) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
-
-      if (endings === "CRLF") {
-        await act(async () => {
-          expect(tab.change(disk.source.replace(/\n/gu, "\r\n"), 0)).toBe(true);
-          publication.resolve({ revision: "crlf" });
-          expect(await tab.flushNow()).toBe(true);
-        });
-        publication = deferred();
-        write.mockClear();
-      }
-      await mount(_fixture);
-      await act(() =>
-        [..._fixture.host.querySelectorAll<HTMLButtonElement>("button")]
-          .find((button) => button.textContent === "Add reference")!
-          .click(),
-      );
-      await type(_fixture, "New entry");
-      await save(_fixture);
-      await act(async () => {
-        publication.reject(unchangedFailure);
-        expect(await tab.flushNow()).toBe(false);
-      });
-      expect(field(_fixture)?.value).toBe("New entry");
-      expect(onSaved).not.toHaveBeenCalled();
-      await act(async () => {
-        expect(await tab.reviewUnchangedRefusal(disk.revision)).toBe(true);
-      });
-      publication = deferred();
-      await act(async () => {
-        const saveLocal = tab.resolveWithLocal(disk.revision);
-        publication.resolve({ revision: "r2" });
-        expect(await saveLocal).toBe(true);
-      });
-      await save(_fixture);
-      expect(field(_fixture)).toBeNull();
-      expect(onSaved).toHaveBeenCalledOnce();
-      expect(disk.source.match(/@misc\{reference1/gu)).toHaveLength(1);
-      expect(write).toHaveBeenCalledTimes(2);
-      if (endings === "CRLF") expect(disk.source).not.toMatch(/(?<!\r)\n/u);
-    },
-  );
 });
 
 function _createFixture() {

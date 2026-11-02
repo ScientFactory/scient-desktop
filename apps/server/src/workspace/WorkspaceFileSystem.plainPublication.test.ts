@@ -5,11 +5,39 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   fileMutationFixture,
   filePublicationHelperWithout,
 } from "../scient/workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../scient/workspace/RetainedFileMutation.ts";
+
+/** Faults for a save: `refuse` answers the rename, `partial` fails a write through the file. */
+const faults = vi.hoisted(() => ({
+  refuse: null as (() => Promise<NodeJS.ErrnoException>) | null,
+  partial: false,
+}));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof NodeFSP>();
+  const rename: typeof actual.rename = async (from, to) => {
+    if (faults.refuse && String(from).endsWith(".scient-tmp")) throw await faults.refuse();
+    return actual.rename(from, to);
+  };
+  const open = (async (...args: Parameters<typeof actual.open>) => {
+    const handle = await actual.open(...args);
+    if (!faults.partial || typeof args[1] !== "number") return handle;
+    const write = handle.write.bind(handle) as (...args: unknown[]) => Promise<unknown>;
+    handle.write = (async (bytes: Uint8Array, ...rest: unknown[]) => {
+      if (!faults.partial) return write(bytes, ...rest);
+      faults.partial = false;
+      await write(bytes, 0, 2, 0);
+      throw Object.assign(new Error("disk"), { code: "EIO" });
+    }) as typeof handle.write;
+    return handle;
+  }) as typeof actual.open;
+  return { ...actual, rename, open, default: { ...actual, rename, open } };
+});
+const held = async () => Object.assign(new Error("held"), { code: "EBUSY" });
 
 const revision = (text: string) => bytesRevision(Buffer.from(text));
 const leftovers = async (directory: string) =>
@@ -17,11 +45,12 @@ const leftovers = async (directory: string) =>
 const posix = HostProcess.Platform.defaultValue() !== "win32";
 
 /**
- * Plain publication in each way a host reaches it: the Windows helper (no shared leases,
- * no one-step replace or create), a native host whose volume cannot publish in one step,
- * and no helper at all. Where no helper can be compiled every mode runs without one.
+ * Plain publication in each way a host reaches it: a fully native helper, the Windows helper
+ * (no shared leases, no one-step replace or create), a native host whose volume cannot
+ * publish in one step, and no helper at all. Where no helper can be compiled every mode runs without one.
  */
 const modes = [
+  ["a helper that could publish natively", async (helper: string) => helper],
   [
     "a Windows-like helper",
     (helper: string) =>
@@ -75,7 +104,8 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
   it.live("saves changed bytes, keeps permissions and leaves no temporary file", () =>
     plain(async (h) => {
       const target = NodePath.join(h.cwd, "main.tex");
-      await NodeFSP.writeFile(target, "A", { mode: 0o640 });
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.chmod(target, 0o664);
       const saved = await h.run(
         h.methods.writeFile({
           cwd: h.cwd,
@@ -86,7 +116,7 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
       );
       expect(saved).toMatchObject({ relativePath: "main.tex", revision: revision("C") });
       expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
-      if (posix) expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o640);
+      if (posix) expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o664);
       expect(await leftovers(h.cwd)).toEqual([]);
       expect(await h.settledRead("main.tex")).toMatchObject({ contents: "C" });
     }),
@@ -114,13 +144,159 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
     }),
   );
 
+  it.live("writes through a file another program won't let be replaced", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "the longer earlier text");
+      faults.refuse = held;
+      try {
+        const saved = await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents: "C",
+            expectedRevision: revision("the longer earlier text"),
+          }),
+        );
+        expect(saved.revision).toBe(revision("C"));
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+      expect(await leftovers(h.cwd)).toEqual([]);
+    }),
+  );
+
+  it.live("keeps every name of a hard-linked file", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      const other = NodePath.join(h.cwd, "other-name.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.link(target, other);
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          contents: "C",
+          expectedRevision: revision("A"),
+        }),
+      );
+      expect(await NodeFSP.readFile(other, "utf8")).toBe("C");
+      expect(await leftovers(h.cwd)).toEqual([]);
+    }),
+  );
+
+  it.live("puts the file back when writing through it fails partway", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "ORIGINAL");
+      faults.refuse = held;
+      faults.partial = true;
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "NEW",
+              expectedRevision: revision("ORIGINAL"),
+            }),
+          ),
+        ).rejects.toMatchObject({ publicationOutcome: "unchanged", cause: { code: "EIO" } });
+      } finally {
+        faults.refuse = null;
+        faults.partial = false;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("ORIGINAL");
+    }),
+  );
+
+  it.live.skipIf(!posix)("never writes through a link put in the file's place", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      const elsewhere = NodePath.join(h.root, "elsewhere.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.writeFile(elsewhere, "A");
+      faults.refuse = async () => {
+        await NodeFSP.rm(target);
+        await NodeFSP.symlink(elsewhere, target);
+        return held();
+      };
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "C",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileTargetChangedError" });
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(elsewhere, "utf8")).toBe("A");
+    }),
+  );
+
+  it.live("leaves bytes another program wrote after the check", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      faults.refuse = async () => {
+        await NodeFSP.writeFile(target, "theirs");
+        return held();
+      };
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "C",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileTargetChangedError" });
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("theirs");
+    }),
+  );
+
+  it.live.skipIf(!posix)("saves a writable file in a folder that refuses new files", () =>
+    plain(async (h) => {
+      const folder = NodePath.join(h.cwd, "locked");
+      await NodeFSP.mkdir(folder);
+      await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "A");
+      await NodeFSP.chmod(folder, 0o555);
+      try {
+        await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "locked/main.tex",
+            contents: "C",
+            expectedRevision: revision("A"),
+          }),
+        );
+      } finally {
+        await NodeFSP.chmod(folder, 0o755);
+      }
+      expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("C");
+    }),
+  );
+
   it.live.skipIf(!posix)(
-    "reports a failure before the rename as unchanged, with the system's error",
+    "reports a file that can't be written as unchanged, with the system's error",
     () =>
       plain(async (h) => {
         const folder = NodePath.join(h.cwd, "locked");
         await NodeFSP.mkdir(folder);
-        await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "A");
+        const target = NodePath.join(folder, "main.tex");
+        await NodeFSP.writeFile(target, "A");
+        await NodeFSP.chmod(target, 0o444);
         await NodeFSP.chmod(folder, 0o555);
         try {
           await expect(
@@ -140,9 +316,100 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         } finally {
           await NodeFSP.chmod(folder, 0o755);
         }
-        expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("A");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
         expect(await leftovers(folder)).toEqual([]);
       }),
+  );
+
+  it.live("lists the earlier text, and can discard it", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "first draft");
+      const request = { cwd: h.cwd, relativePath: "main.tex" };
+      await h.run(
+        h.methods.writeFile({
+          ...request,
+          contents: "second draft",
+          expectedRevision: revision("first draft"),
+        }),
+      );
+      const [kept] = (await h.run(h.methods.listFileVersions(request))).versions;
+      expect(kept).toMatchObject({ revision: revision("first draft"), byteLength: 11 });
+      expect(await NodeFSP.readFile(kept!.retainedPath, "utf8")).toBe("first draft");
+
+      await h.run(h.methods.discardFileVersion({ ...request, versionId: kept!.versionId }));
+      expect((await h.run(h.methods.listFileVersions(request))).versions).toEqual([]);
+    }),
+  );
+
+  it.live("keeps an outside change but not each of its own autosaves", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      const request = { cwd: h.cwd, relativePath: "main.tex" };
+      const save = (contents: string, before: string) =>
+        h.run(h.methods.writeFile({ ...request, contents, expectedRevision: revision(before) }));
+      await save("B", "A");
+      await save("C", "B");
+      await NodeFSP.writeFile(target, "theirs");
+      await save("D", "theirs");
+      const { versions } = await h.run(h.methods.listFileVersions(request));
+      expect(versions.map((version) => version.revision)).toEqual([
+        revision("theirs"),
+        revision("A"),
+      ]);
+    }),
+  );
+
+  it.live("goes on with its own saves but won't replace other text it can't keep", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      const save = (contents: string, before: string) =>
+        h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents,
+            expectedRevision: revision(before),
+          }),
+        );
+      await save("B", "A");
+      const history = NodePath.join(h.root, "file-history");
+      await NodeFSP.rm(history, { recursive: true });
+      await NodeFSP.writeFile(history, "not a folder");
+      await save("C", "B");
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+
+      await NodeFSP.writeFile(target, "theirs");
+      await expect(save("D", "theirs")).rejects.toMatchObject({ publicationOutcome: "unchanged" });
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("theirs");
+    }),
+  );
+
+  it.live("takes a file's history along when it's renamed", () =>
+    plain(async (h) => {
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "a.tex"), "first");
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "a.tex",
+          contents: "second",
+          expectedRevision: revision("first"),
+        }),
+      );
+      await h.run(
+        h.methods.renameFile({
+          cwd: h.cwd,
+          relativePath: "a.tex",
+          destinationRelativePath: "b.tex",
+        }),
+      );
+      const { versions } = await h.run(
+        h.methods.listFileVersions({ cwd: h.cwd, relativePath: "b.tex" }),
+      );
+      expect(versions.map((version) => version.revision)).toEqual([revision("first")]);
+    }),
   );
 
   it.live("keeps epochs stable between service instances and advances them on each save", () =>
@@ -630,9 +897,11 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await expect(NodeFSP.lstat(NodePath.join(h.cwd, "old"))).rejects.toMatchObject({
           code: "ENOENT",
         });
-        expect(
-          await h.run(h.methods.listFileVersions({ cwd: h.cwd, relativePath: "old/deep/x.tex" })),
-        ).toMatchObject({ versions: [], attention: null });
+        const history = await h.run(
+          h.methods.listFileVersions({ cwd: h.cwd, relativePath: "old/deep/x.tex" }),
+        );
+        expect(history.versions.map((version) => version.revision)).toEqual([revision("X")]);
+        expect(history.attention).toBeNull();
       }),
     );
 
@@ -806,4 +1075,107 @@ describe("plain creation beside native replacement", () => {
       (helper) => filePublicationHelperWithout(helper, ["atomicCreateMetadata"]),
     ),
   );
+});
+
+describe("a file too large to keep a copy of", () => {
+  it.live("isn't replaced, since nothing could bring it back", () =>
+    fileMutationFixture(
+      async (h) => {
+        const target = NodePath.join(h.cwd, "huge.log");
+        await NodeFSP.writeFile(target, "");
+        await NodeFSP.truncate(target, 1024 ** 3 + 1);
+        await expect(
+          h.run(h.methods.writeFile({ cwd: h.cwd, relativePath: "huge.log", contents: "x" })),
+        ).rejects.toMatchObject({ publicationOutcome: "unchanged" });
+        expect((await NodeFSP.stat(target)).size).toBe(1024 ** 3 + 1);
+      },
+      {},
+      null,
+      async (helper) => helper,
+    ),
+  );
+});
+
+describe("an Overleaf step", () => {
+  it.live("stays inside the kept copies' limit, changing nothing", () =>
+    fileMutationFixture(
+      async (h) => {
+        const target = NodePath.join(h.cwd, "main.tex");
+        const contents = "x".repeat(10_000);
+        await NodeFSP.writeFile(target, contents);
+        const retentionDirectory = NodePath.join(h.root, "vault");
+        await NodeFSP.mkdir(retentionDirectory, { mode: 0o700 });
+        await expect(
+          h.run(
+            h.methods.replaceFileRetained({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              retentionDirectory,
+              id: "step-0",
+              expectedRevision: revision(contents),
+              bytes: Buffer.from("new"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationUnavailableError" });
+        expect(await NodeFSP.readFile(target, "utf8")).toBe(contents);
+      },
+      {},
+      1,
+      async (helper) => helper,
+    ),
+  );
+});
+
+describe("a save after an older build left a file stuck", () => {
+  it.live("goes ahead, and nothing asks about the stuck publication again", () => {
+    let target = "",
+      outside = "",
+      conflict = true;
+    return fileMutationFixture(
+      async (h) => {
+        target = NodePath.join(h.cwd, "main.tex");
+        outside = NodePath.join(h.root, "writer");
+        await NodeFSP.writeFile(target, "A");
+        const request = { cwd: h.cwd, relativePath: "main.tex" };
+        await expect(
+          h.run(
+            h.methods.deleteFile({
+              ...request,
+              expectedRevision: revision("A"),
+              mutationId: "stuck",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileRecoveryRequiredError" });
+
+        const methods = await h.restart({ nativeSaves: false });
+        expect((await h.run(methods.listFileVersions(request))).attention).toBeNull();
+        expect(
+          await h.run(
+            methods.withSettledFileRead(request, (attention) => Effect.succeed(attention)),
+          ),
+        ).toBeNull();
+        await h.run(
+          methods.writeFile({
+            ...request,
+            contents: "my text",
+            expectedRevision: revision("D"),
+          }),
+        );
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("my text");
+      },
+      {
+        at: async (point) => {
+          if (point === "checked" && conflict) {
+            await NodeFSP.writeFile(outside, "B");
+            await NodeFSP.rename(outside, target);
+          }
+          if (point === "restore-intent" && conflict) {
+            conflict = false;
+            await NodeFSP.writeFile(outside, "D");
+            await NodeFSP.rename(outside, target);
+          }
+        },
+      },
+    );
+  });
 });
