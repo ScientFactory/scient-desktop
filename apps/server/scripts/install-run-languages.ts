@@ -47,6 +47,7 @@ const silentInstaller = (url: string, flags: string, places: ReadonlyArray<strin
     .replace(/\.exe$/iu, "")}.exe`;
   return [
     `curl -sSfLo "${file}" "${url}"`,
+    `echo "downloaded ${file}, $(wc -c < "${file}") bytes"`,
     `{ MSYS_NO_PATHCONV=1 "./${file}" ${flags} || { echo "installer exited $?"; false; }; }`,
     `{ ls -d ${places.join(" ")} 2>/dev/null || true; }`,
   ].join(" && ");
@@ -191,6 +192,9 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
   },
   lab: {
+    // First: on Intel Macs Homebrew's headers, such as Octave's SUNDIALS, sit where compilers look,
+    // and CmdStan's build takes them over its own.
+    stan: { linux: CMDSTAN, darwin: CMDSTAN, win32: CMDSTAN },
     // Chocolatey's Octave points at a download GNU no longer serves.
     octave: {
       linux: apt("octave"),
@@ -255,13 +259,13 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
       darwin: [
         'curl -sSfLo gdl.dmg "https://github.com/gnudatalanguage/gdl/releases/download/weekly-release/gdl-macOS-$(uname -m)-headless.dmg"',
         "hdiutil attach -nobrowse -mountpoint /Volumes/gdl gdl.dmg",
-        "ls -R /Volumes/gdl | head -40",
-        "sudo cp -R /Volumes/gdl/*.app /Applications/",
+        // ditto copies an app the way the Finder does, keeping its bundled libraries whole.
+        'sudo ditto "/Volumes/gdl/GNU Data Language.app" "/Applications/GNU Data Language.app"',
+        'ls -l "/Applications/GNU Data Language.app/Contents/Resources/libs/libomp.dylib"',
         "hdiutil detach /Volumes/gdl",
       ].join(" && "),
       win32: { skip: "GDL publishes no Windows build, and IDL needs a license" },
     },
-    stan: { linux: CMDSTAN, darwin: CMDSTAN, win32: CMDSTAN },
   },
   // Each is hundreds of megabytes or more, so they run on one computer. Their routes are the same
   // everywhere.
@@ -269,7 +273,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     isabelle: {
       linux:
         // The Cambridge mirror, since the main server does not answer GitHub's computers.
-        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2026_linux.tar.gz" | tar -xz -C "$HOME"',
+        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2026_linux.tar.gz" | tar -xz -C "$HOME" && { "$HOME/Isabelle2026/bin/isabelle"; "$HOME/Isabelle2026/bin/isabelle" process_theories -? || true; }',
     },
     sage: {
       linux:
