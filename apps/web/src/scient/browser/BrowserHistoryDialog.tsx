@@ -52,8 +52,15 @@ export function BrowserHistoryDialog({
 
   const [query, setQuery] = useState("");
   const [search] = useDebouncedValue(query.trim(), { wait: SEARCH_DELAY_MS });
-  const [pages, setPages] = useState<ReadonlyArray<BrowserHistoryPage> | null>(null);
-  const [next, setNext] = useState<BrowserHistoryCursor | undefined>();
+  const [found, setFound] = useState<{
+    readonly profileId: string;
+    readonly pages: ReadonlyArray<BrowserHistoryPage>;
+    readonly next: BrowserHistoryCursor | undefined;
+  } | null>(null);
+  // Another profile's pages never show, even for a moment.
+  const shown = found?.profileId === profileId ? found : null;
+  const pages = shown?.pages ?? null;
+  const next = shown?.next;
   const [failed, setFailed] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [now] = useState(() => Date.now());
@@ -73,10 +80,14 @@ export function BrowserHistoryDialog({
       if (request !== latestRequest.current) return;
       setFailed(result._tag === "Failure");
       if (result._tag === "Failure") return;
-      setPages((current) =>
-        before ? [...(current ?? []), ...result.value.pages] : result.value.pages,
-      );
-      setNext(result.value.next);
+      setFound((current) => ({
+        profileId: profile,
+        pages:
+          before && current?.profileId === profile
+            ? [...current.pages, ...result.value.pages]
+            : result.value.pages,
+        next: result.value.next,
+      }));
     },
   );
 
@@ -87,11 +98,14 @@ export function BrowserHistoryDialog({
   }, [search, profileId]);
 
   const removePage = async (url: string) => {
-    const before = pages;
-    setPages((current) => current?.filter((page) => page.url !== url) ?? null);
+    const before = found;
+    setFound(
+      (current) =>
+        current && { ...current, pages: current.pages.filter((page) => page.url !== url) },
+    );
     const result = await remove({ environmentId, input: { profileId, urls: [url] } });
     if (result._tag === "Success") return;
-    setPages(before);
+    setFound(before);
     toastManager.add({ type: "error", title: "Could not remove this from your history" });
   };
 
@@ -99,8 +113,9 @@ export function BrowserHistoryDialog({
     setConfirmingClear(false);
     const result = await clear({ environmentId, input: { profileId } });
     if (result._tag === "Success") {
-      setPages([]);
-      setNext(undefined);
+      // A page load still on its way would bring back what was cleared.
+      latestRequest.current += 1;
+      setFound({ profileId, pages: [], next: undefined });
       return;
     }
     toastManager.add({ type: "error", title: "Could not clear your history" });

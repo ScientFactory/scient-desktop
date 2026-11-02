@@ -103,9 +103,13 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const manager = yield* PreviewManager;
 
+    const cutoff = Effect.map(Clock.currentTimeMillis, (now) => now - RETENTION_MS);
     const prune = Effect.gen(function* () {
-      const cutoff = (yield* Clock.currentTimeMillis) - RETENTION_MS;
-      yield* sql`DELETE FROM scient_browser_history WHERE last_visited_at < ${cutoff}`;
+      yield* sql`DELETE FROM scient_browser_history WHERE last_visited_at < ${yield* cutoff}`;
+    });
+    // Pruning follows writes, so a read must leave out what has expired since the last one.
+    const kept = Effect.fn(function* (profileId: BrowserProfileId) {
+      return [sql`profile_id = ${profileId}`, sql`last_visited_at >= ${yield* cutoff}`];
     });
 
     const recordVisit = Effect.fn("BrowserHistory.recordVisit")(function* (page: VisitedPage) {
@@ -165,7 +169,7 @@ export const layer = Layer.effect(
 
     const list = Effect.fn("BrowserHistory.list")(
       function* ({ profileId, query, before }: BrowserHistoryListInput) {
-        const conditions = [sql`profile_id = ${profileId}`, ...matching(searchTerms(query ?? ""))];
+        const conditions = [...(yield* kept(profileId)), ...matching(searchTerms(query ?? ""))];
         if (before) {
           conditions.push(sql`(last_visited_at, url) < (${before.lastVisitedAt}, ${before.url})`);
         }
@@ -188,7 +192,7 @@ export const layer = Layer.effect(
       function* ({ profileId, query }: BrowserHistorySuggestInput) {
         const terms = searchTerms(query);
         if (terms.length === 0) return { pages: [] };
-        const conditions = [sql`profile_id = ${profileId}`, ...matching(terms)];
+        const conditions = [...(yield* kept(profileId)), ...matching(terms)];
         const start = escapeLike(query.trim());
         const rows = yield* sql<PageRow>`
           SELECT url, title, last_visited_at FROM scient_browser_history

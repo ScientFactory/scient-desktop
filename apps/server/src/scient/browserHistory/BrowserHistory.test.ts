@@ -157,12 +157,14 @@ describe("BrowserHistory", () => {
     ),
   );
 
-  it.effect("forgets pages after 90 days", () =>
+  it.effect("forgets pages after 90 days, before and after the next visit", () =>
     run(
       Effect.gen(function* () {
-        const { publish, urls } = yield* setup;
-        yield* publish(navigated(success("https://old.test/")));
+        const { history, publish, urls } = yield* setup;
+        yield* publish(navigated(success("https://old.test/", "Old")));
         yield* TestClock.adjust(Duration.days(91));
+        expect(yield* urls).toEqual([]);
+        expect((yield* history.suggest({ profileId: "default", query: "old" })).pages).toEqual([]);
         yield* publish(navigated(success("https://new.test/")));
         expect(yield* urls).toEqual(["https://new.test/"]);
       }),

@@ -85,12 +85,13 @@ describe("BrowserHistoryDialog", () => {
     });
   });
 
-  it("shows the pages of the profile the tab moves to", async () => {
+  it("shows the pages of the profile the tab moves to, and the old ones not for a moment", async () => {
     resetServer();
     const { view } = open();
     await using screen = await render(view);
     await expect.element(screenPage.getByText("nature")).toBeVisible();
-    mocks.list.mockResolvedValue(success({ pages: [visit("science")] }));
+    let answerHome: (value: unknown) => void = () => {};
+    mocks.list.mockReturnValueOnce(new Promise((resolve) => (answerHome = resolve)));
     await screen.rerender(
       <BrowserHistoryDialog
         threadRef={threadRef}
@@ -100,12 +101,37 @@ describe("BrowserHistoryDialog", () => {
       />,
     );
 
-    await expect.element(screenPage.getByText("science")).toBeVisible();
     await expect.element(screenPage.getByText("nature")).not.toBeInTheDocument();
     expect(mocks.list).toHaveBeenLastCalledWith({
       environmentId: threadRef.environmentId,
       input: { profileId: "home" },
     });
+    answerHome(success({ pages: [visit("science")] }));
+    await expect.element(screenPage.getByText("science")).toBeVisible();
+  });
+
+  it("stays cleared when a page load still on its way answers", async () => {
+    resetServer();
+    const next = { lastVisitedAt: 1, url: "https://nature.test/" };
+    mocks.list.mockResolvedValueOnce(success({ pages: [visit("nature")], next }));
+    const { view } = open();
+    await using _screen = await render(view);
+    let answerMore: (value: unknown) => void = () => {};
+    mocks.list.mockReturnValueOnce(new Promise((resolve) => (answerMore = resolve)));
+    await screenPage.getByRole("button", { name: "Show more" }).click();
+    await screenPage.getByRole("button", { name: "Clear history" }).click();
+    await screenPage
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Clear history" })
+      .click();
+    await expect.element(screenPage.getByText("Pages you visit will appear here.")).toBeVisible();
+
+    answerMore(success({ pages: [visit("older")], next }));
+    await expect.element(screenPage.getByText("Pages you visit will appear here.")).toBeVisible();
+    expect(screenPage.getByText("older").all()).toHaveLength(0);
+    await expect
+      .element(screenPage.getByRole("button", { name: "Show more" }))
+      .not.toBeInTheDocument();
   });
 
   it("ignores an older search that answers last", async () => {
