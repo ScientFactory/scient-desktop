@@ -15,10 +15,10 @@ describe("product insight contract", () => {
         name,
         {
           ...properties,
-          source: "PRIVATE",
+          source: "\\documentclass{article} PRIVATE",
           path: "PRIVATE",
-          documentId: "PRIVATE",
-          revision: "PRIVATE",
+          file: "/Users/someone/PRIVATE.tex",
+          text: "PRIVATE",
           error: "PRIVATE",
         },
         context,
@@ -36,13 +36,12 @@ describe("product insight contract", () => {
       );
     }
   });
-  it("recognizes bounded public namespaces and Antigravity variants without private labels", () => {
+  it("folds public namespaces and Antigravity variants into one model key", () => {
     expect(modelKey("openai/gpt-5.4")).toBe("gpt-5.4");
     expect(modelKey("anthropic/claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
     expect(modelKey("gemini-3.8-flash-high")).toBe("gemini-3.8-flash");
     expect(modelKey("google/gemini-3.7-flash-low")).toBe("gemini-3.7-flash");
-    expect(modelKey("private/gpt-5.4")).toBe("other");
-    expect(modelKey("openai/PRIVATE")).toBe("other");
+    expect(modelKey("lab/gpt-5.4")).toBe("lab/gpt-5.4");
   });
   it("preserves exact reported usage without adding overlapping subsets", () => {
     const event = normalizeInheritedEvent(
@@ -87,7 +86,12 @@ describe("product insight contract", () => {
     for (const value of [-1, 0.5, Infinity, NaN, 1_000_000_001, "500"]) {
       const event = normalizeInheritedEvent(
         "provider.turn.usage",
-        { model: "PRIVATE", usageStatus: "complete", inputTokens: value, outputTokens: 20 },
+        {
+          model: "not a model id",
+          usageStatus: "complete",
+          inputTokens: value,
+          outputTokens: 20,
+        },
         context,
       )!;
       expect(event.properties.inputTokens).toBeUndefined();
@@ -105,29 +109,35 @@ describe("product insight contract", () => {
       )?.properties.modelKey,
     ).toBe("other");
   });
-  it("bounds all UI categories and strips paths and arbitrary settings", () => {
-    for (const name of ["panel.viewed", "settings.viewed", "feature.viewed", "usage.viewed"]) {
-      const event = normalizeInheritedEvent(
-        name,
-        {
-          category: "PRIVATE",
-          section: "PRIVATE",
-          feature: "PRIVATE",
-          metric: "PRIVATE",
-          path: "PRIVATE",
-          value: "PRIVATE",
-        },
-        context,
-      )!;
-      expect(JSON.stringify(event)).not.toContain("PRIVATE");
-      expect(
-        eventContractViolation({
+  it("keeps UI categories but strips paths and free text", () => {
+    for (const [name, key] of [
+      ["panel.viewed", "category"],
+      ["settings.viewed", "section"],
+      ["feature.viewed", "feature"],
+      ["usage.viewed", "metric"],
+    ] as const) {
+      for (const value of [
+        "/Users/someone/PRIVATE",
+        "a PRIVATE sentence",
+        "https://PRIVATE.example",
+        "PRIVATE@example.com",
+      ]) {
+        const event = normalizeInheritedEvent(
           name,
-          properties: event.properties,
-          privacyLevel: "product",
-          consentLevel: "product",
-        }),
-      ).toBeNull();
+          { [key]: value, path: "PRIVATE", title: "PRIVATE" },
+          context,
+        )!;
+        expect(event.properties[key]).toBe("other");
+        expect(JSON.stringify(event)).not.toContain("PRIVATE");
+        expect(
+          eventContractViolation({
+            name,
+            properties: event.properties,
+            privacyLevel: "product",
+            consentLevel: "product",
+          }),
+        ).toBeNull();
+      }
     }
   });
 });

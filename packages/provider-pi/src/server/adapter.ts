@@ -112,7 +112,13 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
+import {
+  addRequestUsage,
+  nativeTurnTokenUsage,
+  type NativeTurnUsage,
+} from "@t3tools/provider-core/server/turnUsage";
 import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import { piRequestUsage } from "./requestUsage.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -423,6 +429,8 @@ interface ActivePiTurn {
   readonly promptMayBeCommandOnly: boolean;
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
+  /** Model requests Pi reported during this turn, added up for usage analytics. */
+  requestUsage?: NativeTurnUsage;
   settleProbeGeneration: number;
   pendingSteerCount: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
@@ -1918,6 +1926,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             status: interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
             completedAt,
             ...(tokenUsage === undefined ? {} : { tokenUsage }),
+            ...(turn.requestUsage === undefined
+              ? {}
+              : {
+                  turnTokenUsage: nativeTurnTokenUsage(
+                    turn.requestUsage,
+                    interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
+                    false,
+                  ),
+                }),
           },
         });
         yield* updateProviderThread(
@@ -2248,6 +2265,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
             turn.outputTruncated = recordString(message, "stopReason") === "length";
+            const request = piRequestUsage(message);
+            if (request !== undefined)
+              turn.requestUsage = addRequestUsage(turn.requestUsage, request);
             const content = recordField(message, "content");
             if (Array.isArray(content)) {
               for (const [index, block] of content.entries()) {
