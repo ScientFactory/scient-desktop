@@ -159,6 +159,8 @@ export function useScientFileActions(input: {
   readonly hostFolder: boolean;
   readonly treeEntries: RefObject<ReadonlyMap<string, ProjectDirectoryEntry>>;
   readonly treeController: RefObject<LazyWorkspaceTreeController | null>;
+  /** Selection changes until the end of this task are the tree's own, not a request to open. */
+  readonly quietSelection: () => void;
 }) {
   const { environmentId, cwd } = input;
   const enabled = !input.hostFolder;
@@ -320,6 +322,11 @@ export function useScientFileActions(input: {
     return paths.length === 1 && isFolder(first) ? first : parentOf(first);
   };
 
+  const startRenaming = (path: string, folder: boolean) => {
+    input.quietSelection();
+    modelRef.current?.startRenaming(folder ? `${path}/` : path);
+  };
+
   const create = async (kind: "folder" | "file", folder: string) => {
     const created = await perform(
       {
@@ -333,9 +340,7 @@ export function useScientFileActions(input: {
     if (path === undefined || controller === null) return;
     // Name it straight away, once the tree lists it.
     await controller.refresh();
-    if (await controller.ensurePath(path)) {
-      modelRef.current?.startRenaming(kind === "folder" ? `${path}/` : path);
-    }
+    if (await controller.ensurePath(path)) startRenaming(path, kind === "folder");
   };
 
   const transfer = async (
@@ -396,6 +401,8 @@ export function useScientFileActions(input: {
     const canUndo = trashed.every((outcome) => outcome.restoreId !== undefined);
     const toastId = toastManager.add({
       type: "success",
+      // Long enough to reach Undo; ⌘Z in the tree works after it closes.
+      timeout: 10_000,
       title:
         trashed.length === 1
           ? `Moved ${baseName(trashed[0]!.from ?? "")} to the ${trashLabel}`
@@ -445,7 +452,7 @@ export function useScientFileActions(input: {
         return void duplicate(paths);
       case MENU.rename: {
         const [path] = paths;
-        if (path !== undefined) modelRef.current?.startRenaming(isFolder(path) ? `${path}/` : path);
+        if (path !== undefined) startRenaming(path, isFolder(path));
         return;
       }
       case MENU.copyPath:
@@ -501,7 +508,8 @@ export function useScientFileActions(input: {
       onRename: (event: FileTreeRenameEvent) => {
         const from = projectPath(event.sourcePath);
         const to = projectPath(event.destinationPath);
-        // The tree moves the row right after this returns.
+        // The tree moves and reselects the row right after this returns.
+        input.quietSelection();
         queueMicrotask(() => input.treeController.current?.noteMoved(from, to));
         void (async () => {
           if (!(await saveEditorsUnder([from]))) return refresh();
@@ -543,7 +551,7 @@ export function useScientFileActions(input: {
       if (key === "c") choice = MENU.copy;
       else if (key === "x") choice = MENU.cut;
       else if (key === "v") choice = MENU.paste;
-      else if (key === "d") choice = MENU.duplicate;
+      // ⌘D stays Scient's Diff toggle; Duplicate is in the menu.
       else if (key === "z") choice = "undo";
       else if (key === "backspace") choice = MENU.trash;
     } else if (command && event.shiftKey && key === "n") {

@@ -155,6 +155,13 @@ export default function FileBrowserPanel({
     hostFolder,
     treeEntries: treeEntriesRef,
     treeController: treeControllerRef,
+    // Renaming selects the entry; that selection must not open it.
+    quietSelection: () => {
+      syncingSelectionRef.current = true;
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
+    },
   });
   // SCIENT-FORK:END
   const searchSelectionPathRef = useRef<string | null>(null);
