@@ -344,6 +344,29 @@ describe("overleafStore", () => {
     expect(client.listOverleafConnections).toHaveBeenCalledTimes(1);
   });
 
+  it("an Overleaf check that fails replaces the last answer with not known", async () => {
+    resetOverleafStoreForTests();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    using _clock = { [Symbol.dispose]: () => vi.useRealTimers() };
+    client.listOverleafConnections
+      .mockReset()
+      .mockResolvedValue({ connections: [{ ...link, linkedHere: true }] });
+    client.readOverleafStatus.mockReset().mockResolvedValue(status(false));
+    client.readOverleafRemoteState
+      .mockReset()
+      .mockResolvedValueOnce({ state: "same" })
+      .mockRejectedValueOnce(new Error("offline"));
+    await loadOverleafWorkspace(environmentId, ROOT);
+    await vi.waitFor(() =>
+      expect(readOverleafWorkspace(environmentId, ROOT).remoteStates.get("c1")).toBe("same"),
+    );
+    vi.setSystemTime(Date.now() + 60_000);
+    await loadOverleafWorkspace(environmentId, ROOT, { force: true });
+    await vi.waitFor(() =>
+      expect(readOverleafWorkspace(environmentId, ROOT).remoteStates.get("c1")).toBe("unknown"),
+    );
+  });
+
   describe("pending decisions", () => {
     const withFiles = (
       reviewId: string,
