@@ -73,10 +73,17 @@ function chooseTool(
     : { command, executable: tool.executable, version: tool.version };
 }
 
-/** The first experiment a NetLogo model saves, since headless NetLogo runs only those. */
+/**
+ * The first experiment a NetLogo model saves, since headless NetLogo runs only those. They sit in a
+ * .nlogo model's eighth section; elsewhere, as in its Info tab, the same markup can be an example.
+ */
 function firstExperiment(file: string): string | null {
   try {
-    const name = /<experiment\b[^>]*\bname="([^"]*)"/u.exec(NodeFS.readFileSync(file, "utf8"))?.[1];
+    const model = NodeFS.readFileSync(file, "utf8");
+    const experiments = file.toLowerCase().endsWith(".nlogox")
+      ? model.replace(/<(info|code)>[\s\S]*?<\/\1>/gu, "")
+      : (model.split("@#$#@#$#@")[7] ?? "");
+    const name = /<experiment\b[^>]*\bname="([^"]*)"/u.exec(experiments)?.[1];
     return name === undefined
       ? null
       : name
@@ -95,7 +102,8 @@ function fill(args: ReadonlyArray<string>, file: string, output: string): Readon
     arg
       .replaceAll("{file}", file)
       .replaceAll("{quotedFile}", quoted)
-      .replaceAll("{fileNoExtension}", file.replace(/\.[^./\\]+$/u, ""))
+      .replaceAll("{fileFolder}", NodePath.dirname(file))
+      .replaceAll("{fileStem}", NodePath.basename(file).replace(/\.[^.]+$/u, ""))
       .replaceAll("{output}", output),
   );
   const at = filled.indexOf("{netlogoExperiment}");

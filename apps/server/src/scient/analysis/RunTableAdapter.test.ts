@@ -191,12 +191,12 @@ describe("how a file is built", () => {
       `O'Brien "x".sql`,
     );
     expect(step.args[2]).toBe(`.read "/project/O'Brien \\"x\\".sql"`);
-    // Isabelle names a theory as an import does, without .thy.
+    // Isabelle runs a theory by name, in its own folder.
     const theory = await prepare(
       adapterFor("isabelle", [found("isabelle", "isabelle", "/usr/bin/isabelle", null)]),
       "Proofs.thy",
     );
-    expect(theory.args).toEqual(["process_theories", "-O", "/project/Proofs"]);
+    expect(theory.args).toEqual(["process_theories", "-O", "-D", "/project", "Proofs"]);
   });
 
   it("runs a NetLogo model's first saved experiment, which is all NetLogo runs headless", async () => {
@@ -207,7 +207,17 @@ describe("how a file is built", () => {
     const model = NodePath.join(folder, "Flock.nlogo");
     NodeFS.writeFileSync(
       model,
-      'to go end\n@#$#@#$#@\n<experiments><experiment name="Wind &amp; rain" repetitions="1"/></experiments>\n',
+      [
+        "to go end",
+        "",
+        // Its Info tab shows an example of the markup before the saved experiment.
+        '## HOW TO USE IT\n<experiment name="example">',
+        "",
+        "",
+        "",
+        "",
+        '<experiments><experiment name="Wind &amp; rain" repetitions="1"/></experiments>',
+      ].join("\n@#$#@#$#@\n"),
     );
     const step = adapter.prepare({
       runId: ExecutionRunId.make("run"),

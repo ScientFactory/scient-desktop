@@ -1,7 +1,8 @@
 /**
  * One way to run a file. `{file}` is the source, `{quotedFile}` the same for inside double quotes
- * read with backslash escapes, `{fileNoExtension}` the source without its extension,
- * `{netlogoExperiment}` the first experiment a NetLogo model saves, and `{output}` a built program.
+ * read with backslash escapes, `{fileFolder}` and `{fileStem}` its folder and its name without the
+ * extension, `{netlogoExperiment}` the first experiment a NetLogo model saves, and `{output}` a
+ * built program.
  */
 export interface ComputeRunCommand {
   /** The tool's name, as the scan reports it. */
@@ -131,8 +132,11 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "isabelle",
     extensions: [".thy"],
-    // Isabelle 2026 replaced `process -T`; theories are named as imports name them, without .thy.
-    commands: [{ command: "isabelle", args: ["process_theories", "-O", "{fileNoExtension}"] }],
+    // Isabelle 2026 replaced `process -T`. The file's folder is the session, so the theories it
+    // imports from beside it are found.
+    commands: [
+      { command: "isabelle", args: ["process_theories", "-O", "-D", "{fileFolder}", "{fileStem}"] },
+    ],
   },
   { languageId: "sage", extensions: [".sage"], commands: [file("sage")] },
   { languageId: "gap", extensions: [".g", ".gap"], commands: [file("gap", "-q")] },
