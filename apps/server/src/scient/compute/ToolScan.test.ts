@@ -113,6 +113,18 @@ describe("the tool scan", () => {
     expect(tools.get("perl")?.[0]?.executable).toBe("C:\\Tools\\PERL.EXE");
   });
 
+  it("passes over the Unix script a Windows tool ships beside its batch file", () => {
+    const tools = scan(
+      computer(["C:\\tools\\kotlinc\\bin\\kotlinc", "C:\\tools\\kotlinc\\bin\\kotlinc.bat"], {
+        platform: "win32",
+        environment: { Path: "C:\\tools\\kotlinc\\bin" },
+      }),
+    );
+    expect(tools.get("kotlin")?.map((tool) => tool.executable)).toEqual([
+      "C:\\tools\\kotlinc\\bin\\kotlinc.bat",
+    ]);
+  });
+
   it("reads each conda location as its own step, so one dead drive sets aside only itself", () => {
     const context = computer(["/home/a/miniconda3/envs/lab/bin/gfortran"], {
       environment: { PATH: "/none" },

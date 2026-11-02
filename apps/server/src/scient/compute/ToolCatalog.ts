@@ -105,9 +105,18 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   netlogo: {
     commands: ["netlogo-headless", "NetLogo"],
     places: {
-      darwin: ["/Applications/NetLogo*/NetLogo*.app"],
-      linux: ["/opt/NetLogo*/NetLogo", "~/NetLogo*/NetLogo"],
-      win32: ["%ProgramFiles%\\NetLogo*\\NetLogo.exe"],
+      // Run starts the headless script, which every NetLogo download has beside the app.
+      darwin: ["/Applications/NetLogo*/netlogo-headless.sh", "/Applications/NetLogo*/NetLogo*.app"],
+      linux: [
+        "/opt/NetLogo*/netlogo-headless.sh",
+        "~/NetLogo*/netlogo-headless.sh",
+        "/opt/NetLogo*/NetLogo",
+        "~/NetLogo*/NetLogo",
+      ],
+      win32: [
+        "%ProgramFiles%\\NetLogo*\\netlogo-headless.bat",
+        "%ProgramFiles%\\NetLogo*\\NetLogo.exe",
+      ],
     },
   },
   sas: {
@@ -172,7 +181,10 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   },
   maxima: {
     commands: ["maxima"],
-    places: { win32: ["%ProgramFiles%\\Maxima-*\\bin\\maxima.bat"] },
+    // Maxima's installer defaults to a folder at the top of C:.
+    places: {
+      win32: ["C:\\maxima-*\\bin\\maxima.bat", "%ProgramFiles%\\Maxima-*\\bin\\maxima.bat"],
+    },
   },
   gp: { commands: ["gp"], places: { win32: ["%ProgramFiles%\\PARI*\\gp*.exe"] } },
   coq: {

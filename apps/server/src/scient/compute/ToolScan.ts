@@ -181,6 +181,8 @@ function scanFolder(
 ): ReadonlyArray<FoundLanguageTool> {
   const path = pathModule(context.platform);
   return context.host.readDirectory(directory, FOLDER_LIMIT).flatMap((entry) => {
+    // Windows starts only these. Tools such as Kotlin ship a Unix script of the same name beside them.
+    if (context.platform === "win32" && !WINDOWS_EXTENSIONS.test(entry)) return [];
     const bare =
       context.platform === "win32" ? entry.toLowerCase().replace(WINDOWS_EXTENSIONS, "") : entry;
     const tools = wanted.get(bare);

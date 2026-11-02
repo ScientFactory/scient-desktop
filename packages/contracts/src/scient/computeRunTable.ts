@@ -198,7 +198,7 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "apl",
     extensions: [".apl"],
-    commands: [file("dyalogscript"), file("apl", "--script")],
+    commands: [file("dyalogscript"), file("apl", "--script", "-f")],
   },
   {
     languageId: "verilog",
