@@ -1,3 +1,5 @@
+import * as NodeUtil from "node:util";
+
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
@@ -110,4 +112,15 @@ export const ompTodoSteps = (
       ];
     }),
   );
+};
+
+/**
+ * A slash command's report as chat text. Reports are written for a terminal:
+ * colors are dropped, and a table or meter keeps its columns in a code block.
+ */
+export const ompCommandOutputText = (output: string): string => {
+  const text = NodeUtil.stripVTControlCharacters(output);
+  return !text.includes("```") && /[█░]|^ {2,}\S/mu.test(text)
+    ? `\n\`\`\`text\n${text.trimEnd()}\n\`\`\`\n`
+    : `${text}\n\n`;
 };

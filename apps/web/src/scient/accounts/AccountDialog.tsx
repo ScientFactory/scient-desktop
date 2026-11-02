@@ -43,7 +43,9 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { readLocalApi } from "~/localApi";
 import { ExtensionIcon } from "../extensions/ExtensionRow";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import { AccountLogo } from "./AccountLogo";
+import { UniversityPicker } from "./University";
 import { accountsState } from "./accountsState";
 import {
   CLI_LOGIN_COMMANDS,
@@ -358,7 +360,7 @@ function DetailsFields({
       {"sites" in details ? (
         <SitesField sites={details.sites} onChange={(sites) => onChange({ ...details, sites })} />
       ) : null}
-      {details.kind === "website" || details.kind === "library" ? (
+      {details.kind === "website" ? (
         <AccountField label="Username">
           <Input
             value={details.username ?? ""}
@@ -420,7 +422,7 @@ function MoreOptionsFields({
   );
   return (
     <>
-      {details.kind === "website" || details.kind === "library" ? (
+      {details.kind === "website" ? (
         <details className="grid gap-3">
           <summary className="cursor-pointer text-sm text-muted-foreground">More options</summary>
           <div className="grid gap-4 pt-3">
@@ -456,10 +458,10 @@ function MoreOptionsFields({
                   ))}
               </NativeSelect>
             </AccountField>
-            {details.kind === "library" ? (
+            {universityDetails(details) ? (
               <AccountField label="Library link">
                 <Input
-                  value={details.proxyUrl}
+                  value={details.proxyUrl ?? ""}
                   onChange={(event) => onChange({ ...details, proxyUrl: event.target.value })}
                   onBlur={(event) =>
                     onChange({ ...details, proxyUrl: libraryLinkTemplate(event.target.value) })
@@ -554,6 +556,7 @@ export function AccountDialog({
   onSaved?: (accountId: AccountId) => void;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
+  const [connecting, setConnecting] = useState(false);
   const configuredProfiles = useClientSettings((settings) => settings.browserProfiles);
   const searchUrlTemplate = useClientSettings(resolveSearchUrlTemplate);
   const profiles = resolveBrowserProfiles(configuredProfiles);
@@ -651,6 +654,7 @@ export function AccountDialog({
     .split("/")[0]!
     .toLowerCase();
   const choose = (entry: CatalogueEntry | null, kind: "website" | "api-key" = "website") => {
+    if (entry && "university" in entry) return setConnecting(true);
     const details = catalogueDetails(entry, entry ? "" : typedSite);
     setDetails(
       !entry && kind === "api-key"
@@ -690,6 +694,24 @@ export function AccountDialog({
       onClose();
     }
   };
+  if (connecting)
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <DialogPopup data-accounts-dialog>
+          <DialogHeader>
+            <DialogTitle>University library</DialogTitle>
+          </DialogHeader>
+          <DialogPanel>
+            <UniversityPicker environmentId={environmentId} autoFocus onChosen={onClose} />
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+    );
   return (
     <Dialog
       open

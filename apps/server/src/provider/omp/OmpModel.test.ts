@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { OmpRpcAvailableModels } from "effect-omp-rpc/schema";
+import { OmpRpcAvailableModels, type OmpRpcModel } from "effect-omp-rpc/schema";
 
 import {
   decodeOmpModelSlug,
@@ -67,6 +67,20 @@ describe("Oh My Pi model slugs", () => {
     expect(
       descriptor && "options" in descriptor ? descriptor.options.map((option) => option.id) : [],
     ).toEqual(["low", "high"]);
+  });
+
+  it("offers fast mode only where the model has a priority tier", () => {
+    const options = (model: Partial<OmpRpcModel>) =>
+      ompModelToServerModel({ provider: "custom", id: "gpt", ...model })?.capabilities
+        ?.optionDescriptors;
+    expect(options({ serviceTiers: ["priority"] })).toEqual([
+      { id: "fastMode", label: "Fast Mode", type: "boolean" },
+    ]);
+    expect(options({ serviceTiers: ["flex"] })).toBeUndefined();
+    expect(options({})).toBeUndefined();
+    expect(options({ provider: "openai-codex" })).toHaveLength(1);
+    expect(options({ provider: "openai-codex", serviceTiers: ["flex"] })).toBeUndefined();
+    expect(options({ provider: "anthropic", id: "claude-opus-5" })).toHaveLength(1);
   });
 
   it("shows a model connection's name in place of its provider id", () => {

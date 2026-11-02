@@ -39,7 +39,8 @@ export const ompUserDetail = (target: OmpTarget, detail: string): string =>
 /** What the version probe reports when the executable itself is absent. */
 export const ompNotInstalledDetail = (target: OmpTarget): string =>
   `${target.name} is not installed or its executable could not be found.`;
-export const OMP_RPC_ARGS = ["--mode", "rpc", "--approval-mode", "yolo"] as const;
+// rpc-ui, not rpc: only it gives the agent its `ask` tool, and the UI requests it sends are the same.
+export const OMP_RPC_ARGS = ["--mode", "rpc-ui", "--approval-mode", "yolo"] as const;
 
 export const ompRpcArgs = (
   sessionDir?: string,
@@ -501,6 +502,8 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     );
   if (target.driverKind === "scient") {
     delete env.SCIENT_AGENT_ENABLE_SOURCES;
+    // Scient shows pages in its own browser, so the agent opens no system browser beside it.
+    env.SCIENT_AGENT_HOST_PAGES = "1";
     if (supportsScientClaudePlugins(version)) env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins";
   }
   const command = yield* resolveSpawnCommand(

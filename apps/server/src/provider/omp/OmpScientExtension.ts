@@ -77,7 +77,12 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
       const envelope = scientRecord(JSON.parse(json));
       // A server request may reuse this id; only a response (no method) answers it.
       if (envelope?.id !== id || "method" in envelope) return undefined;
-      if (envelope.error) throw new Error(label + " rejected the tool request.");
+      if (envelope.error) {
+        const reason = scientRecord(envelope.error)?.message;
+        throw new Error(
+          label + " rejected the tool request." + (typeof reason === "string" ? " " + reason : ""),
+        );
+      }
       return { value: envelope.result };
     };
     // A blank line completes an event; only data fields carry the message.
@@ -254,6 +259,9 @@ export default async function scientOmpExtension(pi) {
       loadMode: "essential",
       description: tool.description,
       parameters: tool.parameters,
+      // A strict grammar makes models fill optional fields, and a filled field changes
+      // what a Scient tool does: an invented session, or a page target instead of a URL.
+      strict: false,
       async execute(_id, args, signal) {
         return scientToolResult(
           scientRecord(await call("tools/call", { name: remoteName, arguments: args }, signal)),

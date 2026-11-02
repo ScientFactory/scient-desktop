@@ -1,5 +1,6 @@
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 import {
+  AccountsError,
   NonNegativeInt,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -14,7 +15,9 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
-  failure: Schema.Union([PreviewAutomationError, OrchestratorMcpFailure]),
+  // SCIENT-FORK:START — Scient Accounts: a hidden profile's tab is refused with a safe denial.
+  failure: Schema.Union([PreviewAutomationError, OrchestratorMcpFailure, AccountsError]),
+  // SCIENT-FORK:END
   failureMode: "return" as const,
   dependencies: [
     ProviderSessionManagerV2,
