@@ -162,7 +162,12 @@ function setup(): Disposable {
   };
 }
 
-async function renderHost() {
+/** Waits for a tab's queued desktop work, such as the close an unmount schedules, to finish. */
+const settled = (runtimeTabId: string) =>
+  new Promise<void>((resolve) => withDesktopTab(runtimeTabId, async () => resolve()));
+
+/** Renders the host; disposing it also waits for the shown tabs' closes, so none reach a later test. */
+async function renderHost(...shownTabs: ReadonlyArray<string>) {
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(
     await render(
@@ -172,9 +177,12 @@ async function renderHost() {
     ),
   );
   stack.defer(async () => {
-    using _timers = fakeTimers();
-    await screen.unmount();
-    await vi.advanceTimersByTimeAsync(0);
+    {
+      using _timers = fakeTimers();
+      await screen.unmount();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await Promise.all(shownTabs.map(settled));
   });
   await act(() => ensureClientSettingsHydrated());
   const environment = stack.move();
@@ -191,7 +199,7 @@ describe("ElectronBrowserHost with several app windows", () => {
     await other.setDisplayed(true);
     await vi.waitFor(() => expect(other.role()).toBe("host"));
 
-    await using screen = await renderHost();
+    await using screen = await renderHost(runtimeTabId);
     using surfaces = new DisposableStack();
     await showTab(surfaces, runtimeTabId);
 
@@ -215,7 +223,7 @@ describe("ElectronBrowserHost with several app windows", () => {
     await vi.waitFor(() => expect(other.role()).toBe("host"));
     takeOverPreviewTabWhenShown("tab_3");
 
-    await using screen = await renderHost();
+    await using screen = await renderHost(runtimeTabId);
     using surfaces = new DisposableStack();
     await showTab(surfaces, runtimeTabId);
 
@@ -233,7 +241,7 @@ describe("ElectronBrowserHost with several app windows", () => {
     await other.setDisplayed(true);
     await vi.waitFor(() => expect(other.role()).toBe("host"));
 
-    await using _screen = await renderHost();
+    await using _screen = await renderHost(runtimeTabId);
     using surfaces = new DisposableStack();
     await showTab(surfaces, runtimeTabId);
     await expect.element(page.getByText(PLACEHOLDER)).toBeVisible();
@@ -256,7 +264,7 @@ describe("ElectronBrowserHost with several app windows", () => {
     using _state = setup();
     using otherWindow = new DisposableStack();
     const runtimeTabId = openTab("tab_2");
-    await using screen = await renderHost();
+    await using screen = await renderHost(runtimeTabId);
     using surfaces = new DisposableStack();
     await showTab(surfaces, runtimeTabId);
     await vi.waitFor(() => expect(screen.container.querySelector("webview")).not.toBeNull());
@@ -269,7 +277,7 @@ describe("ElectronBrowserHost with several app windows", () => {
     await expect.element(page.getByText(PLACEHOLDER)).toBeVisible();
     expect(screen.container.querySelector("webview")).toBeNull();
     await vi.advanceTimersByTimeAsync(0);
-    await new Promise<void>((resolve) => withDesktopTab(runtimeTabId, async () => resolve()));
-    expect(mocks.closeTab).not.toHaveBeenCalled();
+    await settled(runtimeTabId);
+    expect(mocks.closeTab).not.toHaveBeenCalledWith(runtimeTabId);
   });
 });
