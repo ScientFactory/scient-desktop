@@ -30,6 +30,7 @@ export const fixture = Effect.fnUntraced(
     }) => Promise<void>,
     hooks: ApplierHooks = {},
     retainedHooks: RetainedMutationHooks = {},
+    nativeSaves = false,
   ) {
     const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
     const run = Effect.runPromiseWith(context);
@@ -39,7 +40,7 @@ export const fixture = Effect.fnUntraced(
     const cwd = NodePath.join(root, "paper"),
       owner = NodePath.join(root, "records");
     yield* Effect.promise(() => NodeFSP.mkdir(cwd));
-    const createFiles = () => makeApplierFiles({ root, helper, retainedHooks });
+    const createFiles = () => makeApplierFiles({ root, helper, retainedHooks, nativeSaves });
     let files = yield* createFiles();
     let applier = yield* make(hooks).pipe(Effect.provideService(WorkspaceFileSystem, files));
     yield* Effect.promise(() =>
