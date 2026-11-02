@@ -11,7 +11,7 @@ import { HttpClient } from "effect/http";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { vi } from "vite-plus/test";
 import { AccountsService } from "../accounts/AccountsService.ts";
-import { fakeAccounts } from "../accounts/agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperAttempt from "./paperAttempt.ts";
 import { listPapers, requestPapers, resumePapers, type PaperRequester } from "./paperQueue.ts";
 

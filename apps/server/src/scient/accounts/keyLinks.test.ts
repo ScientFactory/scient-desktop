@@ -3,7 +3,7 @@ import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { fakeAccounts } from "./agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "./Accounts.testkit.ts";
 import { makeAccountKeyLinks } from "./keyLinks.ts";
 
 const accountId = AccountId.make("acc_fixture1");

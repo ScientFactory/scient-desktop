@@ -24,7 +24,7 @@ import * as Layer from "effect/Layer";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { accountAgentOperations } from "./AccountAgentService.ts";
-import { fakeAccounts } from "./AccountsService.testkit.ts";
+import { fakeAccounts } from "../Accounts.testkit.ts";
 import { AccountSessionFiles, makeSessionFiles } from "./sessionFiles.ts";
 
 it.effect(
