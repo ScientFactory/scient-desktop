@@ -92,7 +92,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     apl: {
       // Ubuntu has no GNU APL package, so this builds the GNU release.
       linux:
-        "curl -sSfL https://ftp.gnu.org/gnu/apl/apl-1.8.tar.gz | tar -xz && cd apl-1.8 && ./configure -q && make -s -j4 && sudo make -s install",
+        "curl -sSfL https://ftp.gnu.org/gnu/apl/apl-2.0.tar.gz | tar -xz && cd apl-2.0 && ./configure -q && make -s -j4 && sudo make -s install",
       darwin: brew("gnu-apl"),
       win32: { skip: "GNU APL has no Windows build, and Dyalog needs a sign-up to download" },
     },
@@ -334,7 +334,9 @@ if (platform === "win32") {
   );
   paths.push(...saved.trim().split(";").filter(Boolean));
 }
-append("GITHUB_PATH", `${paths.filter((place) => NodeFS.existsSync(place)).join("\n")}\n`);
+const added = paths.filter((place) => NodeFS.existsSync(place));
+console.log(`Added to PATH:\n${added.join("\n")}`);
+append("GITHUB_PATH", `${added.join("\n")}\n`);
 append("GITHUB_ENV", `SCIENT_TEST_RUN_TABLE_EXPECT=${installed.join(",")}\n`);
 append("GITHUB_ENV", `SCIENT_RUN_LANGUAGES_NOT_INSTALLED=${failed.join(",")}\n`);
 append(

@@ -157,6 +157,17 @@ describe("the tool scan", () => {
     expect(tools.get("jags")?.[0]?.name).toBe("jags");
   });
 
+  it("reads Windows variables in any case, as Git Bash passes them on", () => {
+    const tools = scan(
+      computer(["C:\\Program Files\\Racket\\Racket.exe", "C:\\tools\\elixir\\bin\\elixir.bat"], {
+        platform: "win32",
+        environment: { PATH: "C:\\tools\\elixir\\bin", PROGRAMFILES: "C:\\Program Files" },
+      }),
+    );
+    expect(tools.get("racket")?.[0]?.executable).toBe("C:\\Program Files\\Racket\\Racket.exe");
+    expect(tools.get("elixir")?.[0]?.executable).toBe("C:\\tools\\elixir\\bin\\elixir.bat");
+  });
+
   it("leads with the catalog's order within one folder", () => {
     const tools = scan(computer(["/usr/bin/cc", "/usr/bin/gcc", "/usr/bin/clang"]));
     expect(tools.get("c")?.map((tool) => tool.name)).toEqual(["clang", "gcc", "cc"]);

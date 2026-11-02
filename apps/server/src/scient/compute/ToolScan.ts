@@ -93,6 +93,14 @@ function isStub(context: DiscoveryContext, directory: string, name: string): boo
   return /\\system32$/iu.test(directory) && /^(bash|wsl)$/iu.test(name);
 }
 
+/** Windows reads variable names in any case, and Git Bash passes them on in capitals. */
+function variable(context: DiscoveryContext, name: string): string | undefined {
+  const exact = context.environment[name];
+  if (exact !== undefined || context.platform !== "win32") return exact;
+  const wanted = name.toLowerCase();
+  return Object.entries(context.environment).find(([key]) => key.toLowerCase() === wanted)?.[1];
+}
+
 function expandVariables(context: DiscoveryContext, pattern: string): string | null {
   const path = pathModule(context.platform);
   const expanded = pattern.startsWith("~")
@@ -100,7 +108,7 @@ function expandVariables(context: DiscoveryContext, pattern: string): string | n
     : pattern;
   let unknown = false;
   const result = expanded.replace(/%([^%]+)%/gu, (_match, name: string) => {
-    const value = context.environment[name];
+    const value = variable(context, name);
     if (value === undefined) unknown = true;
     return value ?? "";
   });
@@ -217,10 +225,8 @@ function commandName(context: DiscoveryContext, tools: LanguageTools, executable
 }
 
 function environmentPathEntries(context: DiscoveryContext): ReadonlyArray<string> {
-  const value =
-    context.platform === "win32"
-      ? (context.environment.Path ?? context.environment.PATH)
-      : context.environment.PATH;
+  // Windows itself spells it Path.
+  const value = variable(context, context.platform === "win32" ? "Path" : "PATH");
   return (value ?? "")
     .split(context.platform === "win32" ? ";" : ":")
     .map((entry) => entry.trim().replace(/^"(.*)"$/u, "$1"))
@@ -229,10 +235,10 @@ function environmentPathEntries(context: DiscoveryContext): ReadonlyArray<string
 
 /** Folders that hold tools outside PATH, for a person whose shell setup Scient cannot see. */
 function managerFolders(context: DiscoveryContext): ReadonlyArray<string> {
-  const env = context.environment;
-  const tree = (name: string, fallback: string) => env[name] ?? fallback;
+  const tree = (name: string, fallback: string) => variable(context, name) ?? fallback;
+  const javaHome = variable(context, "JAVA_HOME");
   const toolchains = [
-    ...(env.JAVA_HOME === undefined ? [] : [`${env.JAVA_HOME}/bin`]),
+    ...(javaHome === undefined ? [] : [`${javaHome}/bin`]),
     `${tree("PYENV_ROOT", "~/.pyenv")}/versions/*/bin`,
     `${tree("ASDF_DATA_DIR", "~/.asdf")}/installs/*/*/bin`,
     `${tree("RUSTUP_HOME", "~/.rustup")}/toolchains/*/bin`,
@@ -302,7 +308,7 @@ function movedFolders(context: DiscoveryContext): ReadonlyArray<string> {
   const path = pathModule(context.platform);
   const separator = context.platform === "win32" ? ";" : ":";
   return DISCOVERY_VARIABLES.flatMap((name) =>
-    (context.environment[name] ?? "").split(separator),
+    (variable(context, name) ?? "").split(separator),
   ).filter((folder) => path.isAbsolute(folder));
 }
 
