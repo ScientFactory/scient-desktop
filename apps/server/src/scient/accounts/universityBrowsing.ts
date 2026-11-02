@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type UniversityBrowseInput,
 } from "@t3tools/contracts";
+import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 import {
   institutionLink,
   openAthensLink,
@@ -14,68 +15,111 @@ import {
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { userRunInvocation } from "./checkAccounts.ts";
-import { isSignInTab } from "./universitySignIn.ts";
+import { isUniversityPage } from "./universitySignIn.ts";
 
 /** A journal recognises a reader for hours once their university vouched for them. */
 const ROUTED_MEMORY_MS = 6 * 60 * 60 * 1000;
+/** A journal OpenAthens has no way into for this university isn't asked about again soon. */
+const NO_ROUTE_MEMORY_MS = 60 * 60 * 1000;
 
-/** Journals already brought in through the university, so a page is reloaded once per journal. */
-const routed = new Map<string, number>();
+/** Per profile and journal: when it was brought in, or found to have no way in. */
+const remembered = new Map<string, { readonly at: number; readonly forMs: number }>();
+const asking = new Set<string>();
 
-/** Article pages name their DOI or title for indexers; other pages are left alone. */
-const articlePageScript = String.raw`(() => {
-  const names = ["citation_doi", "citation_title", "citation_journal_title", "dc.identifier", "prism.doi", "publication_doi"];
-  const meta = document.querySelector(names.map((name) => 'meta[name="' + name + '" i]').join(","));
-  return meta ? location.href : null;
+/**
+ * Reads the page as a journal article only when it names a DOI or a journal for indexers, as
+ * journals do; a page with neither is left alone.
+ */
+export const articlePageScript = String.raw`(() => {
+  const read = (name) => document.querySelector('meta[name="' + name + '" i]')?.getAttribute("content") ?? "";
+  const doi = ["citation_doi", "prism.doi", "publication_doi", "dc.identifier", "dc.identifier.doi"]
+    .map((name) => /\b(10\.\d{4,9}\/[^\s"<>]+)/.exec(read(name))?.[1])
+    .find(Boolean);
+  const journal = read("citation_journal_title");
+  return doi || journal ? { url: location.href, doi: doi ?? null } : null;
 })()`;
+const ArticlePage = Schema.Struct({ url: Schema.String, doi: Schema.NullOr(Schema.String) });
+const decodeArticle = Schema.decodeUnknownOption(Schema.NullOr(ArticlePage));
 
-/** OpenAthens hands back the journal's own way in, or no way in for a site it doesn't cover. */
+/** Where the page is now, to tell whether the person is still on it. */
+const whereScript = "location.href";
+
+const samePage = (a: string, b: string) =>
+  URL.canParse(a) &&
+  URL.canParse(b) &&
+  new URL(a).origin === new URL(b).origin &&
+  new URL(a).pathname === new URL(b).pathname;
+
+/**
+ * What OpenAthens is told about the article: its address without the query or fragment, which can
+ * carry a person's own details. OpenAthens answers DOI links only some of the time.
+ */
+export const openAthensTarget = (articleUrl: string) => {
+  const page = new URL(articleUrl);
+  return `${page.origin}${page.pathname}`;
+};
+
+type Answer =
+  | { readonly kind: "route"; readonly url: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "unknown" };
+
+/** OpenAthens hands back the journal's own way in, or says it has none for this university. */
 const askOpenAthens = Effect.fn("University.askOpenAthens")(
-  function* (domain: string, articleUrl: string) {
+  function* (domain: string, target: string) {
     const http = yield* HttpClient.HttpClient;
-    const response = yield* http.execute(HttpClientRequest.get(openAthensLink(domain, articleUrl)));
+    const response = yield* http.execute(HttpClientRequest.get(openAthensLink(domain, target)));
     const location = response.headers["location"];
-    return response.status >= 300 &&
+    if (
+      response.status >= 300 &&
       response.status < 400 &&
       location !== undefined &&
       URL.canParse(location) &&
       new URL(location).protocol === "https:"
-      ? location
-      : undefined;
+    )
+      return { kind: "route", url: location } satisfies Answer;
+    return (response.status === 200 ? { kind: "none" } : { kind: "unknown" }) satisfies Answer;
   },
   Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
   Effect.provide(FetchHttpClient.layer),
   Effect.timeoutOption("8 seconds"),
-  Effect.map(Option.getOrUndefined),
-  Effect.orElseSucceed(() => undefined),
+  Effect.map(Option.getOrElse((): Answer => ({ kind: "unknown" }))),
+  Effect.orElseSucceed((): Answer => ({ kind: "unknown" })),
 );
 
 /** The way into this article through the university, when one is known to work. */
 const browseLink = Effect.fn("University.browseLink")(function* (
   account: AccountSummary,
-  articleUrl: string,
+  article: { readonly url: string; readonly doi: string | null },
 ) {
   const details = universityDetails(account.details);
-  if (!details) return undefined;
+  if (!details) return { kind: "none" } satisfies Answer;
   const { institution, proxyUrl } = details;
   if (institution && usesOpenAthens(institution))
-    return yield* askOpenAthens(institution.domain, articleUrl);
+    return yield* askOpenAthens(institution.domain, openAthensTarget(article.url));
   if (proxyUrl) {
     const proxyHost = URL.canParse(proxyUrl) ? new URL(proxyUrl).hostname : undefined;
-    const already = proxyHost !== undefined && new URL(articleUrl).hostname.endsWith(proxyHost);
-    return already ? undefined : proxyUrl.replace("{url}", encodeURIComponent(articleUrl));
+    const already = proxyHost !== undefined && new URL(article.url).hostname.endsWith(proxyHost);
+    return already
+      ? ({ kind: "none" } satisfies Answer)
+      : ({
+          kind: "route",
+          url: proxyUrl.replace("{url}", encodeURIComponent(article.url)),
+        } satisfies Answer);
   }
-  return institution && institutionLink(articleUrl, institution.entityId);
+  const own = institution && institutionLink(article.url, institution.entityId);
+  return own ? ({ kind: "route", url: own } satisfies Answer) : ({ kind: "none" } satisfies Answer);
 });
 
 /**
  * A journal article the person opened is reloaded once through their university, so the journal
  * knows them as the university's reader without any button. Only a university the person is
- * signed in to, in the profile it lives in, and only article pages: the address goes to the
- * university's OpenAthens, never anything else the person browses.
+ * signed in to, in the profile it lives in, and only journal articles on the public web; OpenAthens
+ * is told the article's DOI link or its plain address, nothing else the person browses.
  */
 export const openThroughUniversity = Effect.fn("University.browse")(function* (
   input: UniversityBrowseInput,
@@ -84,7 +128,12 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
 ) {
   if (!URL.canParse(input.url)) return { routed: false };
   const page = new URL(input.url);
-  if (page.protocol !== "https:") return { routed: false };
+  if (
+    page.protocol !== "https:" ||
+    isLocalLoopbackHost(page.hostname) ||
+    isPrivateNetworkHost(page.hostname)
+  )
+    return { routed: false };
   const university = universitiesOf(accounts).find(
     (account) =>
       account.lastCheck?.state === "signed-in" &&
@@ -92,30 +141,41 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
         input.profileId,
   );
   const details = university && universityDetails(university.details);
-  if (!university || !details || isSignInTab(details, input.url)) return { routed: false };
+  if (!university || !details || isUniversityPage(details, input.url)) return { routed: false };
+  const key = `${input.profileId}:${university.accountId}:${page.hostname}`;
   const now = yield* Clock.currentTimeMillis;
-  const last = routed.get(page.hostname);
-  if (last !== undefined && now - last < ROUTED_MEMORY_MS) return { routed: false };
-  const broker = yield* PreviewAutomationBroker;
-  const invoke = <A>(operation: "evaluate" | "navigate" | "accountWaitForLoad", body: unknown) =>
-    broker.invoke<A>({
-      scope: userRunInvocation(input.threadId, environmentId),
-      operation,
-      input: body,
-      tabId: input.tabId,
-      updateCurrentTab: false,
-    });
-  // A journal's page can take seconds; it says it is an article once it has loaded.
-  yield* invoke("accountWaitForLoad", {}).pipe(Effect.ignore);
-  const article = yield* invoke<unknown>("evaluate", { expression: articlePageScript }).pipe(
-    Effect.orElseSucceed(() => null),
-  );
-  // The person may have moved on while the page was read.
-  if (typeof article !== "string" || !URL.canParse(article)) return { routed: false };
-  if (new URL(article).hostname !== page.hostname) return { routed: false };
-  routed.set(page.hostname, now);
-  const link = yield* browseLink(university, article);
-  if (!link) return { routed: false };
-  const moved = yield* invoke("navigate", { url: link }).pipe(Effect.option);
-  return { routed: Option.isSome(moved) };
+  const last = remembered.get(key);
+  if ((last && now - last.at < last.forMs) || asking.has(key)) return { routed: false };
+  asking.add(key);
+  return yield* Effect.gen(function* () {
+    const broker = yield* PreviewAutomationBroker;
+    const invoke = <A>(operation: "evaluate" | "navigate" | "accountWaitForLoad", body: unknown) =>
+      broker.invoke<A>({
+        scope: userRunInvocation(input.threadId, environmentId),
+        operation,
+        input: body,
+        tabId: input.tabId,
+        updateCurrentTab: false,
+      });
+    // A journal's page can take seconds; it says it is an article once it has loaded.
+    yield* invoke("accountWaitForLoad", {}).pipe(Effect.ignore);
+    const read = yield* invoke<unknown>("evaluate", { expression: articlePageScript }).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    const article = Option.getOrNull(decodeArticle(read));
+    // The person may have moved on while the page was read.
+    if (!article || !samePage(article.url, input.url)) return { routed: false };
+    const answer = yield* browseLink(university, article);
+    const at = yield* Clock.currentTimeMillis;
+    if (answer.kind === "none") remembered.set(key, { at, forMs: NO_ROUTE_MEMORY_MS });
+    if (answer.kind !== "route") return { routed: false };
+    // Only the page the person is still on is reloaded; a newer one is theirs.
+    const still = yield* invoke<unknown>("evaluate", { expression: whereScript }).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (typeof still !== "string" || !samePage(still, article.url)) return { routed: false };
+    const moved = yield* invoke("navigate", { url: answer.url }).pipe(Effect.option);
+    if (Option.isSome(moved)) remembered.set(key, { at, forMs: ROUTED_MEMORY_MS });
+    return { routed: Option.isSome(moved) };
+  }).pipe(Effect.ensuring(Effect.sync(() => asking.delete(key))));
 });

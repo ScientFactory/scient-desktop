@@ -617,21 +617,26 @@ provider environment. The existing proxy redacts reflected values in responses.
   university's page and back to the person's MyAthens page; no journal is involved. Other
   universities have no sign-in page of their own, so a publisher's institutional link asks for
   them. Scient watches the tab every 0.4 s and closes it the moment the link comes back, before
-  confirming, so the publisher's page never stays. A tab an earlier press left on the sign-in is
-  reused, and leftovers close when a sign-in succeeds. It adds each origin that asked the person
-  for something to `sites`, so a saved password can only ever go where the person already signed
-  in; directory data never authorizes that. The sign-in counts once the hidden check agrees; it
+  confirming, so the publisher's page never stays. A tab an earlier press left on the sign-in, in
+  the account's profile and on a learned sign-in address or OpenAthens' sign-in, is reused, and
+  such leftovers close when a sign-in succeeds; other pages on the university's domain are never
+  touched. It adds each exact origin that asked the person for something to `sites`, even under a
+  domain `sites` already covers, so a saved password can only ever go where the person already
+  signed in and the export guard knows the address; directory data never authorizes that. The sign-in counts once the hidden check agrees; it
   then continues waiting papers. A check that can't tell keeps the last known state and its date.
   `scient_account_browser_session` refuses those learned sign-in origins and, for OpenAthens
   universities, `*.openathens.net`: that session also opens the university's other services.
   Quiet keep-alive visits use `my.openathens.net/check` for OpenAthens universities.
 - **Browsing access**: `accounts.universities.browse` (`universityBrowsing.ts`) runs 2.5 s after a
   tab settles on an `https` address, only for a university signed in and living in that tab's
-  profile. If the page names a DOI or title for indexers, it is reloaded once per journal host
-  (remembered six hours in memory) through the university: for OpenAthens, the server asks
-  `go.openathens.net/redirector/<domain>` without following redirects and uses the journal route
-  it answers with, or nothing for a site OpenAthens doesn't cover; otherwise the library link or a
-  known platform's institutional link. Pages that aren't articles never leave the machine.
+  profile, never for private or local hosts. If the loaded page names a DOI or a journal for
+  indexers, it is reloaded once per profile, account and journal host (six hours, kept only after
+  the reroute happened; a definite "no way in" is kept an hour) through the university: for
+  OpenAthens, the server asks `go.openathens.net/redirector/<domain>` with the article's address
+  minus query and fragment, without following redirects, and uses the journal route it answers
+  with; otherwise the library link or a known platform's institutional link. The tab is reread just
+  before navigating and left alone if the person moved on. Pages that aren't articles never leave
+  the machine.
 - **Papers**: `scient_paper_get` and `scient_papers_queue` go through one queue, one route set per
   university: the OpenAthens redirector (which knows every journal the university subscribes to
   and resolves DOI links), the library link, then the journal platform's institutional link

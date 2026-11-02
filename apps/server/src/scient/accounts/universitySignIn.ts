@@ -49,9 +49,7 @@ export const isUniversitySignInService = (accounts: ReadonlyArray<AccountSummary
     if (!university) return false;
     if (university.institution && usesOpenAthens(university.institution) && onOpenAthens(url))
       return true;
-    return university.sites.some(
-      (site) => site.startsWith("https://") && matchesAccountOrigin(url, [site]),
-    );
+    return matchesAccountOrigin(url, signInOrigins(university.sites));
   });
 
 /** OpenAthens' own sign-in pages, on the way to the university's. */
@@ -64,21 +62,38 @@ const isOpenAthensSignIn = (url: string) => {
   );
 };
 
-/** A tab still on this university's sign-in: one left from an earlier press, or this one. */
-export const isSignInTab = (
-  details: { readonly sites: ReadonlyArray<string> },
-  url: string | null | undefined,
-) =>
-  typeof url === "string" &&
-  !signInReturn(url) &&
-  (isOpenAthensSignIn(url) || matchesAccountOrigin(url, details.sites));
+/** The exact addresses that asked the person to sign in, as learned from their own sign-in. */
+const signInOrigins = (sites: ReadonlyArray<string>) =>
+  sites.filter((site) => site.startsWith("https://"));
 
-/** Sites with the sign-in service added, where the person's password was asked for. */
+/**
+ * A tab still on this university's sign-in, left from an earlier press: in the account's profile,
+ * on a page that asked the person to sign in before. A course page or mail on the same domain is
+ * never one.
+ */
+export const isSignInTab = (
+  details: { readonly sites: ReadonlyArray<string>; readonly profileId?: string | undefined },
+  tab: { readonly url: string | null; readonly profileId?: string | undefined },
+) =>
+  typeof tab.url === "string" &&
+  !signInReturn(tab.url) &&
+  tab.profileId === (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) &&
+  (isOpenAthensSignIn(tab.url) || matchesAccountOrigin(tab.url, signInOrigins(details.sites)));
+
+/** The university's own pages and sign-in, which are never brought in through itself. */
+export const isUniversityPage = (details: { readonly sites: ReadonlyArray<string> }, url: string) =>
+  isOpenAthensSignIn(url) || onOpenAthens(url) || matchesAccountOrigin(url, details.sites);
+
+/**
+ * Sites with the sign-in service added, where the person's password was asked for. Each exact
+ * address is kept even under a domain the sites already cover: it is what keeps that session out
+ * of scripts.
+ */
 export const withSignInService = (
   sites: ReadonlyArray<string>,
   seen: ReadonlySet<string>,
 ): ReadonlyArray<string> => {
-  const fresh = [...seen].filter((origin) => !matchesAccountOrigin(origin, sites));
+  const fresh = [...seen].filter((origin) => !sites.includes(origin));
   return [...sites, ...fresh].slice(0, MOST_SITES);
 };
 
@@ -191,12 +206,12 @@ type Invoke = Effect.Success<ReturnType<typeof invokeIn>>;
 
 const closeLeftovers = Effect.fn("University.closeLeftovers")(function* (
   invoke: Invoke,
-  details: { readonly sites: ReadonlyArray<string> },
+  details: { readonly sites: ReadonlyArray<string>; readonly profileId?: string | undefined },
   keep?: PreviewTabId,
 ) {
   const status = yield* invoke<PreviewAutomationStatus>("status", {}).pipe(Effect.option);
   const leftovers = Option.isSome(status)
-    ? (status.value.tabs ?? []).filter((tab) => tab.tabId !== keep && isSignInTab(details, tab.url))
+    ? (status.value.tabs ?? []).filter((tab) => tab.tabId !== keep && isSignInTab(details, tab))
     : [];
   yield* Effect.forEach(leftovers, (tab) => invoke("close", {}, tab.tabId).pipe(Effect.ignore), {
     discard: true,
@@ -252,7 +267,7 @@ export const startUniversitySignIn = Effect.fn("University.startSignIn")(functio
   // A tab left on the university's page from an earlier press is the one to use.
   const status = yield* invoke<PreviewAutomationStatus>("status", {}).pipe(Effect.option);
   const leftover = Option.isSome(status)
-    ? status.value.tabs?.find((tab) => isSignInTab(details, tab.url))
+    ? status.value.tabs?.find((tab) => isSignInTab(details, tab))
     : undefined;
   const reused = leftover
     ? yield* invoke("navigate", { url: link }, leftover.tabId).pipe(

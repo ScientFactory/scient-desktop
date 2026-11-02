@@ -10,7 +10,12 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
-import { openThroughUniversity } from "./universityBrowsing.ts";
+import * as NodeVM from "node:vm";
+import {
+  articlePageScript,
+  openAthensTarget,
+  openThroughUniversity,
+} from "./universityBrowsing.ts";
 
 const ENTITY = "https://idp.example.edu/idp/shibboleth";
 const university = (
@@ -33,7 +38,7 @@ const university = (
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
 
-const tab = (article: string | null) => {
+const tab = (article: string | null, options: { readonly nowAt?: string } = {}) => {
   const navigated: Array<string> = [];
   const broker = PreviewAutomationBroker.of({
     connect: () => Effect.succeed(Stream.empty),
@@ -43,7 +48,10 @@ const tab = (article: string | null) => {
       Effect.sync(() => {
         if (request.operation === "navigate")
           navigated.push((request.input as { url: string }).url);
-        return (request.operation === "evaluate" ? article : {}) as A;
+        if (request.operation !== "evaluate") return {} as A;
+        const expression = (request.input as { expression: string }).expression;
+        if (expression === "location.href") return (options.nowAt ?? article) as A;
+        return (article ? { url: article, doi: null } : null) as A;
       }),
   });
   return { broker, navigated };
@@ -114,3 +122,61 @@ it.effect("never reroutes the university's own sign-in page", () =>
     expect(browser.navigated).toEqual([]);
   }),
 );
+
+it.effect("leaves an article alone when the person moved on while the way in was found", () =>
+  Effect.gen(function* () {
+    const article = "https://journals.asm.org/doi/10.1128/x";
+    const browser = tab(article, { nowAt: "https://journals.asm.org/toc/mbio/current" });
+    expect(yield* open(article, [university()], browser)).toEqual({ routed: false });
+    expect(browser.navigated).toEqual([]);
+  }),
+);
+
+it.effect("never reads private or local pages", () =>
+  Effect.gen(function* () {
+    for (const url of [
+      "https://192.168.1.20/doc",
+      "https://localhost:3000/a",
+      "http://www.science.org/doi/x",
+    ]) {
+      const browser = tab(url);
+      yield* open(url, [university()], browser);
+      expect(browser.navigated).toEqual([]);
+    }
+  }),
+);
+
+const readPage = (
+  metas: Record<string, string>,
+  url = "https://journal.example.org/a?token=s#p",
+) => {
+  const document = {
+    querySelector: (selector: string) => {
+      const name = /name="([^"]+)" i/.exec(selector)?.[1]?.toLowerCase();
+      const found = Object.entries(metas).find(([key]) => key.toLowerCase() === name);
+      return found ? { getAttribute: () => found[1] } : null;
+    },
+  };
+  return NodeVM.runInNewContext(articlePageScript, {
+    document,
+    location: { href: url },
+  }) as unknown;
+};
+
+it("reads a page as an article only when it names a DOI or a journal", () => {
+  expect(readPage({ "dc.Identifier": "doi:10.1056/NEJMra2506114" })).toEqual({
+    url: "https://journal.example.org/a?token=s#p",
+    doi: "10.1056/NEJMra2506114",
+  });
+  expect(readPage({ citation_journal_title: "Brain" })).toMatchObject({ doi: null });
+  // A document system's own identifier is no article.
+  expect(readPage({ "dc.identifier": "document-123" })).toBeNull();
+  expect(readPage({ citation_title: "Meeting notes" })).toBeNull();
+  expect(readPage({})).toBeNull();
+});
+
+it("tells OpenAthens the article's address without its query and fragment", () => {
+  expect(openAthensTarget("https://journal.example.org/a?token=s#p")).toBe(
+    "https://journal.example.org/a",
+  );
+});

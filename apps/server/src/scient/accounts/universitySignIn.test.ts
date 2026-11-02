@@ -161,10 +161,17 @@ it.live("ends quietly when the person closes the tab", () =>
   }),
 );
 
-it("adds only addresses the sites don't cover, within the limit", () => {
+it("keeps each exact sign-in address, even under a covered domain, within the limit", () => {
   expect(withSignInService(["example.edu"], new Set(["https://idp.example.edu"]))).toEqual([
     "example.edu",
+    "https://idp.example.edu",
   ]);
+  expect(
+    withSignInService(
+      ["example.edu", "https://idp.example.edu"],
+      new Set(["https://idp.example.edu"]),
+    ),
+  ).toEqual(["example.edu", "https://idp.example.edu"]);
   expect(withSignInService(["example.edu"], new Set([SIGN_IN]))).toEqual(["example.edu", SIGN_IN]);
   const full = Array.from({ length: 16 }, (_, index) => `s${index}.example.edu`);
   expect(withSignInService(full, new Set([SIGN_IN]))).toHaveLength(16);
@@ -173,6 +180,10 @@ it("adds only addresses the sites don't cover, within the limit", () => {
 it("keeps a university's sign-in service, and nothing else of it, out of scripts", () => {
   const accounts = [university(["example.edu", SIGN_IN])];
   expect(isUniversitySignInService(accounts, `${SIGN_IN}/common/saml2`)).toBe(true);
+  // Learned under a domain the sites already cover, it is still kept out.
+  const covered = [university(["example.edu", "https://idp.example.edu"])];
+  expect(isUniversitySignInService(covered, "https://idp.example.edu/login")).toBe(true);
+  expect(isUniversitySignInService(covered, "https://moodle.example.edu/my")).toBe(false);
   expect(isUniversitySignInService(accounts, "https://moodle.example.edu/my")).toBe(false);
   expect(isUniversitySignInService([], `${SIGN_IN}/common`)).toBe(false);
 });
@@ -211,14 +222,17 @@ it("leaves unreadable saved data for the decoder to report", () => {
   expect(withLibrariesFolded(bytes)).toBe(bytes);
 });
 
-it("knows a tab still on the university's sign-in, from OpenAthens to the university's page", () => {
-  const details = { sites: ["huji.ac.il"] };
-  expect(isSignInTab(details, "https://idp.cc.huji.ac.il/simplesaml/login")).toBe(true);
-  expect(isSignInTab(details, "https://login.openathens.net/saml/2/sso")).toBe(true);
-  expect(isSignInTab(details, "https://my.openathens.net/auth?targetURL=%2Fapp")).toBe(true);
-  expect(isSignInTab(details, "https://my.openathens.net/app/research")).toBe(false);
-  expect(isSignInTab(details, "https://www.nejm.org/")).toBe(false);
-  expect(isSignInTab(details, null)).toBe(false);
+it("knows a tab left on the university's sign-in, and never a course page or another profile", () => {
+  const details = { sites: ["huji.ac.il", "https://idp.cc.huji.ac.il"], profileId: "default" };
+  const at = (url: string | null, profileId = "default") =>
+    isSignInTab(details, { url, profileId });
+  expect(at("https://idp.cc.huji.ac.il/simplesaml/login")).toBe(true);
+  expect(at("https://login.openathens.net/saml/2/sso")).toBe(true);
+  expect(at("https://my.openathens.net/auth?targetURL=%2Fapp")).toBe(true);
+  expect(at("https://my.openathens.net/app/research")).toBe(false);
+  expect(at("https://moodle.huji.ac.il/my/")).toBe(false);
+  expect(at("https://idp.cc.huji.ac.il/simplesaml/login", "work")).toBe(false);
+  expect(at(null)).toBe(false);
 });
 
 it("keeps OpenAthens out of scripts for a university that signs in there", () => {
@@ -258,14 +272,32 @@ it.live("uses the tab an earlier press left on the university's page instead of 
             // Then the person closes it, which ends the follow.
             const tabs =
               statuses === 1
-                ? [{ tabId: "tab-left", url: "https://idp.example.edu/login", ownedByCaller: true }]
+                ? [
+                    {
+                      tabId: "tab-course",
+                      url: "https://moodle.example.edu/my",
+                      profileId: "default",
+                    },
+                    {
+                      tabId: "tab-elsewhere",
+                      url: "https://idp.example.edu/login",
+                      profileId: "work",
+                    },
+                    {
+                      tabId: "tab-left",
+                      url: "https://idp.example.edu/login",
+                      profileId: "default",
+                    },
+                  ]
                 : [];
             return { available: true, tabs } as unknown as A;
           }
           return { tabId: request.tabId ?? "tab-new" } as A;
         }),
     });
-    const fake = fakeAccounts({ accounts: [university(["example.edu"])] });
+    const fake = fakeAccounts({
+      accounts: [university(["example.edu", "https://idp.example.edu"])],
+    });
     const result = yield* startUniversitySignIn(
       { accountId: ID, threadId: ThreadId.make("thread-beside") },
       EnvironmentId.make("env-fixture"),
