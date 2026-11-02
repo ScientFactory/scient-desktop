@@ -23,6 +23,10 @@ export function doiIn(text: string | undefined): string | undefined {
   return URL.canParse(`https://doi.org/${clean}`) ? decodeDoi(clean) : undefined;
 }
 
+const Biblio = Schema.Struct({
+  first_page: Schema.optional(Schema.NullOr(Schema.String)),
+  last_page: Schema.optional(Schema.NullOr(Schema.String)),
+});
 const Location = Schema.Struct({
   is_oa: Schema.optional(Schema.NullOr(Schema.Boolean)),
   pdf_url: Schema.optional(Schema.NullOr(Schema.String)),
@@ -36,16 +40,25 @@ const Work = Schema.Struct({
   authorships: Schema.optional(
     Schema.Array(Schema.Struct({ author: Schema.Struct({ display_name: Schema.String }) })),
   ),
+  biblio: Schema.optional(Schema.NullOr(Biblio)),
   primary_location: Schema.optional(Schema.NullOr(Location)),
   locations: Schema.optional(Schema.Array(Location)),
 });
 const decodeWork = Schema.decodeUnknownOption(Schema.fromJsonString(Work));
+const Handle = Schema.Struct({
+  values: Schema.Array(Schema.Struct({ data: Schema.Struct({ value: Schema.Unknown }) })),
+});
+const decodeHandle = Schema.decodeUnknownOption(Schema.fromJsonString(Handle));
 export interface Paper {
   readonly doi?: string;
   readonly title?: string;
   readonly year?: number;
   readonly firstAuthor?: string;
   readonly landingUrl: string;
+  /** The article at its publisher, once known: a DOI link can't carry a university's sign-in. */
+  readonly articleUrl?: string;
+  /** Its length in print, which tells a preview from the paper. */
+  readonly pages?: number;
   /** Free legal copies, the published version first. */
   readonly openAccess: ReadonlyArray<{
     readonly pdfUrl?: string;
@@ -77,8 +90,12 @@ function paperFrom(
     if (location.pdf_url) return [{ pdfUrl: location.pdf_url, published }];
     return location.landing_page_url ? [{ pageUrl: location.landing_page_url, published }] : [];
   });
+  const first = Number(work.biblio?.first_page);
+  const last = Number(work.biblio?.last_page);
+  const pages = last >= first && first > 0 ? last - first + 1 : undefined;
   return {
     ...(resolvedDoi ? { doi: resolvedDoi } : {}),
+    ...(pages ? { pages } : {}),
     ...(work.title ? { title: work.title } : {}),
     ...(work.publication_year ? { year: work.publication_year } : {}),
     ...(work.authorships?.[0] ? { firstAuthor: work.authorships[0].author.display_name } : {}),
@@ -97,6 +114,17 @@ function paperFrom(
 /** An arXiv id in an abs or pdf link, such as `1706.03762`. */
 const arxivIn = (url: string | undefined) =>
   url?.match(/^https:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\/([\w./-]+?)(?:v\d+)?(?:\.pdf)?$/u)?.[1];
+
+/** Where a DOI points. Elsevier's address needs its article page, not its redirector. */
+export const articleAddress = Effect.fn("Papers.articleAddress")(function* (doi: string) {
+  const http = yield* HttpClient.HttpClient;
+  const text = yield* getText(http, `https://doi.org/api/handles/${encodeURI(doi)}?type=URL`);
+  const handle = text === undefined ? Option.none() : decodeHandle(text);
+  const url = Option.isSome(handle) ? handle.value.values[0]?.data.value : undefined;
+  if (typeof url !== "string" || !URL.canParse(url)) return undefined;
+  const pii = url.match(/^https?:\/\/linkinghub\.elsevier\.com\/retrieve\/pii\/([^/?#]+)/u)?.[1];
+  return pii ? `https://www.sciencedirect.com/science/article/pii/${pii}` : url;
+});
 
 /** What OpenAlex knows about the paper a DOI or link names. */
 export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (input: {

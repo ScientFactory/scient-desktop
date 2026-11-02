@@ -1,6 +1,6 @@
 # Accounts & secrets
 
-Open **Settings → Accounts & secrets** to connect website and library sign-ins, API keys, databases,
+Open **Settings → Accounts & secrets** to connect website and university sign-ins, API keys, databases,
 command-line logins and browser profiles. Choose the environment that will use them.
 
 Use **Add account** to enter details and choose Scient’s encrypted store, a system keychain
@@ -27,7 +27,9 @@ can enforce it; readable values are supplied to agents through private session f
 | `scient_account_find_profile`    | Find a browser profile that can open a page.                                    |
 | `scient_account_browser_session` | Supply a site's browser session to scripts.                                     |
 | `scient_account_add`             | Ask you for a key in a private card and keep it here.                           |
-| `scient_paper_get`               | Save a paper's PDF through open access or your library.                         |
+| `scient_paper_get`               | Save one paper's PDF through open access or your university.                    |
+| `scient_papers_queue`            | Queue any number of papers to fetch in the background.                          |
+| `scient_papers_status`           | Read what arrived, what waits for you and what can't be reached.                |
 
 When an agent needs a key you don't have in Accounts, it asks in a private card and saves your
 answer here, so later conversations reuse it. One-time secrets still use the plain card.
@@ -79,7 +81,7 @@ name. **Keep in Accounts** copies one in and leaves the file as it is.
 A key a service refuses shows **Key refused**, and the agent asks you for a new one in a private card.
 
 **Get PDF** on a source with a DOI or link finds the paper the same way an agent does, saves it in
-`papers/` and attaches it to the source.
+`papers/` and attaches it to the source. See [Papers behind a subscription](#papers-behind-a-subscription).
 
 Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
 without replacing what you typed. They submit only to sign you back in: on your own tab, when it's
@@ -101,11 +103,6 @@ through Google, your university or another sign-in service, Scient adds that sit
 and shows Undo. Coming back to the sign-in service's own sites, such as Google Docs after Google's
 sign-in, adds nothing. A site signed in from several profiles is one row with their pictures.
 
-For journals, add your library (the HUJI library is in the list; for another, paste any link your
-library gives). `scient_paper_get` tries a free legal copy first, then your library in the
-browser, one paper at a time with a pause between, at most 100 a day, so the library never sees
-bulk downloading. PDFs are saved in the project's `papers` folder.
-
 Choose several stores when saving. Updates change every existing copy. If an external write
 fails, Scient keeps the password and reports the failed store. A 1Password vault that rejects a
 write is hidden from the choices until you reconnect 1Password; no setup step is needed.
@@ -118,3 +115,50 @@ stay out of agent conversations, but Accounts does not protect them from a malic
 running as you. On Windows and Linux,
 other programs running as you can read system keychain items. A host without a usable
 keychain keeps Scient's encryption key in an owner-only file.
+
+## Papers behind a subscription
+
+On a university network, Get PDF and agents reach closed papers with no setup: Scient tries the
+publisher first, and a publisher that recognises the network hands over the PDF.
+
+To reach papers from anywhere, connect your university. It works on any network, any time, whether
+or not a paper is waiting:
+
+- **Connect your university** is the first row in Sources until you do. Pick your university there,
+  in a conversation that asks for it, or under **University library** in Add an account.
+- Its own sign-in opens beside your work. When you finish, the tab closes and the university shows
+  **Signed in**. If it already knows you, nothing opens to type into. Pressing Sign in again
+  reuses the same tab. Passwords are offered for saving as on any other site.
+- If your university isn't listed, paste a link from your library's website.
+- The university's crest then stays beside the Sources title. Press it to see the sign-in's status,
+  sign in, or check it. An amber dot means it needs you.
+
+Once you're signed in, journals know you in Scient's browser too. The first article you open at a
+journal reloads once through your university, and you land back on it with your university's
+access. Only article pages are sent this way, and only to your university's sign-in service.
+
+Scient searches a public directory of institutions with only the text you type. A university that
+uses OpenAthens signs in on your own OpenAthens page and reaches any journal it pays for through
+it, so no journal opens during sign-in or checks. Other universities sign in through a publisher,
+which Scient closes as soon as the university answers. A university account
+is a website sign-in held in one browser profile, your default unless you choose another. Being on
+campus never counts as being signed in. Scripts can't export the session at your university's
+sign-in service, because it can also open your mail and records.
+
+Every paper goes through one queue, so nothing is limited to a few at a time:
+
+- **Get missing PDFs** beside the Sources title fetches a project's whole list.
+- Agents use `scient_paper_get` for one paper and `scient_papers_queue` for any number.
+  `scient_papers_status` says what arrived, what waits for you, and what can't be reached.
+- Papers run one at a time per publisher with a pause between, with publishers side by side. If a
+  publisher refuses several in a row, Scient pauses that publisher, doubling the pause up to four
+  hours, and carries on with the others.
+- A sign-in or a publisher's check asks you once, on the Sources band or in the conversation, and
+  every paper waiting on it continues afterwards. The queue survives a restart.
+
+The list is yours to decide, however long it is. Many university licences forbid systematic
+downloading, and a publisher can suspend a university's access over it.
+
+Scient checks each PDF before saving it. A short preview of a longer paper, or a file about
+something else, is not kept. PDFs are saved in the project's `papers` folder, and a paper already
+there isn't fetched again.

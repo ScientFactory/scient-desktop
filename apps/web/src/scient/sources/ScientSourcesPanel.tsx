@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   ScientSourcesOverviewResult,
   ScientSourcesPreflightResult,
+  ThreadId,
 } from "@t3tools/contracts";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
@@ -13,6 +14,7 @@ import {
   ChevronLeft,
   Download,
   ExternalLink,
+  FileDown,
   FileUp,
   FileText,
   Folder,
@@ -77,8 +79,10 @@ import {
 } from "./SourceRemovalConfirmation";
 import { useScientSources } from "./useScientSources";
 import { accountsState } from "../accounts/accountsState";
-import { useAccountBrowser } from "../accounts/useAccountBrowser";
-import { useAccountCommand } from "../accounts/useAccounts";
+import { UniversityCrest, UniversityRow } from "../accounts/University";
+import { PaperQueueBand } from "../accounts/PaperRequests";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type SourceContextAction = "view" | "edit" | "open-pdf" | "remove";
@@ -242,6 +246,7 @@ function zoteroCollectionLabels(
 
 export function ScientSourcesPanel(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly root: string;
   readonly projectTitle: string;
   readonly onOpenPdf: (input: {
@@ -252,7 +257,34 @@ export function ScientSourcesPanel(props: {
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
-  const openBrowser = useAccountBrowser(props.environmentId);
+  const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
+  const listPapers = useStableCallback(
+    useAccountCommand(accountsState.listPapers, props.environmentId),
+  );
+  const { data: accounts } = useAccounts(props.environmentId);
+  const papersSaved = accounts?.paperQueues?.find((item) => item.root === props.root)?.saved;
+  const refreshOverview = sources.refreshOverview;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opening a project's Sources picks up the paper list on the server that a restart interrupted
+  useEffect(() => {
+    void listPapers({ root: props.root });
+  }, [listPapers, props.root]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the server attaches queued papers to sources; this keeps the loaded list in step with it
+  useEffect(() => {
+    if (papersSaved) void refreshOverview();
+  }, [papersSaved, refreshOverview]);
+  const missingPdfs = (sources.overview?.records ?? []).flatMap((record) => {
+    const doi = record.identifiers.find(({ scheme }) => scheme.toLowerCase() === "doi")?.value;
+    return record.attachments.length === 0 && (doi || record.url)
+      ? [
+          {
+            ...(doi ? { doi } : {}),
+            ...(record.url ? { url: record.url } : {}),
+            ...(record.title ? { title: record.title } : {}),
+            source: { sourceId: record.sourceId, expectedRevision: record.revision },
+          },
+        ]
+      : [];
+  });
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
@@ -979,18 +1011,10 @@ export function ScientSourcesPanel(props: {
             });
             return;
           }
-          const { landingUrl: openUrl, profileId } = result.value;
+          // Anything waiting for the user is on the band above Sources, with its action.
           toastManager.add({
-            type: "error",
+            type: result.value.status === "needs-you" ? "info" : "error",
             title: result.value.message,
-            ...(openUrl
-              ? {
-                  actionProps: {
-                    children: "Open",
-                    onClick: () => void openBrowser(openUrl, profileId),
-                  },
-                }
-              : {}),
           });
         }}
         onOpenPdf={props.onOpenPdf}
@@ -1033,45 +1057,71 @@ export function ScientSourcesPanel(props: {
           revealImportedSource(sources.uploadLocalFiles(files), files.length === 1);
         }}
       />
+      <PaperQueueBand
+        environmentId={props.environmentId}
+        root={props.root}
+        threadId={props.threadId}
+      />
       <PanelHeader
         title="Sources"
         action={
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={sources.busy || sources.checkingZotero}
-                  aria-label="Import sources"
-                >
-                  {sources.busy || sources.checkingZotero ? (
-                    <LoaderCircle className="animate-spin" />
-                  ) : (
-                    <Download />
-                  )}
-                  Import sources
-                </Button>
-              }
-            />
-            <MenuPopup align="end" side="bottom" className="min-w-44">
-              <MenuItem onClick={() => localFileInput.current?.click()}>
-                <FileUp />
-                Import PDF files
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setSelectedSourceId(null);
-                  setImportOutcome(null);
-                  sources.clearOperationSummary();
-                  void sources.openZoteroLibrary();
-                }}
+          <div className="flex items-center gap-1">
+            <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
+            {missingPdfs.length > 0 ? (
+              <ScientTooltip
+                content={
+                  missingPdfs.length === 1
+                    ? "Get the missing PDF"
+                    : `Get ${missingPdfs.length} missing PDFs`
+                }
               >
-                <ZoteroMark />
-                Import from Zotero
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Get missing PDFs"
+                  onClick={() => void requestPapers({ root: props.root, papers: missingPdfs })}
+                >
+                  <FileDown />
+                </Button>
+              </ScientTooltip>
+            ) : null}
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={sources.busy || sources.checkingZotero}
+                    aria-label="Import sources"
+                  >
+                    {sources.busy || sources.checkingZotero ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Download />
+                    )}
+                    Import sources
+                  </Button>
+                }
+              />
+              <MenuPopup align="end" side="bottom" className="min-w-44">
+                <MenuItem onClick={() => localFileInput.current?.click()}>
+                  <FileUp />
+                  Import PDF files
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setSelectedSourceId(null);
+                    setImportOutcome(null);
+                    sources.clearOperationSummary();
+                    void sources.openZoteroLibrary();
+                  }}
+                >
+                  <ZoteroMark />
+                  Import from Zotero
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          </div>
         }
       />
       {dragActive ? (
@@ -1186,14 +1236,20 @@ export function ScientSourcesPanel(props: {
         </div>
       ) : null}
       {sources.overview.records.length === 0 ? (
-        <CenteredState
-          icon={<BookOpen />}
-          title="No sources yet"
-          description="Import PDFs from this computer or references from Zotero. Scient keeps a portable project copy."
-        />
+        <>
+          <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
+          <CenteredState
+            icon={<BookOpen />}
+            title="No sources yet"
+            description="Import PDFs from this computer or references from Zotero. Scient keeps a portable project copy."
+          />
+        </>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="divide-y divide-border">
+            {sourceQuery ? null : (
+              <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
+            )}
             {filteredSourceRecords.map((record) => {
               const materialSelection = selectScientSourceMaterial({
                 materials: record.attachments,

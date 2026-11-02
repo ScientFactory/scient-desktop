@@ -1,5 +1,11 @@
 import { GOOGLE_SITE, type AccountSummary, type EnvironmentId } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import {
+  OPEN_ATHENS_QUIET_VISIT,
+  universityDetails,
+  universitySignInLink,
+  usesOpenAthens,
+} from "@t3tools/shared/scientPaperLinks";
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import type { AtomRegistry } from "effect/reactivity";
 import { accountsState } from "./accountsState";
@@ -21,11 +27,31 @@ export function nextQuietVisit(
 ) {
   return accounts
     .flatMap((account) => {
+      const visit = visits[account.accountId];
+      const due = visit ? visit.at + visit.gapMs : 0;
+      const details = universityDetails(account.details);
+      if (details?.institution && details.profileId) {
+        // OpenAthens keeps the session itself; other universities answer with a page that posts
+        // itself onward, which a quiet request can't follow. Either way the answer keeps the
+        // session in use but says nothing about it.
+        const url = usesOpenAthens(details.institution)
+          ? OPEN_ATHENS_QUIET_VISIT
+          : universitySignInLink(details);
+        return url && due <= now
+          ? [
+              {
+                accountId: account.accountId,
+                profileId: details.profileId,
+                url,
+                due,
+                tellsSessionState: false,
+              },
+            ]
+          : [];
+      }
       const [signIn] = profileSignIns([account]);
       const site = signIn?.sites[0];
       if (!signIn || !site || site === GOOGLE_SITE || site.endsWith(`.${GOOGLE_SITE}`)) return [];
-      const visit = visits[account.accountId];
-      const due = visit ? visit.at + visit.gapMs : 0;
       return due > now
         ? []
         : [
@@ -34,6 +60,7 @@ export function nextQuietVisit(
               profileId: signIn.profileId,
               url: site.startsWith("https://") ? site : `https://${site}/`,
               due,
+              tellsSessionState: true,
             },
           ];
     })
@@ -81,7 +108,10 @@ export function watchKeepSignedIn(
     const target = nextQuietVisit(snapshot.value.accounts, visits, now);
     if (!target) return;
     const answer = await visit(target.profileId, target.url, environmentId).catch(() => null);
-    const ended = answer !== null && sessionEnded(target.url, answer.url, answer.status);
+    const ended =
+      target.tellsSessionState &&
+      answer !== null &&
+      sessionEnded(target.url, answer.url, answer.status);
     localStorage.setItem(
       key,
       JSON.stringify({

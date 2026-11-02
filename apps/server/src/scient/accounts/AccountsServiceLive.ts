@@ -11,6 +11,7 @@ import {
   type AccountActivityEntry,
   type AccountApproval,
   type AccountHandoff,
+  type PaperQueueSummary,
   type AccountApprovalDecision,
   type AccountControls,
   type AccountSecretSummary,
@@ -50,6 +51,7 @@ import {
   AccountsState,
   Activity,
   decodePrivateJson,
+  withLibrariesFolded,
   emptyState,
   encodePrivateJson,
   type StoredAccount,
@@ -138,6 +140,7 @@ export const layer = Layer.effect(
         target.type === "account" ? target.accountId : target.profileId,
       ]);
     const handoffs = new Map<string, AccountHandoff>();
+    const paperQueues = new Map<string, PaperQueueSummary>();
     // In memory only, never trimmed while the server runs: a forgotten entry would expose a filled
     // page. The account autofill put into a tab, keyed by thread and tab.
     const filledTabs = new Map<string, { accountId: AccountId; url: string }>();
@@ -201,6 +204,7 @@ export const layer = Layer.effect(
           cli: cliStores.statuses(),
         },
         handoffs: [...handoffs.values()],
+        paperQueues: [...paperQueues.values()],
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
@@ -217,7 +221,7 @@ export const layer = Layer.effect(
       const saved = yield* persistence.read("accounts-state");
       const activity = yield* persistence.read("accounts-activity");
       const loaded = Option.isSome(saved)
-        ? yield* decodePrivateJson(AccountsState, saved.value)
+        ? yield* decodePrivateJson(AccountsState, withLibrariesFolded(saved.value))
         : emptyState;
       const log = Option.isSome(activity) ? yield* decodePrivateJson(Activity, activity.value) : [];
       cache.clear();
@@ -708,6 +712,14 @@ export const layer = Layer.effect(
       handoffCancelled: Effect.fn("AccountsService.handoffCancelled")((handoffId) =>
         Effect.sync(() => cancelledHandoffs.has(handoffId)),
       ),
+      setPaperQueue: Effect.fn("AccountsService.setPaperQueue")((queue) =>
+        locked(
+          Effect.gen(function* () {
+            paperQueues.set(queue.root, queue);
+            yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
       showHandoff: Effect.fn("AccountsService.showHandoff")(function* (handoffId) {
         const reveal = yield* locked(
           Effect.sync(() => (handoffs.has(handoffId) ? handoffReveals.get(handoffId) : undefined)),
@@ -1149,7 +1161,7 @@ export const layer = Layer.effect(
             const candidates = state.accounts
               .filter(
                 ({ summary: { details } }) =>
-                  (details.kind === "website" || details.kind === "library") &&
+                  details.kind === "website" &&
                   details.username === input.username &&
                   siteMatches(details.sites, input.origin),
               )
@@ -1197,10 +1209,7 @@ export const layer = Layer.effect(
             const account = findAccount(accountId);
             if (!account) return yield* missing();
             const details = account.summary.details;
-            if (
-              (details.kind !== "website" && details.kind !== "library") ||
-              !siteMatches(details.sites, origin)
-            )
+            if (details.kind !== "website" || !siteMatches(details.sites, origin))
               return yield* failure("denied", "The page does not match this account's sites.");
             const values = yield* resolve(accountId, ["password", "totp"]);
             let otp: string | undefined;

@@ -28,6 +28,7 @@ import {
   type BrowserImportSource,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
 
 export function siteMatchesUrl(site: string, url: string): boolean {
@@ -84,8 +85,7 @@ export function matchingAccounts(
   return accounts
     .filter(
       ({ details }) =>
-        (details.kind === "website" || details.kind === "library") &&
-        details.sites.some((site) => siteMatchesUrl(site, url)),
+        details.kind === "website" && details.sites.some((site) => siteMatchesUrl(site, url)),
     )
     .sort(
       (a, b) =>
@@ -251,14 +251,7 @@ export const accountCatalogue = [
   { name: "OpenAI", kind: "api-key", site: "api.openai.com", envName: "OPENAI_API_KEY" },
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
-  { name: "OpenAthens library", kind: "library", site: "openathens.net" },
-  {
-    name: "HUJI library",
-    kind: "library",
-    // OpenAthens hands HUJI sign-ins to the university's own page, idp.cc.huji.ac.il.
-    site: "huji.ac.il",
-    proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
-  },
+  { name: "University library", kind: "website", site: "", university: true },
   { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
@@ -337,7 +330,7 @@ export const accountCatalogueGroups = [
   },
   {
     name: "Universities & libraries",
-    entries: ["HUJI", "HUJI library", "OpenAthens library", "Moodle", "Google"],
+    entries: ["University library", "HUJI", "Moodle", "Google"],
   },
   {
     name: "Developer tools",
@@ -358,12 +351,6 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
   switch (entry.kind) {
     case "website":
       return { kind: "website", sites: entry.site ? [entry.site] : [] };
-    case "library":
-      return {
-        kind: "library",
-        sites: [entry.site],
-        proxyUrl: "proxyUrl" in entry ? entry.proxyUrl : "",
-      };
     case "api-key":
       return {
         kind: "api-key",
@@ -424,7 +411,7 @@ export function capturedSignInInput(
   const origin = new URL(capture.url).origin;
   const existing = matchingAccounts(accounts, capture.url, capture.profileId).find(
     (account) =>
-      (account.details.kind === "website" || account.details.kind === "library") &&
+      account.details.kind === "website" &&
       (account.details.username === capture.username ||
         ((account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === capture.profileId &&
           !account.details.username &&
@@ -472,10 +459,7 @@ export function automaticSignIn(form: DesktopLoginForm) {
 }
 
 export function signInLabel(account: AccountSummary) {
-  const username =
-    account.details.kind === "website" || account.details.kind === "library"
-      ? account.details.username
-      : undefined;
+  const username = account.details.kind === "website" ? account.details.username : undefined;
   return username ? `${account.name} · ${username}` : account.name;
 }
 
@@ -517,16 +501,22 @@ export function matchExistingProfile(
 
 /** A website password, as a browser or a password export saves them; listed under Saved passwords. */
 export function isSavedPassword(account: AccountSummary) {
-  return account.details.kind === "website" && account.secrets.password !== undefined;
-}
-
-/** A website account that is only a profile's session: no password, and no username but Google's. */
-export function isBrowserSignIn(account: AccountSummary) {
   return (
     account.details.kind === "website" &&
-    account.secrets.password === undefined &&
-    (account.details.username === undefined || account.details.sites.includes(GOOGLE_SITE))
+    account.secrets.password !== undefined &&
+    !universityDetails(account.details)
   );
+}
+
+/** Only a profile's session: no password, and no username but Google's. */
+const hasNothingToType = ({ details, secrets }: AccountSummary) =>
+  details.kind === "website" &&
+  secrets.password === undefined &&
+  (details.username === undefined || details.sites.includes(GOOGLE_SITE));
+
+/** A site signed in from a profile. A university has its own row. */
+export function isBrowserSignIn(account: AccountSummary) {
+  return hasNothingToType(account) && !universityDetails(account.details);
 }
 
 /** The saved sign-ins a page can be filled with. A browser sign-in has nothing to type. */
@@ -535,7 +525,7 @@ export function fillableAccounts(
   url: string,
   profileId: string,
 ) {
-  return matchingAccounts(accounts, url, profileId).filter((account) => !isBrowserSignIn(account));
+  return matchingAccounts(accounts, url, profileId).filter((account) => !hasNothingToType(account));
 }
 
 /** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
@@ -625,10 +615,13 @@ export function changedSourceProfile(
     : undefined;
 }
 
+/** Whether a university's sign-in was last seen working. */
+export const signedIntoUniversity = (account: AccountSummary) =>
+  !account.signedOut && account.lastCheck?.state === "signed-in";
+
 /** What each kind of account is called on screen. */
 export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
   website: "Website sign-in",
-  library: "Library access",
   "api-key": "API key",
   database: "Database",
   "cli-login": "Command-line login",
@@ -736,11 +729,12 @@ export function accountStatusLabel(
     return account.lastCheck?.state === "rejected" ? "Key refused" : null;
   if (account.lastSignInOutcome === "password-rejected") return "Password rejected";
   if (account.lastSignInOutcome === "code-rejected") return "Code rejected";
-  if (account.signedOut) return "Signed out";
+  const university = account.details && universityDetails(account.details);
+  if (account.signedOut) return university ? "Sign in needed" : "Signed out";
   const check = account.lastCheck;
-  if (!check) return null;
+  if (!check) return university ? "Not signed in yet" : null;
   if (check.state === "signed-in") return `Signed in · ${relativeTime(check.at)}`;
-  if (check.state === "signed-out") return "Signed out";
+  if (check.state === "signed-out") return university ? "Sign in needed" : "Signed out";
   if (check.state === "needs-you") return "Needs you";
   if (check.state === "rejected") return "Sign-in rejected";
   if (check.state === "limited") return "Site is limiting access";

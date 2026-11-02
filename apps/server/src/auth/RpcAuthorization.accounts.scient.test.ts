@@ -25,6 +25,14 @@ it.effect(
         check: () => Effect.succeed({ checked: 0 }),
         linkKey: () => Effect.void,
         paperForSource: () => Effect.die("not reached"),
+        papers: {
+          request: () => Effect.die("not reached"),
+          continue: () => Effect.die("not reached"),
+          list: () => Effect.die("not reached"),
+          universitySignIn: () => Effect.die("not reached"),
+          universityBrowse: () => Effect.die("not reached"),
+          universities: () => Effect.die("not reached"),
+        },
         plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
       });
       const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
