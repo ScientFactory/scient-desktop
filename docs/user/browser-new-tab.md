@@ -5,8 +5,11 @@ from Drive, Docs and Scholar to Colab, Classroom and Earth. They open in the pro
 toolbar, so you reach that profile's account. If it isn't signed in, Google shows its sign-in
 first.
 
-On a Hebrew University profile, **Moodle** joins them. Scient recognises the profile from its email
-address or its sign-ins on `huji.ac.il` sites.
+On a profile whose email address is at a university, that university's **Moodle** joins them, or
+**Opal** at the Open University. Scient knows the Moodle of the Hebrew University, Tel Aviv,
+Technion, Ben-Gurion, Ariel and Reichman. For another university, Moodle appears once the profile
+signs in to its Moodle or opens it twice. To have a Moodle on any other profile, add it as a
+shortcut.
 
 Below them is a search box that works like the address bar. Type a web address to open it, or
 anything else to search with the search engine chosen in Settings. It uses the profile shown in the

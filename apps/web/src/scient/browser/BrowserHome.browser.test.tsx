@@ -78,8 +78,20 @@ it("opens Gmail, each shortcut and Google from Apps", async () => {
 it("shows the university's Moodle only on that university's profile", async () => {
   const onOpenUrl = vi.fn();
   accounts.data = {
-    profiles: [{ profileId: "uni", source: { email: "a@mail.huji.ac.il" } }, { profileId: "main" }],
-    accounts: [],
+    profiles: [
+      { profileId: "uni", source: { email: "a@mail.huji.ac.il" } },
+      { profileId: "main", source: { email: "a@gmail.com" } },
+    ],
+    accounts: [
+      {
+        details: {
+          kind: "website",
+          profileId: "main",
+          username: "a",
+          sites: ["moodle.huji.ac.il"],
+        },
+      },
+    ],
   };
   const home = (profileId: string) => (
     <BrowserHome

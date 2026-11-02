@@ -120,14 +120,68 @@ const STARTING_SITES: ReadonlyArray<HomeSite> = [
   CALENDAR,
 ];
 
-/** Each university's Moodle, by the domain of its people's addresses and sign-ins. */
-const UNIVERSITY_MOODLES: Readonly<Record<string, HomeSite>> = {
-  "huji.ac.il": { name: "Moodle", url: "https://moodle.huji.ac.il/", icon: ICONS.huji },
+const moodle = (url: string, icon: string): HomeSite => ({ name: "Moodle", url, icon });
+const REICHMAN = moodle("https://moodle.runi.ac.il/", ICONS.runi);
+
+/** Each university's learning site, by the domain of its people's addresses. */
+const UNIVERSITY_SITES: Readonly<Record<string, HomeSite>> = {
+  "huji.ac.il": moodle("https://moodle.huji.ac.il/", ICONS.huji),
+  "tau.ac.il": moodle("https://moodle.tau.ac.il/", ICONS.tau),
+  "technion.ac.il": moodle("https://moodle.technion.ac.il/", ICONS.technion),
+  "bgu.ac.il": moodle("https://moodle.bgu.ac.il/", ICONS.bgu),
+  "openu.ac.il": { name: "Opal", url: "https://opal.openu.ac.il/", icon: ICONS.openu },
+  "ariel.ac.il": moodle("https://moodle.ariel.ac.il/", ICONS.ariel),
+  "runi.ac.il": REICHMAN,
+  // Reichman was IDC Herzliya, and many still have those addresses.
+  "idc.ac.il": REICHMAN,
 };
 
-/** The Moodle of the university a profile belongs to, from `profileDomains`. */
-export function universityMoodle(domains: ReadonlyArray<string>) {
-  return byDomain(domains, UNIVERSITY_MOODLES)?.value;
+/** A site's host, without its port or the trailing dot of a fully written name. */
+function hostOf(site: string) {
+  return site
+    .replace(/^https?:\/\//i, "")
+    .split(/[/?#]/)[0]!
+    .replace(/:\d*$/, "")
+    .replace(/\.+$/, "")
+    .toLowerCase();
+}
+
+/** The last two labels of a host, or three under a country's zone such as ac.il or edu.au. */
+function organisationDomain(host: string) {
+  const labels = host.split(".");
+  const inZone =
+    labels.length > 2 &&
+    labels.at(-1)!.length === 2 &&
+    ["ac", "edu", "co", "org", "gov", "net"].includes(labels.at(-2)!);
+  return labels.slice(inZone ? -3 : -2).join(".");
+}
+
+/**
+ * The learning site of the university a profile's own address is at. A listed university has its
+ * own; for any other it's the Moodle on that university's domain the profile opens most or signs
+ * in to. Other profiles add it as a shortcut.
+ */
+export function universitySite(
+  addressDomain: string | undefined,
+  signInSites: ReadonlyArray<string>,
+  visits: SavedShortcuts["visits"],
+): HomeSite | undefined {
+  if (!addressDomain) return undefined;
+  const domain = hostOf(addressDomain);
+  const listed = byDomain([domain], UNIVERSITY_SITES);
+  if (listed) return listed.value;
+  const organisation = organisationDomain(domain);
+  const opened = Object.values(visits)
+    .filter(({ count }) => count >= MIN_VISITS_TO_SUGGEST)
+    .toSorted((a, b) => b.count - a.count)
+    .map(({ url }) => url);
+  const found = [...opened, ...signInSites]
+    .flatMap((site) => parseSiteUrl(site) ?? [])
+    .find(({ hostname }) => {
+      const host = hostOf(hostname);
+      return host.startsWith("moodle") && host.endsWith(`.${organisation}`);
+    });
+  return found ? { name: "Moodle", url: `${found.origin}/` } : undefined;
 }
 
 /** A web address, or null when the text isn't one. Chromium percent-encodes spaces in a host. */
@@ -151,7 +205,7 @@ function siteKeyOf(raw: string) {
 
 /** The first site on each host names it, so everything on docs.google.com reads as Docs. */
 const KNOWN_SITES = new Map(
-  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_MOODLES)]
+  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_SITES)]
     .flatMap((site) => {
       const key = siteKeyOf(site.url);
       return key ? [[key, site] as const] : [];

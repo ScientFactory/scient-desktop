@@ -20,7 +20,7 @@ import { Label } from "~/components/ui/label";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { profileDomains } from "~/scient/accounts/accountsView";
+import { profileAddressDomain, profileSignInSites } from "~/scient/accounts/accountsView";
 import { useAccounts } from "~/scient/accounts/useAccounts";
 
 import {
@@ -30,7 +30,7 @@ import {
   type HomeSite,
   parseSiteUrl,
   type Shortcut,
-  universityMoodle,
+  universitySite,
   useBrowserShortcuts,
   useProfileShortcuts,
   visibleShortcuts,
@@ -317,15 +317,20 @@ export function BrowserHome({
   onSearch: (query: string) => void;
 }) {
   const { data } = useAccounts(threadRef.environmentId);
-  const moodle = universityMoodle(profileDomains(data, profileId));
   const saved = useProfileShortcuts(profileId);
+  const university = universitySite(
+    profileAddressDomain(data, profileId),
+    profileSignInSites(data, profileId),
+    saved.visits,
+  );
+  const onTopRow = university ? [university] : [];
   const remove = useBrowserShortcuts((state) => state.remove);
   const [dialog, setDialog] = useState<{ shortcut: Shortcut | null } | null>(null);
   return (
     <div className="flex flex-col items-center gap-10 pb-6">
       <div className="flex flex-wrap items-center justify-center gap-1">
-        {[GMAIL, ...(moodle ? [moodle] : [])].map((site) => (
-          <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
+        {[GMAIL, ...onTopRow].map((site) => (
+          <Button key={site.url} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
             <SiteIcon threadRef={threadRef} site={site} className="size-5 object-contain" />
             {site.name}
           </Button>
@@ -339,7 +344,7 @@ export function BrowserHome({
         onSearch={onSearch}
       />
       <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-x-1 gap-y-2">
-        {visibleShortcuts(saved, moodle ? [moodle] : []).map((shortcut) => (
+        {visibleShortcuts(saved, onTopRow).map((shortcut) => (
           <ShortcutCircle
             key={shortcut.url}
             threadRef={threadRef}

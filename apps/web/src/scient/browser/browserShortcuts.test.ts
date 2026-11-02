@@ -7,7 +7,7 @@ import {
   migrateShortcuts,
   type SavedShortcuts,
   type Shortcut,
-  universityMoodle,
+  universitySite,
   useBrowserShortcuts,
   visibleShortcuts,
 } from "./browserShortcuts";
@@ -130,26 +130,89 @@ it("fills every row of the Apps menu with different apps", () => {
   expect(GOOGLE_APPS.every(({ icon }) => icon?.startsWith("data:image/"))).toBe(true);
 });
 
-describe("universityMoodle", () => {
-  it.each(["mail.huji.ac.il", "huji.ac.il", "cs.huji.ac.il", "MAIL.HUJI.AC.IL"])(
-    "finds the Moodle of %s",
+describe("universitySite", () => {
+  const site = (address: string | undefined, signInSites: ReadonlyArray<string> = []) => {
+    const found = universitySite(address, signInSites, saved().visits);
+    return found && { name: found.name, url: found.url };
+  };
+
+  it.each(["mail.huji.ac.il", "huji.ac.il", "cs.huji.ac.il", "MAIL.HUJI.AC.IL", "huji.ac.il."])(
+    "finds the Moodle of an address at %s",
     (domain) => {
-      expect(universityMoodle(["gmail.com", domain])).toMatchObject({
-        name: "Moodle",
-        url: "https://moodle.huji.ac.il/",
-      });
+      expect(site(domain)).toEqual({ name: "Moodle", url: "https://moodle.huji.ac.il/" });
     },
   );
 
-  it.each(["gmail.com", "nothuji.ac.il", "huji.ac.il.example.org"])("ignores %s", (domain) => {
-    expect(universityMoodle([domain])).toBeUndefined();
+  it.each(["post.tau.ac.il", "campus.technion.ac.il", "post.bgu.ac.il", "ariel.ac.il"])(
+    "knows the listed university at %s",
+    (domain) => {
+      expect(site(domain)?.url).toMatch(/^https:\/\/moodle\.[a-z]+\.ac\.il\/$/);
+    },
+  );
+
+  it("knows the Open University's Opal, and Reichman by its old IDC addresses too", () => {
+    expect(site("openu.ac.il")).toEqual({ name: "Opal", url: "https://opal.openu.ac.il/" });
+    expect(site("post.idc.ac.il")).toEqual(site("post.runi.ac.il"));
+    expect(site("post.runi.ac.il")?.url).toBe("https://moodle.runi.ac.il/");
+  });
+
+  it("shows nothing for a personal address, whatever university sites the profile uses", () => {
+    visit("https://moodle.tau.ac.il/my/", 5);
+    expect(
+      site("gmail.com", ["moodle.huji.ac.il", "https://moodle2.cs.huji.ac.il"]),
+    ).toBeUndefined();
+    expect(site(undefined, ["moodle.huji.ac.il"])).toBeUndefined();
+  });
+
+  it.each(["nothuji.ac.il", "huji.ac.il.example.org"])("ignores %s", (domain) => {
+    expect(site(domain)).toBeUndefined();
+  });
+
+  it.each([
+    ["mail.ucl.ac.uk", "https://moodle.ucl.ac.uk/"],
+    ["cs.ox.ac.uk", "https://moodle2.cs.ox.ac.uk/"],
+    ["epfl.ch", "https://moodle.epfl.ch/"],
+    ["student.ethz.ch", "https://moodle-app2.let.ethz.ch/"],
+    ["une.edu.au", "https://moodle.une.edu.au/"],
+    ["s.kyushu-u.ac.jp", "https://moodle.s.kyushu-u.ac.jp/"],
+    ["grad.ufsc.br", "https://moodle.ufsc.br/"],
+    ["mit.edu", "https://moodle.mit.edu/"],
+  ])("learns the Moodle of an unlisted university at %s from a sign-in", (domain, url) => {
+    expect(site(domain, [url.replace(/\/$/, ""), "https://www.google.com"])).toEqual({
+      name: "Moodle",
+      url,
+    });
+  });
+
+  it("keeps the port of a Moodle that has its own", () => {
+    expect(
+      site("ucl.ac.uk", ["https://moodle.ucl.ac.uk:8443", "moodle2.ucl.ac.uk:8080"])?.url,
+    ).toBe("https://moodle.ucl.ac.uk:8443/");
+    expect(site("ucl.ac.uk", ["moodle2.ucl.ac.uk:8080"])?.url).toBe(
+      "https://moodle2.ucl.ac.uk:8080/",
+    );
+  });
+
+  it("learns it from opening it twice, and prefers the one opened most", () => {
+    visit("https://moodle.ucl.ac.uk/course/", 1);
+    expect(site("ucl.ac.uk")).toBeUndefined();
+    visit("https://moodle.ucl.ac.uk/course/", 1);
+    expect(site("ucl.ac.uk")?.url).toBe("https://moodle.ucl.ac.uk/");
+    visit("https://moodle-archive.ucl.ac.uk/", 3);
+    expect(site("ucl.ac.uk", ["moodle.ucl.ac.uk"])?.url).toBe("https://moodle-archive.ucl.ac.uk/");
+  });
+
+  it("only takes a Moodle on the address's own university", () => {
+    expect(
+      site("ucl.ac.uk", ["moodle.ox.ac.uk", "moodle.org", "moodle-ucl.example.com"]),
+    ).toBeUndefined();
+    expect(site("moodle-consulting.com", ["https://moodle-consulting.com"])).toBeUndefined();
   });
 
   it("doesn't repeat a Moodle on the top row as a shortcut", () => {
     visit("https://moodle.huji.ac.il/2026-27/", 3);
-    const moodle = universityMoodle(["huji.ac.il"])!;
     expect(names()).toContain("Moodle");
-    const onTopRow = visibleShortcuts(saved(), [moodle]);
+    const onTopRow = visibleShortcuts(saved(), [site("huji.ac.il")!]);
     expect(onTopRow.map(({ name }) => name)).not.toContain("Moodle");
   });
 });
