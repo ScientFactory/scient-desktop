@@ -13,7 +13,6 @@ import {
   type AccountsSnapshot,
   type EnvironmentId,
   type BrowserProfileRecord,
-  type ClientSettings,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -57,6 +56,7 @@ import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
+import { addBrowserProfile, withOwnDefault } from "./addBrowserProfile";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
@@ -107,17 +107,6 @@ function BrowserLogo({ id, name }: { id: string; name: string }) {
   ) : (
     <ProfilePicture name={name} />
   );
-}
-
-/**
- * The built-in Main profile is only the starting point: once the user has a profile of their
- * own, the first one opens new tabs instead.
- */
-function withOwnDefault(current: ClientSettings): ClientSettings {
-  const own = current.browserProfiles.filter((profile) => profile.kind === "persistent");
-  return current.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID && own[0]
-    ? { ...current, browserDefaultProfileId: own[0].id }
-    : current;
 }
 
 /** One browser import at a time, even after its dialog closed and was opened again. */
@@ -860,26 +849,7 @@ export function BrowserProfiles({
               <MenuItem
                 onClick={() =>
                   void act(async () => {
-                    await persistClientSettingsUpdate((current) => {
-                      if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT)
-                        return current;
-                      return withOwnDefault({
-                        ...current,
-                        browserProfiles: [
-                          ...current.browserProfiles,
-                          {
-                            id: `profile-${randomUUID()}`,
-                            name: importProfileName(
-                              "Profile",
-                              mergeProfiles(current.browserProfiles, []).map(
-                                (profile) => profile.name,
-                              ),
-                            ),
-                            kind: "persistent",
-                          },
-                        ],
-                      });
-                    });
+                    await addBrowserProfile();
                   })
                 }
               >
