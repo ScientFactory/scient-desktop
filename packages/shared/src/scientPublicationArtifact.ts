@@ -17,7 +17,10 @@ export const publicationDigest = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
 /** Validate before executing: a receipt cannot make a project/PATH candidate authoritative. */
-export async function validatePublicationArtifact(helper: string) {
+export function validatePublicationArtifact(helper: string) {
+  return validateArtifact(helper, 1);
+}
+async function validateArtifact(helper: string, attempt: number): Promise<string> {
   const platform = HostProcess.Platform.defaultValue();
   const arch = HostProcess.Architecture.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
@@ -89,16 +92,7 @@ export async function validatePublicationArtifact(helper: string) {
     if (!matches) throw new Error("Native publication is not a host Mach-O executable.");
   }
   const permissionsKey =
-    platform === "win32"
-      ? (
-          await Promise.all(
-            [helper, receiptPath, NodePath.dirname(helper)].map(async (path) => {
-              const stat = await NodeFSP.lstat(path, { bigint: true });
-              return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-            }),
-          )
-        ).join("|")
-      : "";
+    platform === "win32" ? await windowsPermissionsKey(helper, receiptPath) : "";
   const checked = checkedWindowsPermissions.get(helper);
   if (
     platform === "win32" &&
@@ -137,6 +131,11 @@ foreach ($file in $files) {
       runningWindowsChecks.set(running, check);
     }
     await check;
+    // A file replaced while PowerShell looked was not the one checked, nor the one hashed.
+    if ((await windowsPermissionsKey(helper, receiptPath)) !== permissionsKey) {
+      if (attempt >= 3) throw new Error("Native publication resource kept changing while checked.");
+      return validateArtifact(helper, attempt + 1);
+    }
     checkedWindowsPermissions.set(helper, { key: permissionsKey, at: performance.now() });
   }
   await NodeFSP.access(
@@ -146,6 +145,16 @@ foreach ($file in $files) {
   return helper;
 }
 const runningWindowsChecks = new Map<string, Promise<unknown>>();
+/** What changes when the helper, its receipt or its folder is replaced or re-permissioned. */
+const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
+  (
+    await Promise.all(
+      [helper, receiptPath, NodePath.dirname(helper)].map(async (path) => {
+        const stat = await NodeFSP.lstat(path, { bigint: true });
+        return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+      }),
+    )
+  ).join("|");
 const checkWindowsPermissions = (helper: string, command: string) =>
   NodeUtil.promisify(NodeChildProcess.execFile)(
     NodePath.join(
