@@ -1,17 +1,17 @@
 import type { AccountSummary, PreviewAutomationStatus, PreviewTabId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { matchesAccountOrigin } from "../signIn/origin.ts";
 import { previewInvoker } from "./broker.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 
 const savedSignIn = (account: AccountSummary, url: string) =>
   account.details.kind === "website" &&
   account.secrets.password !== undefined &&
-  matchesAccountOrigin(url, account.details.sites);
+  anySiteMatches(account.details.sites, url);
 
 const profileOf = ({ details }: AccountSummary) =>
   details.kind === "website" ? details.profileId : undefined;

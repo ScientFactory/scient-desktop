@@ -17,6 +17,7 @@ export {
   authorizationDecision,
   inScope,
 } from "@t3tools/shared/scientAccountAuthorization";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 
 export const effectiveProfile = (
   profiles: ReadonlyArray<BrowserProfileRecord>,
@@ -42,20 +43,9 @@ export const sameTarget = (left: AccountTarget, right: AccountTarget) =>
     ? right.type === "account" && left.accountId === right.accountId
     : right.type === "profile" && left.profileId === right.profileId;
 
-export const siteMatches = (sites: ReadonlyArray<string>, origin: string) => {
-  try {
-    const url = new URL(origin);
-    if (url.protocol !== "https:" || url.username || url.password || url.origin !== origin)
-      return false;
-    return sites.some((site) =>
-      site.startsWith("https://")
-        ? new URL(site).origin === origin
-        : url.hostname === site || url.hostname.endsWith(`.${site}`),
-    );
-  } catch {
-    return false;
-  }
-};
+/** `anySiteMatches` for a value that must be a bare origin, such as a page origin from the client. */
+export const siteMatches = (sites: ReadonlyArray<string>, origin: string) =>
+  URL.canParse(origin) && new URL(origin).origin === origin && anySiteMatches(sites, origin);
 
 /** What a finished sign-in says about the account's status. */
 export const outcomeCheckState = (

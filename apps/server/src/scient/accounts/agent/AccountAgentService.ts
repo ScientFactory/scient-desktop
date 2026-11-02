@@ -9,10 +9,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
-import { matchesAccountOrigin } from "../signIn/origin.ts";
 import { isUniversitySignInService } from "../universitySignIn.ts";
 
 const isAccountsError = Schema.is(AccountsError);
@@ -256,8 +256,7 @@ export const accountAgentOperations = {
       input.accountId === undefined ? undefined : yield* getAccount(scope, input.accountId);
     if (
       account &&
-      (account.details.kind !== "website" ||
-        !matchesAccountOrigin(input.url, account.details.sites))
+      (account.details.kind !== "website" || !anySiteMatches(account.details.sites, input.url))
     )
       return yield* fail("denied", "The requested site does not match this website account.");
     // The session at a university's sign-in service opens its mail and records too.

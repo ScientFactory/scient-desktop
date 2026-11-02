@@ -1,5 +1,5 @@
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import type { SignInDetection } from "./detection.ts";
-import { matchesAccountOrigin } from "./origin.ts";
 
 /** Google alone can take seven: account list, address, passkey, options, password, code, trust. */
 export const MAX_SIGN_IN_STEPS = 10;
@@ -22,7 +22,7 @@ export function decideSignIn(
       kind: undefined,
       message: "The site's sign-in page didn't load. Try again later.",
     } as const;
-  if (!matchesAccountOrigin(page.origin, sites))
+  if (!anySiteMatches(sites, page.origin))
     return {
       type: "needs-user",
       kind: undefined,
@@ -87,7 +87,7 @@ export function decideSignIn(
 export function pageOffersNoSignIn(page: SignInDetection, sites: ReadonlyArray<string>) {
   if (page.broken) return !page.signedIn;
   if (page.signedIn || page.limited || page.challenge) return false;
-  if (!matchesAccountOrigin(page.origin, sites)) return false;
+  if (!anySiteMatches(sites, page.origin)) return false;
   return !(
     page.username ||
     page.password ||

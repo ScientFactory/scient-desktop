@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { browserFailure, previewInvoker } from "../agent/broker.ts";
@@ -27,7 +28,6 @@ import {
 } from "./decision.ts";
 import { SignInDetection, signInDetectionScript, tickRememberScript } from "./detection.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
-import { matchesAccountOrigin } from "./origin.ts";
 import {
   signInReturn,
   universityDetails,
@@ -76,7 +76,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   });
   const status = yield* invoke<PreviewAutomationStatus>("status", {}, tabId);
   const current = status.tabs?.find((tab) => tab.tabId === (tabId ?? status.tabId));
-  const onSite = current?.url ? matchesAccountOrigin(current.url, details.sites) : false;
+  const onSite = current?.url ? anySiteMatches(details.sites, current.url) : false;
   const sameProfile = details.profileId === undefined || current?.profileId === details.profileId;
   // The agent's own tab is used when it is on the account's site (in any profile: the password
   // works anywhere) or in the account's profile, where it is sent to the site. A new tab opens the
@@ -103,7 +103,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
     ...(reuse && current ? { tabId: current.tabId } : {}),
     open: false,
   };
-  if (details.loginUrl && !matchesAccountOrigin(details.loginUrl, details.sites))
+  if (details.loginUrl && !anySiteMatches(details.sites, details.loginUrl))
     return yield* new AccountsError({
       reason: "denied",
       message: "The sign-in URL does not match the account's sites.",
@@ -218,7 +218,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       if (
         university &&
         submissions.some(({ fields }) => fields.includes("password")) &&
-        !matchesAccountOrigin(page.origin, details.sites) &&
+        !anySiteMatches(details.sites, page.origin) &&
         !page.broken &&
         !page.limited &&
         !page.challenge &&

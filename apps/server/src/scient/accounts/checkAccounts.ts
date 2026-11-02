@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { automaticSignInOnHold, isGoogleSessionRow } from "./AccountDecisions.ts";
@@ -34,7 +35,6 @@ import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./agent/profileDetection.ts";
 import { guardedSignIn } from "./agent/guardedSignIn.ts";
-import { matchesAccountOrigin } from "./signIn/origin.ts";
 
 const MAX_CHECKED = 40;
 const PAUSE_MS = 1_500;
@@ -112,7 +112,7 @@ const universitySessionState = (
   if (!URL.canParse(page.finalUrl)) return "unknown";
   const stopped = new URL(page.finalUrl);
   return page.passwordField ||
-    matchesAccountOrigin(page.finalUrl, details.sites) ||
+    anySiteMatches(details.sites, page.finalUrl) ||
     isIdentityPage(stopped) ||
     isLoginPlace(stopped)
     ? "signed-out"

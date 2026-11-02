@@ -11,6 +11,10 @@
       "types": "./src/scientAccountAuthorization.ts",
       "import": "./src/scientAccountAuthorization.ts"
     },
+    "./scientSiteMatch": {
+      "types": "./src/scientSiteMatch.ts",
+      "import": "./src/scientSiteMatch.ts"
+    },
     "./scientPaperLinks": {
       "types": "./src/scientPaperLinks.ts",
       "import": "./src/scientPaperLinks.ts"
