@@ -124,9 +124,60 @@ const windowFocused = () =>
       clearTimeout(timer);
       resolve();
     };
-    const timer = setTimeout(done, 1_000);
+    const timer = setTimeout(done, 300);
     window.addEventListener("focus", done);
   });
+
+/**
+ * Keys typed between a New File or New Folder choice and its name field taking
+ * focus, kept for the field instead of reaching the tree (whose type-to-find
+ * would eat them). Ends after a few seconds at most.
+ */
+function captureEarlyKeys(isField: (target: EventTarget | undefined) => boolean) {
+  const typed = { text: "", finish: null as "Enter" | "Escape" | null };
+  const onKey = (event: globalThis.KeyboardEvent) => {
+    if (isField(event.composedPath()[0]) || typed.finish !== null) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "Enter" || event.key === "Escape") typed.finish = event.key;
+    else if (event.key === "Backspace") typed.text = typed.text.slice(0, -1);
+    else if (event.key.length === 1) typed.text += event.key;
+    else return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const stop = () => {
+    clearTimeout(timer);
+    window.removeEventListener("keydown", onKey, true);
+  };
+  const timer = setTimeout(stop, 3_000);
+  window.addEventListener("keydown", onKey, true);
+  return { typed, stop };
+}
+
+/** Puts early keys into the name field as if typed there. */
+function replayEarlyKeys(
+  field: HTMLInputElement,
+  typed: { readonly text: string; readonly finish: "Enter" | "Escape" | null },
+) {
+  if (typed.text) {
+    // The field is controlled: set its value the way typing does, then announce it.
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+      field,
+      typed.text,
+    );
+    field.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  }
+  if (typed.finish) {
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: typed.finish,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+  }
+}
 
 /** Tree paths end with "/" for folders; project paths never do. */
 const projectPath = (treePath: string) => treePath.replace(/\/$/u, "");
@@ -430,9 +481,15 @@ export function useScientFileActions(input: {
     const model = modelRef.current;
     const controller = input.treeController.current;
     if (!model || !controller) return;
+    const early = captureEarlyKeys(
+      (target) => target instanceof HTMLInputElement && target === nameField(),
+    );
     // The folder is listed and open, so the new row sits inside it.
     if (folder) {
-      if (!(await controller.ensurePath(folder)) || !(await controller.load(folder))) return;
+      if (!(await controller.ensurePath(folder)) || !(await controller.load(folder))) {
+        early.stop();
+        return;
+      }
       const item = model.getItem(`${folder}/`);
       if (item && "expand" in item) item.expand();
     }
@@ -454,14 +511,14 @@ export function useScientFileActions(input: {
     input.quietSelection();
     model.startRenaming(treePath, { removeIfCanceled: true });
     requestAnimationFrame(() => {
+      early.stop();
       const field = nameField();
-      if (field && field.getRootNode() instanceof ShadowRoot) {
-        const root = field.getRootNode() as ShadowRoot;
-        if (root.activeElement !== field) {
-          field.focus();
-          field.select();
-        }
+      if (!field) return;
+      if ((field.getRootNode() as ShadowRoot).activeElement !== field) {
+        field.focus();
+        field.select();
       }
+      replayEarlyKeys(field, early.typed);
     });
   };
 
