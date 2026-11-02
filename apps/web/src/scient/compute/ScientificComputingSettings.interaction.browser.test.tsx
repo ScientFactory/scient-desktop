@@ -392,6 +392,12 @@ describe("Scientific Computing settings interactions", () => {
   const clickMenuItem = async (label: string) => {
     await act(async () => menuItem(label).click());
   };
+  /** The confirmation a menu item opens, once it has mounted. */
+  const confirmation = async () => {
+    const find = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
+    await vi.waitFor(() => expect(find()).not.toBeNull());
+    return find()!;
+  };
 
   const installationRow = (_fixture: _Fixture, executable: string) => {
     const control = [...document.querySelectorAll<HTMLElement>("[data-compute-installation]")].find(
@@ -2070,7 +2076,7 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture, "matlab");
     await openMaintenance(_fixture, "MATLAB connection");
     await clickMenuItem("Remove");
-    await click(_fixture, "Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
+    await click(_fixture, "Remove", await confirmation());
     await vi.waitFor(() => expect(mocks.calls).toEqual(["remove"]));
     expect(_fixture.container.textContent).not.toContain("Not connected");
     expect(_fixture.container.textContent?.match(/Preparing MATLAB connection/gu)).toBeNull();
@@ -2515,7 +2521,7 @@ describe("Scientific Computing settings interactions", () => {
     await openMaintenance(_fixture, "Python runtime");
     await clickMenuItem("Remove");
     expect(mocks.manage).not.toHaveBeenCalled();
-    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    const dialog = await confirmation();
     expect(dialog.textContent).toContain(
       "System installations and project environments are untouched",
     );
@@ -2523,7 +2529,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.manage).not.toHaveBeenCalled();
     await openMaintenance(_fixture, "Python runtime");
     await clickMenuItem("Remove");
-    await click(_fixture, "Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
+    await click(_fixture, "Remove", await confirmation());
     expect(mocks.calls).toEqual(["remove"]);
   });
 
@@ -2536,7 +2542,7 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture);
     await openMaintenance(_fixture, "Python runtime");
     await clickMenuItem("Remove");
-    await click(_fixture, "Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
+    await click(_fixture, "Remove", await confirmation());
     expect(mocks.calls).toEqual(["remove"]);
     const alert = _fixture.container.querySelector<HTMLElement>('[role="alert"]');
     expect(alert?.textContent).toContain("Busy operation");
