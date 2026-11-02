@@ -195,6 +195,11 @@ export function useScientFileActions(input: {
   const key = workspaceKey(environmentId, cwd);
   const modelRef = useRef<FileTree | null>(null);
   const menuTargetsRef = useRef<readonly string[]>([]);
+  /** A new file or folder the tree shows while it is being named, before it exists. */
+  const pendingCreateRef = useRef<{
+    readonly relativePath: string;
+    readonly kind: "folder" | "file";
+  } | null>(null);
   const copyOnDropRef = useRef(false);
   const runChange = useAtomCommand(changeEntriesCommand, { reportFailure: false });
   const runOpenWithApps = useAtomCommand(openWithAppsCommand, { reportFailure: false });
@@ -325,14 +330,17 @@ export function useScientFileActions(input: {
     if (
       isChangeError(error) &&
       error.failure === "exists" &&
-      (change._tag === "move" || change._tag === "copy") &&
+      (change._tag === "move" || change._tag === "copy" || change._tag === "import") &&
       change.collision === "ask"
     ) {
-      // Items already moved stay moved (and undoable); the choice applies to the rest.
-      const remaining = change.items.filter(
-        (item) =>
-          !completed.some((outcome) => outcome.from === item.from && outcome.to !== undefined),
-      );
+      // Items already done stay done (and undoable); the choice applies to the rest.
+      const done = (from: string) =>
+        completed.some((outcome) => outcome.from === from && outcome.to !== undefined);
+      const rest: WorkspaceEntryChange | null =
+        change._tag === "import"
+          ? { ...change, sources: change.sources.filter((source) => !done(source)) }
+          : { ...change, items: change.items.filter((item) => !done(item.from)) };
+      const remaining = rest._tag === "import" ? rest.sources : "items" in rest ? rest.items : [];
       const choice = await new Promise<ClashChoice>((resolve) =>
         setClash({ paths: error.paths ?? [], resolve }),
       );
@@ -341,8 +349,8 @@ export function useScientFileActions(input: {
         refresh();
         return completed.length > 0 ? completed : null;
       }
-      const rest = await perform({ ...change, items: remaining, collision: choice }, options);
-      return [...completed, ...(rest ?? [])];
+      const after = await perform({ ...rest, collision: choice } as WorkspaceEntryChange, options);
+      return [...completed, ...(after ?? [])];
     }
     if (completed.length === 0) refresh();
     reportFailure(options.failureTitle, error);
@@ -401,27 +409,60 @@ export function useScientFileActions(input: {
     modelRef.current?.startRenaming(folder ? `${path}/` : path);
   };
 
+  /**
+   * New File and New Folder show a name field at once, as VS Code does: the row
+   * is the tree's own until named, and the entry is made on disk with that name.
+   */
   const create = async (kind: "folder" | "file", folder: string) => {
-    const created = await perform(
-      {
-        _tag: kind === "folder" ? "create-folder" : "create-file",
-        relativePath: join(folder, kind === "folder" ? "untitled folder" : "untitled.md"),
-      },
-      {
-        failureTitle: kind === "folder" ? "Couldn’t make a folder" : "Couldn’t make a file",
-        ownRefresh: true,
-      },
-    );
-    const path = created?.[0]?.to;
+    const model = modelRef.current;
     const controller = input.treeController.current;
-    if (path === undefined || controller === null) return;
-    // Name it straight away: once the tree lists it, and after the menu that
-    // asked has given focus back (the name field ends the rename when it loses focus).
-    refreshProjectEntriesQuery(environmentId, cwd);
-    await controller.refresh();
-    if (!(await controller.ensurePath(path))) return;
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    startRenaming(path, kind === "folder");
+    if (!model || !controller) return;
+    // The folder is listed and open, so the new row sits inside it.
+    if (folder) {
+      if (!(await controller.ensurePath(folder)) || !(await controller.load(folder))) return;
+      const item = model.getItem(`${folder}/`);
+      if (item && "expand" in item) item.expand();
+    }
+    const [stem, extension] = kind === "folder" ? ["untitled folder", ""] : ["untitled", ".md"];
+    let relativePath = join(folder, `${stem}${extension}`);
+    for (
+      let number = 2;
+      model.getItem(relativePath) || model.getItem(`${relativePath}/`);
+      number++
+    ) {
+      relativePath = join(folder, `${stem} ${number}${extension}`);
+    }
+    const treePath = kind === "folder" ? `${relativePath}/` : relativePath;
+    model.add(treePath);
+    pendingCreateRef.current = { relativePath, kind };
+    input.quietSelection();
+    model.startRenaming(treePath, { removeIfCanceled: true });
+  };
+
+  /** Makes a named new entry on disk; the server picks a free name if this one is taken. */
+  const makeEntry = (relativePath: string, kind: "folder" | "file") => {
+    input.treeController.current?.noteAdded(relativePath, kind === "folder" ? "directory" : "file");
+    void perform(
+      { _tag: kind === "folder" ? "create-folder" : "create-file", relativePath },
+      { failureTitle: kind === "folder" ? "Couldn’t make a folder" : "Couldn’t make a file" },
+    );
+  };
+
+  /**
+   * A new entry left with its first name (Return or a click elsewhere without
+   * changes) is made with it; one whose naming was cancelled is gone from the tree.
+   */
+  const finishPendingCreate = () => {
+    const pending = pendingCreateRef.current;
+    if (!pending) return;
+    const { relativePath, kind } = pending;
+    const stillNaming = document
+      .querySelector(FILE_TREE_TAG_NAME)
+      ?.shadowRoot?.activeElement?.matches("input");
+    if (stillNaming) return;
+    pendingCreateRef.current = null;
+    const treePath = kind === "folder" ? `${relativePath}/` : relativePath;
+    if (modelRef.current?.getItem(treePath)) makeEntry(relativePath, kind);
   };
 
   const transfer = async (
@@ -657,6 +698,12 @@ export function useScientFileActions(input: {
         const to = projectPath(event.destinationPath);
         // The tree moves and reselects the row right after this returns.
         input.quietSelection();
+        const pending = pendingCreateRef.current;
+        if (pending?.relativePath === from) {
+          pendingCreateRef.current = null;
+          queueMicrotask(() => makeEntry(to, pending.kind));
+          return;
+        }
         queueMicrotask(() => input.treeController.current?.noteMoved(from, to));
         void (async () => {
           if (!(await saveEditorsUnder([from]))) return refresh();
@@ -679,6 +726,10 @@ export function useScientFileActions(input: {
       return;
     }
     const origin = event.nativeEvent.composedPath()[0];
+    // Return or Escape in a new entry's name field ends its naming.
+    if (origin instanceof HTMLInputElement && (event.key === "Enter" || event.key === "Escape")) {
+      setTimeout(finishPendingCreate, 0);
+    }
     if (
       origin instanceof HTMLInputElement ||
       origin instanceof HTMLTextAreaElement ||
@@ -767,6 +818,8 @@ export function useScientFileActions(input: {
       copyOnDropRef.current = event.altKey;
     },
     onKeyDown,
+    /** Focus leaving the tree ends a new entry's naming, as a click elsewhere does. */
+    onBlur: () => setTimeout(finishPendingCreate, 0),
     /** The right-click menu's file items, in groups the panel places between its own. */
     menuItems: (treePath: string) => {
       if (!enabled) return { create: [], edit: [], trash: [], copiesMention: false };

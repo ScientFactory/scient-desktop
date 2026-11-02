@@ -520,6 +520,7 @@ export default function FileBrowserPanel({
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
       // SCIENT-FORK:START — file shortcuts in the tree, ⌥ while dragging to copy, and drops from outside
       onKeyDown={fileActions.onKeyDown}
+      onBlur={fileActions.onBlur}
       onDragOverCapture={fileActions.onDragOver}
       onDragOver={fileActions.externalDrop.onDragOver}
       onDragLeave={fileActions.externalDrop.onDragLeave}

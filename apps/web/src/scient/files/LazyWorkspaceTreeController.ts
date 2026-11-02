@@ -193,6 +193,28 @@ export class LazyWorkspaceTreeController {
     this.#emit();
   }
 
+  /**
+   * Follows an entry the tree already shows before the disk has it (a new
+   * file or folder named in place), so the next listing finds it known.
+   */
+  noteAdded(relativePath: string, kind: ProjectDirectoryEntry["kind"]): void {
+    if (this.#destroyed || this.#entries.has(relativePath)) return;
+    const parent = this.#branches.get(parentDirectory(relativePath));
+    if (parent?.status !== "loaded") return;
+    this.#entries.set(relativePath, {
+      name: relativePath.split("/").at(-1)!,
+      relativePath,
+      kind,
+      readOnly: false,
+    });
+    this.#branches.set(parentDirectory(relativePath), {
+      ...parent,
+      children: new Set([...parent.children, relativePath]),
+    });
+    if (kind === "directory") this.#unloadedDirectories.add(relativePath);
+    this.#emit();
+  }
+
   retry(relativeDirectory: string): Promise<boolean> {
     return this.load(relativeDirectory, true);
   }
