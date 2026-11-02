@@ -3,9 +3,15 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 import * as HostProcess from "./HostProcess.ts";
 
-const checkedWindowsPermissions = new Map<string, string>();
+/** Windows permission checks that passed, by what they looked at and when. */
+const checkedWindowsPermissions = new Map<string, { readonly key: string; readonly at: number }>();
+// PowerShell takes a second or more to start, so a pass is trusted this long while the
+// helper, its receipt and its folder stay as they were. Folders above change whenever
+// anything is created beside them, so their times say nothing about their permissions.
+const WINDOWS_PERMISSIONS_TRUSTED_MS = 60_000;
 
 export const publicationDigest = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
@@ -17,10 +23,8 @@ export async function validatePublicationArtifact(helper: string) {
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
   if (!NodePath.isAbsolute(helper) || NodePath.basename(helper) !== binary)
     throw new Error("Native publication requires an absolute host-owned resource path.");
-  const authority = [];
   for (let path = helper; ; path = NodePath.dirname(path)) {
     const stat = await NodeFSP.lstat(path);
-    authority.push(`${path}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}`);
     if (stat.isSymbolicLink() || (path === helper ? !stat.isFile() : !stat.isDirectory()))
       throw new Error("Native publication resource cannot traverse links.");
     if (platform !== "win32" && stat.uid !== 0 && stat.uid !== HostProcess.UserId.defaultValue())
@@ -84,8 +88,23 @@ export async function validatePublicationArtifact(helper: string) {
           );
     if (!matches) throw new Error("Native publication is not a host Mach-O executable.");
   }
-  const permissionsKey = `${authority.join("\0")}:${receiptStat.ctimeMs}:${receiptStat.mtimeMs}:${receiptStat.size}`;
-  if (platform === "win32" && checkedWindowsPermissions.get(helper) !== permissionsKey) {
+  const permissionsKey =
+    platform === "win32"
+      ? (
+          await Promise.all(
+            [helper, receiptPath, NodePath.dirname(helper)].map(async (path) => {
+              const stat = await NodeFSP.lstat(path, { bigint: true });
+              return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+            }),
+          )
+        ).join("|")
+      : "";
+  const checked = checkedWindowsPermissions.get(helper);
+  if (
+    platform === "win32" &&
+    (checked?.key !== permissionsKey ||
+      performance.now() - checked.at > WINDOWS_PERMISSIONS_TRUSTED_MS)
+  ) {
     const command = `
 $ErrorActionPreference = 'Stop'
 $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
@@ -107,24 +126,18 @@ foreach ($file in $files) {
     if ($rule.AccessControlType -eq 'Allow' -and !($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and $rule.IdentityReference.Value -notin $allowed -and ($rule.FileSystemRights -band $mask)) { throw 'Native resource is writable by another principal' }
   }
 }`;
-    NodeChildProcess.execFileSync(
-      NodePath.join(
-        process.env.SystemRoot ?? "C:/Windows",
-        "System32/WindowsPowerShell/v1.0/powershell.exe",
-      ),
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        Buffer.from(command, "utf16le").toString("base64"),
-      ],
-      {
-        env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper },
-        stdio: "pipe",
-        timeout: 10_000,
-      },
-    );
-    checkedWindowsPermissions.set(helper, permissionsKey);
+    // Asynchronous: PowerShell takes a second or more to start, and a synchronous launch
+    // would hold the whole server for that long. Checks asked meanwhile share this one.
+    const running = `${helper}\0${permissionsKey}`;
+    let check = runningWindowsChecks.get(running);
+    if (!check) {
+      check = checkWindowsPermissions(helper, command).finally(() =>
+        runningWindowsChecks.delete(running),
+      );
+      runningWindowsChecks.set(running, check);
+    }
+    await check;
+    checkedWindowsPermissions.set(helper, { key: permissionsKey, at: performance.now() });
   }
   await NodeFSP.access(
     helper,
@@ -132,3 +145,22 @@ foreach ($file in $files) {
   );
   return helper;
 }
+const runningWindowsChecks = new Map<string, Promise<unknown>>();
+const checkWindowsPermissions = (helper: string, command: string) =>
+  NodeUtil.promisify(NodeChildProcess.execFile)(
+    NodePath.join(
+      process.env.SystemRoot ?? "C:/Windows",
+      "System32/WindowsPowerShell/v1.0/powershell.exe",
+    ),
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(command, "utf16le").toString("base64"),
+    ],
+    {
+      env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper },
+      timeout: 10_000,
+      windowsHide: true,
+    },
+  );
