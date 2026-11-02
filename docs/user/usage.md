@@ -197,7 +197,7 @@ in OpenCode with an API key. A Console browser sign-in alone does not report the
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
-otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`, otherwise for the CLI
+otherwise for the account you signed in with in Scient or set as `CURSOR_API_KEY`, otherwise for the CLI
 login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,
 and Keychain login report limits only with Cursor's default API endpoint. If you configure a custom
 Cursor endpoint, use an explicit token or file-based CLI login for limits.

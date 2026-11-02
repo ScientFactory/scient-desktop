@@ -884,20 +884,21 @@ describe("EnvironmentProviderSettings instance removal", () => {
 
   it("warns that resetting an enabled default-off provider turns it off", async () => {
     await setup();
-    const antigravityId = ProviderInstanceId.make("antigravity");
-    const antigravity = ProviderDriverKind.make("antigravity");
+    // SCIENT-FORK: Antigravity is on by default in Scient; Cursor is off by default in both.
+    const cursorId = ProviderInstanceId.make("cursor");
+    const cursor = ProviderDriverKind.make("cursor");
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
-        [antigravityId]: {
-          driver: antigravity,
+        [cursorId]: {
+          driver: cursor,
           enabled: true,
-          config: { binaryPath: "/opt/antigravity/bin/agy" },
+          config: { binaryPath: "/opt/cursor/bin/agent" },
         },
       },
     };
-    await setProviders([{ ...provider(), instanceId: antigravityId, driver: antigravity }]);
-    await using _screen = await render(panel({ targetInstanceId: antigravityId }));
+    await setProviders([{ ...provider(), instanceId: cursorId, driver: cursor }]);
+    await using _screen = await render(panel({ targetInstanceId: cursorId }));
     await userEvent.click(page.getByRole("button", { name: /^Reset .* provider settings/ }));
 
     expect(state.confirm).toHaveBeenCalledWith(
