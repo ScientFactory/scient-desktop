@@ -9,13 +9,14 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { signInRefused, siteLimiting } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { SignInDetection, signInDetectionScript } from "../signIn/detection.ts";
-import { matchesAccountOrigin } from "../signIn/origin.ts";
 import { accountOtp } from "../signIn/totp.ts";
+import { browserFailure, previewInvoker } from "./broker.ts";
 import { authorizePreviewTab } from "./previewProfileAccess.ts";
 
 /** Only the agent sees whether a password worked, so a refused one must not be able to repeat. */
@@ -51,27 +52,9 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   const accounts = yield* AccountsService;
   const broker = yield* PreviewAutomationBroker;
   const invocation = yield* AgentInvocationContext;
-  const invoke = <A>(
-    operation: Parameters<typeof broker.invoke>[0]["operation"],
-    value: unknown,
-    tabId?: PreviewTabId,
-  ) =>
-    broker
-      .invoke<A>({
-        scope: invocation,
-        operation,
-        input: value,
-        ...(tabId === undefined ? {} : { tabId }),
-      })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new AccountsError({
-              reason: "unavailable",
-              message: error.message || "The browser could not fill this field.",
-            }),
-        ),
-      );
+  const invoke = previewInvoker(broker, invocation, {
+    mapError: browserFailure("The browser could not fill this field."),
+  });
   const status = yield* invoke<PreviewAutomationStatus>("status", {}, input.tabId);
   const tabId = input.tabId ?? status.tabId ?? undefined;
   if (!status.tabs?.some((tab) => tab.tabId === tabId && tab.ownedByCaller))
@@ -84,7 +67,7 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
       () => new AccountsError({ reason: "unavailable", message: "The page could not be read." }),
     ),
   );
-  if (!matchesAccountOrigin(page.origin, details.sites))
+  if (!anySiteMatches(details.sites, page.origin))
     return yield* denied("This page isn't on one of the account's sites.");
   // Only the field asked for: another field's store may be locked or disconnected.
   const secretText = Effect.fn("AccountsAgent.fillSecret")(function* (field: "password" | "code") {

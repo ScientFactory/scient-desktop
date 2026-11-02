@@ -5,12 +5,24 @@ import revision5 from "../fixtures/contract-v5.json" with { type: "json" };
 import revision6 from "../fixtures/contract-v6.json" with { type: "json" };
 import revision7 from "../fixtures/contract-v7.json" with { type: "json" };
 import revision8 from "../fixtures/contract-v8.json" with { type: "json" };
-import fixture from "../fixtures/contract-v9.json" with { type: "json" };
+import revision9 from "../fixtures/contract-v9.json" with { type: "json" };
+import fixture from "../fixtures/contract-v10.json" with { type: "json" };
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
 import { ANALYTICS_EVENT_NAMES, consentAllows, normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation, type PrivacyLevel } from "./wireContract.ts";
 
 describe("analytics contract conformance corpus", () => {
+  it("continues accepting the complete revision 9 corpus", () => {
+    for (const entry of revision9.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
   it("continues accepting the complete revision 8 corpus", () => {
     for (const entry of revision8.cases)
       expect(
@@ -81,13 +93,12 @@ describe("analytics contract conformance corpus", () => {
 
   it("matches every registered normalizer exactly", () => {
     expect(buildAnalyticsConformanceFixture()).toEqual(fixture);
-    expect(new Set(fixture.cases.map((entry) => entry.name)).size).toBe(
-      ANALYTICS_EVENT_NAMES.length,
-    );
+    const names = new Set(fixture.cases.map((entry) => entry.name));
+    for (const name of ANALYTICS_EVENT_NAMES) expect(names.has(name), name).toBe(true);
     expect(JSON.stringify(fixture)).not.toMatch(/PRIVATE-CONTENT|example\.invalid|\/private\//u);
   });
 
-  it("normalizes every provider and keeps custom model and version labels private", () => {
+  it("normalizes every provider and keeps custom build labels and free-text models out", () => {
     for (const provider of [
       "codex",
       "claudeAgent",
@@ -106,7 +117,7 @@ describe("analytics contract conformance corpus", () => {
         "provider.turn.sent",
         {
           provider,
-          model: "private-custom-name",
+          model: "a private custom name",
         },
         { appVersion: "private-custom-build", buildChannel: "stable" },
       );
@@ -119,7 +130,7 @@ describe("analytics contract conformance corpus", () => {
     }
   });
 
-  it("enforces each event's consent threshold and drops inherited unreviewed events", () => {
+  it("enforces each event's consent threshold and records events without a normalizer", () => {
     for (const entry of fixture.cases) {
       // An owner event needs a valid hash; contract.test.ts covers its rejection.
       if (entry.name === "install.owner_observed") continue;
@@ -163,6 +174,6 @@ describe("analytics contract conformance corpus", () => {
         {},
         { appVersion: "0.6.8", buildChannel: "stable" },
       ),
-    ).toBeNull();
+    ).toMatchObject({ name: "client.connected", privacyLevel: "product" });
   });
 });

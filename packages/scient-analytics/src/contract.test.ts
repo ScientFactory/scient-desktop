@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { durationBucket, modelKey, normalizeInheritedEvent } from "./contract.ts";
+import { durationBucket, modelKey, normalizedKeys, normalizeInheritedEvent } from "./contract.ts";
 import { ANALYTICS_CONTRACT_REVISION, eventContractViolation } from "./wireContract.ts";
 
 const context = {
@@ -48,13 +48,14 @@ describe("Scient analytics contract", () => {
           name,
           {
             provider,
-            model: "PRIVATE-MODEL",
+            model: "gpt-6.1-luna",
             installed: true,
             fromInstalled: false,
             toInstalled: true,
             prompt: "PRIVATE-CONTENT",
-            instanceId: "PRIVATE-INSTANCE",
             path: "/PRIVATE/PATH",
+            workspace: "/Users/PRIVATE/project",
+            endpoint: "https://PRIVATE.example",
           },
           context,
         );
@@ -73,35 +74,41 @@ describe("Scient analytics contract", () => {
     },
   );
 
-  it("keeps private/custom driver names other and absent input metadata unknown", () => {
+  it("sends driver and model names as the code passes them, as T3 does", () => {
     const event = normalizeInheritedEvent(
       "provider.turn.sent",
-      { provider: "PRIVATE-DRIVER", model: "PRIVATE-MODEL" },
+      { provider: "newDriver", model: "lab-model-7b" },
       context,
     );
     expect(event?.properties).toMatchObject({
-      provider: "other",
+      provider: "newDriver",
+      modelKey: "lab-model-7b",
       attachmentCountBucket: "unknown",
     });
     expect(event?.properties).not.toHaveProperty("hasInput");
-    expect(JSON.stringify(event)).not.toContain("PRIVATE");
     expect(
       normalizeInheritedEvent("provider.turn.sent", { hasInput: false }, context)?.properties
         .hasInput,
     ).toBe(false);
+    const freeText = normalizeInheritedEvent(
+      "provider.turn.sent",
+      { provider: "a sentence, not a driver", model: "Not A Model Id!" },
+      context,
+    );
+    expect(freeText?.properties).toMatchObject({ provider: "other", modelKey: "other" });
   });
 
-  it("attributes Pi without collecting custom endpoint or model names", () => {
+  it("attributes Pi and its model but never sends an endpoint address", () => {
     const event = normalizeInheritedEvent(
       "provider.turn.sent",
       {
         provider: "pi",
-        model: "private-local-model",
+        model: "local-model",
         endpoint: "https://private.example",
       },
       context,
     );
-    expect(event?.properties).toMatchObject({ provider: "pi", modelKey: "other" });
+    expect(event?.properties).toMatchObject({ provider: "pi", modelKey: "local-model" });
     expect(JSON.stringify(event)).not.toContain("private");
   });
   it("keeps skipped source imports distinct from success and failure without private details", () => {
@@ -112,8 +119,8 @@ describe("Scient analytics contract", () => {
         trigger: "user",
         durationMs: 450,
         title: "PRIVATE_SOURCE",
-        itemKey: "PRIVATE_KEY",
         error: "PRIVATE_ERROR",
+        file: "/Users/someone/PRIVATE.pdf",
       },
       context,
     );
@@ -125,18 +132,14 @@ describe("Scient analytics contract", () => {
     });
     expect(JSON.stringify(skipped)).not.toContain("PRIVATE");
   });
-  it("keeps known model choices useful while suppressing custom model text", () => {
+  it("folds model aliases and pinned versions, and sends other model ids as they are", () => {
     expect(modelKey("gpt-5-codex")).toBe("gpt-5.4");
     expect(modelKey("claude-opus-4-6-20251117")).toBe("claude-opus-4-6");
-    expect(modelKey("private-lab-model-alpha")).toBe("other");
-
-    const normalized = normalizeInheritedEvent(
-      "provider.turn.sent",
-      { provider: "opencode", model: "private-lab-model-alpha" },
-      context,
-    );
-    expect(normalized?.properties.modelKey).toBe("other");
-    expect(JSON.stringify(normalized)).not.toContain("private-lab-model-alpha");
+    expect(modelKey("claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(modelKey("anthropic/claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(modelKey("lab-model-alpha")).toBe("lab-model-alpha");
+    expect(modelKey("a model name with spaces")).toBe("other");
+    expect(modelKey(undefined)).toBe("unknown");
   });
 
   it("uses bounded duration and failure values", () => {
@@ -164,18 +167,100 @@ describe("Scient analytics contract", () => {
     });
   });
 
-  it("rejects unregistered names and drops unregistered properties", () => {
-    expect(normalizeInheritedEvent("ui.clicked", { selector: "#private" }, context)).toBeNull();
+  it("records events and fields without a Scient normalizer, as T3 does", () => {
+    expect(
+      normalizeInheritedEvent("chatgpt.sign_in.completed", { outcome: "succeeded", n: 2 }, context),
+    ).toEqual({
+      name: "chatgpt.sign_in.completed",
+      privacyLevel: "product",
+      priority: "core",
+      properties: {
+        outcome: "succeeded",
+        n: 2,
+        ...context,
+        contractRevision: ANALYTICS_CONTRACT_REVISION,
+      },
+    });
     const surface = normalizeInheritedEvent(
       "surface.opened",
-      { surface: "settings", path: "/Users/private" },
+      { surface: "settings", layout: "split", path: "/Users/private" },
       context,
     );
     expect(surface?.properties).toEqual({
       surface: "settings",
+      layout: "split",
       ...context,
       contractRevision: ANALYTICS_CONTRACT_REVISION,
     });
+    expect(normalizeInheritedEvent("Not An Event", {}, context)).toBeNull();
+  });
+
+  it("names the fields a normalizer uses; the rest pass through as recorded", () => {
+    const properties = { provider: "codex", model: "gpt-5.6-sol", durationMs: 1200, requests: 3 };
+    expect([...normalizedKeys("provider.turn.completed", properties, context)].toSorted()).toEqual([
+      "durationMs",
+      "model",
+      "provider",
+    ]);
+    expect(
+      normalizeInheritedEvent("provider.turn.completed", properties, context)?.properties,
+    ).toMatchObject({ provider: "codex", modelKey: "gpt-5.6-sol", requests: 3 });
+    expect([...normalizedKeys("chatgpt.sign_in.completed", { outcome: "ok" }, context)]).toEqual(
+      [],
+    );
+  });
+
+  it("never sends free text, paths, links, email addresses or nested objects", () => {
+    const event = normalizeInheritedEvent(
+      "provider.request.completed",
+      {
+        provider: "codex",
+        serviceTier: "fast",
+        inputTokens: 12,
+        tags: ["a", "b"],
+        prompt: "short",
+        Message: "short",
+        errorMessage: "short",
+        file: "C:\\Users\\someone\\notes.txt",
+        relative: "./notes/today.md",
+        home: "~/notes",
+        nestedPath: "data/Users/someone/x",
+        link: "https://example.com/x",
+        fileLink: "file:x",
+        who: "someone@example.com",
+        list: ["ok", "/etc/passwd"],
+        long: "x".repeat(257),
+        nested: { a: 1 },
+        notFinite: Number.NaN,
+        "bad key": 1,
+      },
+      context,
+    );
+    expect(event?.properties).toEqual({
+      provider: "codex",
+      serviceTier: "fast",
+      inputTokens: 12,
+      tags: ["a", "b"],
+      ...context,
+      contractRevision: ANALYTICS_CONTRACT_REVISION,
+    });
+  });
+
+  it("keeps every event within the wire limits", () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [`field${index}`, "y".repeat(250)]),
+    );
+    const event = normalizeInheritedEvent("bulk.event", many, context);
+    if (!event) throw new Error("Missing event");
+    expect(
+      eventContractViolation({
+        name: event.name,
+        privacyLevel: event.privacyLevel,
+        consentLevel: event.privacyLevel,
+        properties: event.properties,
+      }),
+    ).toBeNull();
+    expect(event.properties.contractRevision).toBe(ANALYTICS_CONTRACT_REVISION);
   });
 
   it("reports thread and project counts on the startup heartbeat", () => {
@@ -235,15 +320,15 @@ describe("Scient analytics contract", () => {
       name: "provider.turn.usage",
       properties: { createdBy: "agent", creationSource: "mcp", scheduled: true, subagent: false },
     });
-    const unknown = normalizeInheritedEvent(
+    const freeText = normalizeInheritedEvent(
       "provider.turn.completed",
-      { provider: "codex", terminalStatus: "completed", createdBy: "someone" },
+      { provider: "codex", terminalStatus: "completed", createdBy: "some one" },
       context,
     );
-    expect(unknown?.properties).not.toHaveProperty("createdBy");
+    expect(freeText?.properties).not.toHaveProperty("createdBy");
   });
 
-  it("records client and feature events without device or free-text details", () => {
+  it("records client and feature events without free text", () => {
     const turn = normalizeInheritedEvent(
       "client.turn.requested",
       {
@@ -251,9 +336,8 @@ describe("Scient analytics contract", () => {
         clientDeviceType: "desktop",
         clientOs: "macOS",
         connectionMethod: "direct",
-        clientBrowser: "PRIVATE",
-        deviceModel: "PRIVATE",
-        appVersion: "9.9.9-private",
+        clientAppVersion: "9.9.9",
+        appVersion: "9.9.9",
       },
       context,
     );
@@ -262,6 +346,7 @@ describe("Scient analytics contract", () => {
       clientDeviceType: "desktop",
       clientOs: "macOS",
       connectionMethod: "direct",
+      clientAppVersion: "9.9.9",
       ...context,
       contractRevision: ANALYTICS_CONTRACT_REVISION,
     });
@@ -290,7 +375,7 @@ describe("Scient analytics contract", () => {
       {
         tool: "delegate_task",
         callerProvider: "claudeAgent",
-        callerModel: "private-custom-model",
+        callerModel: "lab-model",
         targetProvider: "codex",
         outcome: "error",
         errorCode: "a private error sentence",
@@ -303,7 +388,7 @@ describe("Scient analytics contract", () => {
     expect(tool?.properties).toMatchObject({
       tool: "delegate_task",
       callerProvider: "claudeAgent",
-      callerModel: "other",
+      callerModel: "lab-model",
       targetProvider: "codex",
       outcome: "error",
       durationMs: 1200,

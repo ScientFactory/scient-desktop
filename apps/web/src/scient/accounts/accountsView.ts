@@ -28,19 +28,10 @@ import {
   type BrowserImportSource,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
+import { anySiteMatches, siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import ACCOUNT_ICONS from "./accountIcons.json";
-
-export function siteMatchesUrl(site: string, url: string): boolean {
-  try {
-    const page = new URL(url);
-    if (page.protocol !== "https:") return false;
-    if (site.startsWith("https://")) return new URL(site).origin === page.origin;
-    return page.hostname === site || page.hostname.endsWith(`.${site}`);
-  } catch {
-    return false;
-  }
-}
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
 export function profileAccounts(
@@ -83,10 +74,7 @@ export function matchingAccounts(
       ? 1
       : 0;
   return accounts
-    .filter(
-      ({ details }) =>
-        details.kind === "website" && details.sites.some((site) => siteMatchesUrl(site, url)),
-    )
+    .filter(({ details }) => details.kind === "website" && anySiteMatches(details.sites, url))
     .sort(
       (a, b) =>
         sameProfile(b) - sameProfile(a) ||
@@ -103,13 +91,10 @@ export function agentMayUse(
   projectId: ProjectId | null | undefined,
 ): boolean {
   return (
-    agentAccess &&
-    (controls.scope.type === "all-projects" ||
-      (projectId != null && controls.scope.projectIds.includes(projectId))) &&
-    (controls.access === "allowed" ||
-      (controls.access === "ask" &&
-        projectId != null &&
-        controls.allowedProjects?.includes(projectId) === true))
+    authorizationDecision(agentAccess, controls, {
+      projectId: projectId ?? undefined,
+      unattended: false,
+    }).decision === "allowed"
   );
 }
 

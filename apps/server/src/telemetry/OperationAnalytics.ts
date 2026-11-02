@@ -14,6 +14,8 @@ export interface OperationObservation {
   readonly finishedAt?: number;
   readonly trigger?: "user" | "agent" | "automation" | "other";
   readonly failureClass?: "process-crash" | "unknown";
+  /** The compute language, such as `python` or `r`; a closed runtime id, never a path. */
+  readonly language?: string;
 }
 
 /** Observe durable outcomes, not RPC acceptance or polling. No raw inputs/results. */
@@ -53,6 +55,7 @@ export const makeOperationAnalytics = Effect.gen(function* () {
           durationMs:
             input.finishedAt === undefined ? undefined : input.finishedAt - input.startedAt,
           failureClass: input.failureClass ?? "unknown",
+          ...(input.language === undefined ? {} : { language: input.language }),
         },
       );
     }).pipe(Effect.ignoreCause());

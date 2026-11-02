@@ -15,10 +15,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { automaticSignInOnHold, isGoogleSessionRow } from "./AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
+import { browserFailure, previewInvoker } from "./agent/broker.ts";
 import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import {
   OPEN_ATHENS_CHECK_PAGE,
@@ -33,7 +35,6 @@ import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./agent/profileDetection.ts";
 import { guardedSignIn } from "./agent/guardedSignIn.ts";
-import { matchesAccountOrigin } from "./signIn/origin.ts";
 
 const MAX_CHECKED = 40;
 const PAUSE_MS = 1_500;
@@ -111,7 +112,7 @@ const universitySessionState = (
   if (!URL.canParse(page.finalUrl)) return "unknown";
   const stopped = new URL(page.finalUrl);
   return page.passwordField ||
-    matchesAccountOrigin(page.finalUrl, details.sites) ||
+    anySiteMatches(details.sites, page.finalUrl) ||
     isIdentityPage(stopped) ||
     isLoginPlace(stopped)
     ? "signed-out"
@@ -177,28 +178,10 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
     listed;
   const broker = yield* PreviewAutomationBroker;
   const scope = yield* AgentInvocationContext;
-  const invoke = <A>(
-    operation: Parameters<typeof broker.invoke>[0]["operation"],
-    input: unknown,
-    tabId?: PreviewTabId,
-  ) =>
-    broker
-      .invoke<A>({
-        scope,
-        operation,
-        input,
-        ...(tabId === undefined ? {} : { tabId }),
-        updateCurrentTab: false,
-      })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new AccountsError({
-              reason: "unavailable",
-              message: error.message || "The browser could not open this site.",
-            }),
-        ),
-      );
+  const invoke = previewInvoker(broker, scope, {
+    updateCurrentTab: false,
+    mapError: browserFailure("The browser could not open this site."),
+  });
   // A tab without a profile is a throwaway session, so name the one the account lives in.
   const browser = yield* invoke<PreviewAutomationStatus>("status", {});
   const opened = yield* invoke<PreviewAutomationStatus>("open", {

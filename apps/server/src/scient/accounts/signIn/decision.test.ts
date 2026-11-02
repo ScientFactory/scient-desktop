@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import {
   decideSignIn,
   decideSignInContinuation,
@@ -7,7 +8,6 @@ import {
   type SignInSubmission,
 } from "./decision.ts";
 import type { SignInDetection } from "./detection.ts";
-import { matchesAccountOrigin } from "./origin.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
 
 const page: SignInDetection = {
@@ -166,10 +166,10 @@ describe("account sign-in decisions", () => {
     ).toBe("signed-in");
   });
   it("matches exact HTTPS origins and domain boundaries without granting extra ports or insecure pages", () => {
-    expect(matchesAccountOrigin("https://sso.example.com/path", ["example.com"])).toBe(true);
-    expect(
-      matchesAccountOrigin("https://example.com:8443/path", ["https://example.com:8443"]),
-    ).toBe(true);
+    expect(anySiteMatches(["example.com"], "https://sso.example.com/path")).toBe(true);
+    expect(anySiteMatches(["https://example.com:8443"], "https://example.com:8443/path")).toBe(
+      true,
+    );
     for (const origin of [
       "https://example.com:8443",
       "http://example.com",
@@ -178,8 +178,8 @@ describe("account sign-in decisions", () => {
       "https://u:p@example.com",
       "not a url",
     ])
-      expect(matchesAccountOrigin(origin, ["example.com"])).toBe(false);
-    expect(matchesAccountOrigin("https://sso.example.com", ["https://example.com"])).toBe(false);
+      expect(anySiteMatches(["example.com"], origin)).toBe(false);
+    expect(anySiteMatches(["https://example.com"], "https://sso.example.com")).toBe(false);
   });
   it("parses outside TOTP formats using the RFC 6238 vector and sanitizes invalid setup errors", () => {
     const setup = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
@@ -192,6 +192,14 @@ describe("account sign-in decisions", () => {
     expect(accountOtp("123456", 0)).toBe("123456");
     for (const value of ["not:a:key", "otpauth://hotp/example?secret=GEZDGNBV&counter=1", ""])
       expect(() => parseTotp(value)).toThrow("The account's two-factor setup is invalid.");
+  });
+  it("reads a TOTP secret written in lowercase, with spaces or padding", () => {
+    for (const setup of [
+      "gezdgnbvgy3tqojqgezdgnbvgy3tqojq",
+      "GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ",
+      "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ====",
+    ])
+      expect(parseTotp(setup).generate({ timestamp: 59_000 })).toBe("287082");
   });
 });
 

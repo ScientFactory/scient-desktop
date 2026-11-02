@@ -2,11 +2,19 @@ export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
 import {
   ANALYTICS_CONTRACT_REVISION,
-  ANALYTICS_PROVIDER_KINDS,
-  EVENT_DEFINITIONS,
+  EVENT_NAME_PATTERN,
+  isContentKey,
+  isPrivateLooking,
+  isWirePrimitive,
+  MAX_ARRAY_PROPERTY_ITEMS,
+  MAX_EVENT_PROPERTIES,
+  MAX_EVENT_PROPERTIES_BYTES,
+  PROPERTY_KEY_PATTERN,
+  type WireValue,
 } from "./wireContract.ts";
 export { ANALYTICS_CONTRACT_REVISION } from "./wireContract.ts";
 
+/** Events with a Scient normalizer. Any other event is still recorded, as in T3. */
 export const ANALYTICS_EVENT_NAMES = [
   "app.session.started",
   "app.session.ended",
@@ -85,7 +93,7 @@ export interface AnalyticsEvent {
   readonly occurred_at: string;
   readonly privacy_level: EventPrivacyLevel;
   readonly consent_level: EventPrivacyLevel;
-  readonly properties: Readonly<Record<string, boolean | string | number>>;
+  readonly properties: Readonly<Record<string, WireValue>>;
 }
 
 export interface AnalyticsBatch {
@@ -103,10 +111,9 @@ export interface NormalizedEvent {
   readonly name: string;
   readonly privacyLevel: EventPrivacyLevel;
   readonly priority: AnalyticsPriority;
-  readonly properties: Readonly<Record<string, boolean | string | number>>;
+  readonly properties: Readonly<Record<string, WireValue>>;
 }
 
-const PROVIDERS: ReadonlySet<string> = new Set(ANALYTICS_PROVIDER_KINDS);
 const RUNTIME_SOURCES = new Set(["custom", "system", "scient_managed", "missing", "unknown"]);
 const LIFECYCLE_ACTIONS = new Set([
   "install",
@@ -198,7 +205,6 @@ const DELIVERY_CLASSES = new Set([
   "unavailable",
 ]);
 const BUILD_CHANNELS = new Set(["stable", "beta", "nightly", "development", "unknown"]);
-const RUNTIME_MODES = new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]);
 const PLATFORM_VALUES = new Set(["macos", "windows", "linux", "other"]);
 const ARCHITECTURE_VALUES = new Set(["arm64", "x64", "other"]);
 const SHUTDOWN_CLASSES = new Set(["graceful", "forced", "crash", "unknown"]);
@@ -338,6 +344,8 @@ const KNOWN_MODEL_KEYS = new Set([
   "openai/gpt-5",
 ]);
 
+const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,79}$/u;
+
 const MODEL_KEY_ALIASES: Readonly<Record<string, string>> = {
   "5.3": "gpt-5.3-codex",
   "5.3-spark": "gpt-5.3-codex-spark",
@@ -368,32 +376,49 @@ const MODEL_KEY_ALIASES: Readonly<Record<string, string>> = {
   "sonnet-5": "claude-sonnet-5",
 };
 
+// Keys a normalizer read while normalizing the current event. Normalizers are synchronous, so
+// one module-level set is enough; every key they did not read is passed through unchanged.
+let readKeys: Set<string> | undefined;
+
 function property(input: Readonly<Record<string, unknown>>, key: string): unknown {
+  readKeys?.add(key);
   return Object.hasOwn(input, key) ? input[key] : undefined;
 }
 
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/u;
+
+function isIdentifier(value: unknown): value is string {
+  return typeof value === "string" && IDENTIFIER_PATTERN.test(value);
+}
+
 function normalizedProvider(value: unknown): string {
-  return typeof value === "string" && PROVIDERS.has(value) ? value : "other";
+  return isIdentifier(value) ? value : "other";
 }
 
 function normalizedRuntimeMode(value: unknown): string {
-  return typeof value === "string" && RUNTIME_MODES.has(value) ? value : "other";
+  return isIdentifier(value) ? value : "other";
 }
 
 function normalizedBoolean(value: unknown): boolean {
   return value === true;
 }
 
+/**
+ * A value code passes keeps its name, even one the set does not list yet, such as a new upstream
+ * failure class. Only missing or free-form values fall back. The set documents the usual values.
+ */
 function normalizedEnum(
   value: unknown,
   allowed: ReadonlySet<string>,
   fallback = "unknown",
 ): string {
-  return typeof value === "string" && allowed.has(value) ? value : fallback;
+  return typeof value === "string" && (allowed.has(value) || IDENTIFIER_PATTERN.test(value))
+    ? value
+    : fallback;
 }
 
 function normalizedIdentifier(value: unknown, fallback: string): string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/u.test(value) ? value : fallback;
+  return isIdentifier(value) ? value : fallback;
 }
 
 /** Copies an optional field only when it is a valid value; unknown values stay absent. */
@@ -415,8 +440,8 @@ function optionalProperties(
       properties[key] = value;
     else if (rule === "identifier" && normalizedIdentifier(value, "") !== "")
       properties[key] = value as string;
-    else if (rule instanceof Set && typeof value === "string" && rule.has(value))
-      properties[key] = value;
+    else if (rule instanceof Set && normalizedEnum(value, rule, "") !== "")
+      properties[key] = value as string;
   }
   return properties;
 }
@@ -476,9 +501,8 @@ function modelFamily(provider: string, model: unknown): string {
 }
 
 /**
- * Returns a maintained public model key. User-defined or otherwise unknown
- * model strings deliberately collapse to `other` so analytics cannot leak a
- * private custom-model name.
+ * Returns a canonical model key: known aliases and pinned versions fold into one key, and any
+ * other model name is sent as it is, as in T3, as long as it looks like a model id.
  */
 export function modelKey(model: unknown): string {
   if (typeof model !== "string") return "unknown";
@@ -494,7 +518,7 @@ export function modelKey(model: unknown): string {
     MODEL_KEY_ALIASES[normalized] ??
     MODEL_KEY_ALIASES[withoutPinnedVersion] ??
     withoutPinnedVersion;
-  return KNOWN_MODEL_KEYS.has(canonical) ? canonical : "other";
+  return KNOWN_MODEL_KEYS.has(canonical) || MODEL_ID_PATTERN.test(canonical) ? canonical : "other";
 }
 
 export function durationBucket(value: unknown): string {
@@ -506,6 +530,11 @@ export function durationBucket(value: unknown): string {
   if (value < 180_000) return "1-3m";
   if (value < 600_000) return "3-10m";
   return "over-10m";
+}
+
+function turnTerminalStatus(value: unknown): string {
+  if (value === "cancelled" || value === "interrupted") return "stopped";
+  return normalizedEnum(value, new Set(["completed", "failed", "stopped"]), "other");
 }
 
 function normalizedInteractionMode(value: unknown): string {
@@ -527,6 +556,15 @@ function normalizedDecision(value: unknown): string {
   }
 }
 
+// The UI sends these as categories it computed itself, never a path or title.
+const VIEW_PROPERTIES = {
+  "panel.viewed": ["category"],
+  "settings.viewed": ["section"],
+  "usage.viewed": ["metric", "window", "breakdown"],
+  "usage.availability": ["state"],
+  "feature.viewed": ["feature"],
+} as const;
+
 /**
  * Converts inherited T3 analytics calls into Scient's bounded wire contract.
  * Unknown events are deliberately ignored until they receive a registered
@@ -538,7 +576,10 @@ function normalizeEvent(
   context: NormalizationContext,
 ): NormalizedEvent | null {
   const input = rawProperties ?? {};
-  const provider = normalizedProvider(property(input, "provider"));
+  // Read without marking it: events that do not report a provider pass it through unchanged.
+  const provider = normalizedProvider(
+    Object.hasOwn(input, "provider") ? input.provider : undefined,
+  );
 
   switch (name) {
     case "app.health":
@@ -870,8 +911,8 @@ function normalizeEvent(
     case "usage.availability":
     case "feature.viewed": {
       const properties: Record<string, string> = {};
-      for (const [key, rule] of Object.entries(EVENT_DEFINITIONS[name].properties)) {
-        properties[key] = normalizedEnum(property(input, key), new Set(rule.values), "other");
+      for (const key of VIEW_PROPERTIES[name]) {
+        properties[key] = normalizedIdentifier(property(input, key), "other");
       }
       return { name, privacyLevel: "product", priority: "core", properties };
     }
@@ -880,18 +921,7 @@ function normalizeEvent(
         provider,
         modelKey:
           property(input, "mixedModels") === true ? "other" : modelKey(property(input, "model")),
-        terminalStatus:
-          normalizedEnum(
-            property(input, "terminalStatus"),
-            new Set(["cancelled", "interrupted"]),
-            "other",
-          ) !== "other"
-            ? "stopped"
-            : normalizedEnum(
-                property(input, "terminalStatus"),
-                new Set(["completed", "failed", "stopped"]),
-                "other",
-              ),
+        terminalStatus: turnTerminalStatus(property(input, "terminalStatus")),
         usageStatus: normalizedEnum(
           property(input, "usageStatus"),
           new Set(["complete", "partial", "unavailable"]),
@@ -1182,7 +1212,8 @@ function normalizeEvent(
         },
       };
     default:
-      return null;
+      // Like T3, an event without a Scient normalizer is still sent; its properties pass through.
+      return { name, privacyLevel: "product", priority: "core", properties: {} };
   }
 }
 
@@ -1193,23 +1224,107 @@ export function analyticsAppVersion(value: string): string {
     : "unknown";
 }
 
+// The gateway sets these on every event; an event's own copy would be confusing.
+const RESERVED_KEYS = new Set([
+  "source",
+  "event_id",
+  "distinct_id",
+  "privacy_level",
+  "consent_level",
+  "identity_type",
+  "productFirstSeenAt",
+]);
+function wireValue(value: unknown): WireValue | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, MAX_ARRAY_PROPERTY_ITEMS)
+      .filter(
+        (item) => isWirePrimitive(item) && !(typeof item === "string" && isPrivateLooking(item)),
+      );
+    return items.length === value.length
+      ? (items as ReadonlyArray<string | number | boolean>)
+      : undefined;
+  }
+  if (!isWirePrimitive(value)) return undefined;
+  return typeof value === "string" && isPrivateLooking(value) ? undefined : value;
+}
+
+function propertiesBytes(properties: Readonly<Record<string, WireValue>>): number {
+  return new TextEncoder().encode(JSON.stringify(properties)).byteLength;
+}
+
+function normalizeReading(
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+  context: NormalizationContext,
+): { readonly normalized: NormalizedEvent | null; readonly read: ReadonlySet<string> } {
+  const read = new Set<string>();
+  readKeys = read;
+  try {
+    return { normalized: normalizeEvent(name, input, context), read };
+  } finally {
+    readKeys = undefined;
+  }
+}
+
+/**
+ * The fields of `properties` that the event's Scient normalizer reads or sets. Every other field
+ * passes through unchanged, so `normalizeInheritedEvent` sends it as recorded.
+ */
+export function normalizedKeys(
+  name: string,
+  properties: Readonly<Record<string, unknown>>,
+  context: NormalizationContext,
+): ReadonlySet<string> {
+  const { normalized, read } = normalizeReading(name, properties, context);
+  const set = normalized?.properties ?? {};
+  return new Set(Object.keys(properties).filter((key) => read.has(key) || Object.hasOwn(set, key)));
+}
+
+/**
+ * Shapes an event for the wire. A Scient normalizer, where one exists, decides the fields it
+ * reads; every other field is sent as recorded, as in T3, after the shape and privacy checks.
+ */
 export function normalizeInheritedEvent(
   name: string,
   rawProperties: Readonly<Record<string, unknown>> | undefined,
   context: NormalizationContext,
 ): NormalizedEvent | null {
-  const normalized = normalizeEvent(name, rawProperties, context);
-  return normalized === null
-    ? null
-    : {
-        ...normalized,
-        properties: {
-          ...normalized.properties,
-          appVersion: analyticsAppVersion(context.appVersion),
-          buildChannel: normalizedEnum(context.buildChannel, BUILD_CHANNELS),
-          contractRevision: ANALYTICS_CONTRACT_REVISION,
-        },
-      };
+  if (!EVENT_NAME_PATTERN.test(name)) return null;
+  const input = rawProperties ?? {};
+  const { normalized, read } = normalizeReading(name, input, context);
+  if (normalized === null) return null;
+
+  const envelope = {
+    appVersion: analyticsAppVersion(context.appVersion),
+    buildChannel: normalizedEnum(context.buildChannel, BUILD_CHANNELS),
+    contractRevision: ANALYTICS_CONTRACT_REVISION,
+  };
+  const properties: Record<string, WireValue> = {};
+  for (const [key, value] of Object.entries(normalized.properties)) {
+    const safe = wireValue(value);
+    if (safe !== undefined) properties[key] = safe;
+  }
+  const room = MAX_EVENT_PROPERTIES - Object.keys(envelope).length;
+  for (const [key, value] of Object.entries(input)) {
+    if (Object.keys(properties).length >= room) break;
+    if (
+      read.has(key) ||
+      Object.hasOwn(properties, key) ||
+      Object.hasOwn(envelope, key) ||
+      !PROPERTY_KEY_PATTERN.test(key) ||
+      RESERVED_KEYS.has(key) ||
+      isContentKey(key)
+    )
+      continue;
+    const safe = wireValue(value);
+    if (safe === undefined) continue;
+    properties[key] = safe;
+    if (propertiesBytes({ ...properties, ...envelope }) > MAX_EVENT_PROPERTIES_BYTES) {
+      delete properties[key];
+    }
+  }
+  return { ...normalized, properties: { ...properties, ...envelope } };
 }
 
 const CONSENT_RANK: Readonly<Record<AnalyticsConsent, number>> = {
