@@ -5,7 +5,7 @@ import type {
   OrchestrationV2ProviderTurnTokenUsage,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
-import type { NativeRequestUsage } from "../../orchestration-v2/Adapters/NativeTurnUsage.ts";
+import type { NativeRequestUsage } from "@t3tools/provider-core/server/turnUsage";
 
 // SCIENT-FORK: optional RPC observations are validated independently of turn routing.
 const Counter = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
