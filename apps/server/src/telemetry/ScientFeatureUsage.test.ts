@@ -55,6 +55,9 @@ describe("Scient feature usage", () => {
         action: { type: "install", name: "private" },
       }),
     ).toEqual({ feature: "providers.plugin.action", variant: "install" });
+    expect(featureUsage(WS_METHODS.accountsUniversitySignIn, { universityId: "private" })).toEqual({
+      feature: "university.sign_in",
+    });
     // Reads, refreshes and subscriptions are not features someone chose.
     expect(featureUsage(WS_METHODS.computeListSessions, { projectId: "p" })).toBe(undefined);
     expect(featureUsage(WS_METHODS.accountsSnapshot, {})).toBe(undefined);
