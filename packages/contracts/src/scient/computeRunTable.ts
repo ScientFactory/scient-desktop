@@ -216,7 +216,8 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "scilab",
     extensions: [".sce"],
-    commands: ["scilab-cli", "scilab"].map((name) => file(name, "-nb", "-f")),
+    // Without -quit Scilab waits at its prompt after the file.
+    commands: ["scilab-cli", "scilab"].map((name) => file(name, "-nb", "-quit", "-f")),
   },
   { languageId: "minizinc", extensions: [".mzn"], commands: [file("minizinc")] },
   { languageId: "ampl", extensions: [".mod"], commands: [file("ampl")] },

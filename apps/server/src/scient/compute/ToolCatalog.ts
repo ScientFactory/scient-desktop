@@ -211,7 +211,11 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   idl: {
     commands: ["idl", "gdl"],
     places: {
-      darwin: ["/Applications/harris/idl*/bin/idl", "/Applications/NV5/idl*/bin/idl"],
+      darwin: [
+        "/Applications/harris/idl*/bin/idl",
+        "/Applications/NV5/idl*/bin/idl",
+        "/Applications/GNU Data Language.app/Contents/MacOS/gdl",
+      ],
       linux: ["/usr/local/harris/idl*/bin/idl", "/usr/local/nv5/idl*/bin/idl"],
       win32: [
         "%ProgramFiles%\\Harris\\IDL*\\bin\\bin.x86_64\\idl.exe",

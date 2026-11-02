@@ -50,7 +50,9 @@ const CLOJURE_LINUX =
 const NEXTFLOW_UNIX =
   "curl -sSfL https://get.nextflow.io | bash && sudo mv nextflow /usr/local/bin/";
 /** The workflow sets up a plain Python first, so pip installs into it. */
-const CMDSTAN = "python -m pip install cmdstanpy && python -m cmdstanpy.install_cmdstan --cores 4";
+// A named version downloads directly; asking for the latest goes through GitHub's API and its limit.
+const CMDSTAN =
+  "python -m pip install cmdstanpy && python -m cmdstanpy.install_cmdstan --version 2.40.0 --cores 4";
 
 const NO_WINDOWS = (name: string) => ({
   skip: `${name} has no Windows build; people run it through WSL, which is Linux`,
@@ -199,7 +201,8 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     vhdl: {
       linux: apt("ghdl"),
       darwin:
-        'curl -sSfL https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-llvm-6.0.0-macos15-aarch64.tar.gz | tar -xz -C "$HOME" && ls "$HOME"/ghdl* && sudo ln -s "$HOME"/ghdl*/bin/ghdl /usr/local/bin/ghdl',
+        // Unpacked whole, since GHDL finds its libraries beside its own folder.
+        "curl -sSfL https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-llvm-6.0.0-macos15-aarch64.tar.gz | sudo tar -xz -C /usr/local --strip-components 1",
       "darwin-x64": { skip: "GHDL publishes no Intel Mac build, and Homebrew disabled its own" },
       win32: [
         "curl -sSfLo ghdl.zip https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-mcode-6.0.0-ucrt64.zip",
