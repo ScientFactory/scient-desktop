@@ -145,10 +145,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     gp: {
       linux: apt("pari-gp"),
       darwin: brew("pari"),
-      win32: windowsInstaller(
-        "https://pari.math.u-bordeaux.fr/pub/pari/windows/Pari64-2-19-0.exe",
-        "/c/Program\\ Files*/PARI*/*",
-      ),
+      win32: { skip: "PARI's Windows installer does not finish unattended, so it waits for good" },
     },
     maxima: {
       linux: apt("maxima"),
@@ -255,13 +252,15 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     },
     idl: {
       linux: apt("gnudatalanguage"),
+      darwin: {
+        skip: "GDL's own Apple Silicon build does not load on macOS 15 (duplicate LC_RPATH)",
+      },
       // Homebrew has no GDL; its own weekly build is a disk image.
-      darwin: [
-        'curl -sSfLo gdl.dmg "https://github.com/gnudatalanguage/gdl/releases/download/weekly-release/gdl-macOS-$(uname -m)-headless.dmg"',
+      "darwin-x64": [
+        'curl -sSfLo gdl.dmg "https://github.com/gnudatalanguage/gdl/releases/download/weekly-release/gdl-macOS-x86_64-headless.dmg"',
         "hdiutil attach -nobrowse -mountpoint /Volumes/gdl gdl.dmg",
-        // ditto copies an app the way the Finder does, keeping its bundled libraries whole.
+        // ditto copies an app the way the Finder does.
         'sudo ditto "/Volumes/gdl/GNU Data Language.app" "/Applications/GNU Data Language.app"',
-        'ls -l "/Applications/GNU Data Language.app/Contents/Resources/libs/libomp.dylib"',
         "hdiutil detach /Volumes/gdl",
       ].join(" && "),
       win32: { skip: "GDL publishes no Windows build, and IDL needs a license" },
@@ -273,7 +272,7 @@ const GROUPS: Readonly<Record<string, Readonly<Record<string, Language>>>> = {
     isabelle: {
       linux:
         // The Cambridge mirror, since the main server does not answer GitHub's computers.
-        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2026_linux.tar.gz" | tar -xz -C "$HOME" && { "$HOME/Isabelle2026/bin/isabelle"; "$HOME/Isabelle2026/bin/isabelle" process_theories -? || true; }',
+        'curl -sSfL "https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2026_linux.tar.gz" | tar -xz -C "$HOME"',
     },
     sage: {
       linux:
@@ -347,7 +346,8 @@ for (const [languageId, ways] of Object.entries(languages)) {
   console.log(`::group::Install ${languageId}`);
   const result = NodeChildProcess.spawnSync("bash", ["-c", way], {
     stdio: "inherit",
-    timeout: 25 * 60_000,
+    // The slowest install that works takes about six minutes; a stuck installer stops here.
+    timeout: 15 * 60_000,
     env: {
       ...NodeProcess.env,
       CURL_HOME: curlHome,
