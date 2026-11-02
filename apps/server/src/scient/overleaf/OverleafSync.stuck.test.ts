@@ -78,6 +78,28 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("a link never traps anyone", () =
     ),
   );
 
+  it.live("says when unlinking finished an interrupted sync first", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const id = yield* linked(w);
+        yield* w.collaborate(PROJECT, { "main.tex": "newer" });
+        crash = true;
+        yield* Effect.exit(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        crash = false;
+        expect(
+          yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" }),
+        ).toMatchObject({ _tag: "done", finishedInterruptedSync: true });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("newer");
+      }),
+    ),
+  );
+
   it.live("won't unlink when the link's checkout left the caller's project meanwhile", () =>
     run(
       Effect.gen(function* () {

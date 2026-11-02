@@ -85,6 +85,7 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("a link and its folder", () => {
           availability: "ready",
           reasons: [],
         });
+        // Seen once, the restore is the link's own: edits before the next sync are its changes.
         yield* write(paper, { "main.tex": "after the restore" });
         expect(yield* w.service.sync({ caller, connectionId, requestId: "s3" })).toMatchObject({
           _tag: "synced",
@@ -105,12 +106,16 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("a link and its folder", () => {
         const connectionId = yield* linked(w);
         const caller = w.at(w.main);
         const paper = NodePath.join(w.main, "paper");
-        yield* write(paper, { "refs.bib": "the shared template's references" });
+        yield* write(paper, {
+          "preamble.tex": "the shared template's preamble",
+          "refs.bib": "the shared template's references",
+        });
         yield* w.service.sync({ caller, connectionId, requestId: "s2" });
         yield* Effect.promise(() => NodeFSP.rm(paper, { recursive: true }));
-        // The same names and one shared file, as two papers from a template have.
+        // The same names and every file but main.tex shared, as two papers from a template have.
         yield* write(paper, {
           "main.tex": "someone else's work",
+          "preamble.tex": "the shared template's preamble",
           "refs.bib": "the shared template's references",
         });
         expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
@@ -122,6 +127,7 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("a link and its folder", () => {
         ).toMatchObject({ _tag: "OverleafConnectionNotReadyError", reason: "folder-changed" });
         expect(yield* w.overleafNow(PROJECT)).toEqual({
           "main.tex": "from Overleaf",
+          "preamble.tex": "the shared template's preamble",
           "refs.bib": "the shared template's references",
         });
       }),

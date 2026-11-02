@@ -6,7 +6,7 @@ import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
-import { fakeAccounts } from "../accounts/agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import { getPaperForSource } from "./getPaper.ts";
 import type * as PaperQueue from "./paperQueue.ts";
 

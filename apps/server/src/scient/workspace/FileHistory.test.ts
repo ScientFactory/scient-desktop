@@ -57,6 +57,22 @@ describe("file history", () => {
     expect(await times(other)).toEqual([2]);
   });
 
+  it("keeps a read-only file's version", async () => {
+    const { directory, target, times } = await fixture();
+    await NodeFSP.writeFile(target, "locked");
+    await NodeFSP.chmod(target, 0o444);
+    expect(
+      await keepFileVersion({
+        directory,
+        target,
+        revision: revisionOf("locked"),
+        ownSave: false,
+        now: 1,
+      }),
+    ).toBe(true);
+    expect(await times()).toEqual([1]);
+  });
+
   it("spaces out Scient's own saves", async () => {
     const { keep, times } = await fixture();
     await keep("one", 0, { ownSave: true });

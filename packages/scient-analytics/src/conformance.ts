@@ -2,6 +2,7 @@ import {
   ANALYTICS_CONTRACT_REVISION,
   ANALYTICS_EVENT_NAMES,
   ANALYTICS_SCHEMA_VERSION,
+  normalizedKeys,
   normalizeInheritedEvent,
 } from "./contract.ts";
 
@@ -104,33 +105,134 @@ const representativeProperties = {
   createdBy: "user",
   scheduled: false,
   subagent: false,
-  // These must be stripped even when every useful property is supplied.
+};
+// Every case sends these too, and they must never reach the wire.
+const privateProperties = {
   path: "/private/fixture",
   email: "fixture@example.invalid",
   prompt: "PRIVATE-CONTENT",
   error: "PRIVATE-CONTENT",
   authorizationUrl: "https://example.invalid/PRIVATE-CONTENT",
 };
+// Fields with no Scient normalizer, sent as recorded: what the server records today.
+const passThroughCases = [
+  {
+    name: "client.turn.requested",
+    properties: {
+      surface: "desktop",
+      clientDeviceType: "desktop",
+      clientOs: "macOS",
+      connectionMethod: "direct",
+      messageChars: 57,
+      messageWords: 11,
+      yelling: 0,
+      profanity: 0,
+      anguish: 1,
+      negation: 2,
+      repetition: 0,
+      blame: 1,
+    },
+  },
+  {
+    name: "feature.used",
+    properties: { feature: "overleaf.sync", outcome: "ok", durationMs: 840 },
+  },
+  {
+    name: "provider.turn.completed",
+    properties: {
+      reportVersion: 2,
+      provider: "scient",
+      terminalStatus: "completed",
+      usageStatus: "complete",
+      usageScope: "main_agent",
+      usageReported: true,
+      hasSubagents: false,
+      inputTokens: 1200,
+      cachedInputTokens: 300,
+      outputTokens: 40,
+      requests: 1,
+      failedRequests: 0,
+      estimatedCostUsd: 0.0042,
+      modelDurationMs: 2300,
+      firstTokenMs: 410,
+      model: "gpt-5.6-sol",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+      creationSource: "new",
+      scheduled: false,
+      subagent: false,
+    },
+  },
+  // T3's request summary has no Scient normalizer at all.
+  {
+    name: "provider.request.completed",
+    properties: {
+      reportVersion: 2,
+      provider: "scient",
+      requestKind: "user",
+      terminalStatus: "completed",
+      lifecycleObserved: true,
+      model: "gpt-5.6-sol",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+      creationSource: "new",
+      scheduled: false,
+      subagent: false,
+      providerTurns: 1,
+      continuations: 0,
+      steeringRestarts: 0,
+      usageStatus: "complete",
+      inputTokens: 1200,
+      cachedInputTokens: 300,
+      outputTokens: 40,
+      requests: 1,
+      failedRequests: 0,
+      estimatedCostUsd: 0.0042,
+      modelDurationMs: 2300,
+      nativeChildTurns: 0,
+      childUsageStatus: "none",
+    },
+  },
+] as const;
+
+/** One event's input: the fields its normalizer uses, so unrelated sample fields stay out. */
+function representativeInput(
+  name: string,
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  const sample: Record<string, unknown> = { ...representativeProperties, ...overrides };
+  const used = normalizedKeys(name, sample, context);
+  return {
+    ...Object.fromEntries(Object.entries(sample).filter(([key]) => used.has(key))),
+    ...privateProperties,
+  };
+}
+
+function fixtureCase(
+  label: string,
+  name: string,
+  properties: Readonly<Record<string, unknown>> | undefined,
+) {
+  const event = normalizeInheritedEvent(name, properties, context);
+  if (event === null) throw new Error(`Missing event normalizer: ${name}`);
+  return {
+    case: `${name}:${label}`,
+    name: event.name,
+    privacyLevel: event.privacyLevel,
+    consentLevel: event.privacyLevel,
+    properties: event.properties,
+  };
+}
 
 /** Generated wire examples are copied across repositories, never imported at runtime. */
 export function buildAnalyticsConformanceFixture() {
-  const cases = ANALYTICS_EVENT_NAMES.flatMap((name) =>
-    [undefined, representativeProperties].flatMap((properties, index) => {
-      const normalized = normalizeInheritedEvent(name, properties, context);
-      // An owner event without a valid hash is dropped, so it has no fallback case.
-      if (normalized === null && name === "install.owner_observed" && index === 0) return [];
-      if (normalized === null) throw new Error(`Missing event normalizer: ${name}`);
-      return [
-        {
-          case: `${name}:${index === 0 ? "fallbacks" : "representative"}`,
-          name: normalized.name,
-          privacyLevel: normalized.privacyLevel,
-          consentLevel: normalized.privacyLevel,
-          properties: normalized.properties,
-        },
-      ];
-    }),
-  );
+  const cases = ANALYTICS_EVENT_NAMES.flatMap((name) => [
+    // An owner event without a valid hash is dropped, so it has no fallback case.
+    ...(name === "install.owner_observed" ? [] : [fixtureCase("fallbacks", name, undefined)]),
+    fixtureCase("representative", name, representativeInput(name)),
+  ]);
   for (const name of [
     "feature.viewed",
     "scient.operation.started",
@@ -138,23 +240,17 @@ export function buildAnalyticsConformanceFixture() {
     "scient.operation.failed",
     "scient.operation.cancelled",
   ] as const) {
-    const event = normalizeInheritedEvent(
-      name,
-      {
-        ...representativeProperties,
-        feature: "latex-visual",
-        operationKind: "latex-visual-edit",
-        trigger: "user",
-      },
-      context,
-    )!;
-    cases.push({
-      case: `${name}:latex-visual`,
-      name: event.name,
-      privacyLevel: event.privacyLevel,
-      consentLevel: event.privacyLevel,
-      properties: event.properties,
-    });
+    cases.push(
+      fixtureCase(
+        "latex-visual",
+        name,
+        representativeInput(name, {
+          feature: "latex-visual",
+          operationKind: "latex-visual-edit",
+          trigger: "user",
+        }),
+      ),
+    );
   }
   for (const provider of ["scient", "omp", "muse", "acpRegistry"]) {
     for (const name of [
@@ -165,19 +261,11 @@ export function buildAnalyticsConformanceFixture() {
       "provider.installation.changed",
       "provider.lifecycle.completed",
     ] as const) {
-      const event = normalizeInheritedEvent(
-        name,
-        { ...representativeProperties, provider },
-        context,
-      )!;
-      cases.push({
-        case: `${name}:${provider}`,
-        name: event.name,
-        privacyLevel: event.privacyLevel,
-        consentLevel: event.privacyLevel,
-        properties: event.properties,
-      });
+      cases.push(fixtureCase(provider, name, representativeInput(name, { provider })));
     }
+  }
+  for (const { name, properties } of passThroughCases) {
+    cases.push(fixtureCase("passthrough", name, { ...properties, ...privateProperties }));
   }
   return {
     schemaVersion: ANALYTICS_SCHEMA_VERSION,

@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { foldLibraryAccounts, withLibrariesFolded } from "./AccountPersistence.ts";
 import { AccountsService } from "./AccountsService.ts";
-import { fakeAccounts } from "./agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "./Accounts.testkit.ts";
 import {
   followSignIn,
   isSignInTab,

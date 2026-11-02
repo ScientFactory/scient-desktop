@@ -271,7 +271,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isFalse(sentWithMcpOverride);
+        assert.isTrue(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -430,6 +430,46 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      reason: "the usage of each model turn Cursor reported",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        {
+          type: "turn-ended",
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 900, cacheWriteTokens: 50 },
+        },
+        { type: "text-delta", text: "Done." },
+        {
+          type: "turn-ended",
+          usage: {
+            inputTokens: 10,
+            outputTokens: 30,
+            cacheReadTokens: 1_000,
+            cacheWriteTokens: 0,
+            reasoningTokens: 5,
+          },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+      turnTokenUsage: {
+        usageScope: "main_agent" as const,
+        usageStatus: "complete" as const,
+        hasSubagents: false,
+        inputTokens: 1_050 + 1_010,
+        outputTokens: 50,
+        cachedInputTokens: 1_900,
+        cacheCreationTokens: 50,
+        requests: 2,
+        failedRequests: 0,
+      },
+    },
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
@@ -444,7 +484,7 @@ describe("CursorAdapterV2", () => {
       failure: null,
       answers: [],
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers }) =>
+  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, turnTokenUsage }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -544,6 +584,16 @@ describe("CursorAdapterV2", () => {
       assert.equal(terminal?.status, failure === null ? "completed" : "failed");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
+      if (turnTokenUsage !== undefined) {
+        const turn = events.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+        );
+        assert.deepStrictEqual(
+          turn?.type === "provider_turn.updated" ? turn.providerTurn.turnTokenUsage : undefined,
+          turnTokenUsage,
+        );
+      }
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>
@@ -562,11 +612,11 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect("fails standalone SDK transport diagnostics and compacts with SDK summarize", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
-      const sentMessages: Array<string> = [];
+      const summarizeRequests: Array<boolean> = [];
       let sendCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
@@ -590,9 +640,7 @@ describe("CursorAdapterV2", () => {
               send: (input) =>
                 Effect.sync(() => {
                   sendCalls += 1;
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
+                  summarizeRequests.push(input.summarize === true);
                   const runId = `native-cursor-run-${sendCalls}`;
                   return {
                     agentId: "native-cursor-error",
@@ -603,9 +651,10 @@ describe("CursorAdapterV2", () => {
                       status: "finished" as const,
                       model: { id: "composer-2.5" },
                       durationMs: 1,
-                      ...(sendCalls === 1
-                        ? { result: "Error: RetriableError: WritableIterable is closed" }
-                        : {}),
+                      result:
+                        sendCalls === 1
+                          ? "Error: RetriableError: WritableIterable is closed"
+                          : "Summary of the conversation so far",
                     }),
                     cancel: Effect.void,
                   };
@@ -698,11 +747,12 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const compactionEvents = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
       );
-      assert.equal(sentMessages[1], "/compress");
+      assert.deepEqual(summarizeRequests, [false, true]);
+      assert.notInclude(JSON.stringify(compactionEvents), "Summary of the conversation so far");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1955,7 +2005,17 @@ describe("CursorAdapterV2", () => {
       if (Option.isSome(terminal)) assert.equal(terminal.value.status, "completed");
       assert.lengthOf(opened, 1);
       assert.lengthOf(sent, 1);
-      assert.notProperty(sent[0]?.options ?? {}, "mcpServers");
+      // Send-level servers replace only the create-time set (SDK >= 1.0.39), so the
+      // current owned credential rides on each send.
+      if (mode === "present")
+        assert.deepEqual(sent[0]?.options?.mcpServers, {
+          scient: {
+            type: "http",
+            url: sendCredential.endpoint,
+            headers: { Authorization: sendCredential.authorizationHeader },
+          },
+        });
+      else assert.notProperty(sent[0]?.options ?? {}, "mcpServers");
       assert.deepEqual(
         opened[0]?.options.mcpServers,
         mode === "present"

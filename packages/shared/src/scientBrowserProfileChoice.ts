@@ -1,3 +1,5 @@
+import { anySiteMatches } from "./scientSiteMatch.ts";
+
 /** What the picker reads; structurally the Accounts contract types. */
 export interface ProfileChoiceState {
   readonly projects: Readonly<Record<string, string>>;
@@ -60,18 +62,6 @@ export interface ProfilePick {
   readonly signedInSite?: string;
 }
 
-/** A bare domain covers its subdomains; an `https://` site is one exact origin. */
-function covers(site: string, page: URL) {
-  if (site.startsWith("https://")) {
-    try {
-      return new URL(site).origin === page.origin;
-    } catch {
-      return false;
-    }
-  }
-  return page.hostname === site || page.hostname.endsWith(`.${site}`);
-}
-
 export function pageSite(url: string | undefined) {
   if (!url) return undefined;
   try {
@@ -93,9 +83,7 @@ export function profilesSignedIn(
   return profiles.filter((id) =>
     signIns.some(
       (signIn) =>
-        signIn.profileId === id &&
-        !signIn.signedOut &&
-        signIn.sites.some((site) => covers(site, page)),
+        signIn.profileId === id && !signIn.signedOut && anySiteMatches(signIn.sites, page),
     ),
   );
 }
@@ -125,15 +113,13 @@ export function pickBrowserProfile(input: {
     const switched = thread?.sites[page.hostname]?.profileId;
     if (eligible(switched)) return { profileId: switched };
     const signIns = input.signIns.filter(
-      (signIn) => !signIn.signedOut && signIn.sites.some((site) => covers(site, page)),
+      (signIn) => !signIn.signedOut && anySiteMatches(signIn.sites, page),
     );
     const signedIn = profilesSignedIn(input.url, input.profiles, signIns);
     // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
     const sameService = (host: string) =>
       host === page.hostname ||
-      signIns.some((signIn) =>
-        signIn.sites.some((site) => covers(site, new URL(`https://${host}`))),
-      );
+      signIns.some((signIn) => anySiteMatches(signIn.sites, `https://${host}`));
     const lastSwitch = Object.values(input.choices?.threads ?? {})
       .flatMap((entry) =>
         Object.entries(entry.sites).flatMap(([host, choice]) =>

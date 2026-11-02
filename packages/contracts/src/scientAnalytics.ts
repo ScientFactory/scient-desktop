@@ -23,28 +23,10 @@ export const ScientAnalyticsPreferenceUpdate = Schema.Struct({
 });
 export type ScientAnalyticsPreferenceUpdate = typeof ScientAnalyticsPreferenceUpdate.Type;
 
-export const ScientAnalyticsUiEventName = Schema.Literals([
-  "project.added",
-  "project.add.failed",
-  "project.opened",
-  "thread.created",
-  "voice.transcription.started",
-  "voice.transcription.completed",
-  "voice.transcription.failed",
-  "voice.transcription.cancelled",
-  "surface.opened",
-  "panel.viewed",
-  "settings.viewed",
-  "usage.viewed",
-  "usage.refresh.requested",
-  "usage.availability",
-  "feature.viewed",
-  "setting.changed",
-  "scient.operation.started",
-  "scient.operation.completed",
-  "scient.operation.failed",
-  "scient.operation.cancelled",
-]);
+/** Any event name, as in T3; the server checks only an event's shape and size. */
+export const ScientAnalyticsUiEventName = Schema.String.check(
+  Schema.isPattern(/^[a-z][a-z0-9_.-]{0,79}$/),
+);
 export type ScientAnalyticsUiEventName = typeof ScientAnalyticsUiEventName.Type;
 
 export const ScientAnalyticsUiEvent = Schema.Struct({

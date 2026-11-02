@@ -61,9 +61,9 @@ export function openOverleafProject(projectId: string): void {
 }
 
 /**
- * Unlinks a folder from Overleaf. It changes nothing on either side, so it asks nothing:
- * linking the same folder to the same project again brings its history back.
- * Resolves to whether the folder is unlinked.
+ * Unlinks a folder from Overleaf without asking: beyond finishing an interrupted sync,
+ * it changes nothing on either side, and linking the same folder to the same project
+ * again brings its history back. Resolves to whether the folder is unlinked.
  */
 export async function unlinkOverleaf(
   environmentId: EnvironmentId,
@@ -86,7 +86,9 @@ export async function unlinkOverleaf(
     toastManager.add({
       type: "success",
       title: "Unlinked from Overleaf",
-      description: "Your files stay as they are, here and on Overleaf.",
+      description: result.finishedInterruptedSync
+        ? "The interrupted sync was finished first. Your files stay as they are now, here and on Overleaf."
+        : "Your files stay as they are, here and on Overleaf.",
     });
     return true;
   } catch (error) {

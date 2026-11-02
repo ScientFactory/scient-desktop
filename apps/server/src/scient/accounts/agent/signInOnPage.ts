@@ -1,16 +1,17 @@
 import type { AccountSummary, PreviewAutomationStatus, PreviewTabId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { matchesAccountOrigin } from "../signIn/origin.ts";
+import { previewInvoker } from "./broker.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 
 const savedSignIn = (account: AccountSummary, url: string) =>
   account.details.kind === "website" &&
   account.secrets.password !== undefined &&
-  matchesAccountOrigin(url, account.details.sites);
+  anySiteMatches(account.details.sites, url);
 
 const profileOf = ({ details }: AccountSummary) =>
   details.kind === "website" ? details.profileId : undefined;
@@ -78,14 +79,13 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
   const tabId = result.tabId;
   const broker = yield* PreviewAutomationBroker;
   const invocation = yield* AgentInvocationContext;
-  const invoke = <A>(operation: Parameters<typeof broker.invoke>[0]["operation"], data: unknown) =>
-    broker.invoke<A>({ scope: invocation, operation, input: data, tabId, updateCurrentTab: false });
+  const invoke = previewInvoker(broker, invocation, { updateCurrentTab: false });
   // A sign-in often ends on the site's home page, not on what the agent asked for.
-  const current = yield* invoke<PreviewAutomationStatus>("status", {});
+  const current = yield* invoke<PreviewAutomationStatus>("status", {}, tabId);
   const opened =
     current.url === input.requestedUrl
       ? current
-      : yield* invoke<PreviewAutomationStatus>("navigate", { url: input.requestedUrl }).pipe(
+      : yield* invoke<PreviewAutomationStatus>("navigate", { url: input.requestedUrl }, tabId).pipe(
           Effect.orElseSucceed(() => current),
         );
   return { status: opened, note: `Signed in with ${allowed.name}.` };
