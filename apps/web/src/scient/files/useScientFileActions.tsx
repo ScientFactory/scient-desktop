@@ -27,6 +27,7 @@ import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 import {
   use,
+  useEffect,
   useRef,
   useState,
   type DragEvent,
@@ -134,7 +135,14 @@ const windowFocused = () =>
  * would eat them). Ends after a few seconds at most.
  */
 function captureEarlyKeys(isField: (target: EventTarget | undefined) => boolean) {
-  const typed = { text: "", finish: null as "Enter" | "Escape" | null };
+  const typed = {
+    text: "",
+    /** Any typing or erasing happened, so the field takes `text` even when empty. */
+    edited: false,
+    finish: null as "Enter" | "Escape" | null,
+    /** A click elsewhere first: the person moved on, so no entry is made. */
+    abandoned: false,
+  };
   const onKey = (event: globalThis.KeyboardEvent) => {
     if (isField(event.composedPath()[0]) || typed.finish !== null) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -142,24 +150,35 @@ function captureEarlyKeys(isField: (target: EventTarget | undefined) => boolean)
     else if (event.key === "Backspace") typed.text = typed.text.slice(0, -1);
     else if (event.key.length === 1) typed.text += event.key;
     else return;
+    if (event.key !== "Enter" && event.key !== "Escape") typed.edited = true;
     event.preventDefault();
     event.stopImmediatePropagation();
+  };
+  const onPointer = () => {
+    typed.abandoned = true;
+    stop();
   };
   const stop = () => {
     clearTimeout(timer);
     window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("pointerdown", onPointer, true);
   };
   const timer = setTimeout(stop, 3_000);
   window.addEventListener("keydown", onKey, true);
+  window.addEventListener("pointerdown", onPointer, true);
   return { typed, stop };
 }
 
 /** Puts early keys into the name field as if typed there. */
 function replayEarlyKeys(
   field: HTMLInputElement,
-  typed: { readonly text: string; readonly finish: "Enter" | "Escape" | null },
+  typed: {
+    readonly text: string;
+    readonly edited: boolean;
+    readonly finish: "Enter" | "Escape" | null;
+  },
 ) {
-  if (typed.text) {
+  if (typed.edited) {
     // The field is controlled: set its value the way typing does, then announce it.
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
       field,
@@ -259,6 +278,10 @@ export function useScientFileActions(input: {
   const key = workspaceKey(environmentId, cwd);
   const modelRef = useRef<FileTree | null>(null);
   const menuTargetsRef = useRef<readonly string[]>([]);
+  /** Keys held for a new entry's name field until it shows; stopped if the panel goes. */
+  const earlyKeysRef = useRef<ReturnType<typeof captureEarlyKeys> | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases a key capture left by a New File or New Folder when the panel unmounts
+  useEffect(() => () => earlyKeysRef.current?.stop(), []);
   /** A new file or folder the tree shows while it is being named, before it exists. */
   const pendingCreateRef = useRef<{
     readonly relativePath: string;
@@ -481,9 +504,11 @@ export function useScientFileActions(input: {
     const model = modelRef.current;
     const controller = input.treeController.current;
     if (!model || !controller) return;
+    earlyKeysRef.current?.stop();
     const early = captureEarlyKeys(
       (target) => target instanceof HTMLInputElement && target === nameField(),
     );
+    earlyKeysRef.current = early;
     // The folder is listed and open, so the new row sits inside it.
     if (folder) {
       if (!(await controller.ensurePath(folder)) || !(await controller.load(folder))) {
@@ -506,6 +531,8 @@ export function useScientFileActions(input: {
     // A native menu gives the window its focus back a moment after it closes;
     // a name field focused before then would not get the typing.
     await windowFocused();
+    // Clicked elsewhere meanwhile (the chat box, say): that is where the typing goes.
+    if (early.typed.abandoned) return;
     model.add(treePath);
     pendingCreateRef.current = { relativePath, kind };
     input.quietSelection();
