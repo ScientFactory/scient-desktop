@@ -180,3 +180,26 @@ it("tells OpenAthens the article's address without its query and fragment", () =
     "https://journal.example.org/a",
   );
 });
+
+it.effect("a page the person left doesn't stop the journal's next article from coming in", () =>
+  Effect.gen(function* () {
+    const first = "https://journals.sagepub.com/doi/10.1177/a";
+    const second = "https://journals.sagepub.com/doi/10.1177/b";
+    // The first page was left before its way in came back.
+    expect(yield* open(first, [university()], tab(first, { nowAt: second }))).toEqual({
+      routed: false,
+    });
+    const browser = tab(second);
+    expect(yield* open(second, [university()], browser)).toEqual({ routed: true });
+    expect(browser.navigated).toHaveLength(1);
+  }),
+);
+
+it.effect("an article named by its query is a different page from its neighbour", () =>
+  Effect.gen(function* () {
+    const article = "https://www.ajronline.org/article?id=1";
+    const browser = tab(article, { nowAt: "https://www.ajronline.org/article?id=2" });
+    expect(yield* open(article, [university()], browser)).toEqual({ routed: false });
+    expect(browser.navigated).toEqual([]);
+  }),
+);

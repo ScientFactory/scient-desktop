@@ -174,7 +174,11 @@ it("keeps each exact sign-in address, even under a covered domain, within the li
   ).toEqual(["example.edu", "https://idp.example.edu"]);
   expect(withSignInService(["example.edu"], new Set([SIGN_IN]))).toEqual(["example.edu", SIGN_IN]);
   const full = Array.from({ length: 16 }, (_, index) => `s${index}.example.edu`);
-  expect(withSignInService(full, new Set([SIGN_IN]))).toHaveLength(16);
+  const kept = withSignInService(full, new Set([SIGN_IN]));
+  expect(kept).toHaveLength(16);
+  // A full list makes room: the sign-in address and the university's own domain always stay.
+  expect(kept).toContain(SIGN_IN);
+  expect(kept[0]).toBe("s0.example.edu");
 });
 
 it("keeps a university's sign-in service, and nothing else of it, out of scripts", () => {
@@ -231,6 +235,14 @@ it("knows a tab left on the university's sign-in, and never a course page or ano
   expect(at("https://my.openathens.net/auth?targetURL=%2Fapp")).toBe(true);
   expect(at("https://my.openathens.net/app/research")).toBe(false);
   expect(at("https://moodle.huji.ac.il/my/")).toBe(false);
+  // A learned address serves other pages too; only its sign-in pages count.
+  const portal = { sites: ["example.edu", "https://portal.example.edu"], profileId: "default" };
+  expect(
+    isSignInTab(portal, { url: "https://portal.example.edu/login", profileId: "default" }),
+  ).toBe(true);
+  expect(
+    isSignInTab(portal, { url: "https://portal.example.edu/courses/42", profileId: "default" }),
+  ).toBe(false);
   expect(at("https://idp.cc.huji.ac.il/simplesaml/login", "work")).toBe(false);
   expect(at(null)).toBe(false);
 });

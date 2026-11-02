@@ -28,7 +28,6 @@ const NO_ROUTE_MEMORY_MS = 60 * 60 * 1000;
 
 /** Per profile and journal: when it was brought in, or found to have no way in. */
 const remembered = new Map<string, { readonly at: number; readonly forMs: number }>();
-const asking = new Set<string>();
 
 /**
  * Reads the page as a journal article only when it names a DOI or a journal for indexers, as
@@ -48,11 +47,16 @@ const decodeArticle = Schema.decodeUnknownOption(Schema.NullOr(ArticlePage));
 /** Where the page is now, to tell whether the person is still on it. */
 const whereScript = "location.href";
 
-const samePage = (a: string, b: string) =>
-  URL.canParse(a) &&
-  URL.canParse(b) &&
-  new URL(a).origin === new URL(b).origin &&
-  new URL(a).pathname === new URL(b).pathname;
+/** The same page, whatever part of it is in view: an article is named by its path and query. */
+const samePage = (a: string, b: string) => {
+  if (!URL.canParse(a) || !URL.canParse(b)) return false;
+  const [first, second] = [new URL(a), new URL(b)];
+  return (
+    first.origin === second.origin &&
+    first.pathname === second.pathname &&
+    first.search === second.search
+  );
+};
 
 /**
  * What OpenAthens is told about the article: its address without the query or fragment, which can
@@ -144,9 +148,12 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
   if (!university || !details || isUniversityPage(details, input.url)) return { routed: false };
   const key = `${input.profileId}:${university.accountId}:${page.hostname}`;
   const now = yield* Clock.currentTimeMillis;
-  const last = remembered.get(key);
-  if ((last && now - last.at < last.forMs) || asking.has(key)) return { routed: false };
-  asking.add(key);
+  const known = (at: number) => {
+    const last = remembered.get(key);
+    return last !== undefined && at - last.at < last.forMs;
+  };
+  if (known(now)) return { routed: false };
+  // Each page asks for itself: one the person left stops on its own before navigating.
   return yield* Effect.gen(function* () {
     const broker = yield* PreviewAutomationBroker;
     const invoke = <A>(operation: "evaluate" | "navigate" | "accountWaitForLoad", body: unknown) =>
@@ -174,8 +181,11 @@ export const openThroughUniversity = Effect.fn("University.browse")(function* (
       Effect.orElseSucceed(() => null),
     );
     if (typeof still !== "string" || !samePage(still, article.url)) return { routed: false };
+    // Another page of this journal may have been brought in meanwhile.
+    if (known(at)) return { routed: false };
+    remembered.set(key, { at, forMs: ROUTED_MEMORY_MS });
     const moved = yield* invoke("navigate", { url: answer.url }).pipe(Effect.option);
-    if (Option.isSome(moved)) remembered.set(key, { at, forMs: ROUTED_MEMORY_MS });
+    if (Option.isNone(moved)) remembered.delete(key);
     return { routed: Option.isSome(moved) };
-  }).pipe(Effect.ensuring(Effect.sync(() => asking.delete(key))));
+  });
 });

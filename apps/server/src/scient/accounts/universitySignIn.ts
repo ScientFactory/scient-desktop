@@ -13,6 +13,7 @@ import {
   universitySignInLink,
   usesOpenAthens,
 } from "@t3tools/shared/scientPaperLinks";
+import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -30,6 +31,9 @@ const MOST_LOOKS = 2250;
 const MOST_SITES = 16;
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
+
+/** Tabs Scient opened for a sign-in, which it may reuse or close. */
+const signInTabs = new Set<string>();
 
 /** The tab each sign-in is happening in, so pressing Sign in again brings it back. */
 const underWay = new Map<AccountSummary["accountId"], { threadId: string; tabId: PreviewTabId }>();
@@ -73,12 +77,23 @@ const signInOrigins = (sites: ReadonlyArray<string>) =>
  */
 export const isSignInTab = (
   details: { readonly sites: ReadonlyArray<string>; readonly profileId?: string | undefined },
-  tab: { readonly url: string | null; readonly profileId?: string | undefined },
-) =>
-  typeof tab.url === "string" &&
-  !signInReturn(tab.url) &&
-  tab.profileId === (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) &&
-  (isOpenAthensSignIn(tab.url) || matchesAccountOrigin(tab.url, signInOrigins(details.sites)));
+  tab: {
+    readonly tabId?: string;
+    readonly url: string | null;
+    readonly profileId?: string | undefined;
+  },
+) => {
+  if (typeof tab.url !== "string" || !URL.canParse(tab.url) || signInReturn(tab.url)) return false;
+  if (tab.profileId !== (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID)) return false;
+  if ((tab.tabId !== undefined && signInTabs.has(tab.tabId)) || isOpenAthensSignIn(tab.url))
+    return true;
+  // After a restart, a tab is known by the page it shows: a sign-in page at a learned address.
+  const page = new URL(tab.url);
+  return (
+    matchesAccountOrigin(tab.url, signInOrigins(details.sites)) &&
+    (isLoginPlace(page) || isIdentityPage(page))
+  );
+};
 
 /** The university's own pages and sign-in, which are never brought in through itself. */
 export const isUniversityPage = (details: { readonly sites: ReadonlyArray<string> }, url: string) =>
@@ -94,7 +109,18 @@ export const withSignInService = (
   seen: ReadonlySet<string>,
 ): ReadonlyArray<string> => {
   const fresh = [...seen].filter((origin) => !sites.includes(origin));
-  return [...sites, ...fresh].slice(0, MOST_SITES);
+  const merged = [...sites, ...fresh];
+  if (merged.length <= MOST_SITES) return merged;
+  // Full: the sign-in addresses stay, newest first, with the university's own domain; other
+  // domains make room.
+  const learned = signInOrigins(merged);
+  const [home, ...domains] = merged.filter((site) => !site.startsWith("https://"));
+  const kept = new Set([
+    ...(home === undefined ? [] : [home]),
+    ...learned.slice(-(MOST_SITES - (home === undefined ? 0 : 1))),
+  ]);
+  for (const domain of domains) if (kept.size < MOST_SITES) kept.add(domain);
+  return merged.filter((site) => kept.has(site));
 };
 
 const invokeIn = Effect.fn("University.browser")(function* (
@@ -167,6 +193,7 @@ const finish = Effect.fn("University.finish")(function* <R>(
   const invoke = yield* invokeIn(input.threadId, environmentId);
   // The university has answered; the page it handed back to is no sign-in, so it never stays.
   yield* invoke("close", {}, tabId).pipe(Effect.ignore);
+  signInTabs.delete(tabId);
   const accounts = yield* AccountsService;
   const current = (yield* accounts.snapshot).accounts.find(
     (item) => item.accountId === input.accountId,
@@ -213,9 +240,15 @@ const closeLeftovers = Effect.fn("University.closeLeftovers")(function* (
   const leftovers = Option.isSome(status)
     ? (status.value.tabs ?? []).filter((tab) => tab.tabId !== keep && isSignInTab(details, tab))
     : [];
-  yield* Effect.forEach(leftovers, (tab) => invoke("close", {}, tab.tabId).pipe(Effect.ignore), {
-    discard: true,
-  });
+  yield* Effect.forEach(
+    leftovers,
+    (tab) =>
+      invoke("close", {}, tab.tabId).pipe(
+        Effect.ignore,
+        Effect.ensuring(Effect.sync(() => signInTabs.delete(tab.tabId))),
+      ),
+    { discard: true },
+  );
   return leftovers;
 });
 
@@ -296,6 +329,7 @@ export const startUniversitySignIn = Effect.fn("University.startSignIn")(functio
       reason: "unavailable",
       message: "No browser tab is available for the sign-in.",
     });
+  signInTabs.add(tabId);
   underWay.set(input.accountId, { threadId: input.threadId, tabId });
   yield* followSignIn(input, environmentId, tabId, afterSignIn).pipe(
     Effect.ensuring(

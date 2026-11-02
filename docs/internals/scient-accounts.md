@@ -617,10 +617,11 @@ provider environment. The existing proxy redacts reflected values in responses.
   university's page and back to the person's MyAthens page; no journal is involved. Other
   universities have no sign-in page of their own, so a publisher's institutional link asks for
   them. Scient watches the tab every 0.4 s and closes it the moment the link comes back, before
-  confirming, so the publisher's page never stays. A tab an earlier press left on the sign-in, in
-  the account's profile and on a learned sign-in address or OpenAthens' sign-in, is reused, and
-  such leftovers close when a sign-in succeeds; other pages on the university's domain are never
-  touched. It adds each exact origin that asked the person for something to `sites`, even under a
+  confirming, so the publisher's page never stays. A tab Scient opened for a sign-in, or after a
+  restart one in the account's profile showing a sign-in page at a learned address or OpenAthens'
+  sign-in, is reused, and such leftovers close when a sign-in succeeds; other pages are never
+  touched. A full `sites` list keeps the sign-in addresses and the university's domain and drops
+  other domains first. It adds each exact origin that asked the person for something to `sites`, even under a
   domain `sites` already covers, so a saved password can only ever go where the person already
   signed in and the export guard knows the address; directory data never authorizes that. The sign-in counts once the hidden check agrees; it
   then continues waiting papers. A check that can't tell keeps the last known state and its date.
