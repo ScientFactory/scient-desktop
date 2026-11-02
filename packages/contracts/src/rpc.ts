@@ -578,6 +578,8 @@ import {
 import {
   SCIENT_WORKSPACE_ENTRY_WS_METHODS,
   WsProjectsChangeEntriesRpc,
+  WsProjectsOpenWithAppsRpc,
+  WsProjectsOpenWithRpc,
 } from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:END
 
@@ -2485,8 +2487,10 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — Scient Files panel entry changes.
+  // SCIENT-FORK:START — Scient Files panel entry changes and Open With.
   WsProjectsChangeEntriesRpc,
+  WsProjectsOpenWithAppsRpc,
+  WsProjectsOpenWithRpc,
   // SCIENT-FORK:END
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,

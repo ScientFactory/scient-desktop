@@ -386,6 +386,29 @@ export const changeWorkspaceEntries = Effect.fn("WorkspaceEntryChanges.change")(
         }),
       );
     }
+    case "import": {
+      // Sources are elsewhere on this computer, named by absolute path; only the
+      // destinations are project paths, checked like any other change.
+      const sources = change.sources.map((source) => NodePath.resolve(source));
+      const outside = change.sources.find((source) => !NodePath.isAbsolute(source));
+      if (outside !== undefined) {
+        return yield* new WorkspaceEntryChangeError({
+          failure: "not-allowed",
+          paths: [outside],
+          message: `${outside} is not a full path on this computer.`,
+        });
+      }
+      const destinations = yield* Effect.forEach(sources, (source) =>
+        resolve(joinRelative(change.folder, NodePath.basename(source))),
+      );
+      const pairs = sources.map((source, index) => ({
+        from: { relativePath: source, absolutePath: source },
+        to: destinations[index]!,
+      }));
+      return yield* run(() =>
+        transferEntries({ host, cwd, mode: "copy", pairs, collision: change.collision, completed }),
+      );
+    }
     case "trash": {
       const entries = outermost(yield* resolveAll(change.relativePaths));
       return yield* run(async () => {

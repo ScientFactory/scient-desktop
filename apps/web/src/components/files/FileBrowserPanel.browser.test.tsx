@@ -377,7 +377,11 @@ describe("Files panel search", () => {
         button: 2,
       }),
     );
-    const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
+    // SCIENT-FORK:START — Copy mention sits under Copy, after Files' own items
+    const copy = page.getByRole("menuitem", { name: "Copy", exact: true });
+    await expect.element(copy).toBeVisible();
+    await userEvent.click(copy);
+    const action = page.getByRole("menuitem", { name: "Mention", exact: true });
     await expect.element(action).toBeVisible();
     await userEvent.click(action);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
@@ -386,7 +390,10 @@ describe("Files panel search", () => {
     await userEvent.keyboard("{Tab}");
     row.focus();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-    await expect.element(action).toHaveFocus();
+    await expect
+      .element(page.getByRole("menuitem", { name: "New File", exact: true }))
+      .toHaveFocus();
+    // SCIENT-FORK:END
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });

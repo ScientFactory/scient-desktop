@@ -123,6 +123,56 @@ it.layer(layer, { excludeTestServices: true })("changeWorkspaceEntries", (it) =>
     );
   });
 
+  describe("import", () => {
+    it.effect("copies files and folders in from elsewhere, never the project into itself", () =>
+      Effect.gen(function* () {
+        const { base, project, home, write, read } = yield* fixture;
+        yield* Effect.promise(async () => {
+          await write("inbox/keep.md");
+          await NodeFSP.mkdir(NodePath.join(base, "downloads", "scans"), { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(base, "downloads", "scans", "page.txt"), "page");
+          await NodeFSP.writeFile(NodePath.join(base, "downloads", "table.csv"), "a,b");
+        });
+
+        const imported = yield* change(project, home, {
+          _tag: "import",
+          sources: [
+            NodePath.join(base, "downloads", "scans"),
+            NodePath.join(base, "downloads", "table.csv"),
+          ],
+          folder: "inbox",
+          collision: "ask",
+        });
+        expect(imported.entries.map((entry) => entry.to)).toEqual([
+          "inbox/scans",
+          "inbox/table.csv",
+        ]);
+        expect(yield* Effect.promise(() => read("inbox/scans/page.txt"))).toBe("page");
+        // The originals stay where they were.
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(base, "downloads", "table.csv"), "utf8"),
+          ),
+        ).toBe("a,b");
+
+        const intoItself = yield* change(project, home, {
+          _tag: "import",
+          sources: [base],
+          folder: "inbox",
+          collision: "ask",
+        }).pipe(Effect.flip);
+        expect(intoItself.failure).toBe("into-itself");
+        const relative = yield* change(project, home, {
+          _tag: "import",
+          sources: ["downloads/table.csv"],
+          folder: "",
+          collision: "ask",
+        }).pipe(Effect.flip);
+        expect(relative.failure).toBe("not-allowed");
+      }),
+    );
+  });
+
   describe("the Trash", () => {
     it.effect("moves items to the Trash, replaces through it, and puts them back", () =>
       Effect.gen(function* () {

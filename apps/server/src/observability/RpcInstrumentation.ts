@@ -359,6 +359,8 @@ const RPC_AGGREGATES = {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   [WS_METHODS.projectsChangeEntries]: "projects",
+  [WS_METHODS.projectsOpenWithApps]: "projects",
+  [WS_METHODS.projectsOpenWith]: "projects",
   // SCIENT-FORK:END
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",

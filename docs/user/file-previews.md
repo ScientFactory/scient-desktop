@@ -27,14 +27,26 @@ folder, and sets file visibility. The tree does not watch the disk, so use
 
 ### Manage files and folders
 
-Right-click a file or folder for **New File**, **New Folder**, **Cut**, **Copy**,
-**Paste**, **Duplicate**, **Rename…**, **Copy Path**, **Copy Relative Path** and
-**Move to Trash**. With several items selected, the menu acts on all of them
-and says how many. Drag files or folders onto a folder to move them into it, or
-onto a file at the top of the tree to move them to the project's top; hold
-`Option` (`Alt`) to copy instead. With the
-tree focused, `mod+c`, `mod+x`, `mod+v`, `mod+backspace` or `Delete`,
-`mod+shift+n` (new folder) and `F2` (rename) work as in Finder or Explorer.
+Right-click a file or folder for **New File**, **New Folder**, **Cut**, **Copy ▸**
+(the item itself, its **Path**, **Relative Path** or **Mention**), **Paste**,
+**Duplicate**, **Rename…** and **Move to Trash**. A new file or folder appears
+with its name ready to type. With several items selected, the menu acts on all
+of them and says how many. Drag files or folders onto a folder to move them
+into it, or onto a file at the top of the tree to move them to the project's
+top; hold `Option` (`Alt`) to copy instead. With the tree focused, `mod+c`,
+`mod+x`, `mod+v`, `mod+backspace` or `Delete`, `mod+shift+n` (new folder) and
+`F2` (rename) work as in Finder or Explorer.
+
+To bring in files from elsewhere on your computer, drag them from Finder or
+Explorer onto a folder in the tree, or right-click and choose **Add Files…** or
+**Add Folder…**. Scient copies them in and leaves the originals where they
+were. This works when the project is on the computer you are using; for a
+remote project, copy files there with that computer's own tools.
+
+**Open with** lists every app your Mac offers for the item, its default first,
+then the code editors Scient found. On Windows, **Other App…** opens Windows'
+own Open With window. Linux has no app chooser shared by its desktops, so Open
+with lists the code editors only.
 
 When a name is taken, Scient asks: **Replace** moves the existing item to the
 Trash, and **Keep Both** gives the new one a numbered name. Nothing is deleted

@@ -2,7 +2,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
-import { FilePathString, TrimmedNonEmptyString } from "../baseSchemas.ts";
+import { DirectoryPathString, FilePathString, TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 /**
  * What the Files panel does to a project's files and folders by hand: new
@@ -35,6 +35,15 @@ export const WorkspaceEntryChange = Schema.Union([
       Schema.isMinLength(1),
       Schema.isMaxLength(MAX_ENTRIES),
     ),
+  }),
+  /**
+   * Copies files and folders from elsewhere on the server's computer (absolute
+   * paths, as a drop from Finder or a picker gives them) into `folder`.
+   */
+  Schema.TaggedStruct("import", {
+    sources: Schema.Array(EntryPath).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_ENTRIES)),
+    folder: DirectoryPathString.check(Schema.isMaxLength(4_096)),
+    collision: WorkspaceEntryCollision,
   }),
   /** Puts items this server moved to the Trash back where they were. */
   Schema.TaggedStruct("restore", {
@@ -100,6 +109,8 @@ export class WorkspaceEntryChangeError extends Schema.TaggedError<WorkspaceEntry
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_WORKSPACE_ENTRY_WS_METHODS = {
   projectsChangeEntries: "projects.changeEntries",
+  projectsOpenWithApps: "projects.openWithApps",
+  projectsOpenWith: "projects.openWith",
 } as const;
 
 export const WsProjectsChangeEntriesRpc = Rpc.make(
@@ -110,3 +121,55 @@ export const WsProjectsChangeEntriesRpc = Rpc.make(
     error: Schema.Union([WorkspaceEntryChangeError, EnvironmentAuthorizationError]),
   },
 );
+
+/** An entry of the project, for Open With. */
+export const WorkspaceOpenWithTarget = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: EntryPath,
+});
+export type WorkspaceOpenWithTarget = typeof WorkspaceOpenWithTarget.Type;
+
+/** An app the computer offers for an entry, as Finder's Open With lists it. */
+export const WorkspaceOpenWithApp = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  isDefault: Schema.Boolean,
+});
+export type WorkspaceOpenWithApp = typeof WorkspaceOpenWithApp.Type;
+
+export const WorkspaceOpenWithApps = Schema.Struct({
+  apps: Schema.Array(WorkspaceOpenWithApp),
+  /** The computer has its own app chooser (Windows' "Open with" window). */
+  chooser: Schema.Boolean,
+});
+export type WorkspaceOpenWithApps = typeof WorkspaceOpenWithApps.Type;
+
+export const WorkspaceOpenWithInput = Schema.Struct({
+  ...WorkspaceOpenWithTarget.fields,
+  /** One of the listed apps, or the computer's own chooser. */
+  app: Schema.Union([
+    Schema.TaggedStruct("app", { id: TrimmedNonEmptyString }),
+    Schema.TaggedStruct("chooser", {}),
+  ]),
+});
+export type WorkspaceOpenWithInput = typeof WorkspaceOpenWithInput.Type;
+
+export class WorkspaceOpenWithError extends Schema.TaggedError<WorkspaceOpenWithError>()(
+  "WorkspaceOpenWithError",
+  { message: TrimmedNonEmptyString },
+) {}
+
+export const WsProjectsOpenWithAppsRpc = Rpc.make(
+  SCIENT_WORKSPACE_ENTRY_WS_METHODS.projectsOpenWithApps,
+  {
+    payload: WorkspaceOpenWithTarget,
+    success: WorkspaceOpenWithApps,
+    error: Schema.Union([WorkspaceOpenWithError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsProjectsOpenWithRpc = Rpc.make(SCIENT_WORKSPACE_ENTRY_WS_METHODS.projectsOpenWith, {
+  payload: WorkspaceOpenWithInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([WorkspaceOpenWithError, EnvironmentAuthorizationError]),
+});

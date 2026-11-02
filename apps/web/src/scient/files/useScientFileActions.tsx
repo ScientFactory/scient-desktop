@@ -1,6 +1,7 @@
 // SCIENT-OWNED: the Files panel's file management, as in Finder or Explorer:
 // new files and folders, rename in place, cut/copy/paste, duplicate, drag to
-// move (⌥ to copy), Move to Trash, and undo of each.
+// move (⌥ to copy), adding items from elsewhere (drop or picker), Open With,
+// Move to Trash, and undo of each.
 import { useAtomValue } from "@effect/atom-react";
 import {
   FILE_TREE_TAG_NAME,
@@ -24,8 +25,17 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
-import { use, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import {
+  use,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
+import { folderDropTarget } from "~/components/chat/folderDrop";
 import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
 import {
   AlertDialog,
@@ -42,19 +52,32 @@ import { FileMetadataThreadContext } from "~/hooks/FileMetadataThreadProvider";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { isMacPlatform } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
+import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { windowEditors } from "~/scient/editorFlush/EditorFlushHosts";
 import { flushFolderEditors } from "~/scient/editorFlush/flushFolderEditors";
 import { applyScientFileRename } from "~/scient/fileSurfaces/scientDocumentSession";
 import { renameInTabHistory } from "~/scient/rightPanel/tabHistory";
+import { readPrimaryEnvironmentId } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
+import { readPreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { cachedOpenWithApps, openWithChoice, openWithKind, withOpenWithApps } from "./fileOpenWith";
 import type { LazyWorkspaceTreeController } from "./LazyWorkspaceTreeController";
 
 const changeEntriesCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:scient-files:change-entries",
   tag: WS_METHODS.projectsChangeEntries,
+});
+const openWithAppsCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:scient-files:open-with-apps",
+  tag: WS_METHODS.projectsOpenWithApps,
+});
+const openWithCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:scient-files:open-with",
+  tag: WS_METHODS.projectsOpenWith,
 });
 
 const isChangeError = Schema.is(WorkspaceEntryChangeError);
@@ -62,6 +85,8 @@ const isChangeError = Schema.is(WorkspaceEntryChangeError);
 const MENU = {
   newFile: "files:new-file",
   newFolder: "files:new-folder",
+  addFiles: "files:add-files",
+  addFolder: "files:add-folder",
   cut: "files:cut",
   copy: "files:copy",
   paste: "files:paste",
@@ -129,6 +154,7 @@ function undoFor(
       ];
     }
     case "copy":
+    case "import":
     case "create-folder":
     case "create-file": {
       // What was made goes to the Trash; what a copy replaced comes back.
@@ -171,6 +197,18 @@ export function useScientFileActions(input: {
   const menuTargetsRef = useRef<readonly string[]>([]);
   const copyOnDropRef = useRef(false);
   const runChange = useAtomCommand(changeEntriesCommand, { reportFailure: false });
+  const runOpenWithApps = useAtomCommand(openWithAppsCommand, { reportFailure: false });
+  const runOpenWith = useAtomCommand(openWithCommand, { reportFailure: false });
+  // The apps the open menu listed, for its clicks.
+  const menuAppsRef = useRef<{
+    readonly path: string;
+    readonly offered: Awaited<ReturnType<typeof cachedOpenWithApps>>;
+    readonly editorNames: ReadonlySet<string>;
+  } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    readonly folder: string;
+    readonly allowed: boolean;
+  } | null>(null);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const trashLabel = serverConfig?.environment.platform.os === "windows" ? "Recycle Bin" : "Trash";
   // The chat whose tabs follow moved files; a detached window without one leaves them.
@@ -183,6 +221,17 @@ export function useScientFileActions(input: {
   const entryOf = (path: string) => input.treeEntries.current.get(path);
   const writable = (path: string) => path !== "" && entryOf(path)?.readOnly !== true;
   const isFolder = (path: string) => entryOf(path)?.kind === "directory";
+  const folderWritable = (folder: string) => folder === "" || writable(folder);
+  /** Items from elsewhere are named by paths on this computer, so the server must run here. */
+  const canImport = () =>
+    window.desktopBridge !== undefined &&
+    folderDropTarget({
+      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+      environmentId,
+      primaryEnvironmentId: readPrimaryEnvironmentId(),
+      connection: readPreparedConnection(environmentId),
+      isDesktopRenderer: true,
+    }) === "local";
 
   const refresh = () => {
     void input.treeController.current?.refresh();
@@ -257,10 +306,12 @@ export function useScientFileActions(input: {
       readonly recordUndo?: boolean;
       /** Receives this change's own undo record, as a toast's Undo needs. */
       readonly onUndoRecord?: (record: UndoRecord) => void;
+      /** The caller refreshes the tree itself (to name a new item once it is listed). */
+      readonly ownRefresh?: boolean;
     },
   ): Promise<ReadonlyArray<WorkspaceEntryChangeOutcome> | null> => {
     const record = (outcomes: ReadonlyArray<WorkspaceEntryChangeOutcome>) => {
-      const undo = settle(change, outcomes, options.recordUndo ?? true);
+      const undo = settle(change, outcomes, options.recordUndo ?? true, !options.ownRefresh);
       if (undo) options.onUndoRecord?.(undo);
     };
     const result = await runChange({ environmentId, input: { cwd, change } });
@@ -303,6 +354,7 @@ export function useScientFileActions(input: {
     change: WorkspaceEntryChange,
     outcomes: ReadonlyArray<WorkspaceEntryChangeOutcome>,
     recordUndo: boolean,
+    refreshTree = true,
   ): UndoRecord | null => {
     followMoves(
       change._tag === "move"
@@ -320,7 +372,7 @@ export function useScientFileActions(input: {
       if (stack.length > MAX_UNDO) stack.shift();
       undoStacks.set(key, stack);
     }
-    refresh();
+    if (refreshTree) refresh();
     return undo && undo.length > 0 ? undo : null;
   };
 
@@ -355,14 +407,21 @@ export function useScientFileActions(input: {
         _tag: kind === "folder" ? "create-folder" : "create-file",
         relativePath: join(folder, kind === "folder" ? "untitled folder" : "untitled.md"),
       },
-      { failureTitle: kind === "folder" ? "Couldn’t make a folder" : "Couldn’t make a file" },
+      {
+        failureTitle: kind === "folder" ? "Couldn’t make a folder" : "Couldn’t make a file",
+        ownRefresh: true,
+      },
     );
     const path = created?.[0]?.to;
     const controller = input.treeController.current;
     if (path === undefined || controller === null) return;
-    // Name it straight away, once the tree lists it.
+    // Name it straight away: once the tree lists it, and after the menu that
+    // asked has given focus back (the name field ends the rename when it loses focus).
+    refreshProjectEntriesQuery(environmentId, cwd);
     await controller.refresh();
-    if (await controller.ensurePath(path)) startRenaming(path, kind === "folder");
+    if (!(await controller.ensurePath(path))) return;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    startRenaming(path, kind === "folder");
   };
 
   const transfer = async (
@@ -458,6 +517,40 @@ export function useScientFileActions(input: {
     });
   };
 
+  /** Copies items from elsewhere on this computer into `folder`; the originals stay. */
+  const importItems = async (sources: readonly string[], folder: string) => {
+    if (sources.length === 0) return;
+    await perform(
+      { _tag: "import", sources: [...sources], folder, collision: "ask" },
+      { failureTitle: "Couldn’t add" },
+    );
+  };
+
+  /** The paths of dropped or picked files, as this computer names them. */
+  const pathsOf = (files: Iterable<File>) =>
+    [...files].flatMap((file) => {
+      const path = window.desktopBridge?.getPathForFile(file);
+      return path ? [path] : [];
+    });
+
+  /** The system's file chooser, several files at once. */
+  const addFiles = (folder: string) => {
+    const picker = document.createElement("input");
+    picker.type = "file";
+    picker.multiple = true;
+    picker.addEventListener("change", () => {
+      void importItems(pathsOf(picker.files ?? []), folder);
+    });
+    picker.click();
+  };
+
+  const addFolder = async (folder: string) => {
+    const picked = await readLocalApi()?.dialogs.pickFolder({
+      targetEnvironmentId: environmentId,
+    });
+    if (picked) await importItems([picked], folder);
+  };
+
   const copyPaths = async (paths: readonly string[], absolute: boolean) => {
     const text = paths
       .map((path) => (absolute ? resolveWorkspaceFilePath(path, cwd) : path))
@@ -475,6 +568,10 @@ export function useScientFileActions(input: {
         return void create("file", folderFor(paths));
       case MENU.newFolder:
         return void create("folder", folderFor(paths));
+      case MENU.addFiles:
+        return addFiles(folderFor(paths));
+      case MENU.addFolder:
+        return void addFolder(folderFor(paths));
       case MENU.cut:
       case MENU.copy: {
         const picked = paths.filter(writable);
@@ -506,6 +603,19 @@ export function useScientFileActions(input: {
     const selected = modelRef.current?.getSelectedPaths() ?? [];
     const paths = selected.includes(treePath) ? selected : [treePath];
     return outermost(paths.map(projectPath));
+  };
+
+  /** The folder under the pointer: a folder row, a file row's folder, or the project's top. */
+  const dropFolderUnder = (event: DragEvent<HTMLElement>) => {
+    const row = event.nativeEvent
+      .composedPath()
+      .find(
+        (element): element is HTMLElement =>
+          element instanceof HTMLElement && element.hasAttribute("data-item-path"),
+      );
+    const treePath = row?.getAttribute("data-item-path");
+    if (!treePath) return "";
+    return treePath.endsWith("/") ? projectPath(treePath) : parentOf(treePath);
   };
 
   const dropPairs = (context: FileTreeDropContext) => {
@@ -659,31 +769,45 @@ export function useScientFileActions(input: {
     onKeyDown,
     /** The right-click menu's file items, in groups the panel places between its own. */
     menuItems: (treePath: string) => {
-      if (!enabled) return { create: [], edit: [], paths: [], trash: [] };
+      if (!enabled) return { create: [], edit: [], trash: [], copiesMention: false };
       const targets = targetsFor(treePath);
       menuTargetsRef.current = targets;
       const single = targets.length === 1;
       // Scient's own records and tool folders stay as they are, even as a copy's source.
       const allWritable = targets.every(writable);
       const folder = folderFor(targets);
-      const folderWritable = folder === "" || writable(folder);
-      const canPaste = fileClipboard?.key === key && folderWritable;
+      const intoFolder = folderWritable(folder);
+      const canPaste = fileClipboard?.key === key && intoFolder;
       // As Finder does, a selection says how many items an action takes.
       const items = single ? "" : ` ${targets.length} Items`;
+      const what = single ? (isFolder(targets[0]!) ? "Folder" : "File") : `${targets.length} Items`;
       const create: ContextMenuItem[] = [
-        { id: MENU.newFile, label: "New File", separatorBefore: true, disabled: !folderWritable },
-        { id: MENU.newFolder, label: "New Folder", disabled: !folderWritable },
+        { id: MENU.newFile, label: "New File", separatorBefore: true, disabled: !intoFolder },
+        { id: MENU.newFolder, label: "New Folder", disabled: !intoFolder },
+        // From elsewhere on this computer, through its own file chooser.
+        ...(canImport()
+          ? [
+              { id: MENU.addFiles, label: "Add Files…", disabled: !intoFolder },
+              { id: MENU.addFolder, label: "Add Folder…", disabled: !intoFolder },
+            ]
+          : []),
       ];
       const edit: ContextMenuItem[] = [
         { id: MENU.cut, label: `Cut${items}`, separatorBefore: true, disabled: !allWritable },
-        { id: MENU.copy, label: `Copy${items}`, disabled: !allWritable },
+        {
+          id: "files:copy-menu",
+          label: "Copy",
+          children: [
+            { id: MENU.copy, label: what, disabled: !allWritable },
+            { id: MENU.copyPath, label: "Path" },
+            { id: MENU.copyRelativePath, label: "Relative Path" },
+            // The panel's own Copy mention, kept under Copy.
+            { id: "copy-mention", label: "Mention" },
+          ],
+        },
         { id: MENU.paste, label: "Paste", disabled: !canPaste },
         { id: MENU.duplicate, label: `Duplicate${items}`, disabled: !allWritable },
         ...(single ? [{ id: MENU.rename, label: "Rename…", disabled: !allWritable }] : []),
-      ];
-      const paths: ContextMenuItem[] = [
-        { id: MENU.copyPath, label: "Copy Path", separatorBefore: true },
-        { id: MENU.copyRelativePath, label: "Copy Relative Path" },
       ];
       const trash: ContextMenuItem[] = [
         {
@@ -694,14 +818,109 @@ export function useScientFileActions(input: {
           disabled: !allWritable,
         },
       ];
-      return { create, edit, paths, trash };
+      return { create, edit, trash, copiesMention: true };
     },
-    /** Acts on a choice from `menuItems`; false when it is not one of them. */
+    /** The menu's Open With, filled with every app the computer offers for the entry. */
+    withOpenWith: async (
+      treePath: string,
+      items: ReadonlyArray<ContextMenuItem>,
+    ): Promise<ContextMenuItem[]> => {
+      if (!enabled) return [...items];
+      const path = projectPath(treePath);
+      const offered = await cachedOpenWithApps(
+        openWithKind(environmentId, path, treePath.endsWith("/")),
+        // Without the computer's list the menu still opens, with the code editors.
+        async () => {
+          try {
+            const result = await runOpenWithApps({
+              environmentId,
+              input: { cwd, relativePath: path },
+            });
+            return result._tag === "Success" ? result.value : null;
+          } catch {
+            return null;
+          }
+        },
+      );
+      const editorNames = new Set(
+        (items.find((item) => item.id === "open-with")?.children ?? []).map((item) => item.label),
+      );
+      menuAppsRef.current = { path, offered, editorNames };
+      return withOpenWithApps(items, offered);
+    },
+    /** Acts on a choice from `menuItems` or Open With; false when it is not one of them. */
     handleMenuChoice: (clicked: string) => {
+      const listed = menuAppsRef.current;
+      const app = listed ? openWithChoice(clicked, listed.offered, listed.editorNames) : null;
+      if (listed && app) {
+        void runOpenWith({
+          environmentId,
+          input: { cwd, relativePath: listed.path, app },
+        }).then((result) => {
+          if (result._tag !== "Success") {
+            reportFailure(
+              "Couldn’t open",
+              result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
+            );
+          }
+        });
+        return true;
+      }
       if (!MENU_CHOICES.has(clicked)) return false;
       act(clicked as MenuChoice, menuTargetsRef.current);
       return true;
     },
+    /** Files and folders dropped from Finder or Explorer are copied into the folder under the pointer. */
+    externalDrop: {
+      onDragOver: (event: DragEvent<HTMLElement>) => {
+        if (!enabled || !event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        const folder = dropFolderUnder(event);
+        const allowed = canImport() && folderWritable(folder);
+        event.dataTransfer.dropEffect = allowed ? "copy" : "none";
+        if (dropTarget?.folder !== folder || dropTarget.allowed !== allowed) {
+          setDropTarget({ folder, allowed });
+        }
+      },
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
+        if (
+          event.relatedTarget instanceof Node &&
+          event.currentTarget.contains(event.relatedTarget)
+        )
+          return;
+        setDropTarget(null);
+      },
+      onDrop: (event: DragEvent<HTMLElement>) => {
+        if (!enabled || !event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDropTarget(null);
+        const folder = dropFolderUnder(event);
+        if (!canImport()) {
+          toastManager.add({
+            type: "error",
+            title: "Files can be added only to a project on this computer",
+          });
+          return;
+        }
+        if (folderWritable(folder)) void importItems(pathsOf(event.dataTransfer.files), folder);
+      },
+    },
+    /** Where a drop from outside goes, over the tree while one is dragged in. */
+    dropOverlay:
+      dropTarget === null
+        ? null
+        : ((
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-end justify-center rounded-md ring-2 ring-primary/60 ring-inset">
+              <span className="mb-3 rounded-md bg-popover px-2.5 py-1 text-xs text-popover-foreground shadow-md">
+                {dropTarget.allowed
+                  ? `Copy into ${dropTarget.folder ? baseName(dropTarget.folder) : "the project"}`
+                  : canImport()
+                    ? "Files can’t change this folder"
+                    : "Files can be added only to a project on this computer"}
+              </span>
+            </div>
+          ) as ReactNode),
     dialog,
   };
 }

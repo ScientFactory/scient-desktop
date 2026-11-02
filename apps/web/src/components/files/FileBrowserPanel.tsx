@@ -195,19 +195,21 @@ export default function FileBrowserPanel({
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
-            ...fileMenuItems,
+            // SCIENT-FORK:START — Open with lists every app the computer offers
+            ...(await fileActions.withOpenWith(item.path, fileMenuItems)),
+            // SCIENT-FORK:END
             // SCIENT-FORK:START — files that open rendered by default can open as source;
-            // then new items (start a document in, or connect, this folder), edit, and paths
+            // then new items (start a document in, or connect, this folder), and edit
             ...(shouldOpenInBrowserByDefault(relativePath)
               ? ([{ id: "open-source", label: "Open source" }] as const)
               : []),
             ...manageItems.create,
             ...folderActions.menuItems(item.path),
             ...manageItems.edit,
-            ...manageItems.paths,
+            // Copy mention sits under Copy when Files manages entries.
+            ...(manageItems.copiesMention ? [] : [{ id: "copy-mention", label: "Copy mention" }]),
+            { id: "add-to-chat", label: "Add to chat", separatorBefore: manageItems.copiesMention },
             // SCIENT-FORK:END
-            { id: "copy-mention", label: "Copy mention" },
-            { id: "add-to-chat", label: "Add to chat" },
             // SCIENT-FORK:START — Move to Trash last, set apart
             ...manageItems.trash,
             // SCIENT-FORK:END
@@ -516,9 +518,12 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
-      // SCIENT-FORK:START — file shortcuts in the tree, and ⌥ while dragging to copy
+      // SCIENT-FORK:START — file shortcuts in the tree, ⌥ while dragging to copy, and drops from outside
       onKeyDown={fileActions.onKeyDown}
       onDragOverCapture={fileActions.onDragOver}
+      onDragOver={fileActions.externalDrop.onDragOver}
+      onDragLeave={fileActions.externalDrop.onDragLeave}
+      onDrop={fileActions.externalDrop.onDrop}
       // SCIENT-FORK:END
     >
       <div
@@ -574,6 +579,7 @@ export default function FileBrowserPanel({
           style={pierreTreeStyle(resolvedTheme)}
         />
         {/* SCIENT-FORK:START */}
+        {fileActions.dropOverlay}
       </ScientFileTreeSurface>
       {folderActions.dialog}
       {fileActions.dialog}
