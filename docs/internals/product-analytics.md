@@ -129,12 +129,8 @@ The renderer keeps per-connection consent discovery coalesced and at most 20
 event requests in flight. Unknown/Off consent does not queue or replay feature
 history. Positive status is lazily refreshed after 60 seconds of activity;
 the server remains the authoritative consent filter. There is no status poller.
-Changing consent fences deferred requests and clears surface coalescing.
-Failed discovery or an uncertain consent/deletion control can retry on later
-activity at most once a minute. A verified
-Off response stays cached until explicit settings refresh or a new connection;
-changing consent from a different client therefore does not silently wake this
-renderer. No missed actions are replayed.
+Failed discovery can retry on later activity at most once a minute. A verified
+Off response stays cached until a new connection. No missed actions are replayed.
 
 Provider send and completion counts need not match. `provider.turn.completed`
 is one provider turn, and `segment` says what started it: the run's first
@@ -207,8 +203,8 @@ fields unknown; a missing origin is never a person.
 
 UI export operations require a cached, positive status with an ephemeral
 `collectionContext`. The server derives that context from its current consent
-epoch and a random value; consent controls, deletion and a new server/HTTP
-lifetime invalidate it. The UI carries it outside event properties, and the
+epoch and a random value; a new server/HTTP lifetime invalidates it. Consent is
+fixed for a server's lifetime, so the epoch stays 0. The UI carries it outside event properties, and the
 HTTP adapter verifies and removes it before recording. It never enters the
 outbox or gateway and is not an installation identity. Old status responses
 remain compatible, but without a context the new UI-operation observers stay
@@ -230,13 +226,8 @@ privacy check. Local raw events expire after 180 days, diagnostics after 30 days
 and dead-letter metadata after 30 days when maintenance runs. An app that is
 not running cannot execute cleanup; old events are filtered before delivery.
 
-Off makes no per-event HTTP, SQLite, or worker call. A saved invalid preference
-fails closed rather than accepting a more permissive environment default.
-Consent/deletion controls abort and await in-flight delivery before altering the
-local queue. Parent-side draining pauses during deletion so old buffered events
-cannot survive identity rotation. Consent controls queue before worker readiness;
-an unacknowledged control terminates the worker rather than leaving higher
-consent active. The worker schedules delivery only while eligible events remain;
+Off makes no per-event HTTP, SQLite, or worker call. The server sets consent once,
+when the worker starts, and sends no later consent or deletion controls. The worker schedules delivery only while eligible events remain;
 diagnostic summaries do not create an endless diagnostic-only feedback loop.
 Shutdown gets 300 ms for local persistence and does not await remote delivery.
 These are implementation bounds, not a claim of zero CPU cost or universally
@@ -258,7 +249,7 @@ environment; panel observations belong to the panel's environment.
 The view observer reads current visibility after coalesced consent discovery;
 leaving before discovery does not replay the abandoned view. At most 16 view
 observers are retained per connection. These events carry the existing ephemeral
-collection context and are rejected after consent changes/deletion. They use the
+collection context and are rejected after the server restarts. They use the
 existing bounded transport, not a clickstream SDK, scan, poller or shutdown-only
 summary. `usage.refresh.requested` is an explicit refresh request, not success;
 `usage.availability` describes a settled non-Limits view's summary availability,
@@ -288,14 +279,12 @@ Progress updates, queued-to-steer promotions, retries, restart continuations,
 restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
 uses the canonical run event or configured instance's driver, never the instance
 name. Consent/identity changes clear the bounded observation state and never
-backfill earlier admissions. Consent/deletion controls establish the sequenced
-event tail's committed watermark before acknowledging the new collection period;
-recording checks the captured epoch again synchronously. Buffered earlier-period
-events are excluded without dropping the first fresh prompt after acknowledgement.
+backfill earlier admissions. Consent is fixed for the server's lifetime, so
+the collection period set at start (epoch 0) never changes.
 Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
 held Droid re-delivery and queue promotion are not first admissions, even after
 local correlation state resets. Unknown legacy provenance is not counted.
-An unavailable watermark fails closed without preventing Off or erasure.
+An unavailable watermark fails closed.
 The event subscription waits for the first valid watermark and can initialize
 after a later successful boundary; the fail-closed sentinel never becomes a
 permanent upstream stream cursor.
@@ -477,6 +466,9 @@ consenting installation pseudonyms are not unique people. Durations are buckets,
 not exact percentile measurements.
 
 ## Deletion and activation gates
+
+The desktop no longer sends deletion requests. The rest of this section describes the
+analytics worker and gateway, which keep their deletion handling.
 
 When the analytics runtime is enabled, an explicit deletion can authenticate
 while consent is Off; it does not temporarily enable Essential collection.
