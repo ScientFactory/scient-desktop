@@ -254,7 +254,6 @@ export const accountCatalogue = [
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
   { name: "University library", kind: "website", site: "", university: true },
-  { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
   {
@@ -330,10 +329,8 @@ export const accountCatalogueGroups = [
       "ORCID",
     ],
   },
-  {
-    name: "Universities & libraries",
-    entries: ["University library", "HUJI", "Moodle", "Google"],
-  },
+  { name: "Websites", entries: ["Google"] },
+  { name: "Universities & libraries", entries: ["University library", "Moodle"] },
   {
     name: "Developer tools",
     entries: [
