@@ -1,5 +1,6 @@
 import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
+import * as Fiber from "effect/Fiber";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 import { assert, it } from "@effect/vitest";
@@ -46,6 +47,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
+import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
@@ -4421,9 +4423,9 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
-it.live("keeps writing a broken run's failed end until it saves, as when the disk is full", () =>
+it.effect("keeps writing a broken run's failed end until it saves, as when the disk is full", () =>
   Effect.gen(function* () {
-    const { observed, written } = yield* captureRootRunTermination({
+    const capture = yield* captureRootRunTermination({
       key: "lost-stream:final-write-retry",
       shouldFinalizeRun: () => Effect.succeed(true),
       failFinalWrites: 2,
@@ -4435,12 +4437,44 @@ it.live("keeps writing a broken run's failed end until it saves, as when the dis
             cause: "database or disk is full",
           }),
         ),
-    });
+    }).pipe(Effect.forkChild);
+    // The two failed writes back off 1 s, then 2 s, before the third saves.
+    for (let step = 0; step < 4; step++) yield* TestClock.adjust("1 second");
+    const { observed, written } = yield* Fiber.join(capture);
     assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
     assert.deepEqual(
       written.map((item) => item.type),
       ["error"],
     );
+  }),
+);
+
+it.effect("records a provider's input rejection at turn start in the terminal error", () =>
+  Effect.gen(function* () {
+    const rejection = "goal objective must be at most 4000 characters";
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "start-failure:input-rejected",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.never,
+      afterStart: (closed) => Deferred.succeed(closed, undefined),
+      startTurn: (turnInput) =>
+        Effect.fail(
+          new ProviderAdapter.ProviderAdapterTurnStartError({
+            driver,
+            threadId: turnInput.threadId,
+            providerThreadId: turnInput.providerThread.id,
+            runId: turnInput.runId,
+            cause: new CodexAppServerRequestError({
+              code: -32600,
+              errorMessage: rejection,
+              method: "thread/goal/set",
+            }),
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    const error = written.find((item) => item.type === "error");
+    assert.include(error?.failure.message ?? "", rejection);
   }),
 );
 

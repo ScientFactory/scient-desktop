@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
@@ -217,7 +218,7 @@ class PiReplayController {
       throw new Error("Pi replay requires a standard command with captured cwd.");
     const prepared = this.bindings.bind({
       ordinal: this.processes.length + 1,
-      args: command.args,
+      args: command.args.map(String),
       cwd: command.options.cwd,
     });
     this.transcript = { ...this.transcript, entries: prepared.entries };
@@ -432,7 +433,7 @@ export function layer<E, R>(input: {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const hostEnvironment = yield* HostProcess.Environment;
@@ -463,9 +464,12 @@ export function layer<E, R>(input: {
     Layer.provide(input.spawner),
     Layer.provide(
       Layer.mergeAll(
-        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
         layerServerConfig,
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
       ),
     ),

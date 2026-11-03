@@ -21,7 +21,7 @@ const makeSpawner = (
   ChildProcessSpawner.make((command) => {
     if (command._tag === "StandardCommand") {
       commands?.push({
-        args: command.args,
+        args: command.args.map(String),
         ...(command.options.cwd ? { cwd: command.options.cwd } : {}),
       });
     }

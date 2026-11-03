@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CheckpointRef } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -30,7 +31,7 @@ const layer = ScientForkCheckpointBaselineLive.pipe(
   Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "scient-fork-baseline-test-" }),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.layer(layer)("ScientForkCheckpointBaseline", (it) => {

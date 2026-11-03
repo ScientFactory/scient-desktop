@@ -20,7 +20,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -394,7 +394,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const projects = yield* ProjectStoreV2;
   const store = yield* makeConnectorStateStore(options.stateDir);
   const clock = yield* Clock.Clock;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const now = () => clock.currentTimeMillisUnsafe();
   const isoNow = Effect.map(DateTime.now, DateTime.formatIso);
   const revision = yield* Ref.make(0);
@@ -976,10 +976,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ] as const);
     });
 
-  const newConnectorId = crypto.randomBytes(12).pipe(
-    Effect.map((bytes) => ConnectorId.make(`con_${Buffer.from(bytes).toString("base64url")}`)),
-    Effect.orDie,
-  );
+  const newConnectorId = random
+    .randomBytes(12)
+    .pipe(
+      Effect.map((bytes) => ConnectorId.make(`con_${Buffer.from(bytes).toString("base64url")}`)),
+    );
 
   const checkUrl = (raw: string, policy: ConnectorEgressPolicy) => {
     const checked = checkConnectorUrl(raw, policy);
@@ -1573,7 +1574,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         state.connectors.find((entry) => entry.connectorId === request.connectorId) ??
         pluginHttp.get(request.connectorId)?.record;
       const rpc = request.method === "POST" ? parseRpcRequest(request.body) : {};
-      const correlationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const correlationId = yield* random.uuidV4();
       const recordToolUse = (decision: "allowed" | "denied", outcome?: "ok" | "error") =>
         record !== undefined && rpc.method === "tools/call" && rpc.toolName !== undefined
           ? credentials.recordUse({

@@ -3,6 +3,7 @@ import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous wire observation records digests without exposing bearer tokens.
 import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import {
@@ -22,7 +23,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -100,6 +101,7 @@ const skillRegistryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodePlatformCrypto.layer,
       Layer.succeed(
         HttpServer.HttpServer,
         HttpServer.HttpServer.of({
@@ -284,7 +286,7 @@ const runConjunction = () =>
         path,
         idAllocator: allocator,
         serverConfig: config,
-        crypto: yield* Crypto.Crypto,
+        digest: yield* Digest.Digest,
         clientFactory: {
           open: () =>
             CodexClient.make(
@@ -875,7 +877,9 @@ const runConjunction = () =>
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+          ),
           idAllocatorLayer,
         ),
       ),

@@ -1366,6 +1366,60 @@ describe("extractMcpToolCallIdentity", () => {
     }
   });
 
+  it("recovers T3 identity from Kiro's @-scoped titles", () => {
+    for (const tool of ["html_render", "t3_thread_read", "delegate_task"]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "kiro-1",
+        kind: "other",
+        title: `@t3-code/${tool}`,
+        status: "pending",
+        rawInput: { tool_id: `t3-code::${tool}`, arguments: { threadId: "thread-1" } },
+      });
+      expect(extractMcpToolCallIdentity(toolCall), tool).toEqual({ server: "t3-code", tool });
+    }
+  });
+
+  // SCIENT-FORK:START — ACP agents see Scient's server as `scient`.
+  it("recovers Scient identity from titles naming the `scient` server", () => {
+    for (const title of [
+      "@scient/html_render",
+      "@t3-code/html_render",
+      "mcp__scient__html_render",
+      'mcp__scient__html_render: {"title":"Plot"}',
+      "scient/html_render",
+      "html_render (scient MCP Server)",
+      "html_render_scient",
+    ]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "scient-1",
+        kind: "other",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toEqual({
+        server: "t3-code",
+        tool: "html_render",
+      });
+    }
+  });
+
+  it("treats goose's `scient` extension as Scient's server", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "goose-scient-1",
+      title: "Rendering a chart",
+      status: "in_progress",
+      _meta: { goose: { toolCall: { extensionName: "scient", toolName: "scient__html_render" } } },
+    });
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+  // SCIENT-FORK:END
+
   it("does not claim an agent's own tool that shares a T3 tool name", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",

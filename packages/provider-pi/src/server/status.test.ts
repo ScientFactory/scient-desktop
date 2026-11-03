@@ -71,7 +71,7 @@ function processHandle(input: {
 /** One recorded `pi` launch: the command it ran with and the environment it saw. */
 interface PiSpawn {
   readonly args: ReadonlyArray<string>;
-  readonly env: NodeJS.ProcessEnv;
+  readonly env: NonNullable<ChildProcess.CommandOptions["env"]>;
 }
 
 /** The fake RPC session answers real transport requests so discovery exercises response routing. */
@@ -90,7 +90,10 @@ function makePiProbeSpawner(input: {
       }
       const standard = ChildProcess.isStandardCommand(command);
       const args = standard ? command.args : [];
-      input.onSpawn?.({ args, env: (standard ? command.options.env : undefined) ?? {} });
+      input.onSpawn?.({
+        args: args.map(String),
+        env: (standard ? command.options.env : undefined) ?? {},
+      });
       if (args.includes("--version")) {
         return processHandle({ stdout: `${input.rawVersion ? "" : "pi "}${input.version}\n` });
       }

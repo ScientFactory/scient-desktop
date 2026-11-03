@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -27,7 +28,7 @@ const testLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-omp-driver-managed-actions-",
   }).pipe(
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(IdAllocator.layer),
     Layer.provideMerge(ProviderContinuationRequests.layer),
     Layer.provideMerge(ModelManifest.layerTest),
@@ -62,7 +63,9 @@ const testLayer = Layer.mergeAll(
       ),
     ),
   ),
-  TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
 );
 
 const noSpawn = ChildProcessSpawner.make(() =>

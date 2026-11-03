@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -24,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -262,20 +264,24 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       yield* controls.beforeSpawn;
       const handle = yield* spawner.spawn(command);
       const environment = command.options.env ?? {};
+      const env = (name: string) => {
+        const value = environment[name];
+        return Redacted.isRedacted(value) ? Redacted.value(value) : value;
+      };
       launches.push({
         command: command.command,
-        args: command.args,
+        args: command.args.map(String),
         cwd: command.options.cwd,
         extendEnv: command.options.extendEnv,
-        profileDirectory: environment.GEMINI_HOME,
-        harnessPath: environment.ANTIGRAVITY_HARNESS_PATH,
-        forceFileStorage: environment.AGY_ACP_FORCE_FILE_STORAGE,
+        profileDirectory: env("GEMINI_HOME"),
+        harnessPath: env("ANTIGRAVITY_HARNESS_PATH"),
+        forceFileStorage: env("AGY_ACP_FORCE_FILE_STORAGE"),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
-        geminiApiKey: environment.GEMINI_API_KEY,
+        geminiApiKey: env("GEMINI_API_KEY"),
         tempDirectory:
-          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : environment.TMPDIR,
+          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
         handle,
       });
       if (environment.ANTIGRAVITY_HARNESS_PATH !== undefined) yield* controls.afterSpawn;
@@ -462,7 +468,7 @@ const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,

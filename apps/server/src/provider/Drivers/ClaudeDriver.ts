@@ -1,7 +1,7 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -81,10 +81,6 @@ import { withConnectionInstanceIdentity } from "./scientInstanceIdentity.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
-  makeCachedProviderMaintenanceResolution,
-  makePackageManagedProviderMaintenanceResolver,
-  normalizeCommandPath,
-  resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -99,6 +95,7 @@ import {
 } from "./ClaudeHome.ts";
 import { setClaudeSkillEnabled } from "./ClaudeSkills.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -110,30 +107,12 @@ const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilities
   return result;
 };
 
-function isClaudeNativeCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return (
-    normalized.endsWith("/.local/bin/claude") ||
-    normalized.endsWith("/.local/bin/claude.exe") ||
-    normalized.includes("/.local/share/claude/")
-  );
-}
-
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
-  provider: DRIVER_KIND,
-  npmPackageName: "@anthropic-ai/claude-code",
-  nativeUpdate: {
-    args: ["update"],
-    isCommandPath: isClaudeNativeCommandPath,
-  },
-});
-
 export type ClaudeDriverEnv =
   | ClaudeAdapterV2DriverEnv
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -197,24 +176,26 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       ? { ...processEnv, DISABLE_UPDATES: "1" }
       : processEnv;
     const connectionMethods = assistedClaudeConnectionMethods(effectiveProcessEnv);
-    const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-      (managedRuntime.usesManagedPath
-        ? Effect.succeed(
+    // SCIENT-FORK:START — Scient updates its managed runtime itself (manual-only here); a Claude
+    // the user installed keeps T3's resolution: npm, Homebrew or the native release feed.
+    const resolveMaintenance = managedRuntime.usesManagedPath
+      ? () =>
+          Effect.succeed(
             makeManualOnlyProviderMaintenanceCapabilities({
               provider: DRIVER_KIND,
               packageName: null,
             }),
           )
-        : resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-            binaryPath: effectiveConfig.binaryPath,
-            env: effectiveProcessEnv,
-          })
-      ).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-      ),
-    );
+      : yield* makeClaudeMaintenanceResolution({
+          binaryPath: effectiveConfig.binaryPath,
+          env: effectiveProcessEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
+    // SCIENT-FORK:END
     const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig, processEnv);
     const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
     const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(

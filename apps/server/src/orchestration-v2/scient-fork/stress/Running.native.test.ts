@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -211,6 +212,7 @@ it.live.each([false, true])(
               allocatorLayer,
               McpProviderSessions.layer,
               NodeServices.layer,
+              NodeCrypto.layer,
             ),
           ),
         );

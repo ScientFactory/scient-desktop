@@ -220,6 +220,7 @@ function makeRegistry(
         );
       },
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
+      invalidateModelCaches: () => Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.

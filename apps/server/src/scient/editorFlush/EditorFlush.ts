@@ -17,7 +17,7 @@ import type {
 import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -163,7 +163,7 @@ export class EditorFlush extends Context.Service<
 const windowKey = (sessionId: string, clientId: string) => `${sessionId}\0${clientId}`;
 
 const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOptions) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   const retirementMillis = Duration.toMillis(options.retirement);
   const startedAt = yield* Clock.currentTimeMillis;
@@ -218,7 +218,7 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
     input: EditorFlushWindow,
   ) {
     const queue = yield* Queue.unbounded<EditorFlushStreamEvent, Cause.Done>();
-    const connectionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const connectionId = yield* random.uuidV4();
     const now = yield* Clock.currentTimeMillis;
     return yield* Effect.sync((): Registration => {
       const key = windowKey(sessionId, input.clientId);
@@ -361,7 +361,7 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
           _tag: "FolderUnavailable",
           message: "The folder could not be found or examined.",
         } as const;
-      const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const requestId = yield* random.uuidV4();
       const start = yield* Clock.currentTimeMillis;
       const request: OpenRequest = {
         request: { requestId, checkoutRoot: input.checkoutRoot, folder: input.folder },

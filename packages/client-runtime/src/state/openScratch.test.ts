@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, type ScopedProjectRef, WS_METHODS } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -40,11 +40,8 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
           Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
       Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => new Uint8Array(size),
-          digest: (_algorithm, data) => Effect.succeed(data),
-        }),
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size)),
       ),
     ),
   );

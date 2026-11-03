@@ -23,7 +23,7 @@ import {
 } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -399,7 +399,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   // SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
   const accounts = yield* Effect.serviceOption(AccountsService);
@@ -516,7 +516,7 @@ export const make = Effect.gen(function* () {
         environmentId,
         threadId,
         state: input.state,
-        jti: yield* crypto.randomUUIDv4(),
+        jti: yield* random.uuidV4(),
       });
 
       yield* Effect.logInfo("publishing agent activity for thread", {

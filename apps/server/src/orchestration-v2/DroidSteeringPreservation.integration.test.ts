@@ -2,6 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeUtil from "node:util";
 import * as Logger from "effect/Logger";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -87,6 +88,7 @@ const decodeNativePrompt = Schema.decodeUnknownSync(
 
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "droid-steer-preservation-" }).pipe(

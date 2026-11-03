@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -17,7 +18,7 @@ import {
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
@@ -42,10 +43,11 @@ import { makeAntigravityAdapterV2 } from "./AntigravityAdapterV2.ts";
 
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-antigravity-native-" }).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
 );
 const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
@@ -182,7 +184,7 @@ const harness = Effect.fnUntraced(function* (options?: {
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // The runtime owns the child scope; the test must outlive it to observe exit.
   const observationScope = yield* Effect.scope;
@@ -291,7 +293,7 @@ await import(${encodeString(mockAgentPath)});`,
           },
           extendEnv: false,
         },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+      }).pipe(Effect.provideService(SecureRandom.SecureRandom, random)),
     onSessionEvent: (event) =>
       Effect.sync(() => {
         if (event._tag === "AvailableCommandsUpdated")

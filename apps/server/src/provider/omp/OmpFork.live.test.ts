@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -253,7 +254,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     180_000,

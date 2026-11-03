@@ -553,7 +553,7 @@ const driverWith = (barrier: CheckoutBarrierShape) =>
   GitVcsDriver.layer.pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scient-checkout-barrier-" })),
     Layer.provide(Layer.succeed(CheckoutBarrier, barrier)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 describe("CheckoutBarrier consumers", () => {

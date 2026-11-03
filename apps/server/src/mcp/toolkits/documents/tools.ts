@@ -12,7 +12,8 @@ import {
   ProjectFilePublicationOutcome,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/ai";
@@ -137,7 +138,8 @@ const sharedDocumentDependencies = [
 
 const htmlDocumentDependencies = [
   ...sharedDocumentDependencies,
-  Crypto.Crypto,
+  Digest.Digest,
+  SecureRandom.SecureRandom,
   ProjectFaviconResolver.ProjectFaviconResolver,
   ServerConfig.ServerConfig,
   ServerSecretStore.ServerSecretStore,

@@ -1,6 +1,7 @@
 import { formatScientCurrentInput } from "../ScientCurrentInput.ts";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
@@ -77,6 +78,7 @@ const skillRegistryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       Layer.succeed(
         HttpServer.HttpServer,
         HttpServer.HttpServer.of({

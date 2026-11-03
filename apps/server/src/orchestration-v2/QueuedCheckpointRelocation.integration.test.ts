@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Checkpoints from "./CheckpointService.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -327,7 +328,13 @@ it.live(
         assert.equal(yield* fs.readFileString(`${beforeRoot}/README.md`), beforeBytes);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(testLayer, policyLayer, database, NodeServices.layer).pipe(
+          Layer.mergeAll(
+            testLayer,
+            policyLayer,
+            database,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ).pipe(
             Layer.provide(
               Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
             ),

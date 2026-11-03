@@ -6,6 +6,8 @@ import { executionOutputContentParts } from "@scientfactory/execution";
 import { initializeScientProject } from "@scientfactory/project-init";
 import { AnalysisSourceRevision, WS_METHODS } from "@t3tools/contracts";
 import { assert, type Vitest } from "@effect/vitest";
+import type * as Digest from "effect/crypto/Digest";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -20,7 +22,7 @@ const encodeRuntimeSettings = Schema.encodeUnknownEffect(Schema.fromJsonString(S
 
 // Registered by server.test.ts so these cases exercise the same T3 server seam.
 export const registerAnalysisRpcTests = (
-  it: Vitest.MethodsNonLive<NodeServices.NodeServices>,
+  it: Vitest.MethodsNonLive<NodeServices.NodeServices | SecureRandom.SecureRandom | Digest.Digest>,
   harness: ScientRpcServerTestHarness,
 ): void => {
   const {

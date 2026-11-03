@@ -3,6 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -12,7 +13,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -350,7 +351,7 @@ const nativeFixture = Effect.fnUntraced(function* (
     environment: { HOME: home },
     fileSystem: observedFs,
     path,
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
     idAllocator: yield* IdAllocatorV2,
     serverConfig: config,
@@ -604,6 +605,7 @@ const withNative = <A, E, R>(
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodePlatformCrypto.layer,
           idAllocatorLayer,
           McpProviderSessions.layer,
           ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-conjunction-" }).pipe(

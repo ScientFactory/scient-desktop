@@ -7,6 +7,7 @@ import {
   resolveScientAgentArtifactPolicy,
 } from "@scientfactory/provider-runtime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -34,7 +35,7 @@ const decodeJsonPath = Schema.decodeSync(Schema.fromJsonString(Schema.String));
 const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-scient-driver-managed-actions-",
 }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ProviderLatestVersions.layer),

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -54,7 +55,12 @@ it.effect("preserves prompt presentation diagnostics through the desktop service
       resolve: () => Effect.void,
     }),
     Effect.provide(
-      Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici, NetService.layer),
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NodeHttpClient.layerUndici,
+        NetService.layer,
+      ),
     ),
     Effect.scoped,
   );

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MessageId,
@@ -34,10 +35,11 @@ export const decodeRecord = Schema.decodeUnknownSync(
 );
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-pi-real-v2-" }).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
 );
 export const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));

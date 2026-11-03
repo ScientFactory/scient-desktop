@@ -3,7 +3,9 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { DROID_DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import { Cause, Effect, Exit, FileSystem, Redacted, Schema, Stream } from "effect";
@@ -392,7 +394,11 @@ it.effect.skipIf(!binary)(
       // The refusal comes first; rejecting permission requests stays as a second line.
       expect(fixture.permissionAnswers).toEqual([]);
       expect(result._tag).toBe("Success");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );
 
@@ -421,7 +427,11 @@ it.effect.skipIf(!binary)(
       expect(encodeJson(toolOutputs)).toContain("blocked by hook");
       expect(fixture.autonomyWrites).toEqual([{ before: "auto-high", value: "normal" }]);
       expect(result._tag).toBe("Success");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );
 
@@ -469,7 +479,11 @@ for (const [source, extraEnvironment, handler] of [
         expect(model.offeredTools).toEqual([]);
         expect(refusal(result)).toContain("organization's Droid policy");
         expect(refusal(result)).toContain("with Droid. Choose another provider");
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        TestClock.withLive,
+      ),
     120_000,
   );
 
@@ -536,7 +550,11 @@ it.effect.skipIf(!binary)(
       expect(offeredTools).toEqual([]);
       expect(refusal(result)).toContain("organization's Droid policy");
       expect(refusal(result)).toContain("Choose another provider");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );
 
@@ -660,6 +678,10 @@ it.effect.skipIf(!binary)(
       );
       // The request Scient asked for went to that model (Droid titles its own session elsewhere).
       expect(models.requests.map((request) => request.model)).toContain(chosen!.value);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );

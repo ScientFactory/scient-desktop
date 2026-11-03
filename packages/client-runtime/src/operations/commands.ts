@@ -31,7 +31,7 @@ import {
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -295,8 +295,8 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
   input: CommandMetadata,
 ) {
   if (input.commandId !== undefined) return input.commandId;
-  const crypto = yield* Crypto.Crypto;
-  return CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+  const random = yield* SecureRandom.SecureRandom;
+  return CommandId.make(yield* random.uuidV4());
 });
 
 const dispatch = (command: OrchestrationV2Command) =>
@@ -307,7 +307,7 @@ type DispatchTag = typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
-  Crypto.Crypto | EnvironmentSupervisor
+  SecureRandom.SecureRandom | EnvironmentSupervisor
 >;
 
 const dispatchConversationFork = (command: ThreadForkCommand) =>

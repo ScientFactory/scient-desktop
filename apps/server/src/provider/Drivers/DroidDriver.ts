@@ -5,7 +5,7 @@ import {
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -93,7 +93,7 @@ export type DroidDriverEnv =
   | ProviderHost
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
@@ -159,7 +159,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
     enabled,
     config,
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -327,7 +327,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
         stampIdentity(checkedSnapshot, accountCapabilities),
       ),
       Effect.tap((checked) => Effect.suspend(() => status?.observeProbe(checked) ?? Effect.void)),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 

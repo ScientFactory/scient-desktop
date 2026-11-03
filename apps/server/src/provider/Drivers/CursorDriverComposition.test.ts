@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -31,10 +32,13 @@ const apiKeyId = ProviderInstanceId.make("cursor-api-key");
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-cursor-composition-" }).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
-  TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
   ManagedRuntimeCatalog.layerTest,
   IdAllocator.layer,
   ModelManifest.layerTest,

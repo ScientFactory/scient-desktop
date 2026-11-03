@@ -6,7 +6,7 @@ import {
   type ModelConnectionReadiness,
 } from "@t3tools/contracts";
 import { createModelCapabilities, preferredReasoningLevel } from "@t3tools/shared/model";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -166,7 +166,11 @@ export function droidRequestFailureDetail(error: EffectAcpErrors.AcpRequestError
 export type DroidToolGuard = "enforced" | "disabled-by-policy" | "unconfirmed";
 export type DroidAcpRuntimeFactory = (
   input: DroidAcpRuntimeInput,
-) => Effect.Effect<DroidAcpRuntime, EffectAcpErrors.AcpError, Crypto.Crypto | Scope.Scope>;
+) => Effect.Effect<
+  DroidAcpRuntime,
+  EffectAcpErrors.AcpError,
+  SecureRandom.SecureRandom | Scope.Scope
+>;
 
 /** One command authority for health probes, ACP sessions, and text generation. */
 export function resolveDroidCliBinaryPath(configuredPath: string | null | undefined): string {
@@ -243,7 +247,7 @@ export const makeDroidAcpRuntime = Effect.fn("DroidAcpSupport.makeDroidAcpRuntim
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
   const { authenticationMode = "active", runtimeSettingsPath, modelTools, ...runtimeInput } = input;
   if (modelTools === "disabled")

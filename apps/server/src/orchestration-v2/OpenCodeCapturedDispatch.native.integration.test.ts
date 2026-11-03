@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 import type * as NodeNet from "node:net";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { initializeScientProject } from "@scientfactory/project-init";
@@ -101,6 +102,7 @@ const registryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       Layer.succeed(
         HttpServer.HttpServer,
         HttpServer.HttpServer.of({
@@ -553,6 +555,8 @@ it.live(
           Effect.ensuring(Effect.sync(releasePeerConnections)),
           Effect.provide(layer),
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(idAllocatorLayer, NodeServices.layer, NodeCrypto.layer)),
+      ),
     ),
 );

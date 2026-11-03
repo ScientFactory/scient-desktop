@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -16,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
@@ -42,7 +44,7 @@ import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost
 const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-managed-native-execution-",
 }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
   Layer.provideMerge(ProviderLatestVersions.layer),
@@ -296,7 +298,15 @@ it.layer(testLayer)("Resolved driver native execution", (it) => {
                 const spawner = ChildProcessSpawner.make((command) =>
                   Effect.sync(() => {
                     if (ChildProcess.isStandardCommand(command))
-                      launches.push({ command: command.command, env: command.options.env ?? {} });
+                      launches.push({
+                        command: command.command,
+                        env: Object.fromEntries(
+                          Object.entries(command.options.env ?? {}).map(([name, value]) => [
+                            name,
+                            Redacted.isRedacted(value) ? Redacted.value(value) : value,
+                          ]),
+                        ),
+                      });
                   }).pipe(Effect.andThen(Effect.die("Synthetic missing CLI"))),
                 );
                 const instance = yield* GrokDriver.create({

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -13,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -137,7 +139,7 @@ describe("Muse native account boundary", () => {
       );
       assert.isFalse(Deferred.isDoneUnsafe(h.spawned));
       assert.isUndefined(yield* h.coordinator.currentForProvider(driver));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   it("resolves explicit API keys with platform-correct environment case semantics", () => {
     assert.isFalse(usesMuseApiKey({ meta_api_key: "fixture" }, "darwin"));
@@ -209,7 +211,7 @@ describe("Muse native account boundary", () => {
       }).pipe(
         Effect.scoped,
         Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
   );
 
@@ -241,7 +243,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -265,7 +267,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -294,7 +296,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -324,7 +326,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -359,7 +361,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -392,7 +394,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -408,7 +410,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -427,7 +429,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 
@@ -459,7 +461,7 @@ describe("Muse native account boundary", () => {
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   );
 });

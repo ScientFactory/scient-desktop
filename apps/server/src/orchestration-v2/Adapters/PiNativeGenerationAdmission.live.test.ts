@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { CommandReceiptV2 } from "../CommandReceiptStore.ts";
@@ -154,7 +155,7 @@ void (async () => { while (true) {
         databaseLayer: (h) => {
           const real = makeSqlitePersistenceLive(
             `${h.serverConfig.stateDir}/pig-${h.root.split("/").at(-1)}.sqlite`,
-          ).pipe(Layer.provide(NodeServices.layer));
+          ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
           return Layer.effect(
             SqlClient.SqlClient,
             Effect.gen(function* () {

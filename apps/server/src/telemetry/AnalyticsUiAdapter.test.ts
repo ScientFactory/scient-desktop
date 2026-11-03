@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
 import { makeAnalyticsUiAdapter } from "./AnalyticsUiAdapter.ts";
@@ -50,7 +50,7 @@ describe("UI operation consent context", () => {
         accepted: false,
       });
       expect(f.events).toEqual([event]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
   it.effect("strips the context before recording and rejects absent or wrong contexts", () =>
     Effect.gen(function* () {
@@ -71,7 +71,7 @@ describe("UI operation consent context", () => {
       });
       expect(f.events).toEqual([event]);
       expect((yield* ui.status).collectionContext).toBe(current.collectionContext);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect("fences other-client consent changes, deletion and a fresh HTTP lifetime", () =>
@@ -100,7 +100,7 @@ describe("UI operation consent context", () => {
         yield* restarted.record({ ...event, collectionContext: afterDelete.collectionContext }),
       ).toEqual({ accepted: false });
       expect(f.events).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect("keeps the legacy UI protocol and restricts new operations to UI-owned kinds", () =>
@@ -123,6 +123,6 @@ describe("UI operation consent context", () => {
         status: Effect.succeed({ available: false, consent: "off" }),
       });
       expect(yield* disabled.status).toEqual({ available: false, consent: "off" });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

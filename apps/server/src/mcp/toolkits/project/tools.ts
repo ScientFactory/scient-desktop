@@ -28,7 +28,8 @@ import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -48,7 +49,7 @@ const shared = {
     ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
-    Crypto.Crypto,
+    SecureRandom.SecureRandom,
   ],
 };
 const ProjectListTool = Tool.make("scient_project_list", {
@@ -177,6 +178,7 @@ const ThreadLaunchTool = Tool.make("scient_thread_launch", {
     ServerSettings.ServerSettingsService,
     ProviderRegistry.ProviderRegistry,
     DocumentText.DocumentText,
+    Digest.Digest,
   ],
 })
   .annotate(Tool.Destructive, true)

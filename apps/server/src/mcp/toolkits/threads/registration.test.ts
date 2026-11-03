@@ -119,7 +119,7 @@ it.effect(
 
       for (const name of ["scient_thread_read", "t3_thread_read"]) {
         const retired = yield* Effect.flip(call(name, granted));
-        expect(retired._tag).toBe("InvalidParams");
+        expect(retired).toBeInstanceOf(McpSchema.InvalidParams);
       }
       expect(lookup).toHaveBeenCalledTimes(1);
 

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -40,7 +41,7 @@ import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost
 const noProcess = () => Effect.die("Continuation identity must not start a provider process");
 const baseLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-native-continuation-identity-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 const providerDependenciesLayer = baseLayer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(

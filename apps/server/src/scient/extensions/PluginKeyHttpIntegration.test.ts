@@ -7,6 +7,7 @@ import type * as NodeNet from "node:net";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpThreadInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -210,7 +211,7 @@ it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
             Layer.mock(ConnectorCredentialStore)({ recordUse: () => Effect.void }),
             Layer.mock(ProjectStoreV2)({}),
             PluginConnectorEligibility.layer,
-            NodeServices.layer,
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
           ),
         ),
       );
@@ -255,7 +256,7 @@ it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
           Layer.provideMerge(
             NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 }),
           ),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       );
       const proxyAddress = Context.get(serverContext, HttpServer.HttpServer).address;

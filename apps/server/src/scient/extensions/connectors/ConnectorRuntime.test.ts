@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import {
@@ -503,7 +504,7 @@ const testLayer = ConnectorCredentialStore.layer.pipe(
   ),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-connectors-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
 );
 
 const readJson = (response: Response) => Effect.promise(() => response.json());

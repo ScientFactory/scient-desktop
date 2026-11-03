@@ -42,11 +42,6 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
-import {
-  CompactCommandGroup,
-  CompactCommandGroupSeparator,
-} from "~/components/ui/compact-command-group";
-import { compactCommandClassName } from "~/components/ui/compact-command-group.styles";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -1782,6 +1777,53 @@ export default function ThreadTerminalDrawer({
     );
   }
 
+  // The single-terminal row and the split sidebar header share these controls,
+  // so neither layout floats them over terminal text.
+  const terminalActions = (
+    <div className="inline-flex h-full items-stretch">
+      <TerminalActionButton
+        disabled={!canOperateTerminal}
+        className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
+          hasReachedSplitLimit
+            ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+            : "hover:bg-accent/70"
+        }`}
+        onClick={onSplitTerminalAction}
+        label={splitTerminalActionLabel}
+      >
+        <SquareSplitHorizontal className="size-3.25" />
+      </TerminalActionButton>
+      <TerminalActionButton
+        disabled={!canOperateTerminal}
+        className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
+          hasReachedSplitLimit
+            ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+            : "hover:bg-accent/70"
+        }`}
+        onClick={onSplitTerminalVerticalAction}
+        label={splitTerminalVerticalActionLabel}
+      >
+        <SquareSplitVertical className="size-3.25" />
+      </TerminalActionButton>
+      <TerminalActionButton
+        disabled={!canOperateTerminal}
+        className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+        onClick={onNewTerminalAction}
+        label={newTerminalActionLabel}
+      >
+        <Plus className="size-3.25" />
+      </TerminalActionButton>
+      <TerminalActionButton
+        disabled={!canOperateTerminal}
+        className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+        onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+        label={closeTerminalActionLabel}
+      >
+        <Trash2 className="size-3.25" />
+      </TerminalActionButton>
+    </div>
+  );
+
   return (
     <aside
       ref={drawerRef}
@@ -1806,52 +1848,14 @@ export default function ThreadTerminalDrawer({
       ) : null}
 
       {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <CompactCommandGroup aria-label="Terminal actions" className="pointer-events-auto">
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className={cn(
-                compactCommandClassName,
-                "p-1",
-                hasReachedSplitLimit && "cursor-not-allowed opacity-45 hover:bg-transparent",
-              )}
-              onClick={onSplitTerminalAction}
-              label={splitTerminalActionLabel}
-            >
-              <SquareSplitHorizontal className="size-3.25" />
-            </TerminalActionButton>
-            <CompactCommandGroupSeparator />
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className={cn(
-                compactCommandClassName,
-                "p-1",
-                hasReachedSplitLimit && "cursor-not-allowed opacity-45 hover:bg-transparent",
-              )}
-              onClick={onSplitTerminalVerticalAction}
-              label={splitTerminalVerticalActionLabel}
-            >
-              <SquareSplitVertical className="size-3.25" />
-            </TerminalActionButton>
-            <CompactCommandGroupSeparator />
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className={cn(compactCommandClassName, "p-1")}
-              onClick={onNewTerminalAction}
-              label={newTerminalActionLabel}
-            >
-              <Plus className="size-3.25" />
-            </TerminalActionButton>
-            <CompactCommandGroupSeparator />
-            <TerminalActionButton
-              disabled={!canOperateTerminal}
-              className={cn(compactCommandClassName, "p-1")}
-              onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-              label={closeTerminalActionLabel}
-            >
-              <Trash2 className="size-3.25" />
-            </TerminalActionButton>
-          </CompactCommandGroup>
+        <div
+          className={cn(
+            "flex shrink-0 items-stretch justify-end border-b border-border/70",
+            // The drawer's resize strip covers its top 6px; keep the buttons below it.
+            isPanel ? "h-[22px]" : "h-7 pt-1.5",
+          )}
+        >
+          {terminalActions}
         </div>
       )}
 
@@ -1883,48 +1887,7 @@ export default function ThreadTerminalDrawer({
           {hasTerminalSidebar && (
             <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
               <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
-                <div className="inline-flex h-full items-stretch">
-                  <TerminalActionButton
-                    disabled={!canOperateTerminal}
-                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
-                      hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
-                    onClick={onSplitTerminalAction}
-                    label={splitTerminalActionLabel}
-                  >
-                    <SquareSplitHorizontal className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    disabled={!canOperateTerminal}
-                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
-                      hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
-                    onClick={onSplitTerminalVerticalAction}
-                    label={splitTerminalVerticalActionLabel}
-                  >
-                    <SquareSplitVertical className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    disabled={!canOperateTerminal}
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={onNewTerminalAction}
-                    label={newTerminalActionLabel}
-                  >
-                    <Plus className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    disabled={!canOperateTerminal}
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-                    label={closeTerminalActionLabel}
-                  >
-                    <Trash2 className="size-3.25" />
-                  </TerminalActionButton>
-                </div>
+                {terminalActions}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">

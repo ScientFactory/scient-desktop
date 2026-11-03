@@ -3,9 +3,11 @@
  * come from FACTORY_API_KEY or prior pairing; expose authentication failure rather than silently
  * skipping it.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
@@ -44,7 +46,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
       const started = yield* runtime.start();
       expect(started.initializeResult.agentInfo?.name).toBe(DROID_AGENT_INFO_NAME);
       expect(started.initializeResult.protocolVersion).toBe(1);
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("session/new exposes model config options with at least one model", () =>
@@ -54,7 +60,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
       const models = buildDroidModelsFromConfigOptions(yield* runtime.getConfigOptions);
       yield* logProbeJson("droid config-option models", models);
       expect(models.length).toBeGreaterThan(0);
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("discovery walks per-model reasoning-effort ladders and restores selection", () =>
@@ -83,7 +93,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
           ? restoredModelOption.currentValue.trim()
           : undefined,
       ).toBe(initialSlug);
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("setModel applies in-session via session/set_config_option", () =>
@@ -119,7 +133,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
           ? currentOption.currentValue.trim()
           : undefined,
       ).toBe(target.slug);
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("applies a built-in model reasoning effort in-session", () =>
@@ -151,7 +169,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
       );
       yield* logProbeJson("droid updated effort option", updatedEffortOption);
       expect(updatedEffortOption?.currentValue).toBe("low");
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("switches to a custom model and applies its advertised reasoning effort", () =>
@@ -176,7 +198,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
       expect(selected?.capabilitiesObserved).toBe(true);
       expect(selected?.currentEffortValue).toBe("high");
       expect(selected?.efforts.map((effort) => effort.value)).toContain("high");
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("advertised auth methods include a resolvable method for this environment", () =>
@@ -196,7 +222,11 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
           advertisedAuthMethods: advertised,
         }),
       ).toBeDefined();
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 
   it.effect("prompt returns a real stopReason and cancel settles a hung turn", () =>
@@ -209,6 +239,10 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
         prompt: [{ type: "text" as const, text: "Reply with exactly: ok" }],
       });
       expect(typeof result.stopReason).toBe("string");
-    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      TestClock.withLive,
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 });

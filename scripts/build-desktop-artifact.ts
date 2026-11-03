@@ -3315,6 +3315,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.toolsets = { appimage: "1.0.3" };
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       // Scient publishes only AppImage; enabling deb would add an unpublished payload to latest-linux.yml
       // and make release attestation require an artifact absent from release-publish.

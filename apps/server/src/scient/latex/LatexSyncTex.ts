@@ -18,7 +18,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -142,7 +142,7 @@ export const make = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const runtime = yield* SyncTexRuntime.SyncTexRuntime;
   const hostPlatform = yield* HostProcess.Platform;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const workspaceFiles = yield* WorkspaceFileSystem;
   const authority = ArtifactAuthority.make(yield* environment.getEnvironmentId);
 
@@ -208,7 +208,7 @@ export const make = Effect.gen(function* () {
     let temporaryDirectory: string | null = null;
     return Effect.gen(function* () {
       if (yield* fileSystem.exists(finalDirectory)) return;
-      const stagingDirectory = `${finalDirectory}.tmp-${yield* crypto.randomUUIDv4()}`;
+      const stagingDirectory = `${finalDirectory}.tmp-${yield* random.uuidV4()}`;
       temporaryDirectory = stagingDirectory;
       const compressedPath = input.syncTexPath;
       const plainPath = compressedPath.replace(/\.gz$/iu, "");

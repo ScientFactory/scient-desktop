@@ -46,7 +46,7 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -205,7 +205,7 @@ class AnalysisRuntimeAdapters extends Context.Reference<ReadonlyArray<AnalysisRu
 const make = Effect.gen(function* () {
   const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
   const toolDiscovery = yield* ToolDiscovery;
@@ -658,20 +658,7 @@ const make = Effect.gen(function* () {
 
           const startedAt = yield* Clock.currentTimeMillis;
           const verifiedAt = yield* nowIso;
-          const verificationRunId = ExecutionRunId.make(
-            yield* crypto
-              .randomUUIDv4()
-              .pipe(
-                Effect.mapError((cause) =>
-                  analysisError(
-                    "verify",
-                    "operation-failed",
-                    "Unable to create the runtime verification identifier.",
-                    cause,
-                  ),
-                ),
-              ),
-          );
+          const verificationRunId = ExecutionRunId.make(yield* random.uuidV4());
           const outputsRef = yield* Ref.make<ReadonlyArray<ExecutionProcessOutput>>([]);
           const outputBytesRef = yield* Ref.make(0);
           const captureOutput = Effect.fn("AnalysisService.captureOutput")(function* (
@@ -1574,22 +1561,7 @@ const make = Effect.gen(function* () {
               analysisError("start", "invalid-source", "The source path is invalid.", cause),
             ),
           );
-        const runId =
-          input.runId ??
-          ExecutionRunId.make(
-            yield* crypto
-              .randomUUIDv4()
-              .pipe(
-                Effect.mapError((cause) =>
-                  analysisError(
-                    "start",
-                    "operation-failed",
-                    "Unable to create the analysis run identifier.",
-                    cause,
-                  ),
-                ),
-              ),
-          );
+        const runId = input.runId ?? ExecutionRunId.make(yield* random.uuidV4());
         const startedAt = yield* nowIso;
         const queuedRunCount = (yield* Ref.get(runtimeQueuesRef)).get(adapter.id)?.length ?? 0;
         if (queuedRunCount >= MAXIMUM_QUEUED_RUNS_PER_RUNTIME) {

@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -21,7 +21,7 @@ it.for(["portable", "native"] as const)(
         yield* TestClock.setTime(Date.parse("2026-09-28T09:30:00.000Z"));
         yield* createProjects;
         const context = yield* Effect.context<
-          ConversationImportCommit | ProjectionStoreV2 | Crypto.Crypto
+          ConversationImportCommit | ProjectionStoreV2 | SecureRandom.SecureRandom
         >();
         const run = Effect.runPromiseWith(context);
         const fixture = importFixture({ turns: 1 });

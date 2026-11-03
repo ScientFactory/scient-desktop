@@ -1,7 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 // SCIENT-FORK:START — Scient Accounts: mount account tools on the existing MCP transport.
@@ -116,9 +116,10 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
-  HttpServerRequest.toURL(request).pipe(
+  requestUrl(request).pipe(
     Option.map((url) => `${url.origin}/.well-known/oauth-protected-resource/mcp`),
   );
 
@@ -484,8 +485,8 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const millis = yield* Clock.currentTimeMillis;
-  const crypto = yield* Crypto.Crypto;
-  const unique = (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8);
+  const random = yield* SecureRandom.SecureRandom;
+  const unique = (yield* random.uuidV4()).slice(0, 8);
   const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}-${unique}.png`;
   const screenshotPath = path.join(config.browserArtifactsDir, fileName);
   yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true }).pipe(
@@ -551,7 +552,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   const resolver = yield* WorkspaceBindingResolver;
   const sessions = yield* ProviderSessionManagerV2;
   const saveServices = yield* Effect.context<
-    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom
   >();
   const built = yield* PreviewSnapshotToolkit;
   const execute = yield* makeScientToolExecutor(built).pipe(Effect.orDie);
@@ -1436,23 +1437,42 @@ export const hostMcpTools: ReadonlyArray<Tool.Any> = [
 ];
 const layerScientToolList = makeScientToolListLayer(hostMcpTools, deviceTools);
 
-const layerMcpTransportBase = McpServer.layerHttp({
-  name: "Scient",
-  version: packageJson.version,
-  path: "/mcp",
-  protocols: [ScientMcpProtocol],
-  allowSessionTermination: true,
-});
+/**
+ * `McpServer` for in-process calls, which provide `McpInvocationContext`
+ * around `callTool` as the auth middleware does for each /mcp request.
+ */
+export const layerInProcessMcpServer = McpServer.middleware<{
+  provides: McpInvocationContext.McpInvocationContext;
+}>()(
+  (effect) =>
+    Effect.flatMap(
+      Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+      Option.match({
+        onNone: () => Effect.die("Provide McpInvocationContext around the in-process MCP call."),
+        onSome: (scope) =>
+          Effect.provideService(effect, McpInvocationContext.McpInvocationContext, scope),
+      }),
+    ),
+  { global: true },
+).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
-export const layerMcpTransport = layerMcpTransportBase.pipe(
-  Layer.provide(layerMcpAuthMiddleware),
-  Layer.provide(layerScientToolList),
-);
+// SCIENT-FORK:START — Scient's server name and request-scoped tool discovery.
+const makeLayerMcpTransport =
+  (toolList: ReturnType<typeof makeScientToolListLayer>) =>
+  <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
+    McpServer.layerHttp({
+      name: "Scient",
+      version: packageJson.version,
+      path: "/mcp",
+      protocols: [ScientMcpProtocol],
+      allowSessionTermination: true,
+      registrations,
+    }).pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(toolList));
 
-// SCIENT-FORK:START — tests declare their own host tools for discovery.
-export const makeLayerMcpTransportForTest = (
-  toolList: ReturnType<typeof makeScientToolListLayer>,
-) => layerMcpTransportBase.pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(toolList));
+export const layerMcpTransport = makeLayerMcpTransport(layerScientToolList);
+
+/** Tests declare their own host tools for discovery. */
+export const makeLayerMcpTransportForTest = makeLayerMcpTransport;
 // SCIENT-FORK:END
 
 /** Every tool the Scient MCP server advertises. AgentContextBudget.test.ts measures this set. */
@@ -1485,4 +1505,4 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));
+export const layer = layerMcpTransport(layerTools);

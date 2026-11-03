@@ -1,6 +1,7 @@
 import * as Path from "effect/Path";
 import { VcsExecutableUnavailableError } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
@@ -465,7 +466,7 @@ const liveResolverLayer = BindingResolver.layer.pipe(
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-authority-config-" }),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.effect(
@@ -584,7 +585,7 @@ it.effect("binds registered native Scratch children without Git and rejects the 
         }),
       ),
       Layer.provide(ServerConfig.layerTest(baseDir, baseDir)),
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     yield* Effect.gen(function* () {
       yield* createProject(scratchRoot);
@@ -615,5 +616,5 @@ it.effect("binds registered native Scratch children without Git and rejects the 
       const error = yield* resolver.resolveThread(threadId).pipe(Effect.flip);
       assert.equal(error.kind, "lineage-conflict");
     }).pipe(Effect.provide(live));
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

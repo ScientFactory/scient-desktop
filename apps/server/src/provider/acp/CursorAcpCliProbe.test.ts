@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { describe, expect } from "vite-plus/test";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -33,7 +35,7 @@ describe("Restored CursorAcpCliProbe.test.ts", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     );
     // regression: 9c64f12ea0 Add ACP support with Cursor provider (#1355)
@@ -85,7 +87,7 @@ describe("Restored CursorAcpCliProbe.test.ts", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     );
     // regression: 9c64f12ea0 Add ACP support with Cursor provider (#1355)
@@ -140,7 +142,7 @@ describe("Restored CursorAcpCliProbe.test.ts", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(NodeServices.layer),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     );
   });

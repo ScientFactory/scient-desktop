@@ -1365,6 +1365,7 @@ export const layer: Layer.Layer<
               loadFromProvider,
               prepareHistoryBeforeStart,
               startError: (cause) => new ProviderTurnStartError({ runId, cause }),
+              projectionStore,
               contextHandoffService,
               eventSink,
               idAllocator,

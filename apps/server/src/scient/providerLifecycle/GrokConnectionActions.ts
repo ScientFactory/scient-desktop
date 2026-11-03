@@ -3,7 +3,7 @@ import {
   type ProviderAuthorizationUrlKind,
 } from "@t3tools/contracts";
 import type { GrokSettings } from "@t3tools/provider-grok/settings";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
@@ -311,8 +311,8 @@ export const makeGrokConnectionActions = Effect.fn("GrokConnectionActions.make")
   settings: GrokSettings,
   environment: NodeJS.ProcessEnv,
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-): Effect.fn.Return<ProviderConnectionActions, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<ProviderConnectionActions, never, SecureRandom.SecureRandom> {
+  const random = yield* SecureRandom.SecureRandom;
   const runtime: GrokConnectionRuntime = {
     open: (deviceFlow) =>
       makeGrokAcpRuntime({
@@ -324,7 +324,7 @@ export const makeGrokConnectionActions = Effect.fn("GrokConnectionActions.make")
         cwd: process.cwd(),
         clientInfo: { name: "scient-provider-connection", version: "0.0.0" },
       }).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, random),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError((cause) => actionError("Grok could not start its local agent.", cause)),
         Effect.map((acp): GrokAcpConnection => ({

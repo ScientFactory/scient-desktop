@@ -120,13 +120,18 @@ export const makeOpenCodeTurnAcceptance = <
         detail: "This OpenCode fork has no confirmed completed native prompt boundary.",
       });
     }
-    const history = yield* paginate(
-      { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 100 },
-      getClient().message.list,
-    ).pipe(Stream.runCollect);
-    const prompts = history.flatMap((message) =>
-      message.type === "user" || message.type === "synthetic" ? [String(message.id)] : [],
+    // Only prompts can be cuts. Listing them by type also skips compaction
+    // messages that the bundled SDK cannot decode (OpenCode 2.2.5 omits `recent`).
+    const client = getClient();
+    const history = yield* Stream.fromIterable(["user", "synthetic"] as const).pipe(
+      Stream.flatMap((type) =>
+        paginate({ sessionID: Session.ID.make(sessionId), limit: 100, type }, client.message.list),
+      ),
+      Stream.runCollect,
     );
+    const prompts = history
+      .toSorted((left, right) => DateTime.Order(right.time.created, left.time.created))
+      .map((message) => String(message.id));
     const index = prompts.indexOf(messageId);
     if (index < 0 || new Set(prompts).size !== prompts.length) {
       return yield* new ProviderAdapter.ProviderAdapterProtocolError({

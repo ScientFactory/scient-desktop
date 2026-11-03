@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AntigravitySettings,
@@ -89,7 +90,7 @@ it.effect.each(["remove", "disable"] as const)(
           ServerConfig.layerTest(process.cwd(), { prefix: "credential-hydration-" }),
           Sqlite.layerMemory,
           IdAllocator.layer,
-        ).pipe(Layer.provideMerge(NodeServices.layer));
+        ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
         const settingsLayer = Settings.layer.pipe(
           Layer.provideMerge(secretLayer),
           Layer.provide(ManagedPolicy.layerTest()),

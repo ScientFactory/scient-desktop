@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -78,7 +80,7 @@ const versionOnlyDroid = Effect.gen(function* () {
   return binaryPath;
 });
 
-it.layer(NodeServices.layer)("Droid catalog ownership", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Droid catalog ownership", (it) => {
   it.effect("keeps native and Scient BYOK discovery distinct from legacy custom entries", () =>
     Effect.gen(function* () {
       const binaryPath = yield* versionOnlyDroid;
@@ -232,7 +234,7 @@ describe("buildInitialDroidProviderSnapshot", () => {
   );
 });
 
-it.layer(NodeServices.layer)("checkDroidProviderStatus", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkDroidProviderStatus", (it) => {
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkDroidProviderStatus(

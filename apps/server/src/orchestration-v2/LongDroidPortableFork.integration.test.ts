@@ -1,5 +1,6 @@
 /** Controlled ACP subprocess + public portable fork + real worker/SQLite; no vendor account. */
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 import {
@@ -78,6 +79,7 @@ const targetText = "LONG-DROID-TARGET: continue using that dataset.";
 const targetAnswer = "LONG-DROID-COMPLETE: retained cobalt exactly once.";
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "long-droid-portable-" }).pipe(

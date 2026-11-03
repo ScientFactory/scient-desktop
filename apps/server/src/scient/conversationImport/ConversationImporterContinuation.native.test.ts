@@ -28,6 +28,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { reserveAttachment } from "../../orchestration-v2/AttachmentFileUse.ts";
@@ -372,7 +373,10 @@ const withImporter = <A, E, R>(
       Effect.provide(nativeImportRuntimeTestLayer(makeLayer(adapters), options.runtimeOptions)),
       Effect.provideService(Clock.Clock, clock),
     );
-  }).pipe(Effect.provide(Layer.mergeAll(idAllocatorLayer, NodeServices.layer)), Effect.scoped);
+  }).pipe(
+    Effect.provide(Layer.mergeAll(idAllocatorLayer, NodeServices.layer, NodeCrypto.layer)),
+    Effect.scoped,
+  );
 
 const continueImport = Effect.fn("test.nativeImport.continue")(function* (
   threadId: ThreadId,
@@ -2049,7 +2053,7 @@ it.live(
           prefix: "native-pending-handoff-restart-",
         });
         const database = makeSqlitePersistenceLive(NodePath.join(directory, "history.sqlite")).pipe(
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         );
         const config = yield* ServerConfig;
         const runtimeOptions = {
@@ -2183,7 +2187,7 @@ it.live(
       }).pipe(
         Effect.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "native-handoff-review-" }).pipe(
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
         Effect.timeout("40 seconds"),
@@ -3436,7 +3440,7 @@ it.live(
         });
         const database = makeSqlitePersistenceLive(
           NodePath.join(directory, "capacity.sqlite"),
-        ).pipe(Layer.provide(NodeServices.layer));
+        ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
         const config = yield* ServerConfig;
         const runtimeOptions = {
           databaseLayer: database,
@@ -3618,7 +3622,7 @@ it.live(
           assert.notEqual(freshConfig.stateDir, config.stateDir);
           const freshDatabase = makeSqlitePersistenceLive(
             NodePath.join(freshConfig.stateDir, "capacity.sqlite"),
-          ).pipe(Layer.provide(NodeServices.layer));
+          ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
           yield* withImporter(
             Effect.gen(function* () {
               const { lease } = yield* leaseFor(original.fixture);
@@ -3667,13 +3671,13 @@ it.live(
           Effect.provide(
             ServerConfig.layerTest(process.cwd(), {
               prefix: "native-capacity-other-profile-",
-            }).pipe(Layer.provideMerge(NodeServices.layer)),
+            }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
           ),
         );
       }).pipe(
         Effect.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "native-capacity-proof-" }).pipe(
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
         Effect.timeout("90 seconds"),

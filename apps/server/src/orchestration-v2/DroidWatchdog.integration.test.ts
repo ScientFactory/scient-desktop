@@ -1,5 +1,6 @@
 /** Real ACP stdio → V2 SQL terminal → held user queue; no live provider/model. */
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -34,6 +35,7 @@ import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 const decodeSettings = Schema.decodeEffect(DroidSettings);
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-watchdog-sql-" }).pipe(

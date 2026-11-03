@@ -159,7 +159,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     // SCIENT-FORK:START — no provider process runs here; the policy fixture stands in for a live native owner.
     Layer.provide(scientToolServicesLayer),
     // SCIENT-FORK:END

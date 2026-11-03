@@ -347,7 +347,10 @@ it.effect("isolates concurrent MCP discovery and rejects calls outside each curr
       sessions[1]!.session,
     );
     expect(yield* malformed.text).toContain('"code":-32602');
-  }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, NodeCrypto.layer)),
+    Effect.scoped,
+  ),
 );
 
 it("rejects ambiguous tool ownership at composition", () => {

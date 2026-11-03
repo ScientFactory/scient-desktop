@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The test reads produced ZIP archives with yauzl.
 import * as NodeCrypto from "node:crypto";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -175,7 +176,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
               }),
             ),
             Layer.provideMerge(capturedFileLookup),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
           )
         : wordLayer(word),
     ),
@@ -185,7 +186,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
     Layer.provideMerge(capturedFileLookup),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
   );
 const TestLayer = exportLayer("scient-convexport-");
 
@@ -213,7 +214,7 @@ const recordingFileSystem = (accesses: Array<FileAccess>) =>
         },
       });
     }),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)));
 
 const recordingLayer = (accesses: Array<FileAccess>) =>
   ConversationExportService.layer.pipe(
@@ -226,7 +227,7 @@ const recordingLayer = (accesses: Array<FileAccess>) =>
       ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-reads-" }),
     ),
     Layer.provideMerge(recordingFileSystem(accesses)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
   );
 
 /** Writes `bytes` where the attachment store keeps `attachment`, and returns that path. */
@@ -257,7 +258,7 @@ const AssetTestLayer = ConversationExportFiles.layer.pipe(
     ),
   ),
   Layer.provideMerge(AssetConfigLive),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
 );
 
 const seedThread = Effect.fn("seedThread")(function* (input: {
@@ -461,7 +462,10 @@ describe("ConversationExportService", () => {
               exportLayer("scient-convexport-real-word-", { _tag: "real", scratchRoot }),
             ),
           );
-        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        }).pipe(
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+          Effect.scoped,
+        ),
     );
   it.effect("exports a 2,100-message thread completely from the server snapshot", () =>
     Effect.gen(function* () {
@@ -934,7 +938,7 @@ describe("ConversationExportFiles", () => {
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
         ),
       ),
     ),
@@ -999,7 +1003,7 @@ describe("ConversationExportFiles", () => {
       Effect.scoped,
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
         ),
       ),
     ),
@@ -1026,7 +1030,7 @@ describe("ConversationExportFiles", () => {
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-files-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
         ),
       ),
     ),

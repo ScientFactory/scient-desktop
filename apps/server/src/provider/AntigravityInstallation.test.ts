@@ -3,10 +3,12 @@ import * as Queue from "effect/Queue";
 import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
 import * as TestClock from "effect/testing/TestClock";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -65,11 +67,11 @@ const releaseAsset = Effect.fn("test.antigravityReleaseAsset")(function* (
   archive: Uint8Array = completeArchive,
   platform: NodeJS.Platform = hostPlatform,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   return {
     version: "fixture-new",
     url: "https://dl.google.com/antigravity-test.zip",
-    sha256: Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie)),
+    sha256: Hex.encode(yield* digest.digest(Digest.sha256, archive).pipe(Effect.orDie)),
     archiveBytes: archive.byteLength,
     executable: {
       name: platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par",
@@ -258,7 +260,7 @@ const cleanupErrorCodes = {
   Busy: "EBUSY",
 } as const;
 
-it.layer(NodeServices.layer)("Antigravity installation", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity installation", (it) => {
   it.effect("records a newer registry revision without downloading the same archive again", () =>
     Effect.gen(function* () {
       const asset = { ...(yield* releaseAsset()), registryVersion: "1.0.0" };
@@ -587,7 +589,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             return yield* Effect.die("Expected one validation process.");
           }
           if (command.command === "taskkill") {
-            taskkillCommands.push(command.args);
+            taskkillCommands.push(command.args.map(String));
             // The validator tree is stopped here, before its pipes close.
             childProcessesRunning = false;
             yield* stopNative;
@@ -605,7 +607,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
               getOutputFd: () => Stream.empty,
             });
           }
-          const profile = command.options.env?.GEMINI_HOME;
+          const profile = command.options.env?.GEMINI_HOME?.toString();
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
           profiles.add(profile);
           const helper = command.args[0] === "-e";

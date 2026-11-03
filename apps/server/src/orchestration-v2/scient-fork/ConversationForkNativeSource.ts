@@ -328,6 +328,27 @@ export function freezeConversationForkNativeSource(input: {
   };
 }
 
+/** Turns handed to the adapter's native clone. Adapters find a turn boundary from the
+ * turns after it (Kiro forks the head when none follows, Pi cuts at the next turn), but
+ * the frozen prefix holds only retained turns, so the source's later live turns are added. */
+export function frozenForkSourceTurns(
+  frozen: FrozenConversationForkNativeSource,
+  liveTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+): ReadonlyArray<OrchestrationV2ProviderTurn> {
+  const boundary = frozen.sourceProviderTurns.find((turn) => turn.id === frozen.providerTurnId);
+  if (boundary === undefined) return frozen.sourceProviderTurns;
+  const frozenIds = new Set(frozen.sourceProviderTurns.map((turn) => turn.id));
+  return [
+    ...frozen.sourceProviderTurns,
+    ...liveTurns.filter(
+      (turn) =>
+        turn.providerThreadId === frozen.sourceProviderThread.id &&
+        turn.ordinal > boundary.ordinal &&
+        !frozenIds.has(turn.id),
+    ),
+  ];
+}
+
 /** A completed clone owns the inherited prefix even if its first local
  * turn failed. Reusing that exact native owner must recover only the
  * rejected local turn, without injecting the cloned source a second time. */

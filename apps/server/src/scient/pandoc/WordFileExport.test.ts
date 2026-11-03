@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -117,7 +118,7 @@ const run = <A, E>(
               scratchRoot: NodePath.join(root, "scratch"),
             }),
           ),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         )
       : converterLayer(options.seen ?? [], options.failure ?? null, options.beforeConvert);
     const layer = wordFileExportLayer.pipe(
@@ -125,7 +126,7 @@ const run = <A, E>(
       Layer.provide(words),
       Layer.provideMerge(WorkspaceLayer),
       Layer.provideMerge(ServerConfig.layerTest(project, NodePath.join(root, "base"))),
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     return yield* Effect.gen(function* () {
       const service = yield* WordFileExport;
@@ -137,7 +138,7 @@ const run = <A, E>(
         );
       return yield* body({ service, files, project, revisionOf });
     }).pipe(Effect.provide(layer));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
 
 describe("WordFileExport", () => {
   it.live("sends captured Mermaid PNG bytes to the Word converter", () => {

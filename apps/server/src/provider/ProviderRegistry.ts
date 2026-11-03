@@ -126,6 +126,17 @@ export interface ProviderRegistryShape {
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Drop T3-owned model caches before an explicit model refresh. Pass the
+   * target of the refresh that follows. Background and ordinary refreshes
+   * keep their cache timers and must not call this.
+   */
+  readonly invalidateModelCaches: (input: {
+    readonly instanceId?: ProviderInstanceId | undefined;
+    readonly cwd?: string | undefined;
+    readonly fresh?: boolean | undefined;
+  }) => Effect.Effect<void>;
+
+  /**
    * Refresh one instance without substituting cached state when its live probe
    * fails. Lifecycle operations use this when fresh state decides whether an
    * operation may start or can truthfully be reported as complete.
@@ -901,7 +912,10 @@ export const layer = Layer.effect(
     const readRefreshedSource = Effect.fn("readRefreshedSource")(function* (
       providerSource: ProviderSnapshotSource,
     ) {
-      const nextProvider = yield* providerSource.refresh;
+      // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
+      const nextProvider = yield* providerSource.refresh.pipe(
+        Effect.andThen(providerSource.getSnapshot),
+      );
       return yield* correlateSnapshotWithSource(providerSource, nextProvider);
     });
 
@@ -1491,6 +1505,34 @@ export const layer = Layer.effect(
       // SCIENT-FORK:END
     });
 
+    const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
+      input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],
+    ) {
+      yield* manifestService.forceRefresh;
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) => input.instanceId === undefined || input.instanceId === instance.instanceId,
+        ),
+        (instance) =>
+          Effect.gen(function* () {
+            yield* instance.invalidateCaches ?? Effect.void;
+            // Instance and full refreshes resolve installer metadata fresh
+            // themselves; a cached workspace refresh needs it resolved here.
+            const maintenance = yield* instance.snapshot.resolveMaintenance({
+              fresh:
+                input.instanceId !== undefined && input.cwd !== undefined && input.fresh !== true,
+            });
+            yield* Effect.forEach(
+              latestProviderVersionCacheKeys(maintenance),
+              latestVersions.invalidate,
+              { discard: true },
+            );
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -1507,6 +1549,7 @@ export const layer = Layer.effect(
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
+      invalidateModelCaches,
       getProviderMaintenanceCapabilitiesForInstance,
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,

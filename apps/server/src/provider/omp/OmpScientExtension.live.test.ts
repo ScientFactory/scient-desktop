@@ -11,6 +11,7 @@ import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -526,7 +527,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     180_000,
@@ -665,7 +670,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     180_000,
@@ -1032,12 +1041,12 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
       ).pipe(
         Effect.provide(
           Layer.mergeAll(
-            NodeServices.layer,
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
             OmpExecutableGate.layer,
             McpProviderSessions.layer,
             allocatorLayer,
             ServerConfig.layerTest(process.cwd(), { prefix: "scient-installed-subagent-" }).pipe(
-              Layer.provide(NodeServices.layer),
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           ),
         ),
@@ -1092,7 +1101,14 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           expect(toolNames(state.data)).toContain("read");
           yield* process.shutdown;
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+          ),
+        ),
+      ),
     120_000,
   );
 });
@@ -1232,7 +1248,11 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     120_000,

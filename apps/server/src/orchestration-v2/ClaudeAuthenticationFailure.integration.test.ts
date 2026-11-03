@@ -1,7 +1,8 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 /** Scripted native SDK frames, actual V2 admission/SQL and live snapshot overlay.
  * No vendor account, credentials or live provider is accessed. */
 import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -46,6 +47,7 @@ import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "
 const settings = Schema.decodeSync(ClaudeSettings)({});
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-claude-auth-" }).pipe(
@@ -66,7 +68,7 @@ it.effect.each(
     const path = yield* Path.Path;
     const config = yield* ServerConfig.ServerConfig;
     const ids = yield* IdAllocator.IdAllocatorV2;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const changes = yield* PubSub.unbounded<void>();
     const badInstanceId = ProviderInstanceId.make("claude-revoked");
     const peerInstanceId = ProviderInstanceId.make("claude-peer");
@@ -95,7 +97,7 @@ it.effect.each(
           connection: { methods: ["claude_subscription"], canDisconnect: true, operation: null },
         };
         const adapter = yield* Claude.makeClaudeAdapterV2({
-          crypto,
+          random,
           instanceId,
           settings,
           environment: {},
@@ -220,6 +222,7 @@ it.effect.each(
           ProviderLatestVersions.layer,
           Layer.succeed(ServerConfig.ServerConfig, config),
           NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
     );
