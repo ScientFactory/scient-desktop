@@ -16,6 +16,9 @@ import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
+// SCIENT-FORK:START — Scient's GitHub connector borrows Source Control's credential.
+import * as ScientCredentials from "./scientCredentials.ts";
+// SCIENT-FORK:END
 
 // `GitHubRest.layerWithDependencies` carries the quota reserve every GitHub reader shares, so it
 // must be built once; the driver is.
@@ -79,6 +82,9 @@ const makeInstance = Effect.all({
   fetchMedia: GitHubMediaFetch.make,
   signIn: makeSignIn,
   isRepositoryStarred: makeIsRepositoryStarred,
+  // SCIENT-FORK:START — Scient's GitHub connector borrows Source Control's credential.
+  credential: ScientCredentials.make,
+  // SCIENT-FORK:END
 });
 
 export const driver = defineSourceControlDriver({
