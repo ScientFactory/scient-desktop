@@ -538,6 +538,24 @@ export function entryFacts(
   ];
 }
 
+/**
+ * A connector's card facts: once its sign-in works, the catalog's access words give way to
+ * whose account it uses, or to nothing when the service does not say.
+ */
+export function connectorFacts(
+  entry: DiscoverEntry | undefined,
+  connector: Pick<ConnectorSummary, "status" | "auth">,
+): ReadonlyArray<string> {
+  const signedIn = connector.status === "connected" && connector.auth.type !== "none";
+  return entryFacts(entry).flatMap(([label, value]) =>
+    !signedIn || label !== "Access"
+      ? [value]
+      : connector.auth.type === "source-control"
+        ? [`Signed in as ${connector.auth.account}`]
+        : [],
+  );
+}
+
 export function validateCuratedAddress(value: string, template: string): string | null {
   return matchesExtensionAddressTemplate(value, template)
     ? null
