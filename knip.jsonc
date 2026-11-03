@@ -136,8 +136,6 @@
       "entry": [
         "scripts/warm-dep-cache.ts",
         "test/fixtures/**/*.mjs",
-        // Explicit standalone connected extracted-intent qualification configuration.
-        "extractedIntentSend.vitest.config.ts",
         // Documented standalone Chromium selection qualification configuration.
         "latexSelection.vitest.config.ts",
         "latexPaging.vitest.config.ts",

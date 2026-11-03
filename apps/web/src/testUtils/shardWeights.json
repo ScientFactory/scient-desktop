@@ -364,7 +364,6 @@
   "src/composer-undo-grouping.test.ts": 0.052,
   "src/composerDraftStore.test.ts": 0.161,
   "src/confirmDialog.test.ts": 0.025,
-  "src/connectedFixture.test.ts": 0.05,
   "src/connection/clientMetadata.test.ts": 0.012,
   "src/connection/desktopLocal.test.ts": 0.013,
   "src/connection/platform.test.ts": 0.06,
