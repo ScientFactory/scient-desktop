@@ -1,5 +1,9 @@
 import type { SessionCookie } from "@t3tools/contracts";
-import { sessionCookieToCdpParam } from "@t3tools/shared/scientSessionCookies";
+import {
+  sessionCookieFromCdp,
+  sessionCookieToCdpParam,
+  type CdpCookie,
+} from "@t3tools/shared/scientSessionCookies";
 import * as Electron from "electron";
 
 export type CdpSend = (method: string, params?: object) => Promise<unknown>;
@@ -32,5 +36,34 @@ export async function setCookies(send: CdpSend, cookies: ReadonlyArray<SessionCo
   for (let start = 0; start < cookies.length; start += BATCH)
     await send("Storage.setCookies", {
       cookies: cookies.slice(start, start + BATCH).map(sessionCookieToCdpParam),
+    });
+}
+
+/** Every cookie of the session's jar, partitioned ones included; values stay in the main process. */
+export async function readJar(send: CdpSend) {
+  const read = (await send("Storage.getCookies").catch(() => send("Network.getAllCookies"))) as {
+    readonly cookies: ReadonlyArray<CdpCookie>;
+  };
+  const cookies: SessionCookie[] = [];
+  let unsupported = 0;
+  for (const cookie of read.cookies) {
+    const converted = sessionCookieFromCdp(cookie);
+    if ("unsupported" in converted) unsupported += 1;
+    else cookies.push(converted);
+  }
+  return { cookies, unsupported };
+}
+
+/** Removes exactly these cookies: name, domain, path and partition must all match. */
+export async function deleteCookies(
+  send: CdpSend,
+  cookies: ReadonlyArray<Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">>,
+) {
+  for (const cookie of cookies)
+    await send("Network.deleteCookies", {
+      name: cookie.name,
+      domain: cookie.domain,
+      path: cookie.path,
+      ...(cookie.partitionKey ? { partitionKey: cookie.partitionKey } : {}),
     });
 }

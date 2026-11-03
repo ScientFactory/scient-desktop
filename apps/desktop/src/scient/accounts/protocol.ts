@@ -17,3 +17,5 @@ export const QUIET_VISIT = "scient:accounts:quiet-visit";
 export const READ_BROWSER_PASSWORDS = "scient:accounts:read-browser-passwords";
 
 export const SITE_ICON = "scient:accounts:site-icon";
+
+export const QUALIFY_SESSION_COPY = "scient:accounts:qualify-session-copy";

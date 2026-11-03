@@ -63,6 +63,14 @@ export interface DesktopGoogleSession {
   readonly valid: boolean;
 }
 
+/** One case of the dev-only session-copy qualification. */
+export interface DesktopQualifyCase {
+  readonly case: number;
+  readonly name: string;
+  readonly ok: boolean;
+  readonly detail?: string;
+}
+
 export interface DesktopAccountsBridge {
   /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
   readonly originBoundFill?: true;
@@ -111,4 +119,6 @@ export interface DesktopAccountsBridge {
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
   readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
+  /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
+  readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

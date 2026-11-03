@@ -25,6 +25,7 @@ import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
 import { readGoogleSessions } from "./googleSessions.ts";
 import { isPublicHttps, quietVisit } from "./quietVisit.ts";
+import { qualifySessionCopy } from "./qualifySessionCopy.ts";
 import * as Channels from "./protocol.ts";
 
 const Value = Schema.String.check(Schema.isMaxLength(65_536));
@@ -310,6 +311,17 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
+  if (!Electron.app.isPackaged)
+    yield* ipc.handle({
+      channel: Channels.QUALIFY_SESSION_COPY,
+      handler: Effect.fn("DesktopAccounts.qualifySessionCopyHandler")(function* (
+        _raw: unknown,
+        event?: AccountsInvokeEvent,
+      ) {
+        if (!(yield* appWindowSender(event))) return null;
+        return yield* Effect.promise(qualifySessionCopy);
+      }),
+    });
   const manager = yield* PreviewManager;
   const context = yield* Effect.context<PreviewManager | ElectronWindow>();
   const runPromise = Effect.runPromiseWith(context);

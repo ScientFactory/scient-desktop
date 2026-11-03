@@ -25,6 +25,7 @@ export function makeDesktopAccountsBridge(
     signOutSite: (profileId, site, environmentId) =>
       ipc.invoke(Channels.SIGN_OUT_SITE, { profileId, site, environmentId }),
     fill: (input) => ipc.invoke(Channels.FILL, input),
+    qualifySessionCopy: () => ipc.invoke(Channels.QUALIFY_SESSION_COPY),
     loginForm: (tabId) => ipc.invoke(Channels.LOGIN_FORM, { tabId }),
     onLoginFormDetected: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, form: DesktopLoginForm) => listener(form);
