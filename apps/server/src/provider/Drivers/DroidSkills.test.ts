@@ -15,8 +15,15 @@ import {
   discoverDroidSkills,
   droidSkillsToServerProviderSkills,
   setDroidSkillEnabled,
-  type DroidSkillInventoryClientFactory,
 } from "./DroidSkills.ts";
+import type { DroidControlClient, DroidControlClientFactory } from "../droid/DroidControl.ts";
+
+const fakeClient = (overrides: Partial<DroidControlClient>): DroidControlClient => ({
+  close: async () => undefined,
+  listSkills: async () => ({ skills: [] }),
+  setSkillDisabled: async () => undefined,
+  ...overrides,
+});
 
 it("maps Droid's native locations and invocation state without recreating precedence", () => {
   NodeAssert.deepEqual(
@@ -206,23 +213,24 @@ it("skips incomplete Droid skill rows and sorts stable ties by path", () => {
 it.effect("decodes native inventory and always closes the client", () =>
   Effect.gen(function* () {
     let closed = 0;
-    const makeClient: DroidSkillInventoryClientFactory = async () => ({
-      close: async () => {
-        closed += 1;
-      },
-      listSkills: async () => ({
-        projectAvailable: true,
-        skills: [
-          {
-            name: "review",
-            description: "Review changes.",
-            location: "personal",
-            filePath: "/skills/review/SKILL.md",
-            enabled: true,
-          },
-        ],
-      }),
-    });
+    const makeClient: DroidControlClientFactory = async () =>
+      fakeClient({
+        close: async () => {
+          closed += 1;
+        },
+        listSkills: async () => ({
+          projectAvailable: true,
+          skills: [
+            {
+              name: "review",
+              description: "Review changes.",
+              location: "personal",
+              filePath: "/skills/review/SKILL.md",
+              enabled: true,
+            },
+          ],
+        }),
+      });
 
     const skills = yield* discoverDroidSkills(
       { binaryPath: "droid", cwd: "/work", environment: {} },
@@ -239,9 +247,9 @@ it.effect("decodes native inventory and always closes the client", () =>
 it.effect("reads skills from the status probe's session instead of starting one", () =>
   Effect.gen(function* () {
     const sessions: Array<string | undefined> = [];
-    const makeClient: DroidSkillInventoryClientFactory = async (input) => {
+    const makeClient: DroidControlClientFactory = async (input) => {
       sessions.push(input.sessionId);
-      return { close: async () => {}, listSkills: async () => ({ skills: [] }) };
+      return fakeClient({});
     };
     yield* discoverDroidSkills(
       { binaryPath: "droid", cwd: "/work", environment: {}, sessionId: "probe-session" },
@@ -254,31 +262,21 @@ it.effect("reads skills from the status probe's session instead of starting one"
 it.effect("rejects invalid native inventory and still closes the client", () =>
   Effect.gen(function* () {
     let closed = 0;
-    const makeClient: DroidSkillInventoryClientFactory = async () => ({
-      close: async () => {
-        closed += 1;
-      },
-      listSkills: async () => ({
-        skills: [{ name: "future", location: "unknown", filePath: "/future/SKILL.md" }],
-      }),
-    });
+    const makeClient: DroidControlClientFactory = async () =>
+      fakeClient({
+        close: async () => {
+          closed += 1;
+        },
+        listSkills: async () => ({
+          skills: [{ name: "future", location: "unknown", filePath: "/future/SKILL.md" }],
+        }),
+      });
 
     const exit = yield* Effect.exit(
       discoverDroidSkills({ binaryPath: "droid", cwd: "/work", environment: {} }, makeClient),
     );
     NodeAssert.equal(Exit.isFailure(exit), true);
     NodeAssert.equal(closed, 1);
-  }),
-);
-
-it.effect("reports startup failure without acquiring a client", () =>
-  Effect.gen(function* () {
-    const exit = yield* Effect.exit(
-      discoverDroidSkills({ binaryPath: "missing", cwd: "/work", environment: {} }, async () => {
-        throw new Error("spawn failed");
-      }),
-    );
-    NodeAssert.equal(Exit.isFailure(exit), true);
   }),
 );
 
@@ -349,15 +347,16 @@ it.effect("closes an acquired client when discovery is interrupted", () =>
     const listStarted = new Promise<void>((resolve) => {
       markListStarted = resolve;
     });
-    const makeClient: DroidSkillInventoryClientFactory = async () => ({
-      close: async () => {
-        closed += 1;
-      },
-      listSkills: () => {
-        markListStarted?.();
-        return new Promise(() => undefined);
-      },
-    });
+    const makeClient: DroidControlClientFactory = async () =>
+      fakeClient({
+        close: async () => {
+          closed += 1;
+        },
+        listSkills: () => {
+          markListStarted?.();
+          return new Promise(() => undefined);
+        },
+      });
 
     const fiber = yield* discoverDroidSkills(
       { binaryPath: "droid", cwd: "/work", environment: {} },
@@ -373,15 +372,16 @@ it.effect("uses Droid's own user-level settings and always closes the client", (
   Effect.gen(function* () {
     const writes: Array<{ name: string; disabled: boolean }> = [];
     let closed = 0;
-    const makeClient: DroidSkillInventoryClientFactory = async () => ({
-      close: async () => {
-        closed += 1;
-      },
-      listSkills: async () => ({ skills: [] }),
-      setSkillDisabled: async (name, disabled) => {
-        writes.push({ name, disabled });
-      },
-    });
+    const makeClient: DroidControlClientFactory = async () =>
+      fakeClient({
+        close: async () => {
+          closed += 1;
+        },
+        listSkills: async () => ({ skills: [] }),
+        setSkillDisabled: async (name, disabled) => {
+          writes.push({ name, disabled });
+        },
+      });
 
     const result = yield* setDroidSkillEnabled(
       {
@@ -406,13 +406,9 @@ it.effect("refuses to change a project skill, without starting Droid", () =>
     // Scient does not know the project here: a project-level write would land
     // in the server's own working directory and leave the project unchanged.
     let started = 0;
-    const makeClient: DroidSkillInventoryClientFactory = async () => {
+    const makeClient: DroidControlClientFactory = async () => {
       started += 1;
-      return {
-        close: async () => undefined,
-        listSkills: async () => ({ skills: [] }),
-        setSkillDisabled: async () => undefined,
-      };
+      return fakeClient({});
     };
 
     const exit = yield* setDroidSkillEnabled(

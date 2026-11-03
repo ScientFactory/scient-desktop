@@ -1,9 +1,13 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { DroidClient, ProcessTransport, SettingsLevel } from "@factory/droid-sdk/node";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+
+import {
+  DroidControlError,
+  droidControlCall,
+  withDroidControl,
+  type DroidControlClientFactory,
+} from "../droid/DroidControl.ts";
 
 const DroidSkillLocation = Schema.Literals(["project", "personal", "builtin", "automation"]);
 const DroidSkillDisabledBy = Schema.Union([
@@ -33,96 +37,6 @@ const DroidSkillInventory = Schema.Struct({
 });
 const decodeDroidSkillInventory = Schema.decodeUnknownEffect(DroidSkillInventory);
 
-const DROID_SKILL_DISCOVERY_ERROR_TAG = "DroidSkillDiscoveryError";
-class DroidSkillDiscoveryError extends Data.TaggedError(DROID_SKILL_DISCOVERY_ERROR_TAG)<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {
-  static readonly is = Predicate.isTagged(DROID_SKILL_DISCOVERY_ERROR_TAG);
-}
-
-export interface DroidSkillInventoryClient {
-  readonly close: () => Promise<void>;
-  readonly listSkills: () => Promise<unknown>;
-  /** Records the choice in Droid's user-level settings. */
-  readonly setSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
-}
-
-export type DroidSkillInventoryClientFactory = (input: {
-  readonly binaryPath: string;
-  readonly cwd: string;
-  readonly environment: NodeJS.ProcessEnv;
-  /** An existing session to read from; otherwise the client starts a new one. */
-  readonly sessionId?: string | undefined;
-  readonly signal: AbortSignal;
-}) => Promise<DroidSkillInventoryClient>;
-
-// The SDK's high-level createSession requires FACTORY_API_KEY and loses subscription-login support.
-// Use its transport/protocol client to retain existing login while preserving SDK framing and
-// process cleanup.
-const liveDroidSkillInventoryClient: DroidSkillInventoryClientFactory = async (input) => {
-  const transport = new ProcessTransport({
-    droidExecPath: input.binaryPath,
-    cwd: input.cwd,
-    // The SDK spreads the server's environment under this one. Undefined
-    // entries mask what the agent environment contract removed; Node omits them.
-    env: input.environment as Record<string, string>,
-  });
-  let client: DroidClient | undefined;
-  let closePromise: Promise<void> | undefined;
-  const close = (): Promise<void> => {
-    closePromise ??= (client ? client.close() : transport.close()).finally(() => {
-      input.signal.removeEventListener("abort", onAbort);
-    });
-    return closePromise;
-  };
-  const onAbort = () => {
-    void close();
-  };
-  input.signal.addEventListener("abort", onAbort, { once: true });
-  try {
-    await transport.connect();
-    // The SDK rejects a failed write through its own promise and leaves the
-    // stream's error event unhandled: a Droid that exits before a request is
-    // written would end the server with an uncaught EPIPE.
-    transport.getManagedProcess()?.childProcess.stdin?.on("error", () => undefined);
-    client = new DroidClient({ transport });
-    // Loading the status probe's session lists the same skills without starting
-    // another session (verified against Droid 0.228.0 and 0.229.0).
-    const opened = input.sessionId
-      ? await client.loadSession({ sessionId: input.sessionId })
-      : await client.initializeSession({
-          machineId: "scient-provider-skill-inventory",
-          cwd: input.cwd,
-        });
-    if (opened.error) {
-      throw new Error(opened.error.message);
-    }
-  } catch (cause) {
-    await close().catch(() => undefined);
-    throw cause;
-  }
-
-  return {
-    close,
-    listSkills: async () => {
-      if (!client) throw new Error("Droid skill inventory client is not initialized.");
-      const response = await client.listSkills();
-      if (response.error) {
-        throw new Error(response.error.message);
-      }
-      return response.result;
-    },
-    setSkillDisabled: async (skillName, disabled) => {
-      if (!client) throw new Error("Droid skill inventory client is not initialized.");
-      const response = await client.setSkillDisabled(skillName, disabled, SettingsLevel.User);
-      if (response.error) {
-        throw new Error(response.error.message);
-      }
-    },
-  };
-};
-
 function trimOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
@@ -139,9 +53,7 @@ export function droidSkillsToServerProviderSkills(
 
     const description = trimOptional(skill.description);
     // The level whose settings hold this skill's own state. Scient writes
-    // only the user level; a project's level belongs to the project, whose
-    // settings Droid writes relative to its working directory (see
-    // setDroidSkillEnabled).
+    // only the user level; a project's level belongs to the project.
     const ownLevel = skill.location === "project" ? "project" : "user";
     const disabledAtAnotherLevel =
       skill.disabledBy?.kind === "ledger" &&
@@ -172,48 +84,32 @@ export const discoverDroidSkills = Effect.fn("discoverDroidSkills")(function* (
     readonly binaryPath: string;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
-    /** The status probe's session, so one probe starts one Droid session. */
+    /**
+     * The status probe's session, so one probe starts one Droid session
+     * (verified against Droid 0.228.0 and 0.229.0).
+     */
     readonly sessionId?: string | undefined;
   },
-  makeClient: DroidSkillInventoryClientFactory = liveDroidSkillInventoryClient,
+  makeClient?: DroidControlClientFactory,
 ) {
-  const client = yield* Effect.tryPromise({
-    try: (signal) => makeClient({ ...input, signal }),
-    catch: (cause) =>
-      new DroidSkillDiscoveryError({
-        cause,
-        detail: "Failed to start Droid's native skill inventory session.",
-      }),
-  });
-
-  return yield* Effect.acquireUseRelease(
-    Effect.succeed(client),
-    (acquired) =>
-      Effect.tryPromise({
-        try: () => acquired.listSkills(),
-        catch: (cause) =>
-          new DroidSkillDiscoveryError({
-            cause,
-            detail: "Droid failed to list its native skill inventory.",
-          }),
-      }).pipe(
-        Effect.flatMap(decodeDroidSkillInventory),
+  return yield* withDroidControl(
+    { ...input, purpose: "its native skill inventory" },
+    (client) =>
+      droidControlCall("Droid failed to list its native skill inventory.", client.listSkills).pipe(
+        Effect.flatMap((raw) =>
+          decodeDroidSkillInventory(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DroidControlError({
+                  cause,
+                  detail: "Droid returned an invalid native skill inventory.",
+                }),
+            ),
+          ),
+        ),
         Effect.map((inventory) => droidSkillsToServerProviderSkills(inventory.skills)),
-        Effect.mapError((cause) =>
-          DroidSkillDiscoveryError.is(cause)
-            ? cause
-            : new DroidSkillDiscoveryError({
-                cause,
-                detail: "Droid returned an invalid native skill inventory.",
-              }),
-        ),
       ),
-    (acquired) =>
-      Effect.promise(() => acquired.close()).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to close Droid's native skill inventory session.", { cause }),
-        ),
-      ),
+    makeClient,
   );
 });
 
@@ -231,43 +127,20 @@ export const setDroidSkillEnabled = Effect.fn("setDroidSkillEnabled")(function* 
     readonly scope?: string | undefined;
     readonly enabled: boolean;
   },
-  makeClient: DroidSkillInventoryClientFactory = liveDroidSkillInventoryClient,
+  makeClient?: DroidControlClientFactory,
 ) {
   if (input.scope === "project") {
-    return yield* new DroidSkillDiscoveryError({
+    return yield* new DroidControlError({
       detail: `Droid project skills are managed in the project. Change '${input.name}' there.`,
     });
   }
-  const client = yield* Effect.tryPromise({
-    try: (signal) => makeClient({ ...input, signal }),
-    catch: (cause) =>
-      new DroidSkillDiscoveryError({
-        cause,
-        detail: "Failed to start Droid's native skill management session.",
-      }),
-  });
-
-  return yield* Effect.acquireUseRelease(
-    Effect.succeed(client),
-    (acquired) =>
-      Effect.tryPromise({
-        try: () => {
-          if (!acquired.setSkillDisabled) {
-            throw new Error("Droid skill management is unavailable.");
-          }
-          return acquired.setSkillDisabled(input.name, !input.enabled);
-        },
-        catch: (cause) =>
-          new DroidSkillDiscoveryError({
-            cause,
-            detail: `Droid failed to ${input.enabled ? "enable" : "disable"} '${input.name}'.`,
-          }),
-      }).pipe(Effect.as({ effectiveEnabled: input.enabled })),
-    (acquired) =>
-      Effect.promise(() => acquired.close()).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to close Droid's native skill management session.", { cause }),
-        ),
-      ),
+  return yield* withDroidControl(
+    { ...input, purpose: "native skill settings" },
+    (client) =>
+      droidControlCall(
+        `Droid failed to ${input.enabled ? "enable" : "disable"} '${input.name}'.`,
+        () => client.setSkillDisabled(input.name, !input.enabled),
+      ).pipe(Effect.as({ effectiveEnabled: input.enabled })),
+    makeClient,
   );
 });
