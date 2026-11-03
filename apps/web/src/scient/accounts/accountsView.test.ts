@@ -8,6 +8,8 @@ import {
   defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
+  type ConnectorSummary,
+  ConnectorId,
   type ProjectId,
 } from "@t3tools/contracts";
 import {
@@ -21,6 +23,7 @@ import {
   agentMayUse,
   libraryLinkTemplate,
   accountListRows,
+  githubIdentities,
   providerManagedAccounts,
   steadyProviderRows,
   type ProviderRowsCache,
@@ -798,5 +801,79 @@ describe("a university's status", () => {
     // Also a session gone from the browser's cookies, which the server records as signed out.
     expect(accountStatusLabel(check("signed-out"), when)).toBe("Sign in needed");
     expect(accountStatusLabel(check("signed-in"), when)).toBe("Signed in · 2h ago");
+  });
+});
+
+describe("githubIdentities", () => {
+  const connector = (
+    connectorId: string,
+    auth: ConnectorSummary["auth"],
+    status: ConnectorSummary["status"],
+  ): ConnectorSummary => ({
+    connectorId: ConnectorId.make(connectorId),
+    serverName: "github",
+    displayName: "GitHub",
+    url: "https://api.githubcopilot.com/mcp/",
+    source: { type: "url" },
+    auth,
+    status,
+    enabled: true,
+    authRevision: 0,
+    availability: { type: "all-projects" },
+    createdAt: "2026-11-03T00:00:00.000Z",
+    updatedAt: "2026-11-03T00:00:00.000Z",
+  });
+  const borrowed = (account: string) =>
+    ({ type: "source-control", host: "github.com", account }) as const;
+
+  it("joins each observed login's uses, each with its own state, and leaves token rows apart", () => {
+    const missing = connector("con_octo0001", borrowed("octo"), "needs-credential");
+    const orphan = connector("con_gone0001", borrowed("gone"), "needs-credential");
+    const identities = githubIdentities(
+      [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "Octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "app",
+        },
+        {
+          kind: "github",
+          id: "github.com:second",
+          name: "second",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+        { kind: "custom-model", id: "m", name: "Model", href: "/settings/custom-models" },
+      ],
+      [
+        missing,
+        orphan,
+        connector(
+          "con_token001",
+          { type: "credential", strategy: "bearer", storage: "owned" },
+          "connected",
+        ),
+      ],
+    );
+    expect(identities).toEqual([
+      {
+        id: "github.com:octo",
+        host: "github.com",
+        login: "Octo",
+        sourceControl: { via: "app" },
+        connector: missing,
+      },
+      {
+        id: "github.com:second",
+        host: "github.com",
+        login: "second",
+        sourceControl: { via: "gh" },
+      },
+      { id: "github.com:gone", host: "github.com", login: "gone", connector: orphan },
+    ]);
   });
 });

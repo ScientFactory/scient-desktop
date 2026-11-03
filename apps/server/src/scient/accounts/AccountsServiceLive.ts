@@ -30,6 +30,7 @@ import {
   Clock,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Layer,
   Option,
@@ -41,6 +42,7 @@ import {
   Stream,
 } from "effect";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
+import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
 import {
   AccountsService,
   fail,
@@ -84,6 +86,8 @@ import { COPIED_FROM, IMPORTED_FROM } from "@t3tools/shared/scientAccountSignIn"
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 
 const missing = () => fail("not-found", "The account no longer exists.");
+/** Offline, Accounts still opens: GitHub's own answer is left out after this long. */
+const GITHUB_IDENTITY_TIMEOUT = Duration.seconds(3);
 
 /** A removed profile's sign-ins ended with it; a saved password stays, free of the profile. */
 const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId: string) =>
@@ -133,6 +137,7 @@ export const layer = Layer.effect(
     const vault = yield* AccountVault;
     const serviceScope = yield* Scope.Scope;
     const sourceControl = yield* Effect.serviceOption(SourceControlProviderRegistry);
+    const githubCredential = yield* Effect.serviceOption(GitHubSourceControlCredential);
     const writes = yield* Semaphore.make(1);
     const events = yield* PubSub.sliding<AccountsSnapshot>({ capacity: 1, replay: 1 });
     let state: AccountsState = emptyState;
@@ -196,13 +201,40 @@ export const layer = Layer.effect(
     const snapshotNow = Effect.gen(function* () {
       const customModelKeys = yield* sources.customModelKeys.pipe(Effect.orElseSucceed(() => []));
       const githubAccounts = yield* githubSignIns;
+      // Source Control's own choice first, as GitHub names it; then gh's other logins.
+      const effective = Option.isSome(githubCredential)
+        ? yield* githubCredential.value.get("github.com").pipe(
+            Effect.timeoutOption(GITHUB_IDENTITY_TIMEOUT),
+            Effect.map(Option.flatten),
+            Effect.orElseSucceed(() => Option.none()),
+          )
+        : Option.none();
+      const githubRows = [
+        ...Option.toArray(effective).map((credential) => ({
+          host: "github.com",
+          account: credential.login,
+          via: credential.via === "cli" ? ("gh" as const) : credential.via,
+        })),
+        ...githubAccounts
+          .filter(
+            (account) =>
+              !Option.exists(
+                effective,
+                (credential) =>
+                  account.host.toLowerCase() === "github.com" &&
+                  account.account.toLowerCase() === credential.login.toLowerCase(),
+              ),
+          )
+          .map((account) => ({ ...account, via: "gh" as const })),
+      ];
       const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = [
-        ...githubAccounts.map((account) => ({
+        ...githubRows.map((account) => ({
           kind: "github" as const,
-          id: `${account.host}:${account.account}`,
+          id: `${account.host.toLowerCase()}:${account.account.toLowerCase()}`,
           name: account.account,
           detail: account.host,
           href: "/settings/source-control" as const,
+          via: account.via,
         })),
         ...customModelKeys.map((connection) => ({
           kind: "custom-model" as const,
