@@ -656,6 +656,44 @@ describe("GitHub with Source Control's account", () => {
     expect(state.githubSignIn.wait).toHaveBeenCalledWith({ environmentId, input: signInInput });
   });
 
+  it("ends the device sign-in when the dialog closes, so a late approval connects nothing", async () => {
+    await using fixture = setup();
+    const lateApproval = Promise.withResolvers<unknown>();
+    state.githubSignIn.start.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        userCode: "WDJB-MJHT",
+        verificationUri: "https://github.com/login/device",
+        expiresAt: Date.now() + 900_000,
+      },
+    });
+    state.githubSignIn.wait.mockReturnValueOnce(lateApproval.promise);
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: githubConnector, nextStep: "ready" },
+    });
+    await fixture.render(githubEntry);
+    await press("Sign in with GitHub");
+    await expect.element(page.getByText("WDJB-MJHT")).toBeVisible();
+    await fixture.reset();
+    expect(state.githubSignIn.cancel).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: signInInput,
+    });
+    await act(async () => lateApproval.resolve({ _tag: "Success", value: { account: "octo" } }));
+    expect(state.add).not.toHaveBeenCalled();
+
+    state.githubSignIn.wait.mockResolvedValueOnce({ _tag: "Success", value: { account: "octo" } });
+    await fixture.render(githubEntry);
+    await press("Sign in with GitHub");
+    await vi.waitFor(() =>
+      expect(state.add.mock.calls[0]?.[0].input.credential).toEqual({
+        type: "source-control",
+        account: "octo",
+      }),
+    );
+  });
+
   it("tells an expired code from a failed connection and offers to try again", async () => {
     await using fixture = setup();
     state.githubSignIn.start.mockResolvedValue({
