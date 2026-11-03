@@ -247,8 +247,8 @@
     },
     {
       "path": "apps/server/src/provider/ScientAwareness.ts",
-      "anchor": "omp: \"before-agent-start-system-append\"",
-      "purpose": "Deliver Scient awareness to Oh My Pi through its session extension."
+      "anchor": "export function buildScientAwareness(",
+      "purpose": "Compose the Scient awareness Oh My Pi's session extension delivers."
     },
     {
       "path": "apps/server/src/scient/skills/ScientSkillSession.ts",

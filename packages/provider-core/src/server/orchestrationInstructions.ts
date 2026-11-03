@@ -29,7 +29,6 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
 
-/** @public SCIENT-FORK: Scient's Codex awareness carries its own browser block. */
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
 ## T3 Code browser
@@ -87,6 +86,8 @@ export interface T3AcpPromptWithInstructionsInput {
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
   readonly content?: T3AcpInstructionContent;
+  /** The session's granted MCP capabilities, for host copy that depends on them. */
+  readonly capabilities?: ReadonlySet<string>;
 }
 // SCIENT-FORK:END
 
@@ -156,6 +157,8 @@ export function t3OrchestrationPrompt(input: {
   readonly instructions?: string;
   readonly deviceInstructions?: string;
   readonly wrapperElement?: string;
+  /** The session's granted MCP capabilities, for host copy that depends on them. */
+  readonly capabilities?: ReadonlySet<string>;
   // SCIENT-FORK:END
 }): string {
   if (!input.hasT3Mcp) return input.prompt;

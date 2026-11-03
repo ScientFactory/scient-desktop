@@ -2355,6 +2355,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           mcpServers: Record<string, McpServerConfig> | undefined,
           hasDeviceTools: boolean,
           delivered: { readonly orchestration: boolean; readonly device: boolean },
+          // SCIENT-FORK:START — host copy reads the session's grants.
+          capabilities: ReadonlySet<string> | undefined,
+          // SCIENT-FORK:END
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2395,6 +2398,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             hasDeviceTools,
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,
+            // SCIENT-FORK:START — host copy reads the session's grants.
+            ...(capabilities === undefined ? {} : { capabilities }),
+            // SCIENT-FORK:END
           });
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
@@ -2480,6 +2486,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               mcpServers,
               hasDeviceTools,
               delivered,
+              // SCIENT-FORK:START — host copy reads the session's grants.
+              mcpServers === undefined ? undefined : mcpSession?.capabilities,
+              // SCIENT-FORK:END
             );
             const compacted = message === "/compress";
             const pendingUpdates: Array<InteractionUpdate> = [];

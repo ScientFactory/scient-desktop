@@ -3,15 +3,42 @@ import { describe, expect, it } from "vite-plus/test";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import {
   buildScientAwareness,
-  SCIENT_AWARENESS_DELIVERY,
+  buildScientPromptAwareness,
+  SCIENT_BROWSER_AWARENESS,
   SCIENT_CORE_AWARENESS,
   SCIENT_COMPUTE_AWARENESS,
   SCIENT_DOCUMENT_BUILD_AWARENESS,
   SCIENT_OVERLEAF_AWARENESS,
-  SCIENT_PREVIEW_AWARENESS,
+  SCIENT_PAPERS_AWARENESS,
   SCIENT_SKILLS_AWARENESS,
 } from "./ScientAwareness.ts";
+import {
+  SCIENT_DEVICE_TOOL_INSTRUCTIONS,
+  SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+} from "./ScientProviderInstructions.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "./ScientToolProjection.ts";
+
+/**
+ * How each built-in provider receives Scient's awareness. Adding a provider
+ * fails the coverage test until its delivery is decided here.
+ */
+const SCIENT_AWARENESS_DELIVERY = {
+  acpRegistry: "first-prompt",
+  antigravity: "first-prompt",
+  claudeAgent: "system-preset-append",
+  codex: "developer-instructions",
+  cursor: "first-prompt",
+  droid: "system-prompt-append",
+  fx: "first-prompt",
+  grok: "rules-append",
+  kiro: "first-prompt",
+  // Muse sends runtime text every turn and has no first-prompt or private system seam.
+  muse: "unsupported-no-prompt-seam",
+  opencode: "managed-server-per-message-system",
+  omp: "before-agent-start-system-append",
+  pi: "before-agent-start-system-append",
+  scient: "before-agent-start-system-append",
+} as const;
 
 const wordCount = (value: string): number => value.trim().split(/\s+/u).length;
 
@@ -39,17 +66,32 @@ describe("Scient awareness", () => {
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
     );
     expect(buildScientAwareness(new Set(["preview", "skills:read"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_PREVIEW_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
+      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_BROWSER_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
     );
   });
 
-  it("adds compact browser awareness only for an actually granted preview capability", () => {
-    expect(wordCount(SCIENT_PREVIEW_AWARENESS)).toBeLessThanOrEqual(50);
+  it("reuses upstream's browser rules only for an actually granted preview capability", () => {
+    expect(SCIENT_BROWSER_AWARENESS).toMatch(/^## Scient browser\n/u);
+    expect(SCIENT_BROWSER_AWARENESS).toContain("Prefer snapshot locators over coordinates.");
+    expect(SCIENT_BROWSER_AWARENESS).toContain("two preview calls fail on one step");
     expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["preview"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_PREVIEW_AWARENESS}`,
+      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_BROWSER_AWARENESS}`,
     );
+  });
+
+  it("sends papers first to the paper tool, and the sign-in note only with the browser", () => {
+    expect(wordCount(SCIENT_PAPERS_AWARENESS)).toBeLessThanOrEqual(70);
+    expect(SCIENT_PAPERS_AWARENESS).toContain("`scient_paper_get` first");
+    expect(SCIENT_PAPERS_AWARENESS).toContain("`scient_papers_queue`");
+    expect(buildScientAwareness(new Set(["preview", "accounts"]))).toContain(
+      "`preview_open` signs in by itself",
+    );
+    const withoutBrowser = buildScientAwareness(new Set(["accounts"]));
+    expect(withoutBrowser).toContain("`scient_paper_get` first");
+    expect(withoutBrowser).not.toContain("preview_open");
+    expect(buildScientAwareness(new Set(["preview"]))).not.toContain("scient_paper_get");
   });
 
   it("recommends Compute runs only with compute authority", () => {
@@ -112,7 +154,7 @@ describe("Scient awareness", () => {
     expect(awareness).toContain("`mcp__scient__preview_status`");
     expect(awareness).toContain("`mcp__scient__preview_open`");
     expect(awareness).not.toContain("`preview_status`");
-    expect(awareness).not.toContain("`ToolSearch`");
+    expect(awareness).toContain("`mcp__scient__preview_*`");
     expect(awareness).not.toContain("use `scient_pdf_build`");
     expect(awareness).toContain("`mcp__scient__scient_skills_list`");
     expect(awareness).toContain("`mcp__scient__scient_skill_load`");
@@ -122,15 +164,27 @@ describe("Scient awareness", () => {
     );
   });
 
+  it("tells Claude to load deferred tools, including the device tools, through ToolSearch", () => {
+    const claude = buildScientAwareness(
+      new Set(["compute", "device", "documents:build", "skills:read", "accounts"]),
+      CLAUDE_SCIENT_TOOL_PROJECTION,
+    );
+    expect(claude).toContain(SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH);
+    expect(claude).toContain("`select:mcp__scient__device_list,");
+    expect(claude.match(/through `ToolSearch` first/gu)).toHaveLength(5);
+    const canonical = buildScientAwareness(new Set(["device"]));
+    expect(canonical).toContain(SCIENT_DEVICE_TOOL_INSTRUCTIONS);
+    expect(canonical).not.toContain("ToolSearch");
+  });
+
+  it("leaves the device text to upstream's own prompt delivery for prompt-only providers", () => {
+    const prompt = buildScientPromptAwareness(new Set(["device", "preview", "not-a-grant"]));
+    expect(prompt).toBe(buildScientAwareness(new Set(["preview"])));
+  });
+
   it("requires an explicit delivery decision for every built-in provider", () => {
     const builtInKinds = BUILT_IN_DRIVERS.map((driver) => String(driver.driverKind)).toSorted();
     expect(Object.keys(SCIENT_AWARENESS_DELIVERY).toSorted()).toEqual(builtInKinds);
-    expect(SCIENT_AWARENESS_DELIVERY.acpRegistry).toBe("unsupported-no-private-system-seam");
-    expect(SCIENT_AWARENESS_DELIVERY.antigravity).toBe("unsupported-no-private-system-seam");
-    expect(SCIENT_AWARENESS_DELIVERY.cursor).toBe("unsupported-no-private-system-seam");
-    expect(SCIENT_AWARENESS_DELIVERY.fx).toBe("unsupported-no-private-system-seam");
-    // MCP tool injection does not imply a private system-instruction channel.
-    expect(SCIENT_AWARENESS_DELIVERY.muse).toBe("unsupported-no-private-system-seam");
     // Oh My Pi uses Pi's session-local extension hook, appended to its string[] prompt.
     expect(SCIENT_AWARENESS_DELIVERY.omp).toBe(SCIENT_AWARENESS_DELIVERY.pi);
   });

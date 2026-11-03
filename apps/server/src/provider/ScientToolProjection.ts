@@ -17,10 +17,11 @@ export const CANONICAL_SCIENT_TOOL_PROJECTION: ScientToolProjection = {
   deferred: false,
 };
 
+/** Claude Code defers MCP tools behind ToolSearch. */
 export const CLAUDE_SCIENT_TOOL_PROJECTION: ScientToolProjection = {
   name: (name) => `mcp__scient__${name}`,
   providerNativeSkillTool: true,
-  deferred: false,
+  deferred: true,
 };
 
 export function scientToolProjectionForProvider(provider: string): ScientToolProjection {

@@ -8121,6 +8121,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ...(previousInstructionState === undefined || compactionMarker !== undefined
               ? {}
               : { previousState: previousInstructionState }),
+            ...(mcpSession === undefined ? {} : { capabilities: mcpSession.capabilities }),
           });
           // SCIENT-FORK:END
           if (text.length > 0) {

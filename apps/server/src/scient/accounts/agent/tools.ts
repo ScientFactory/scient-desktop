@@ -265,7 +265,7 @@ const paperGet = metadata(
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "Get one paper's PDF by DOI or link and save it in the project: a free legal copy, or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
+      "The first step for any paper: get its PDF by DOI or link and save it in the project, from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
