@@ -3283,6 +3283,10 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+// SCIENT-FORK:START — subagent cards showed Claude Code's tools-used line; upstream PR pending.
+// Claude Code opens a subagent's result with the tools it used, a note for the parent model.
+const CLAUDE_TOOLS_USED_LINE = /^<tools-used-before-summary>[^<]*<\/tools-used-before-summary>\s*/u;
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
@@ -3304,11 +3308,12 @@ function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
       )
       .join("\n");
     if (text.length > 0) {
-      return text;
+      return text.replace(CLAUDE_TOOLS_USED_LINE, "");
     }
   }
-  return claudeNativeToolOutputText(output);
+  return claudeNativeToolOutputText(output).replace(CLAUDE_TOOLS_USED_LINE, "");
 }
+// SCIENT-FORK:END
 
 function isClaudeSubagentAsyncLaunchAck(output: ClaudeNativeToolOutput): boolean {
   const value = claudeNativeToolOutputValue(output);
