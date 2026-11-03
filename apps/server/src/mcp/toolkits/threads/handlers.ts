@@ -17,39 +17,22 @@ const readFailed = (threadId: ThreadId) => () =>
   toolError("orchestration_error", `Thread ${threadId} could not be read.`);
 
 /**
- * Authority comes from the host-issued invocation, never from the input: a
- * thread may read itself or another non-deleted thread in its own project.
+ * Authority comes from the host-issued invocation, never from the input. Scoping
+ * follows upstream's `readThread`: a live caller reads live threads in its own
+ * project, and a missing, deleted or other-project thread reads the same.
  */
 export const readHandoffSummaryForInvocation = Effect.fn("ScientThreadsToolkit.readHandoffSummary")(
   function* (input: ScientHandoffSummaryReadInput) {
     const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-    if (!invocation.capabilities.has("threads:read")) {
-      return yield* toolError(
-        "capability_denied",
-        "This provider session does not grant read access to Scient threads.",
-      );
-    }
     const projections = yield* ProjectionStoreV2;
-    const target = yield* projections
-      .getThreadShell(input.threadId)
-      .pipe(Effect.mapError(readFailed(input.threadId)));
-    if (target === null) {
-      return yield* toolError(
-        "thread_not_found",
-        `Thread ${input.threadId} does not exist or is no longer available.`,
-      );
-    }
-    if (input.threadId !== invocation.threadId) {
-      const caller = yield* projections
-        .getThreadShell(invocation.threadId)
-        .pipe(Effect.mapError(readFailed(input.threadId)));
-      if (caller === null || caller.projectId !== target.projectId) {
-        return yield* toolError(
-          "thread_outside_project",
-          `Thread ${input.threadId} is not in the calling thread's project. scient_handoff_summary_read only reads threads in the calling project.`,
-        );
-      }
-    }
+    const shell = (threadId: ThreadId) =>
+      projections.getThreadShell(threadId).pipe(Effect.mapError(readFailed(input.threadId)));
+    const caller = yield* shell(invocation.threadId);
+    if (caller === null || caller.deletedAt !== null)
+      return yield* toolError("thread_not_found", "The calling thread was not found.");
+    const target = input.threadId === caller.id ? caller : yield* shell(input.threadId);
+    if (target === null || target.deletedAt !== null || target.projectId !== caller.projectId)
+      return yield* toolError("thread_not_found", "The thread was not found.");
     const page = yield* projections
       .getContextHandoffSummaryPage(
         input.threadId,

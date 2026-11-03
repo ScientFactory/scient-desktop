@@ -20,6 +20,8 @@ import { makeMuseManagedRuntimeResolution } from "../scient/providerLifecycle/Mu
 import { ProviderLifecycleCoordinator } from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import { makeNativeSessionShutdown } from "./NativeSessionShutdown.ts";
 import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
+import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
+import { buildScientAwareness } from "./ScientAwareness.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 
 export type MuseCompositionEnv =
@@ -34,6 +36,8 @@ export const MuseDriver = makeMuseDriver<
   Pick<ScientProviderInstance, "managedRuntimeActions">
 >({
   runtimeInstructions: buildScientRuntimeInstructions,
+  // Muse has no system seam; its first turn carries the awareness, and a changed one again.
+  scientAwareness: (capabilities) => buildScientAwareness(toMcpCapabilities(capabilities)),
   resolveRuntime: Effect.fnUntraced(function* (input) {
     const host = yield* ProviderHost;
     const config = yield* ServerConfig;

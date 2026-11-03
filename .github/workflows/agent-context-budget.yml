@@ -20,35 +20,30 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      # SCIENT-FORK: Scient's sibling budget covers every awareness capability.
-      BUDGETS: apps/server/src/provider/agentContextBudget.json apps/server/src/provider/agentContextBudget.scient.json
+      # SCIENT-FORK: Scient's budget measures Scient's text; upstream's file stays upstream's.
+      BUDGET: apps/server/src/provider/agentContextBudget.scient.json
       ALLOW_INCREASE: ${{ contains(github.event.pull_request.labels.*.name, 'agent-context-increase') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          sparse-checkout: |
-            apps/server/src/provider/agentContextBudget.json
-            apps/server/src/provider/agentContextBudget.scient.json
+          # SCIENT-FORK: the Scient budget, as above.
+          sparse-checkout: apps/server/src/provider/agentContextBudget.scient.json
           sparse-checkout-cone-mode: false
 
       - name: Compare with main
         run: |
           git fetch --quiet --depth=1 origin main
-          grown=""
-          for BUDGET in $BUDGETS; do
-            if ! git cat-file -e "FETCH_HEAD:$BUDGET" 2>/dev/null; then
-              echo "main has no $BUDGET yet."
-              continue
-            fi
-            git show "FETCH_HEAD:$BUDGET" > "$RUNNER_TEMP/main.json"
-            file_grown=$(jq -r --slurpfile main "$RUNNER_TEMP/main.json" '
-              to_entries[]
-              | select($main[0][.key] != null and .value > $main[0][.key])
-              | "\(.key): \($main[0][.key]) -> \(.value) (+\(.value - $main[0][.key]))"
-            ' "$BUDGET")
-            if [ -n "$file_grown" ]; then grown="$grown$file_grown"$'\n'; fi
-          done
+          if ! git cat-file -e "FETCH_HEAD:$BUDGET" 2>/dev/null; then
+            echo "main has no agent context budget yet."
+            exit 0
+          fi
+          git show "FETCH_HEAD:$BUDGET" > "$RUNNER_TEMP/main.json"
+          grown=$(jq -r --slurpfile main "$RUNNER_TEMP/main.json" '
+            to_entries[]
+            | select($main[0][.key] != null and .value > $main[0][.key])
+            | "\(.key): \($main[0][.key]) -> \(.value) (+\(.value - $main[0][.key]))"
+          ' "$BUDGET")
           if [ -z "$grown" ]; then
             echo "Agent context is not larger than main."
             exit 0
@@ -58,5 +53,5 @@ jobs:
             echo "Accepted by the agent-context-increase label."
             exit 0
           fi
-          echo "::error::Agent context grew compared to main. Cut the added text and rerun the evals that cover it (evals/README.md), or ask a maintainer to add the agent-context-increase label."
+          echo "::error file=$BUDGET::Agent context grew compared to main. Cut the added text and rerun the evals that cover it (evals/README.md), or ask a maintainer to add the agent-context-increase label."
           exit 1

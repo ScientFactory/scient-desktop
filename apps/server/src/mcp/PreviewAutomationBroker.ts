@@ -39,12 +39,16 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+// SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
 import * as AgentInvocationContext from "../scient/operations/AgentInvocationContext.ts";
+// SCIENT-FORK:END
 
 const HOST_RESPONSE_GRACE_MS = 1_000;
 
 export interface PreviewAutomationInvokeInput {
+  // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
   readonly scope: AgentInvocationContext.AgentInvocationScope;
+  // SCIENT-FORK:END
   readonly operation: PreviewAutomationOperation;
   readonly input: unknown;
   readonly tabId?: PreviewTabId;
@@ -104,10 +108,12 @@ interface HostAssignment {
 
 interface PreviewAutomationRequestErrorContext {
   readonly operation: PreviewAutomationOperation;
+  // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
   readonly environmentId: AgentInvocationContext.AgentInvocationScope["environmentId"];
   readonly threadId: AgentInvocationContext.AgentInvocationScope["threadId"];
-  readonly providerSessionId: string | undefined;
+  readonly providerSessionId: string;
   readonly providerInstanceId: AgentInvocationContext.AgentInvocationScope["providerInstanceId"];
+  // SCIENT-FORK:END
   readonly clientId: string;
   readonly connectionId: ClientConnection["connectionId"];
   readonly requestId: string;
@@ -162,10 +168,10 @@ const selectorDiagnosticsFromInput = (
   return {};
 };
 
-// SCIENT-FORK:START - transport-neutral native sessions retain per-thread browser ownership.
 /** Codex/OpenCode share sessions across threads; include thread id to isolate tabs and ownership. */
+// SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
 const hostAssignmentKey = (scope: AgentInvocationContext.AgentInvocationScope): string =>
-  `${scope.environmentId}\u0000${scope.nativeSessionId !== undefined ? `native:${scope.nativeSessionId}` : `provider:${scope.providerSessionId}`}\u0000${scope.threadId}`;
+  `${scope.environmentId}\u0000${scope.providerSessionId}\u0000${scope.threadId}`;
 // SCIENT-FORK:END
 
 const isPreviewTabId = Schema.is(PreviewTabId);
@@ -537,6 +543,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
         host.liveTabs.some(
           (tab) =>
+            // SCIENT-FORK: the transport-neutral scope names its thread directly.
             tab.threadId === input.scope.threadId &&
             (!visibleOnly || tab.visible === true) &&
             (input.tabId === undefined || tab.tabId === input.tabId),
@@ -589,10 +596,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
       const context: PreviewAutomationRequestErrorContext = {
         operation: input.operation,
+        // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
         environmentId: input.scope.environmentId,
         threadId: input.scope.threadId,
         providerSessionId: input.scope.providerSessionId,
         providerInstanceId: input.scope.providerInstanceId,
+        // SCIENT-FORK:END
         clientId: connection.clientId,
         connectionId: connection.connectionId,
         requestId,
@@ -610,10 +619,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     if (!route) {
       return yield* new PreviewAutomationNoAvailableHostError({
         operation: input.operation,
+        // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
         environmentId: input.scope.environmentId,
         threadId: input.scope.threadId,
         providerSessionId: input.scope.providerSessionId,
         providerInstanceId: input.scope.providerInstanceId,
+        // SCIENT-FORK:END
       });
     }
     const { connection, requestId, requestContext, requestSequence } = route;
@@ -639,6 +650,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           connectionId: connection.connectionId,
           request: {
             requestId,
+            // SCIENT-FORK: the transport-neutral scope names its thread directly.
             threadId: input.scope.threadId,
             tabId: requestContext.tabId,
             tabIdExplicit: input.tabId !== undefined,

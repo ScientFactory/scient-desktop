@@ -152,7 +152,7 @@ export interface OverleafCapturedFile {
 }
 
 /**
- * Why a new file is left out unless someone selects it (pr-c-design section 5).
+ * Why a new file is left out unless someone selects it.
  * A rule evaluated at every capture, never a remembered choice. `too-large`
  * is over Overleaf's file limit: never read, and selecting it is refused.
  */

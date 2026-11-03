@@ -209,6 +209,8 @@ export interface MuseAdapterV2Options {
   // SCIENT-FORK:START — host runtime text remains outside the generic adapter by default.
   /** Host-owned runtime text; defaults to the package's generic T3 policy. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  /** Host awareness for the session's granted MCP capabilities; absent sends none. */
+  readonly scientAwareness?: (capabilities: ReadonlySet<string>) => string;
   // SCIENT-FORK:END
 }
 
@@ -343,6 +345,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+      let sentAwareness: string | undefined;
+      // SCIENT-FORK:END
 
       let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
       const agentEndedAt = new Map<string, DateTime.Utc>();
@@ -1413,6 +1418,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             turn.items.set(item.itemId, item);
             turn.dirty.delete(item.itemId);
             yield* publishItem(turn, item);
+            // SCIENT-FORK:START — a completed compaction, manual or automatic, may drop the
+            // awareness from the context, so the next turn carries it again.
+            if (
+              item.kind === "compaction" &&
+              item.status === "completed" &&
+              (!item.outcome || item.outcome === "compacted")
+            )
+              sentAwareness = undefined;
+            // SCIENT-FORK:END
             if (turn.compact && item.kind === "compaction" && item.status !== "inProgress") {
               yield* finish(
                 turn,
@@ -2085,6 +2099,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             yield* handleNotification(method, data).pipe(Effect.catch(failHost));
         }).pipe(eventPermit.withPermits(1));
         if (continuation) return;
+        // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+        const mcpForAwareness =
+          options.scientAwareness === undefined || input.configureMcp === false
+            ? undefined
+            : yield* mcpSessions.read(input.threadId);
+        const awareness =
+          mcpForAwareness === undefined
+            ? undefined
+            : options.scientAwareness?.(mcpForAwareness.capabilities);
+        const sendAwareness = awareness !== undefined && awareness !== sentAwareness;
+        // SCIENT-FORK:END
         yield* Effect.gen(function* () {
           if (compact) {
             const result = yield* request("session/compact", {}, true, nativeId).pipe(
@@ -2103,6 +2128,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               "turn/start",
               {
                 input: [
+                  // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+                  ...(sendAwareness
+                    ? [
+                        {
+                          type: "text" as const,
+                          text: `<scient_instructions>\n${awareness}\n</scient_instructions>`,
+                        },
+                      ]
+                    : []),
+                  // SCIENT-FORK:END
                   {
                     type: "text",
                     // SCIENT-FORK:START — provider fields use the shared host-selectable formatter.
@@ -2130,6 +2165,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               );
               return yield* protocolError("Muse admitted the turn under an unexpected identity");
             }
+            // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+            if (sendAwareness) sentAwareness = awareness;
+            // SCIENT-FORK:END
           }
         }).pipe(
           Effect.onError((cause) => {

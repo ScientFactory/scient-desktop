@@ -54,7 +54,7 @@ import * as OverleafStateStoreModule from "./OverleafStateStore.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 import * as WorkspaceApplierModule from "./WorkspaceApplier.ts";
 
-/** Per-file decisions on what a sync sends (pr-c-design section 5). */
+/** Per-file decisions on what a sync sends. */
 export interface OverleafFileDecisions {
   /** New files to keep only on this computer (remembered until sent). */
   readonly keepOnlyHere?: ReadonlyArray<string> | undefined;
@@ -128,7 +128,7 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
 
 /**
  * An open editor of the linked folder could not save, or a window did not answer
- * the request to save (pr-c-design.md sections 4.3, 4.4 and 6). The operation
+ * the request to save. The operation
  * stopped before it read or changed a file. Its reason is `editor-unsaved`.
  */
 export class OverleafEditorUnsavedError extends Schema.TaggedError<OverleafEditorUnsavedError>()(
@@ -889,7 +889,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   /**
    * The engine's selections for a request: the default new-file selection, the
    * conflict choices, and the per-file decisions, which the engine applies to the
-   * review's own capture and carries through rebuilt reviews (pr-c-design section 5).
+   * review's own capture and carries through rebuilt reviews.
    */
   const selectionsFor = (
     input: { readonly files?: OverleafFileDecisions },

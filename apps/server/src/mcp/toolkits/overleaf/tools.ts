@@ -17,14 +17,14 @@ import {
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { OverleafSync } from "../../../scient/overleaf/OverleafSync.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 
 /**
- * Overleaf manual sync for agents (pr-c-design.md sections 1 and 6): whatever a
+ * Overleaf manual sync for agents: whatever a
  * person can do, with no Overleaf permission, approval or confirmation of its
  * own. Every result carries `lines`, the sentences a person would see, beside
  * the structured fields the app reads. See docs/internals/scient-overleaf-agent-tools.md.
@@ -80,14 +80,11 @@ const dependencies = [
   SecretRequests,
 ];
 
-const overleafOperation = (id: string): OperationMetadata => ({
+const overleafOperation = (id: string): OperationDefinition => ({
   id,
-  family: "overleaf",
   scope: "workspace",
-  // Overleaf is a document workflow; it adds no grant of its own (pr-c-design.md section 1).
+  // Overleaf is a document workflow; it adds no grant of its own.
   requiredCapabilities: ["documents:build"],
-  approval: "session-grant",
-  documentation: "docs/internals/scient-overleaf-agent-tools.md",
 });
 
 const ConnectionId = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,63}$/u)).annotate({

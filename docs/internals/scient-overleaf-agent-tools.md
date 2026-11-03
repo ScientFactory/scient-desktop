@@ -13,8 +13,8 @@ operation records say `session-grant`. The provider's own handling of tool calls
 under the composer setting is the only control. Each tool is annotated honestly
 (read-only, destructive, open-world), which providers use for their own prompts.
 
-**Results.** Every success carries `lines`, the sentences a person would see
-(pr-c-design.md section 4.1), beside structured fields from the same views the
+**Results.** Every success carries `lines`, the sentences a person would see,
+beside structured fields from the same views the
 routes return. Lines name counts, manuscript paths and fixed categories only:
 never Git's text, a commit or the token. A result for a thread in another
 worktree starts with the linked-copy line ("This link belongs to the copy of the
@@ -60,12 +60,12 @@ earlier receipt instead of running again; a retried tool call is a new request.
   `link-folder` it walks the folder (at most 2,000 entries, no hidden folders,
   no links) and sets `suggestNewFolder` when it holds five or more code or data
   files, or any when the folder is the project's top. That is information, not
-  a step (pr-c-design.md section 3).
+  a step.
 - **Sync**, **restore**, **preview** and **recover** look the link up in the project's list first, so
   the result names the linked copy; a link the list leaves out
   fails with the service's own reason (relink, another project, disconnected).
 - **Relink** records the folder in the calling thread's copy.
-- **Files** (pr-c-design.md section 5) are fields on preview and sync, not a
+- **Files** are fields on preview and sync, not a
   tool of their own: `files.keepOnlyHere` keeps new files only on this computer
   (remembered until sent), `files.send` sends a new file the rule skips
   (build output, hidden, Scient's own) or one kept only here, and

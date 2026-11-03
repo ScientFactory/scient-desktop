@@ -1,9 +1,11 @@
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Logger from "effect/Logger";
 import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import { Tool } from "effect/ai";
 
 import { scientTools } from "../../mcp/ScientOperationCatalog.ts";
@@ -12,7 +14,6 @@ import {
   ScientSkillsToolkitHandlersLive,
 } from "../../mcp/toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "../../mcp/toolkits/skills/tools.ts";
-import { makeScientToolExecutor } from "./AgentOperationDispatcher.ts";
 import { SCIENT_CORE_AWARENESS } from "../../provider/ScientAwareness.ts";
 import { prepareScientSkillTurn } from "../skills/ScientSkillInvocation.ts";
 import { AgentInvocationContext } from "./AgentInvocationContext.ts";
@@ -24,7 +25,14 @@ it.live(
   "adds zero automatic catalog bytes and preserves rare and explicit access at 28, 100 and 500 entries",
   () =>
     Effect.gen(function* () {
-      const execute = yield* makeScientToolExecutor(yield* ScientSkillsToolkit);
+      const built = yield* ScientSkillsToolkit;
+      const execute = <Name extends keyof typeof ScientSkillsToolkit.tools>(
+        name: Name,
+        input: Tool.Parameters<(typeof ScientSkillsToolkit.tools)[Name]>,
+      ) =>
+        built
+          .handle(name, input)
+          .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption));
       const coreBytes = Buffer.byteLength(SCIENT_CORE_AWARENESS);
       expect(coreBytes).toBeLessThan(2_000);
       for (const count of [28, 100, 500]) {
@@ -51,7 +59,8 @@ it.live(
         expect(selected.input).not.toContain("additional skills");
         expect(Buffer.byteLength(selected.input!)).toBeLessThan(600);
         const invocation = AgentInvocationContext.of({
-          nativeSessionId: "budget-fixture",
+          providerSessionId: "budget-fixture",
+          providerInstanceId: ProviderInstanceId.make("budget-provider"),
           environmentId: EnvironmentId.make("budget-environment"),
           threadId: ThreadId.make("budget-thread"),
           issuedAt: 1,
@@ -154,20 +163,8 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(58);
+      expect(scientTools).toHaveLength(46);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
-        "preview_act",
-        "preview_dialog",
-        "preview_evaluate",
-        "preview_navigate",
-        "preview_open",
-        "preview_recording_start",
-        "preview_recording_stop",
-        "preview_resize",
-        "preview_set_appearance",
-        "preview_snapshot",
-        "preview_status",
-        "preview_wait_for",
         "scient_account_add",
         "scient_account_browser_session",
         "scient_account_credentials",

@@ -2,11 +2,8 @@ import { hasOperationCapabilities, type OperationDefinition } from "@scientfacto
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import * as Sink from "effect/Sink";
-import type { Tool, Toolkit } from "effect/ai";
 
-import { scientOperationCatalog, scientTools } from "../../mcp/ScientOperationCatalog.ts";
+import { scientOperationCatalog } from "../../mcp/ScientOperationCatalog.ts";
 import { AgentInvocationContext, type AgentInvocationScope } from "./AgentInvocationContext.ts";
 import { resolveAgentWorkspace } from "./AgentWorkspaceScope.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
@@ -51,39 +48,6 @@ export const dispatchScientOperation = Effect.fn("AgentOperationDispatcher.dispa
   return yield* action.pipe(
     Effect.provideService(AgentInvocationContext, { ...invocation, workspace }),
   );
-});
-
-/** Trusted host composition captures handlers once. Consumers only select a tool
- * and input; they cannot substitute a Toolkit/handler on each invocation. */
-export const makeScientToolExecutor = Effect.fn("AgentOperationDispatcher.makeExecutor")(function* <
-  Tools extends Record<string, Tool.Any>,
->(built: Toolkit.WithHandler<Tools>) {
-  for (const [name, tool] of Object.entries(built.tools)) {
-    if (tool !== scientTools.find((registered) => registered.name === name))
-      return yield* new AgentOperationUnavailable({ message: "Unknown Scient tool definition." });
-  }
-  const resolver = yield* Effect.serviceOption(WorkspaceBindingResolver);
-  return Effect.fn("AgentOperationDispatcher.executeTool")(function* <
-    Name extends keyof Tools & string,
-  >(name: Name, input: Tool.Parameters<Tools[Name]>) {
-    const operation = scientOperationCatalog.forTool(name);
-    if (
-      !operation ||
-      !Object.hasOwn(built.tools, name) ||
-      built.tools[name] !== scientTools.find((tool) => tool.name === name)
-    ) {
-      return yield* new AgentOperationUnavailable({ message: "Unknown Scient tool." });
-    }
-    const invocation = dispatchScientOperation(
-      operation.id,
-      built
-        .handle(name, input)
-        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
-    );
-    return yield* Option.isSome(resolver)
-      ? invocation.pipe(Effect.provideService(WorkspaceBindingResolver, resolver.value))
-      : invocation;
-  });
 });
 
 /** Discovery uses the same grants as dispatch; a stale list never grants access. */

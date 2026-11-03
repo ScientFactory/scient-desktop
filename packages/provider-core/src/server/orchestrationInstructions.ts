@@ -29,7 +29,6 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
 
-/** @public SCIENT-FORK: Scient's Codex awareness carries its own browser block. */
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
 ## T3 Code browser
@@ -72,6 +71,10 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+  /** The session's granted MCP capabilities, as its provider-facing manifest lists them. */
+  readonly capabilities?: ReadonlySet<string>;
+  // SCIENT-FORK:END
 }
 
 // SCIENT-FORK:START — host copy for the shared ACP prompt composer.
@@ -88,6 +91,14 @@ export interface T3AcpPromptWithInstructionsInput {
   readonly previousState?: T3AcpInstructionState;
   readonly content?: T3AcpInstructionContent;
 }
+
+const sameCapabilities = (
+  left: ReadonlySet<string> | undefined,
+  right: ReadonlySet<string> | undefined,
+) =>
+  left === undefined || right === undefined
+    ? left === right
+    : left.size === right.size && [...left].every((capability) => right.has(capability));
 // SCIENT-FORK:END
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -99,7 +110,10 @@ export function t3AcpPromptWithInstructions(input: T3AcpPromptWithInstructionsIn
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
+    // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+    sameCapabilities(input.previousState.capabilities, input.state.capabilities)
+    // SCIENT-FORK:END
   ) {
     return input.prompt;
   }
@@ -156,6 +170,8 @@ export function t3OrchestrationPrompt(input: {
   readonly instructions?: string;
   readonly deviceInstructions?: string;
   readonly wrapperElement?: string;
+  /** The session's granted MCP capabilities, for host copy that depends on them. */
+  readonly capabilities?: ReadonlySet<string>;
   // SCIENT-FORK:END
 }): string {
   if (!input.hasT3Mcp) return input.prompt;

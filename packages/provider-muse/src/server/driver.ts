@@ -78,6 +78,10 @@ export interface MuseRuntimeResolution<Requirements = never, Extension extends o
 export interface MuseDriverOptions<Requirements = never, Extension extends object = {}> {
   /** Host-owned runtime text; absent means the package's generic T3 default. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
+  // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+  /** Host awareness for the session's granted MCP capabilities; absent sends none. */
+  readonly scientAwareness?: (capabilities: ReadonlySet<string>) => string;
+  // SCIENT-FORK:END
   /** Host-owned runtime selection; receives the environment Muse is launched with. */
   readonly resolveRuntime?: (
     input: ProviderDriverCreateInput<MuseSettings> & {
@@ -250,6 +254,9 @@ export const makeMuseDriver = <Requirements = never, Extension extends object = 
       ...(options.runtimeInstructions === undefined
         ? {}
         : { runtimeInstructions: options.runtimeInstructions }),
+      ...(options.scientAwareness === undefined
+        ? {}
+        : { scientAwareness: options.scientAwareness }),
       // SCIENT-FORK:END
     });
     const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {

@@ -2,7 +2,11 @@ import type { AcpAdapterV2ApplicationBridge } from "@t3tools/provider-acp/server
 import type { T3AcpInstructionState } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import {
+  buildScientAwareness,
+  buildScientPromptAwareness,
+} from "../../provider/ScientAwareness.ts";
+import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "../../provider/antigravity/WorkspaceInstructions.ts";
 import { buildScientAcpPromptWithInstructions } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import {
@@ -10,20 +14,38 @@ import {
   nativeTurnAcceptance,
 } from "../scient-provider/NativeTurnReceipts.ts";
 
-/** Shared Scient prompt and native-delivery behavior; awareness is added only where supported. */
+/** Shared Scient prompt and native-delivery behavior; awareness rides the first prompt. */
 export const scientAcpProviderBridge = {
   nativeTurnAcceptance,
   isPreAcceptanceRejectionCode,
-  composePrompt: buildScientAcpPromptWithInstructions,
+  composePrompt: (input) =>
+    buildScientAcpPromptWithInstructions(
+      input,
+      input.state.capabilities === undefined
+        ? undefined
+        : buildScientPromptAwareness(input.state.capabilities),
+    ),
   runtimeInstructions: buildScientRuntimeInstructions,
 } satisfies Pick<
   AcpAdapterV2ApplicationBridge,
   "nativeTurnAcceptance" | "isPreAcceptanceRejectionCode" | "composePrompt" | "runtimeInstructions"
 >;
 
+/** Antigravity's own file tool writes outside the project, so its prompt says so. */
+export const scientAntigravityBridge = {
+  ...scientAcpProviderBridge,
+  composePrompt: (input) =>
+    buildScientAcpPromptWithInstructions(
+      input,
+      input.state.capabilities === undefined
+        ? undefined
+        : `${buildScientPromptAwareness(input.state.capabilities)}\n\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS.trim()}`,
+    ),
+} satisfies typeof scientAcpProviderBridge;
+
 /**
- * Adds awareness only for flavors whose native launcher has a real prompt or
- * rules seam. Callers without one use `scientAcpProviderBridge` instead.
+ * Awareness for flavors whose native launcher has a private prompt or rules
+ * seam; the prompt then carries no awareness.
  */
 export const scientAcpAwarenessBridge = {
   scientAwareness: (capabilities) =>
@@ -35,7 +57,7 @@ const withoutDeviceTools = (state: T3AcpInstructionState): T3AcpInstructionState
   hasDeviceTools: false,
 });
 
-/** Full bridge for ACP flavors that can deliver a Scient prompt. */
+/** Full bridge for ACP flavors with a private seam for Scient's awareness. */
 export const scientAcpApplicationBridge = {
   ...scientAcpProviderBridge,
   ...scientAcpAwarenessBridge,

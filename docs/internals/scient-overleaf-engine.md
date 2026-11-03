@@ -526,7 +526,7 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
   checkout barrier's application section, then the store's compare-and-set,
   then the file layer's locks. Overleaf is fetched before the section.
-- **New files** (pr-c-design section 5). A review prepared without a list of
+- **New files**. A review prepared without a list of
   additions selects every new file no rule skips; an explicit list, even an
   empty one, is used exactly as given. The rule is judged again at every
   capture and never remembered: build leftovers, hidden files (any path
