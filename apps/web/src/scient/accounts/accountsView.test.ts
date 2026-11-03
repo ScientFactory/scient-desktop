@@ -33,6 +33,7 @@ import {
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
+  importedLabel,
   matchingAccounts,
   mergeProfiles,
   mergeSourceProfiles,
@@ -203,6 +204,12 @@ describe("Accounts decisions", () => {
     expect(name.length).toBeLessThanOrEqual(BROWSER_PROFILE_NAME_MAX_LENGTH);
     expect(name.endsWith(" 2")).toBe(true);
     expect(importProfileName(" ", [])).toBe("Profile");
+  });
+
+  it("says an empty import brought nothing, and counts cookies when sites can't be read", () => {
+    expect(importedLabel(0, 0)).toBe("nothing to import");
+    expect(importedLabel(3, undefined)).toBe("3 cookies");
+    expect(importedLabel(3, 0)).toBe("3 cookies");
   });
 
   it("derives kind-specific forms and secret fields from catalogue choices", () => {

@@ -26,6 +26,7 @@ import {
   type BrowserProfile,
   type BrowserProfileRecord,
   type BrowserImportSource,
+  type BrowserImportSourceProfile,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
@@ -123,10 +124,10 @@ export function mergeSourceProfiles(
         ...(source.unavailable === "browserRunning"
           ? details
               .filter((detail) => detail.sourceId === source.id)
-              .map(
-                (detail) =>
-                  [detail.directory, { directory: detail.directory, name: detail.name }] as const,
-              )
+              .map((detail): [string, BrowserImportSourceProfile] => [
+                detail.directory,
+                { directory: detail.directory, name: detail.name },
+              ])
           : []),
       ]).values(),
     ].map((profile) => ({
@@ -136,6 +137,22 @@ export function mergeSourceProfiles(
       ),
     })),
   }));
+}
+
+const cookieCount = (count: number) =>
+  `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+
+/** How many cookies a browser profile holds, when its browser lets Scient count them. */
+export function cookiesLabel(count: number | undefined) {
+  if (count === undefined) return undefined;
+  return count === 0 ? "no cookies" : cookieCount(count);
+}
+
+/** What importing a browser profile brought: cookies, counted per site. A cookie isn't a sign-in. */
+export function importedLabel(cookies: number, sites: number | undefined) {
+  if (cookies === 0) return "nothing to import";
+  if (!sites) return cookieCount(cookies);
+  return `cookies for ${sites.toLocaleString()} ${sites === 1 ? "site" : "sites"}`;
 }
 
 export function importProfileName(sourceName: string, taken: ReadonlyArray<string>) {

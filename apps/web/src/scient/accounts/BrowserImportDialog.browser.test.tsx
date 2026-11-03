@@ -48,7 +48,7 @@ const snapshot: AccountsSnapshot = {
     onePassword: { state: "not-connected" },
   },
 };
-it("lists running-browser metadata and imports the selection only after quit and recheck", async () => {
+it("lists running-browser metadata, imports the selection only after quit and recheck, and says what it brought", async () => {
   state.sources = [
     { id: "chrome", name: "Chrome", profiles: [], unavailable: "browserRunning" },
     { id: "edge", name: "Edge", profiles: [], unavailable: "notInstalled" },
@@ -71,6 +71,10 @@ it("lists running-browser metadata and imports the selection only after quit and
           name: "Work",
           email: "synthetic@example.invalid",
         },
+      ],
+      signedInSites: async () => [
+        { domain: "example.com", cookies: 3 },
+        { domain: "example.org", cookies: 1 },
       ],
     },
   });
@@ -104,7 +108,10 @@ it("lists running-browser metadata and imports the selection only after quit and
     { id: "chrome", name: "Chrome", profiles: [{ directory: "Profile 1", name: "Work" }] },
   ];
   await page.getByRole("button", { name: "I’ve quit it" }).click();
-  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  await expect
+    .element(page.getByText("Chrome · synthetic@example.invalid · cookies for 2 sites"))
+    .toBeVisible();
+  expect(close).not.toHaveBeenCalled();
   expect(state.importCookies).toHaveBeenCalledOnce();
   expect(state.importCookies.mock.calls[0]?.[3]).toMatchObject({
     sourceProfileDirectory: "Profile 1",
@@ -113,9 +120,13 @@ it("lists running-browser metadata and imports the selection only after quit and
   });
 });
 
-it("imports a Chromium profile's saved passwords through the Accounts importer", async () => {
+it("imports a Chromium profile's saved passwords through the Accounts importer, saying so meanwhile", async () => {
   state.sources = [
-    { id: "chrome", name: "Chrome", profiles: [{ directory: "Default", name: "Personal" }] },
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [{ directory: "Default", name: "Personal", cookieCount: 1200 }],
+    },
   ];
   state.importCookies.mockReset().mockResolvedValue({
     kind: "imported",
@@ -126,13 +137,15 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
   });
   state.toast.mockReset();
   state.command.mockClear();
+  const passwords = Promise.withResolvers<{ content: string; skipped: number }>();
   using _bridge = stubGlobal("desktopBridge", {
     getLocalEnvironmentBootstraps: () => [],
     accounts: {
       sourceProfiles: async () => [
         { sourceId: "chrome", directory: "Default", name: "Personal", passwordCount: 7 },
       ],
-      readBrowserPasswords: async () => ({ content: "synthetic csv", skipped: 3 }),
+      readBrowserPasswords: () => passwords.promise,
+      signedInSites: async () => [],
     },
   });
   await using _screen = await render(
@@ -143,11 +156,15 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
       onClose={() => {}}
     />,
   );
+  await expect.element(page.getByText("Chrome · 1,200 cookies", { exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "Personal · Chrome" }).click();
   await expect
     .element(page.getByRole("checkbox", { name: "Also import saved passwords (7)" }))
     .toBeChecked();
   await page.getByRole("button", { name: "Import (1)", exact: true }).click();
+  await expect.element(page.getByRole("status")).toHaveTextContent("Importing saved passwords…");
+  passwords.resolve({ content: "synthetic csv", skipped: 3 });
+  await expect.element(page.getByRole("status")).not.toBeInTheDocument();
   await vi.waitFor(() =>
     expect(state.toast).toHaveBeenCalledWith({
       type: "success",

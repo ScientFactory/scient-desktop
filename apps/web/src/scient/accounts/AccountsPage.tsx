@@ -83,7 +83,7 @@ import {
 } from "./accountsView";
 import { UniversityIcon, useUniversitySignIn } from "./University";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
-import { BrowserImportDialog, BrowserProfiles } from "./BrowserProfiles";
+import { BrowserImportDialog, BrowserProfiles, useImportingPasswords } from "./BrowserProfiles";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
 import { ProfilePicture } from "./ProfilePicture";
@@ -813,6 +813,7 @@ function AccountsContent({
   // Lists that grow on their own (saved passwords, sign-ins recorded while browsing, sign-ins
   // managed elsewhere) are one row each, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
+  const importingPasswords = useImportingPasswords();
   const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
@@ -926,11 +927,11 @@ function AccountsContent({
               onActivity={setActivity}
             />
           ))}
-        {savedPasswords.length ? (
+        {savedPasswords.length || importingPasswords ? (
           <ListRow
             icon={<KeyRoundIcon />}
             title="Saved passwords"
-            detail={savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
+            detail={`${importingPasswords ? "Importing… " : ""}${savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}`}
             onOpen={() => setDialog("passwords")}
           />
         ) : null}

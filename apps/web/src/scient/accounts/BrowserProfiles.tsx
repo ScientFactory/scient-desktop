@@ -1,7 +1,7 @@
 import { clickableAccountRow } from "./clickableAccountRow";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import {
   BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
@@ -67,6 +67,8 @@ import {
   matchExistingProfile,
   mergeSourceProfiles,
   changedSourceProfile,
+  cookiesLabel,
+  importedLabel,
   signedOutOfGoogle,
   sitesToKeep,
 } from "./accountsView";
@@ -100,6 +102,23 @@ function sourceRecord(
 
 /** One browser import at a time, even after its dialog closed and was opened again. */
 let importRunning = false;
+
+/** Whether a browser import is still adding saved passwords, for the Accounts page to say so. */
+let importingPasswords = false;
+const importingPasswordsListeners = new Set<() => void>();
+function setImportingPasswords(value: boolean) {
+  importingPasswords = value;
+  for (const listener of importingPasswordsListeners) listener();
+}
+export function useImportingPasswords() {
+  return useSyncExternalStore(
+    (listener) => {
+      importingPasswordsListeners.add(listener);
+      return () => importingPasswordsListeners.delete(listener);
+    },
+    () => importingPasswords,
+  );
+}
 
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
@@ -227,9 +246,7 @@ export function BrowserImportDialog({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
   // Closing never stops an import: it finishes in the background and reports in a toast.
-  const closed = useRef(false);
   const close = () => {
-    closed.current = true;
     if (busy) toastManager.add({ type: "info", title: "The import continues in the background" });
     onClose();
   };
@@ -237,7 +254,9 @@ export function BrowserImportDialog({
   const [quitting, setQuitting] = useState<ReturnType<typeof mergeSourceProfiles>[number] | null>(
     null,
   );
-  const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
+  // What each profile imported here brought, by its key.
+  const [brought, setBrought] = useState<ReadonlyMap<string, string>>(new Map());
+  const passwordsImporting = useImportingPasswords();
   const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
@@ -253,7 +272,7 @@ export function BrowserImportDialog({
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
   ) =>
-    imported.has(JSON.stringify([source.id, profile.directory])) ||
+    brought.has(JSON.stringify([source.id, profile.directory])) ||
     linkedProfile(source, profile) !== undefined;
   const load = async () => {
     const [sources, details] = await Promise.all([
@@ -341,12 +360,20 @@ export function BrowserImportDialog({
             const record = sourceRecord(profileId, source.id, profile);
             if (Option.isSome(record)) await updateRecord(record.value);
             else profileError();
+            const sites = outcome.imported
+              ? await window.desktopBridge?.accounts
+                  ?.signedInSites(profileId, environmentId)
+                  .catch(() => undefined)
+              : [];
+            const label = importedLabel(outcome.imported, sites?.length);
+            setBrought((current) => new Map(current).set(key, label));
           }
           done.add(key);
           if (passwords && readPasswords && profile.passwordCount !== undefined)
             passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
       if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
+      if (passwordSources.length) setImportingPasswords(true);
       for (const { profileId, ...input } of passwordSources) {
         const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
         const result = csv
@@ -370,12 +397,11 @@ export function BrowserImportDialog({
             ? `Imported ${passwordTotals.imported} passwords, ${passwordTotals.skipped} skipped`
             : `Imported ${passwordTotals.imported} passwords`,
         });
-      setImported((current) => new Set([...current, ...done]));
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
-      if (!closed.current && done.size === selected.size) onClose();
     } catch {
       profileError();
     }
+    setImportingPasswords(false);
     importRunning = false;
     setBusy(false);
   };
@@ -420,7 +446,7 @@ export function BrowserImportDialog({
                             <span className="grid min-w-0 flex-1 text-sm">
                               <span>{source.name}</span>
                               <span className="text-xs text-muted-foreground">
-                                Needs Full Disk Access
+                                Needs Full Disk Access to see what it holds
                               </span>
                             </span>
                             <div className="shrink-0">
@@ -469,14 +495,24 @@ export function BrowserImportDialog({
                               title={profile.name}
                               description={
                                 alreadyImported
-                                  ? [source.name, profile.email, passwordsOnly && "Imported"]
+                                  ? [
+                                      source.name,
+                                      profile.email,
+                                      brought.get(key) ?? (passwordsOnly && "Imported"),
+                                    ]
                                       .filter(Boolean)
                                       .join(" · ")
                                   : source.unavailable === "browserRunning"
                                     ? `${source.name} · ${RUNNING_BROWSER_COPY}`
                                     : source.unavailable
                                       ? BROWSER_IMPORT_FAILURE_COPY[source.unavailable]
-                                      : [source.name, profile.email].filter(Boolean).join(" · ")
+                                      : [
+                                          source.name,
+                                          profile.email,
+                                          cookiesLabel(profile.cookieCount),
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" · ")
                               }
                               action={
                                 alreadyImported && !passwordsOnly ? (
@@ -543,7 +579,11 @@ export function BrowserImportDialog({
                   </Collapsible>
                 ) : null}
               </DiscoveryList>
-              {readPasswords && selectedPasswordCount !== undefined ? (
+              {passwordsImporting ? (
+                <p role="status" className="py-3 text-sm text-muted-foreground">
+                  Importing saved passwords…
+                </p>
+              ) : readPasswords && selectedPasswordCount !== undefined ? (
                 <label className="flex items-center gap-2 py-3 text-sm">
                   <Checkbox
                     checked={passwords}
@@ -561,7 +601,7 @@ export function BrowserImportDialog({
             </DialogPanel>
             <DialogFooter>
               <Button variant="outline" onClick={close}>
-                {busy ? "Close" : "Cancel"}
+                {busy || brought.size ? "Close" : "Cancel"}
               </Button>
               <Button
                 disabled={busy || !canWrite || selected.size === 0}
