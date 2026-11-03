@@ -78,7 +78,6 @@ export function useScientFolderActions(input: {
         {
           id: "new-document",
           label: "New document here",
-          separatorBefore: true,
           children: [
             { id: "new-document:markdown", label: "Markdown" },
             { id: "new-document:latex", label: "LaTeX" },
