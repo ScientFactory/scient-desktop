@@ -167,12 +167,12 @@ describe("Scient project initialization", () => {
 
   it("coalesces concurrent initialization attempts", async () => {
     const root = await fixture();
-    const [first, second] = await Promise.all([
-      initializeScientProject({ root }),
-      initializeScientProject({ root }),
-    ]);
+    // One setup for both, decided before either looks at the folder.
+    const first = initializeScientProject({ root });
+    const second = initializeScientProject({ root });
+    expect(second).toBe(first);
 
-    expect(first).toEqual(second);
+    expect(await first).toEqual(await second);
     expect((await inspectScientProject(root)).state).toBe("initialized");
   });
 
