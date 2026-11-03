@@ -8,6 +8,7 @@ export type ScientMcpToolSummaryAction =
   | "scient-skills"
   | "scient-sources"
   | "scient-documents"
+  | "scient-overleaf"
   | "scient-compute";
 
 function tool(
@@ -48,6 +49,8 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_account_fill: tool(["Fill", "Filling", "Filled", "a saved field"], "scient-accounts"),
   t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
   t3_paper_get: tool(["Get", "Getting", "Got", "a paper's PDF"], "scient-accounts"),
+  t3_papers_queue: tool(["Queue", "Queueing", "Queued", "papers to fetch"], "scient-accounts"),
+  t3_papers_status: tool(["Check", "Checking", "Checked", "queued papers"], "scient-accounts"),
   // SCIENT-FORK:END
   t3_skills_list: tool(["Check", "Checking", "Checked", "available skills"], "scient-skills"),
   // A completed load reads "Used Latex Authoring", the wording skill loads already use.
@@ -74,7 +77,34 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_pdf_build: tool(["Build", "Building", "Built", "a PDF"], "scient-documents"),
   t3_latex_build: tool(["Build", "Building", "Built", "a LaTeX document"], "scient-documents"),
   t3_document_export: tool(["Export", "Exporting", "Exported", "a document"], "scient-documents"),
+  t3_overleaf_status: tool(["Check", "Checking", "Checked", "Overleaf links"], "scient-overleaf"),
+  t3_overleaf_preview: tool(
+    ["Preview", "Previewing", "Previewed", "an Overleaf sync"],
+    "scient-overleaf",
+  ),
+  t3_overleaf_connect: tool(
+    ["Link", "Linking", "Linked", "a folder to Overleaf"],
+    "scient-overleaf",
+  ),
+  t3_overleaf_sync: tool(["Sync", "Syncing", "Synced", "with Overleaf"], "scient-overleaf"),
+  t3_overleaf_kept_copies: tool(
+    ["Manage", "Managing", "Managed", "kept Overleaf copies"],
+    "scient-overleaf",
+  ),
+  t3_overleaf_undo: tool(["Undo", "Undoing", "Undid", "an Overleaf send"], "scient-overleaf"),
+  t3_overleaf_manage: tool(
+    ["Manage", "Managing", "Managed", "an Overleaf link"],
+    "scient-overleaf",
+  ),
+  t3_overleaf_token: tool(
+    ["Manage", "Managing", "Managed", "the Overleaf token"],
+    "scient-overleaf",
+  ),
   t3_compute_run: tool(["Run", "Running", "Ran", "code"], "scient-compute"),
+  t3_compute_run_file: tool(["Run", "Running", "Ran", "a project file"], "scient-compute"),
+  t3_notebook_read: tool(["Read", "Reading", "Read", "a notebook"], "scient-compute"),
+  t3_notebook_edit: tool(["Edit", "Editing", "Edited", "a notebook"], "scient-compute"),
+  t3_notebook_run: tool(["Run", "Running", "Ran", "notebook cells"], "scient-compute"),
   t3_compute_output: tool(["Read", "Reading", "Read", "run output"], "scient-compute"),
   t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
   t3_compute_variables: tool(["Read", "Reading", "Read", "session variables"], "scient-compute"),
@@ -132,6 +162,8 @@ export function scientMcpToolSummaryLabel(
     case "scient-documents":
       // One verb for PDF/LaTeX builds and exports alike.
       return phrase("Prepared", "prepare", `documents ${times}`);
+    case "scient-overleaf":
+      return phrase("Used", "use", `Overleaf ${times}`);
     case "scient-compute":
       return phrase("Used", "use", `Compute ${times}`);
   }
