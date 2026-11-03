@@ -48,7 +48,6 @@ import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { DeviceToolkit } from "../device/tools.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
 import * as ComputeMcpGateway from "../compute/ComputeMcpGateway.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
@@ -227,7 +226,14 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      const deviceNames = new Set(Object.keys(DeviceToolkit.tools));
+      // The credential holds worktree, orchestration and preview: the device and
+      // pull-request tools, whose every call needs a grant it lacks, are not listed.
+      const unlisted = new Set(
+        [
+          ...McpHttpServer.hostMcpToolGrants.device,
+          ...McpHttpServer.hostMcpToolGrants["pull-requests"],
+        ].map((tool) => tool.name),
+      );
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,
@@ -245,9 +251,7 @@ it.effect.each(
       expect(new Set(toolNames).size).toBe(toolNames.length);
       for (const name of hostNames) {
         expect(scientOperationCatalog.forTool(name), `${name} must have one owner`).toBeUndefined();
-        expect(toolNames.includes(name), `registered host tool ${name}`).toBe(
-          !deviceNames.has(name),
-        );
+        expect(toolNames.includes(name), `registered host tool ${name}`).toBe(!unlisted.has(name));
       }
       for (const name of toolNames) {
         expect(
