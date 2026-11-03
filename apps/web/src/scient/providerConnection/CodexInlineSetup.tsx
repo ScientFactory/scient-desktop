@@ -4,7 +4,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
-  CheckCircle2Icon,
   DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
@@ -20,6 +19,7 @@ import {
   AssistedSetupDeviceCode,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
+  AssistedSetupStatusFrame,
   AssistedSetupStatus,
   AssistedSetupUpdateButton,
   AssistedSetupUpdateStatus,
@@ -302,7 +302,7 @@ export function CodexInlineSetup(props: {
     const updating = pendingAction === "update" || activeRuntimeOperation?.action === "update";
     const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={stage}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -327,13 +327,13 @@ export function CodexInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (externalUpdateProgress) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           name="Codex"
           provider={props.provider}
@@ -341,14 +341,14 @@ export function CodexInlineSetup(props: {
           update={externalProviderUpdate(props.provider)}
           working={externalUpdateProgress}
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRuntimeRepair) {
     const error = localError ?? managedRuntimeRepairMessage(props.provider, "Codex");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -361,7 +361,7 @@ export function CodexInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -369,7 +369,7 @@ export function CodexInlineSetup(props: {
     const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             error ??
@@ -402,7 +402,7 @@ export function CodexInlineSetup(props: {
           </AssistedSetupActions>
         ) : null}
         {error ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -416,7 +416,7 @@ export function CodexInlineSetup(props: {
     const usingDeviceCode = activeConnectionOperation?.method === "codex_device_code";
     const openFailure = !starting && !verifying ? page.failure : null;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             starting
@@ -487,7 +487,7 @@ export function CodexInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -495,7 +495,7 @@ export function CodexInlineSetup(props: {
     if (updateOffer) {
       const issue = providerUpdateIssue(props.provider, updateOffer, localError);
       return (
-        <SetupFrame>
+        <AssistedSetupFrame>
           <AssistedSetupUpdateStatus
             issue={issue}
             name="Codex"
@@ -511,11 +511,11 @@ export function CodexInlineSetup(props: {
             />
           </AssistedSetupActions>
           {issue ? runtimeDiagnostics : null}
-        </SetupFrame>
+        </AssistedSetupFrame>
       );
     }
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         title="Codex is ready"
         body={
@@ -539,7 +539,7 @@ export function CodexInlineSetup(props: {
     props.provider.auth.status === "unknown"
   ) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={localError ?? "Check your internet connection or VPN, then try again."}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -574,7 +574,7 @@ export function CodexInlineSetup(props: {
             Try again
           </Button>
         </AssistedSetupActions>
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -601,7 +601,7 @@ export function CodexInlineSetup(props: {
     if (actionFailure) throw actionFailure.cause;
   };
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
           signInError ??
@@ -653,27 +653,6 @@ export function CodexInlineSetup(props: {
           provider={props.provider}
         />
       ) : null}
-    </SetupFrame>
+    </AssistedSetupFrame>
   );
-}
-
-function StatusFrame(props: {
-  readonly accountAction?: ReactNode;
-  readonly title: string;
-  readonly body: ReactNode;
-}) {
-  return (
-    <SetupFrame>
-      <AssistedSetupStatus
-        body={props.body}
-        icon={<CheckCircle2Icon className="size-5 text-success" />}
-        title={props.title}
-        trailing={props.accountAction}
-      />
-    </SetupFrame>
-  );
-}
-
-function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }

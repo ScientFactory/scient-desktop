@@ -1,6 +1,5 @@
 import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 import {
-  CheckCircle2Icon,
   DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
@@ -15,6 +14,7 @@ import {
   AssistedSetupActions,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
+  AssistedSetupStatusFrame,
   AssistedSetupStatus,
   AssistedSetupUpdateButton,
   AssistedSetupUpdateStatus,
@@ -331,7 +331,7 @@ export function ClaudeInlineSetup(props: {
     const updating = pendingAction === "update" || activeRuntimeOperation?.action === "update";
     const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={stage}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -358,13 +358,13 @@ export function ClaudeInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (externalUpdateProgress) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           name="Claude"
           provider={props.provider}
@@ -372,14 +372,14 @@ export function ClaudeInlineSetup(props: {
           update={externalProviderUpdate(props.provider)}
           working={externalUpdateProgress}
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRuntimeRepair) {
     const error = localError ?? managedRuntimeRepairMessage(props.provider, "Claude");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -392,7 +392,7 @@ export function ClaudeInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -400,7 +400,7 @@ export function ClaudeInlineSetup(props: {
     const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             error ??
@@ -433,7 +433,7 @@ export function ClaudeInlineSetup(props: {
           </AssistedSetupActions>
         ) : null}
         {error ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -441,7 +441,7 @@ export function ClaudeInlineSetup(props: {
     const verifying =
       activeConnectionOperation?.status === "verifying" || pendingAction === "submit-code";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={verifying ? "Finding your available models…" : "Complete sign-in in your browser."}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -491,14 +491,14 @@ export function ClaudeInlineSetup(props: {
             </Button>
           ) : null}
         </AssistedSetupActions>
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (isAuthenticated) {
     if (!isReady) {
       return (
-        <StatusFrame
+        <AssistedSetupStatusFrame
           accountAction={props.accountAction}
           body={
             props.provider.message ??
@@ -515,7 +515,7 @@ export function ClaudeInlineSetup(props: {
     if (updateOffer) {
       const issue = providerUpdateIssue(props.provider, updateOffer, localError);
       return (
-        <SetupFrame>
+        <AssistedSetupFrame>
           <AssistedSetupUpdateStatus
             issue={issue}
             name="Claude"
@@ -531,13 +531,13 @@ export function ClaudeInlineSetup(props: {
             />
           </AssistedSetupActions>
           {issue ? runtimeDiagnostics : null}
-        </SetupFrame>
+        </AssistedSetupFrame>
       );
     }
     const accountLabel = props.provider.auth.label;
     const isSubscriptionAccount = accountLabel?.toLowerCase().includes("subscription") ?? false;
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         title="Claude is ready"
         body={
@@ -560,7 +560,7 @@ export function ClaudeInlineSetup(props: {
 
   if (props.provider.auth.required === false) {
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         title={isReady ? "Claude is ready" : "Claude needs attention"}
         body={
           isReady
@@ -575,7 +575,7 @@ export function ClaudeInlineSetup(props: {
 
   if (!signInMethod) {
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         title="Claude needs setup"
         body="Finish configuring this custom Claude provider in Settings."
         warning
@@ -589,7 +589,7 @@ export function ClaudeInlineSetup(props: {
   const canInstallManaged =
     !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
           signInError ??
@@ -643,37 +643,6 @@ export function ClaudeInlineSetup(props: {
           provider={props.provider}
         />
       ) : null}
-    </SetupFrame>
+    </AssistedSetupFrame>
   );
-}
-
-function StatusFrame(props: {
-  readonly accountAction?: ReactNode;
-  /** Runtime diagnostics, shown only for a warning. */
-  readonly diagnostics?: ReactNode;
-  readonly title: string;
-  readonly body: ReactNode;
-  readonly warning?: boolean;
-}) {
-  return (
-    <SetupFrame>
-      <AssistedSetupStatus
-        body={props.body}
-        icon={
-          props.warning ? (
-            <TriangleAlertIcon className="size-5 text-warning" />
-          ) : (
-            <CheckCircle2Icon className="size-5 text-success" />
-          )
-        }
-        title={props.title}
-        trailing={props.accountAction}
-      />
-      {props.diagnostics}
-    </SetupFrame>
-  );
-}
-
-function SetupFrame({ children }: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame>{children}</AssistedSetupFrame>;
 }
