@@ -350,6 +350,30 @@ export const BrowserProfileRecord = Schema.Struct({
 });
 export type BrowserProfileRecord = typeof BrowserProfileRecord.Type;
 
+/** A partitioned cookie's key as the browser stored it; the ancestor bit is never derived. */
+export const CookiePartitionKey = Schema.Struct({
+  topLevelSite: Schema.String,
+  hasCrossSiteAncestor: Schema.Boolean,
+});
+export type CookiePartitionKey = typeof CookiePartitionKey.Type;
+
+/** One cookie with every attribute a copy between jars must keep. */
+export const SessionCookie = Schema.Struct({
+  name: Schema.String,
+  value: Schema.String,
+  /** Chromium form: `.github.com` for a domain cookie, `github.com` for a host-only one. */
+  domain: Schema.String,
+  hostOnly: Schema.Boolean,
+  path: Schema.String,
+  secure: Schema.Boolean,
+  httpOnly: Schema.Boolean,
+  sameSite: Schema.Literals(["unspecified", "no_restriction", "lax", "strict"]),
+  /** Unix seconds; absent for a cookie that ends with the browser. */
+  expires: Schema.optional(Schema.Number),
+  partitionKey: Schema.optional(CookiePartitionKey),
+}).check(Schema.makeFilter((cookie) => cookie.hostOnly === !cookie.domain.startsWith(".")));
+export type SessionCookie = typeof SessionCookie.Type;
+
 export const defaultBrowserProfileRecord = (profileId: BrowserProfileId): BrowserProfileRecord => ({
   profileId,
   access: "allowed",

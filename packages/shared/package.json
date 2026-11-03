@@ -35,6 +35,10 @@
       "types": "./src/scientBrowserProfileChoice.ts",
       "import": "./src/scientBrowserProfileChoice.ts"
     },
+    "./scientSessionCookies": {
+      "types": "./src/scientSessionCookies.ts",
+      "import": "./src/scientSessionCookies.ts"
+    },
     "./scientPublicationArtifact": {
       "types": "./src/scientPublicationArtifact.ts",
       "import": "./src/scientPublicationArtifact.ts"
