@@ -165,7 +165,9 @@ it.effect("says so when the site rejects the saved sign-in", () =>
 
 it.effect("never retries a sign-in the site already rejected", () =>
   Effect.gen(function* () {
-    const { result, uses } = yield* run([{ ...account, lastSignInOutcome: "password-rejected" }]);
+    const { result, uses } = yield* run([
+      { ...account, signIn: { state: "password-rejected", at: "2026-01-01T00:00:00.000Z" } },
+    ]);
     expect(result?.note).toContain("won't repeat it");
     expect(uses).toEqual([]);
   }),

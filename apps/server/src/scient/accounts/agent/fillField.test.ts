@@ -133,7 +133,7 @@ it.effect("won't fill for an account on hold", () =>
   Effect.gen(function* () {
     const held: AccountSummary = {
       ...accountNamed("three"),
-      lastSignInOutcome: "password-rejected",
+      signIn: { state: "password-rejected", at: "2026-01-01T00:00:00.000Z" },
     };
     const { result, typed } = yield* run(held, "username");
     expect(result.filled).toBe(false);

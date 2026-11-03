@@ -357,6 +357,9 @@ interface ServerTab {
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
+  // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+  leftBlank: boolean;
+  // SCIENT-FORK:END
 
   abortedNavigation: {
     readonly url: string;
@@ -612,6 +615,9 @@ const make = Effect.gen(function* () {
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
+    // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+    if (navStatus._tag === "Success" || navStatus._tag === "LoadFailed") tab.leftBlank = true;
+    // SCIENT-FORK:END
     void tab.cdp
       .send("Page.getNavigationHistory")
       .catch(() => null)
@@ -635,8 +641,18 @@ const make = Effect.gen(function* () {
 
   const reportLoaded = async (tab: ServerTab) => {
     const url = tab.page.url();
+    // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+    if (url === "about:blank") {
+      // A new tab is blank too, while its first page loads.
+      if (tab.leftBlank && !tab.loading) {
+        tab.leftBlank = false;
+        report(tab, { _tag: "Idle" });
+      }
+      return;
+    }
+    // SCIENT-FORK:END
     // Chromium's error page loads after `requestfailed` and must not clear LoadFailed.
-    if (url === "about:blank" || url.startsWith("chrome-error://")) return;
+    if (url.startsWith("chrome-error://")) return;
     // A navigation that starts and fails during the title read leaves the URL unchanged.
     const generation = tab.navigationGeneration;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
@@ -907,6 +923,9 @@ const make = Effect.gen(function* () {
       recordingStart: null,
       initialNavigation: null,
       navigationGeneration: 0,
+      // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+      leftBlank: false,
+      // SCIENT-FORK:END
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -955,6 +974,16 @@ const make = Effect.gen(function* () {
           if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
         });
       }
+      // SCIENT-FORK:START — Scient Browser: Back can leave a page that's still loading.
+      if (frame === page.mainFrame() && page.url() === "about:blank") {
+        if (tab.navigationGeneration > 0) {
+          tab.loading = false;
+          tab.leftBlank = true;
+          // A page Back cancelled is no download to wait for; the empty page stays empty.
+          clearAbortedNavigation(tab);
+        }
+      }
+      // SCIENT-FORK:END
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);

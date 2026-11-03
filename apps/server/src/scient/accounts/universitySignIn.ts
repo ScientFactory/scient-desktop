@@ -229,8 +229,7 @@ const finish = Effect.fn("University.finish")(function* <R>(
     (item) => item.accountId === input.accountId,
   );
   // The network can wave a library link through, but this person just signed in on the way.
-  const signedIn =
-    seen?.lastCheck?.state === "signed-in" || (!details.institution && asked.size > 0);
+  const signedIn = seen?.signIn?.state === "signed-in" || (!details.institution && asked.size > 0);
   // The check already said what it saw; a person's unfinished sign-in is no refused password.
   if (!signedIn) return;
   yield* accounts.recordUse({

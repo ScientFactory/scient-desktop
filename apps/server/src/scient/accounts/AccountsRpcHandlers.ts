@@ -18,7 +18,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
-import { websiteSessionStatus } from "./websiteSessions.ts";
+import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
   continuePapersAsUser,
@@ -93,18 +93,23 @@ export const makeAccountsRpcHandlers = ({
         WS_METHODS.accountsSnapshot,
         Effect.gen(function* () {
           const snapshot = yield* accounts.snapshot;
-          const now = yield* Clock.currentTimeMillis;
-          return {
-            ...snapshot,
-            accounts: websiteSessionStatus(
-              snapshot.accounts,
-              input.browserSessions ?? [],
-              observedSessions,
-              now,
-              input.browserSessionSourceId,
-              input.defaultProfileId,
-            ),
-          };
+          const ended = endedWebsiteSessions(
+            snapshot.accounts,
+            input.browserSessions ?? [],
+            observedSessions,
+            yield* Clock.currentTimeMillis,
+            input.browserSessionSourceId,
+            input.defaultProfileId,
+          );
+          if (ended.length === 0) return snapshot;
+          // Kept like any other look at the site, so every reader sees the session end.
+          yield* Effect.forEach(
+            ended,
+            (accountId) =>
+              accounts.recordCheck(accountId, { state: "signed-out" }).pipe(Effect.ignore),
+            { discard: true },
+          );
+          return yield* accounts.snapshot;
         }),
         attributes,
       ),

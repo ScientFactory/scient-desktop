@@ -3,6 +3,9 @@ import { ChevronDown, Globe, History, RadioTower } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
+// SCIENT-FORK:START — Scient Browser: everything beyond these few.
+import { Button } from "~/components/ui/button";
+// SCIENT-FORK:END
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
 import { DiscoveryList } from "../ui/discovery-list";
 
@@ -26,6 +29,7 @@ interface Props {
   onOpenUrl: (url: string) => void;
   // SCIENT-FORK:START — Scient: the browser's home page sits above these suggestions.
   home?: ReactNode;
+  onShowHistory?: () => void;
   // SCIENT-FORK:END
 }
 
@@ -39,6 +43,7 @@ export function PreviewEmptyState({
   onRemoveRecent,
   onOpenUrl,
   home,
+  onShowHistory,
 }: Props) {
   const [showOtherServers, setShowOtherServers] = useState(false);
   const servers = useDiscoveredLocalServers({
@@ -103,6 +108,13 @@ export function PreviewEmptyState({
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <History className="size-4 shrink-0" />
               <h2 className="font-medium">Recently used</h2>
+              {/* SCIENT-FORK:START — Scient Browser: everything beyond these few. */}
+              {onShowHistory ? (
+                <Button className="ms-auto" size="xs" variant="ghost" onClick={onShowHistory}>
+                  See all
+                </Button>
+              ) : null}
+              {/* SCIENT-FORK:END */}
             </div>
             <DiscoveryList>
               {recents.map((entry) => (

@@ -22,22 +22,22 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
   ) : null;
   return (
     <div className="group relative flex w-full items-center">
+      {/* SCIENT-FORK:START — Scient Browser: one thin line per recent site. */}
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-3 py-3 pr-10 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex w-full items-center gap-3 px-3 py-2.5 pr-10 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <PreviewFaviconIcon threadRef={threadRef} url={entry.url} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium text-foreground">
-            {entry.title ?? label}
-          </span>
-          <span className="truncate text-xs text-muted-foreground">
-            {entry.title ? `${label} · ` : ""}
-            {visitedAt}
-          </span>
-        </div>
+        <PreviewFaviconIcon threadRef={threadRef} url={entry.url} className="size-5" />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {entry.title ?? label}
+        </span>
+        <span className="max-w-1/2 truncate text-xs text-muted-foreground">
+          {entry.title ? `${parsed.host} · ` : ""}
+          {visitedAt}
+        </span>
       </button>
+      {/* SCIENT-FORK:END */}
       <button
         type="button"
         aria-label={`Remove ${label} from history`}

@@ -445,5 +445,12 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           }
         : result,
     ),
+    // A sign-in that worked after Scient typed the saved password shows that password works.
+    Effect.map((result) =>
+      result.outcome === "signed-in" &&
+      submissions.some(({ fields }) => fields.includes("password"))
+        ? { ...result, savedPasswordUsed: true as const }
+        : result,
+    ),
   );
 });
