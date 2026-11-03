@@ -6131,6 +6131,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "start_immediately" };
       }
     }
+    // SCIENT-FORK:START — a Droid run holds one follow-up; a newer one waits in the queue.
+    if (dispatchMode.type === "steer_active") {
+      const targetRunId = dispatchMode.targetRunId;
+      if (projection.runs.find((run) => run.id === targetRunId)?.heldDroidSteer !== undefined)
+        dispatchMode = { type: "queue_after_active" };
+    }
+    // SCIENT-FORK:END
     // Stop leaves the run reading as running until its provider stops. A plain
     // send in that window queues behind the stopped queue instead of steering
     // text the agent never receives; an explicit steer or restart still fails below.

@@ -220,8 +220,9 @@ in Full access.
   command, another tool call or a sub-agent of the turn is still running, the follow-up waits and
   the thread says "Your message will be delivered when the current step finishes. Stop interrupts
   now." Scient delivers it as soon as that work is done, or when Droid finishes the step by
-  itself, whichever comes first. A background sub-agent counts until Droid reports it finished. A
-  newer follow-up takes the place of one that is waiting.
+  itself, whichever comes first. A background sub-agent counts until Droid reports it finished.
+  Another follow-up sent while one is waiting joins the thread's queue, where you can edit or
+  remove it; it is sent after the turn.
 - **Stop** ends the turn and keeps what Droid had produced: Scient cancels the step, takes what
   Droid still sends for it (the answer so far and the final state of a running command; Droid
   answers within a fraction of a second and Scient waits two seconds at most), then closes that

@@ -914,7 +914,7 @@ it.effect(
 );
 
 it.effect(
-  "replaces only the newest held native Droid Steer while retaining two canonical FIFO messages",
+  "keeps the held native Droid Steer and queues a newer one behind two canonical FIFO messages",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -927,7 +927,7 @@ it.effect(
           .filter((run) => run.status === "queued")
           .map((run) => [run.id, run.userMessageId, run.queuePosition]);
         assert.lengthOf(queued, 2);
-        yield* h.send("older", initial.runs[0]!.id);
+        const older = yield* h.send("older", initial.runs[0]!.id);
         yield* h.worker.drain(12);
         yield* h.waitFor(
           (p) => p.runs.find((run) => run.id === initial.runs[0]!.id)?.status === "running",
@@ -935,12 +935,11 @@ it.effect(
         const newest = yield* h.send("newer", initial.runs[0]!.id);
         yield* h.worker.drain(12);
         const held = yield* h.observe("two-steers-ingested-with-two-fifo-runs", newest);
-        assert.deepEqual(
-          held.projection.runs
-            .filter((run) => run.status === "queued")
-            .map((run) => [run.id, run.userMessageId, run.queuePosition]),
-          queued,
-        );
+        const queuedAfterNewer = held.projection.runs
+          .filter((run) => run.status === "queued")
+          .map((run) => [run.id, run.userMessageId, run.queuePosition]);
+        assert.deepEqual(queuedAfterNewer.slice(0, 2), queued);
+        assert.lengthOf(queuedAfterNewer, 3, "The newer follow-up waits in the queue");
         assert.deepEqual(
           held.trace,
           ["first"],
@@ -953,8 +952,7 @@ it.effect(
             (item) => item.nativeItemRef?.nativeId === "run" && item.status === "completed",
           ),
         );
-        // Complete the current outbox request even if the obsolete revision is due first.
-        yield* advance(h, initial, newest);
+        yield* advance(h, initial, older);
         yield* h.waitFor(
           (p) =>
             p.attempts.filter((attempt) => attempt.runId === initial.runs[0]!.id).length === 2 &&
@@ -964,15 +962,14 @@ it.effect(
           (event) =>
             event.direction === "incoming" &&
             event.stage === "decoded" &&
-            JSON.stringify(event.payload).includes("native prompt: newer"),
+            JSON.stringify(event.payload).includes("native prompt: older"),
         );
-        assert.deepEqual(yield* h.wire, ["first", "cancel", "newer"]);
-        assert.isFalse((yield* h.wire).includes("older"));
+        assert.deepEqual(yield* h.wire, ["first", "cancel", "older"]);
         assert.deepEqual(
           (yield* h.orchestrator.getThreadProjection(h.threadId)).runs
             .filter((run) => run.status === "queued")
             .map((run) => [run.id, run.userMessageId, run.queuePosition]),
-          queued,
+          queuedAfterNewer,
         );
       }),
     ).pipe(Effect.provide(outer)),
@@ -1817,8 +1814,6 @@ it.effect(
           "scope-before-held-policy",
           CommandId.make("policy:send:first"),
         )).scopes;
-        const olderSentinel = "OLDER_INTENT_MUST_NOT_REACH_NATIVE";
-        yield* h.send(olderSentinel, initial.runs[0]!.id);
         const submittedText =
           "follow-up [Captured terminal](t3-context://v1/terminal/terminal-proof)";
         const command = yield* h.send(submittedText, initial.runs[0]!.id, false, {
@@ -1891,7 +1886,6 @@ it.effect(
         assert.deepEqual(rebound.createdAt, message.createdAt);
         const nativePrompt = encodeNativeJson((yield* h.nativePrompts).at(-1)!.params);
         assert.include(nativePrompt, "CAPTURED_CONTEXT_ONLY");
-        assert.notInclude(nativePrompt, olderSentinel);
         assert.include(nativePrompt, "captured.txt");
         assert.notEqual(
           adopted.providerThreads.find((thread) => thread.id === target.providerThreadId)!
@@ -2039,7 +2033,7 @@ it.effect(
 
 it.effect.each(
   (["probe", "pre-admission"] as const).map((window) => ({
-    caseTitle: `invalidates an older native reservation at ${window} while retaining and then executing both FIFO payloads`,
+    caseTitle: `keeps the older native reservation at ${window} and runs a newer follow-up after both FIFO payloads`,
     window,
   })),
 )("$caseTitle", ({ window }) =>
@@ -2072,13 +2066,12 @@ it.effect.each(
       yield* trace.at("older-reservation-entered", gate.entered);
       const newer = yield* h.send("newer", initial.runs[0]!.id);
       trace.admissionCommands.push(newer);
-      const registered = yield* h.observe("newest-revision-invalidated-old-reservation", newer);
+      const registered = yield* h.observe("newer-queued-behind-held-reservation", newer);
       heldOwner(registered.projection, initial);
-      assert.equal(registered.projection.runs[0]!.heldDroidSteer!.revision, newer);
-      assert.deepEqual(
-        registered.projection.runs.filter((run) => run.status === "queued"),
-        fifo,
-      );
+      assert.equal(registered.projection.runs[0]!.heldDroidSteer!.revision, older);
+      const queued = registered.projection.runs.filter((run) => run.status === "queued");
+      assert.deepEqual(queued.slice(0, 2), fifo);
+      assert.lengthOf(queued, 3);
       assert.deepEqual(
         registered.projection.messages.filter((message) =>
           fifoMessages.some((old) => old.id === message.id),
@@ -2089,14 +2082,13 @@ it.effect.each(
       h.hooks.beforeConsume = undefined;
       yield* gate.release;
       yield* trace.at("older-reservation-returned", Fiber.join(execution));
-      yield* trace.at("newer-native-adoption", advance(h, initial, newer));
-      assert.deepEqual(yield* h.wire, ["first", "cancel", "newer"]);
-      assert.isFalse((yield* h.wire).includes("older"));
-      yield* trace.drain("obsolete-effects-drain", 24, h.worker.drain(24));
-      assert.isTrue(
-        (yield* h.outbox.listByCommandId(older)).every((effect) => effect.status === "succeeded"),
+      yield* trace.at("older-native-adoption", advance(h, initial, older));
+      assert.deepEqual(yield* h.wire, ["first", "cancel", "older"]);
+      const queuedTexts = ["fifo-1", "fifo-2", "newer"];
+      const queuedMessages = registered.projection.messages.filter((message) =>
+        queued.some((run) => run.userMessageId === message.id),
       );
-      for (const [index, run] of fifo.entries()) {
+      for (const [index, run] of queued.entries()) {
         yield* h.release("finish-prompt");
         yield* trace.at(
           `fifo-${index + 1}-predecessor-waiting`,
@@ -2104,7 +2096,7 @@ it.effect.each(
             (p) =>
               p.runs.find(
                 (candidate) =>
-                  candidate.id === (index === 0 ? initial.runs[0]!.id : fifo[index - 1]!.id),
+                  candidate.id === (index === 0 ? initial.runs[0]!.id : queued[index - 1]!.id),
               )?.status === "waiting",
           ),
         );
@@ -2128,7 +2120,7 @@ it.effect.each(
             (event) =>
               event.direction === "incoming" &&
               event.stage === "decoded" &&
-              JSON.stringify(event.payload).includes(`native prompt: fifo-${index + 1}`),
+              JSON.stringify(event.payload).includes(`native prompt: ${queuedTexts[index]}`),
           ),
         );
         const current = yield* h.orchestrator.getThreadProjection(h.threadId);
@@ -2137,21 +2129,21 @@ it.effect.each(
         assert.deepEqual(promoted.modelSelection, run.modelSelection);
         assert.deepEqual(
           current.messages.find((message) => message.id === run.userMessageId),
-          fifoMessages[index],
+          queuedMessages.find((message) => message.id === run.userMessageId),
         );
       }
-      assert.deepEqual(yield* h.wire, ["first", "cancel", "newer", "fifo-1", "fifo-2"]);
+      assert.deepEqual(yield* h.wire, ["first", "cancel", "older", "fifo-1", "fifo-2", "newer"]);
       yield* h.release("finish-prompt");
       yield* trace.at(
-        "last-fifo-waiting",
-        h.waitFor((p) => p.runs.find((run) => run.id === fifo[1]!.id)?.status === "waiting"),
+        "last-queued-waiting",
+        h.waitFor((p) => p.runs.find((run) => run.id === queued[2]!.id)?.status === "waiting"),
       );
       yield* trace.drain("last-fifo-drain", 24, h.worker.drain(24));
       yield* trace.at(
         "all-fifo-runs-completed",
         h.waitFor((p) => p.runs.every((run) => run.status === "completed")),
       );
-      yield* h.observe("newest-only-and-actual-FIFO-order", newer);
+      yield* h.observe("held-then-actual-FIFO-order", newer);
     }).pipe(Effect.onError((cause) => trace.failure(cause, { protocol: h.protocol })));
   }),
 );
