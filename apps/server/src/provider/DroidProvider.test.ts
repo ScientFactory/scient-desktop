@@ -201,15 +201,6 @@ describe("buildInitialDroidProviderSnapshot", () => {
     }),
   );
 
-  it.effect("never offers conversation rewind for Droid", () =>
-    Effect.gen(function* () {
-      for (const enabled of [true, false]) {
-        const snapshot = yield* buildInitialDroidProviderSnapshot(decodeDroidSettings({ enabled }));
-        expect(snapshot.supportsConversationRollback).toBe(false);
-      }
-    }),
-  );
-
   it.effect("returns a pending snapshot when enabled", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialDroidProviderSnapshot(

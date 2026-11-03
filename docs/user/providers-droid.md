@@ -206,8 +206,11 @@ in Full access.
 
 ## Behavior notes and limitations
 
-- **Checkpoints / rollback is not supported.** Droid's ACP surface does not expose a revert
-  operation, so the rollback action is unavailable in Droid threads.
+- **Rewinding a conversation** restores the files from Scient's checkpoint and continues in a
+  copy of the Droid conversation that ends at the kept turn; the original stays in Droid's
+  session history. Rewind is refused, with nothing changed, while background work is running or
+  when Droid's history no longer matches (for example after compaction). It needs a Droid that
+  supports rewind, such as the Scient-managed 1.2.0.
 - **Follow-ups during a turn** become the next prompt of the same turn. Droid's protocol has one
   way to do that: stop the current step and send the message, after which Droid sees the earlier
   request as interrupted and continues from your message. (Droid would also accept a second

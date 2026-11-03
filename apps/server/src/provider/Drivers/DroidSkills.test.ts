@@ -19,9 +19,11 @@ import {
 import type { DroidControlClient, DroidControlClientFactory } from "../droid/DroidControl.ts";
 
 const fakeClient = (overrides: Partial<DroidControlClient>): DroidControlClient => ({
+  messages: [],
   close: async () => undefined,
   listSkills: async () => ({ skills: [] }),
   setSkillDisabled: async () => undefined,
+  rewindBefore: async () => ({ newSessionId: "unused" }),
   ...overrides,
 });
 

@@ -15,6 +15,7 @@ import {
   findSelectDroidConfigOption,
   makeDroidCredentialRedactor,
   resolveDroidAutonomyModeId,
+  resolveDroidCliBinaryPath,
   validateDroidReasoningState,
   type DroidAcpRuntime,
   type DroidAcpRuntimeFactory,
@@ -24,6 +25,8 @@ import {
   makeDroidSubagentTracker,
   observeDroidSubagentToolCall,
 } from "../../provider/droid/DroidSubagents.ts";
+import type { DroidControlClientFactory } from "../../provider/droid/DroidControl.ts";
+import { rewindDroidSession } from "../../provider/droid/DroidRewind.ts";
 import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
 import { confirmDroidTurnAdmission } from "./DroidTurnAdmission.ts";
 import {
@@ -51,6 +54,7 @@ export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor
   readonly makeRuntime: DroidAcpRuntimeFactory;
   readonly childProcessSpawner: Parameters<DroidAcpRuntimeFactory>[0]["childProcessSpawner"];
   readonly onAuthenticationRejected: (message: string) => Effect.Effect<void>;
+  readonly makeControlClient?: DroidControlClientFactory;
 }
 const DEFAULT_IDLE_MILLIS = 600_000;
 const TASK_IDLE_MILLIS = 3_600_000;
@@ -148,6 +152,15 @@ export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
     supportsCompaction: true,
     // Droid 1.2.0 advertises session/fork; forks stay on the qualified portable path.
     nativeSessionFork: false,
+    rewindSession: (input) =>
+      rewindDroidSession(
+        {
+          binaryPath: resolveDroidCliBinaryPath(options.settings.binaryPath),
+          environment: options.environment,
+        },
+        input,
+        options.makeControlClient,
+      ),
     beforeRuntimeReuse: Effect.fn("DroidAdapterV2.beforeRuntimeReuse")(function* (runtime) {
       const droid = runtimes.get(runtime);
       if (droid?.checkConfiguration)

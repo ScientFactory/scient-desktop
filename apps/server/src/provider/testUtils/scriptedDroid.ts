@@ -25,6 +25,7 @@ const state = {
   model: process.env.MODEL ?? "droid-native",
   prompts: 0,
   nextId: 1000,
+  sessionId: "scripted",
   waiters: new Map(),
 };
 let options = () => [
@@ -35,12 +36,12 @@ let options = () => [
   { id: "model", name: "Model", category: "model", type: "select", currentValue: state.model,
     options: ["droid-native", "custom:scient-fixture", "droid-other"].map((value) => ({ value, name: value })) },
 ];
-const update = (value) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "scripted", update: value } });
+const update = (value) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: state.sessionId, update: value } });
 const publish = () => update({ sessionUpdate: "config_option_update", configOptions: options() });
 const request = (method, params) => new Promise((resolve) => {
   const id = state.nextId++;
   state.waiters.set(id, resolve);
-  send({ jsonrpc: "2.0", id, method, params: { sessionId: "scripted", ...params } });
+  send({ jsonrpc: "2.0", id, method, params: { sessionId: state.sessionId, ...params } });
 });
 const reply = (message, result) => send({ jsonrpc: "2.0", id: message.id, result });
 const fail = (message, error) => send({ jsonrpc: "2.0", id: message.id, error });
@@ -62,7 +63,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       return reply(message, { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { fork: {} } }, authMethods: [] });
     case "session/new":
     case "session/load":
-      return reply(message, { sessionId: "scripted", configOptions: options() });
+      state.sessionId = message.params?.sessionId ?? "scripted";
+      return reply(message, { sessionId: state.sessionId, configOptions: options() });
     case "session/set_config_option":
       if (message.params.configId === "autonomy_level" && !state.locked) state.autonomy = message.params.value;
       if (message.params.configId === "model") state.model = message.params.value;

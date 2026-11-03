@@ -7,6 +7,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
   DroidSettings,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -15,10 +16,13 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type ChatAttachment,
   type ModelSelection,
 } from "@t3tools/contracts";
@@ -27,6 +31,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -57,6 +63,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
+import type { DroidControlClientFactory } from "../../provider/droid/DroidControl.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const decodeElicitationCapabilities = Schema.decodeUnknownSync(
@@ -126,6 +133,7 @@ const harness = Effect.fnUntraced(function* (
     readonly makeRuntime?: DroidAcpRuntimeFactory;
     readonly sensitiveValues?: ReadonlyArray<string>;
     readonly onPeer?: (peer: Effect.Success<ReturnType<typeof scriptedDroid>>) => void;
+    readonly makeControlClient?: DroidControlClientFactory;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -280,6 +288,7 @@ const harness = Effect.fnUntraced(function* (
       Effect.sync(() => {
         rejectedAuthentication.push(message);
       }),
+    ...(scenario?.makeControlClient ? { makeControlClient: scenario.makeControlClient } : {}),
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -287,7 +296,7 @@ const harness = Effect.fnUntraced(function* (
     modelSelection,
     runtimePolicy,
   });
-  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  let providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const now = yield* DateTime.now;
   const appThread: OrchestrationV2AppThread = {
     id: threadId,
@@ -417,10 +426,160 @@ const harness = Effect.fnUntraced(function* (
     writeBlocked,
     releaseWrite,
     signal: (value: string) => fs.writeFileString(controlPath, value),
+    useProviderThread: (next: OrchestrationV2ProviderThread) => {
+      providerThread = next;
+    },
   };
 });
 
+const isAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
+  it.effect("never opens Droid's session for rewind when its own process may still hold it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let controlOpened = false;
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) { reply(message, { stopReason: "end_turn" }); }`,
+          liveClock: true,
+          makeRuntime: (input) =>
+            makeDroidAcpRuntime(input).pipe(
+              Effect.map((native) => ({
+                ...native,
+                terminateProcessGroup: Effect.fail(
+                  new AcpSessionRuntime.AcpProcessGroupTerminationError({
+                    detail: "still running",
+                  }),
+                ),
+              })),
+            ),
+          makeControlClient: async () => {
+            controlOpened = true;
+            throw new Error("Rewind must not open a second owner.");
+          },
+        });
+        yield* h.send(1, "full-access");
+        yield* h.terminal;
+        const turn: OrchestrationV2ProviderTurn = {
+          id: ProviderTurnId.make("droid-turn-1"),
+          providerThreadId: h.providerThread.id,
+          nodeId: NodeId.make("droid-root-1"),
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed",
+          nativeAcceptance: "accepted",
+          startedAt: null,
+          completedAt: null,
+        };
+
+        const exit = yield* h.runtime
+          .rollbackThread({
+            providerThread: h.providerThread,
+            providerThreadTurns: [turn],
+            target: {
+              type: "provider_turn",
+              checkpointId: CheckpointId.make("droid-checkpoint-1"),
+              appRunOrdinal: 1,
+              providerTurn: turn,
+            },
+          })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        assert.isFalse(controlOpened);
+      }),
+    ),
+  );
+  it.effect("rewinds in a forked Droid session, after releasing its own process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let ownedPids: () => ReadonlyArray<number> = () => [];
+        let liveWhenControlOpened: ReadonlyArray<number> | undefined;
+        const rewoundBefore: Array<string> = [];
+        const prompt = (id: string, text: string) => ({
+          id,
+          role: "user",
+          content: [{ type: "text", text }],
+        });
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) { reply(message, { stopReason: "end_turn" }); }`,
+          liveClock: true,
+          makeControlClient: async (input) => {
+            liveWhenControlOpened = ownedPids().filter(isAlive);
+            assert.equal(input.sessionId, "scripted");
+            return {
+              messages: [
+                {
+                  id: "context-1",
+                  role: "user",
+                  content: [{ type: "text", text: "<system-reminder>tools" }],
+                },
+                prompt("droid-1", "Remember ALPHA"),
+                { id: "hook-record", role: "user", content: [] },
+                prompt("droid-2", "Remember BRAVO"),
+              ],
+              close: async () => undefined,
+              listSkills: async () => ({ skills: [] }),
+              setSkillDisabled: async () => undefined,
+              rewindBefore: async (messageId) => {
+                rewoundBefore.push(messageId);
+                return { newSessionId: "droid-rewound" };
+              },
+            };
+          },
+        });
+        ownedPids = h.ownedPids;
+        yield* h.send(1, "full-access", "default", "Remember ALPHA");
+        yield* h.terminal;
+        yield* h.send(2, "full-access", "default", "Remember BRAVO");
+        yield* h.terminal;
+        const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
+          id: ProviderTurnId.make(`droid-turn-${ordinal}`),
+          providerThreadId: h.providerThread.id,
+          nodeId: NodeId.make(`droid-root-${ordinal}`),
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal,
+          status: "completed",
+          nativeAcceptance: "accepted",
+          startedAt: null,
+          completedAt: null,
+        });
+
+        const rolledBack = yield* h.runtime.rollbackThread({
+          providerThread: h.providerThread,
+          providerThreadTurns: [turn(1), turn(2)],
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("droid-checkpoint-1"),
+            appRunOrdinal: 1,
+            providerTurn: turn(1),
+            message: { role: "user", text: "Remember ALPHA", attachments: [] },
+          },
+        });
+
+        // Droid writes to a session it loads: no ACP process may still hold it.
+        assert.deepEqual(liveWhenControlOpened, []);
+        assert.deepEqual(rewoundBefore, ["droid-2"]);
+        assert.equal(rolledBack.providerThread.nativeThreadRef?.nativeId, "droid-rewound");
+        h.useProviderThread(rolledBack.providerThread);
+        yield* h.send(3, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const loaded = (yield* h.readLog!())
+          .filter((message) => message.method === "session/load")
+          .map((message) => message.params?.sessionId);
+        assert.equal(loaded.at(-1), "droid-rewound");
+      }),
+    ),
+  );
   it.effect("accepts for the session with allow-once when Droid offers no allow-always", () =>
     Effect.scoped(
       Effect.gen(function* () {

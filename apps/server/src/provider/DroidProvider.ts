@@ -56,8 +56,6 @@ const DROID_PRESENTATION = {
   displayName: "Droid",
   showInteractionModeToggle: true,
   requiresNewThreadForModelChange: false,
-  // Droid's ACP surface has no conversation rewind.
-  supportsConversationRollback: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

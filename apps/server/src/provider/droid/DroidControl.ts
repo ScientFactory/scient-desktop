@@ -17,9 +17,13 @@ export class DroidControlError extends Data.TaggedError(DROID_CONTROL_ERROR_TAG)
 }
 
 export interface DroidControlClient {
+  /** The opened session's messages, oldest first; empty for a new session. */
+  readonly messages: ReadonlyArray<unknown>;
   readonly listSkills: () => Promise<unknown>;
   /** Records the choice in Droid's user-level settings. */
   readonly setSkillDisabled: (skillName: string, disabled: boolean) => Promise<void>;
+  /** Forks the session just before `messageId`; files are left to Scient's checkpoints. */
+  readonly rewindBefore: (messageId: string) => Promise<{ readonly newSessionId: string }>;
   readonly close: () => Promise<void>;
 }
 
@@ -67,6 +71,7 @@ const liveDroidControlClient: DroidControlClientFactory = async (input) => {
     void close();
   };
   input.signal.addEventListener("abort", onAbort, { once: true });
+  let messages: ReadonlyArray<unknown>;
   try {
     await transport.connect();
     // The SDK rejects a failed write through its own promise and leaves the
@@ -75,19 +80,34 @@ const liveDroidControlClient: DroidControlClientFactory = async (input) => {
     transport.getManagedProcess()?.childProcess.stdin?.on("error", () => undefined);
     const opened = new DroidClient({ transport });
     client = opened;
-    if (input.sessionId) unwrap(await opened.loadSession({ sessionId: input.sessionId }));
-    else
-      unwrap(await opened.initializeSession({ machineId: "scient-droid-control", cwd: input.cwd }));
+    const session = input.sessionId
+      ? unwrap(await opened.loadSession({ sessionId: input.sessionId })).session
+      : unwrap(
+          await opened.initializeSession({ machineId: "scient-droid-control", cwd: input.cwd }),
+        ).session;
+    messages = session.messages;
   } catch (cause) {
     await close().catch(() => undefined);
     throw cause;
   }
   const connected = client;
   return {
+    messages,
     close,
     listSkills: async () => unwrap(await connected.listSkills()),
     setSkillDisabled: async (skillName, disabled) => {
       unwrap(await connected.setSkillDisabled(skillName, disabled, SettingsLevel.User));
+    },
+    rewindBefore: async (messageId) => {
+      const result = unwrap(
+        await connected.executeRewind({
+          messageId,
+          filesToRestore: [],
+          filesToDelete: [],
+          forkTitle: "Rewound in Scient",
+        }),
+      );
+      return { newSessionId: result.newSessionId };
     },
   };
 };
