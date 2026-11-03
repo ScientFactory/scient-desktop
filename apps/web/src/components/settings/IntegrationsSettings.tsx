@@ -224,7 +224,9 @@ export async function importBrowserCookiesIntoTarget(
     readonly keepSites?: ReadonlyArray<string>;
     // SCIENT-FORK:END
   },
+  // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
 ): Promise<ImportOutcome & { readonly importedSites?: number }> {
+  // SCIENT-FORK:END
   try {
     const result = await bridge.importBrowserCookies({
       environmentId,
@@ -293,7 +295,9 @@ export async function importBrowserCookiesIntoTarget(
       skipped: result.skipped,
       skippedDomains: result.skippedDomains,
       targetName,
+      // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
       ...(result.importedSites === undefined ? {} : { importedSites: result.importedSites }),
+      // SCIENT-FORK:END
     };
   } catch (cause) {
     const policyRefusal = importPolicyRefusal(cause);
