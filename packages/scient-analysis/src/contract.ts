@@ -11,7 +11,7 @@ export { ExecutionRunId as AnalysisRunId };
 const Identifier = Schema.NonEmptyString.check(Schema.isMaxLength(128));
 const PathString = Schema.NonEmptyString.check(Schema.isMaxLength(32 * 1024));
 
-export const ANALYSIS_CONTRACT_VERSION = 1 as const;
+const ANALYSIS_CONTRACT_VERSION = 1 as const;
 
 export const AnalysisRuntimeId = Identifier.pipe(Schema.brand("AnalysisRuntimeId"));
 export type AnalysisRuntimeId = typeof AnalysisRuntimeId.Type;

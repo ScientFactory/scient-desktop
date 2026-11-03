@@ -2,9 +2,9 @@ import * as Schema from "effect/Schema";
 
 import { ByteLength, ContentHash, Count, ObservedAt, Sequence } from "./primitives.ts";
 
-export const MAXIMUM_COMPUTE_REPRESENTATIONS_PER_BUNDLE = 32;
+const MAXIMUM_COMPUTE_REPRESENTATIONS_PER_BUNDLE = 32;
 export const MAXIMUM_COMPUTE_INLINE_REPRESENTATION_BYTES = 1024 * 1024;
-export const MAXIMUM_COMPUTE_REPRESENTATION_METADATA_BYTES = 256 * 1024;
+const MAXIMUM_COMPUTE_REPRESENTATION_METADATA_BYTES = 256 * 1024;
 export const MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES = 8 * 1024 * 1024;
 
 const utf8 = new TextEncoder();
@@ -74,7 +74,7 @@ export const ComputeRepresentation = Schema.Struct({
 });
 export type ComputeRepresentation = typeof ComputeRepresentation.Type;
 
-export function computeRepresentationByteLength(representation: ComputeRepresentation): number {
+function computeRepresentationByteLength(representation: ComputeRepresentation): number {
   switch (representation.data._tag) {
     case "text":
       return utf8.encode(representation.data.text).byteLength;

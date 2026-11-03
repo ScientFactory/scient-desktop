@@ -12,7 +12,7 @@ export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 /** Longest accepted clip. */
 export const MAX_DURATION_MS = 180_000;
 /** Canonical WAV header length for the fixed 16-byte PCM `fmt ` layout. */
-export const WAV_HEADER_BYTES = 44;
+const WAV_HEADER_BYTES = 44;
 
 const MAX_AUDIO_BASE64_CHARS = 4 * Math.ceil(MAX_AUDIO_BYTES / 3);
 const BITS_PER_SAMPLE = 16;
@@ -87,7 +87,7 @@ export function normalizeVoiceClip(input: unknown): NormalizedVoiceClip {
  * Throw unless `bytes` is a canonical 24 kHz mono 16-bit PCM WAV whose declared
  * data length matches the buffer. Exposed for direct byte-level testing.
  */
-export function assertValidWav(bytes: NodeBuffer.Buffer): void {
+function assertValidWav(bytes: NodeBuffer.Buffer): void {
   if (!isValidWav(bytes)) {
     throw invalidAudio("The recorded audio is not a valid 24 kHz mono PCM WAV file.");
   }

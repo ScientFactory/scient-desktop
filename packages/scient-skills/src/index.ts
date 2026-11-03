@@ -7,7 +7,6 @@ export {
   type SkillCatalogDiagnostic,
 } from "./catalog.ts";
 export {
-  SCIENT_SKILL_MANIFEST_FILE,
   SCIENT_SKILLS_LOCK_FILE,
   SKILL_DOCUMENT_FILE,
   skillOriginKey,
@@ -25,7 +24,6 @@ export {
   type SkillResourceSummary,
 } from "./model.ts";
 export {
-  parseProjectSkillLock,
   readProjectSkillLock,
   renderProjectSkillLock,
   writeProjectSkillLock,
@@ -35,22 +33,14 @@ export {
 export {
   isStrictSemver,
   loadEmbeddedSkillRelease,
-  loadProjectSkillRelease,
   loadSkillRelease,
   parseSkillReleaseManifest,
   readSkillResource,
-  SkillReleaseValidationError,
 } from "./release.ts";
 export {
   loadProjectSkillCatalog,
-  MAX_PROJECT_SKILL_BYTES,
   MAX_PROJECT_SKILLS,
-  SCIENT_PROJECT_SKILLS_DIRECTORY,
   type ProjectSkillCatalog,
   type ProjectSkillDiagnostic,
 } from "./projectSkills.ts";
-export {
-  parseSkillDocument,
-  SkillDocumentError,
-  type ParsedSkillDocument,
-} from "./skillDocument.ts";
+export { parseSkillDocument, type ParsedSkillDocument } from "./skillDocument.ts";

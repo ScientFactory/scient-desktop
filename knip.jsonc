@@ -140,7 +140,7 @@
         "latexSelection.vitest.config.ts",
         "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
-        "src/scient/documentPage/main.tsx",
+        "src/scient/documentPage/main.tsx!",
         // The Visual performance benchmark: its production build configuration,
         // page entry (latex-visual-benchmark.html) and Node runner.
         "latexVisualBenchmark.config.ts",

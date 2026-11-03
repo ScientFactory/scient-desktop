@@ -45,7 +45,7 @@ function basename(path: string): string {
  * lose the root; any other absolute path keeps only its file name, so no
  * machine-specific directory leaves the installation.
  */
-export function projectRelativePath(path: string, roots: ReadonlyArray<string>): string {
+function projectRelativePath(path: string, roots: ReadonlyArray<string>): string {
   const normalized = path.replace(/\\/gu, "/");
   if (!isAbsolutePath(path)) return normalized.replace(/^\.\//u, "");
   for (const root of roots) {

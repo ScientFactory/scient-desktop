@@ -44,11 +44,11 @@ import {
 } from "./markdownAst.ts";
 import { readMessageBody } from "./messageBody.ts";
 
-export const SCIENT_CONVERSATION_MARKDOWN_VERSION = 1;
+const SCIENT_CONVERSATION_MARKDOWN_VERSION = 1;
 
 export type MarkdownMessageRole = "user" | "assistant";
 
-export const MARKDOWN_PART_KINDS = [
+const MARKDOWN_PART_KINDS = [
   "attachments",
   "context",
   "plan",
@@ -64,7 +64,7 @@ const EXPORT_VALUE_PATTERN = /^[a-f0-9]{12,64}$/u;
 const ISO_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const MARKER_PATTERN = /^<!-- scient:([a-z-]+)((?: [a-z-]+=[^\s=]+)*) -->$/u;
 
-export function isExportValue(value: string): boolean {
+function isExportValue(value: string): boolean {
   return EXPORT_VALUE_PATTERN.test(value);
 }
 
@@ -111,7 +111,7 @@ export function formatPartMarker(input: {
 }
 
 /** "27 Sep 2026, 14:05 UTC" in the requested zone; UTC when the zone is unknown. */
-export function formatSpeakerTime(iso: string, timeZone: string): string {
+function formatSpeakerTime(iso: string, timeZone: string): string {
   const epochMs = Date.parse(iso);
   if (!Number.isFinite(epochMs)) return iso;
   let formatter: Intl.DateTimeFormat;
