@@ -7853,100 +7853,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
 
     it.effect.each(
       (["all", "targeted", "workspace", "workspace-fresh", "background"] as const).map((mode) => ({
-        caseTitle: `provider refresh invalidates T3 caches before probing (${mode})`,
+        caseTitle: `provider refresh asks the registry to invalidate model caches before probing (${mode})`,
         mode,
       })),
     )("$caseTitle", ({ mode }) => {
-      const driver = ProviderDriverKind.make("codex");
-      const instanceIds = [
-        ProviderInstanceId.make("codex"),
-        ProviderInstanceId.make("codex_work"),
-      ] as const;
-      const packageNames = ["@example/personal", "@example/work"];
-      const invalidated: string[] = [];
-      const resolvedMaintenance: string[] = [];
+      // The registry owns what invalidation clears (ProviderRegistry.test.ts); the server only
+      // scopes it to the request and runs it before the probe.
+      const instanceId = ProviderInstanceId.make("codex_work");
+      const cwd = "/synthetic/provider-refresh";
       const workspaceScoped = mode === "workspace" || mode === "workspace-fresh";
       const targeted = mode === "targeted" || workspaceScoped;
-      const cwd = "/synthetic/provider-refresh";
-      let manifestRefreshed = false;
-      let probed = false;
-      const instances = instanceIds.map(
-        (instanceId, index) =>
-          ({
-            instanceId,
-            driverKind: driver,
-            continuationIdentity: { driverKind: driver, continuationKey: instanceId },
-            displayName: undefined,
-            enabled: true,
-            invalidateCaches: Effect.sync(() => {
-              invalidated.push(instanceId);
-            }),
-            snapshot: {
-              resolveMaintenance: (options) =>
-                Effect.sync(() => {
-                  assert.equal(options?.fresh, mode === "workspace");
-                  assert.include(invalidated, instanceId);
-                  resolvedMaintenance.push(instanceId);
-                  return makeManualOnlyProviderMaintenanceCapabilities({
-                    provider: driver,
-                    packageName: packageNames[index]!,
-                  });
-                }),
-              getSnapshot: Effect.never,
-              refresh: Effect.never,
-              streamChanges: Stream.empty,
-              applyUsageLimits: () => Effect.void,
-            },
-            get orchestrationAdapter(): never {
-              throw new Error("Provider refresh must not start a V2 chat session");
-            },
-            textGeneration: {} as ProviderInstance["textGeneration"],
-          }) satisfies ProviderInstance,
-      );
-      const expected = mode === "background" ? [] : targeted ? [instanceIds[1]!] : instanceIds;
-      const probe = (versionCache: ProviderLatestVersions.ProviderLatestVersions["Service"]) =>
-        Effect.gen(function* () {
-          probed = true;
-          assert.equal(manifestRefreshed, mode !== "background");
-          assert.deepEqual(invalidated.toSorted(), expected.toSorted());
-          assert.deepEqual(resolvedMaintenance.toSorted(), expected.toSorted());
-          for (let index = 0; index < instanceIds.length; index++) {
-            assert.equal(
-              yield* versionCache.cached(packageNames[index]!, Effect.succeed("2.0.0")),
-              expected.includes(instanceIds[index]!) ? "2.0.0" : "1.0.0",
-            );
-          }
+      const calls: string[] = [];
+      const invalidations: unknown[] = [];
+      const probe = (kind: string) =>
+        Effect.sync(() => {
+          calls.push(kind);
           return [];
         });
       return Effect.gen(function* () {
-        const versionCache = yield* ProviderLatestVersions.make(
-          packageNames.map((name) => [name, "1.0.0"] as const),
-        );
         yield* buildAppUnderTest({
           layers: {
-            providerLatestVersions: versionCache,
-            modelManifest: {
-              forceRefresh: Effect.sync(() => {
-                manifestRefreshed = true;
-                return ModelManifest.BUNDLED_MODEL_MANIFEST;
-              }),
-            },
-            providerInstanceRegistry: { listInstances: Effect.succeed(instances) },
             providerRegistry: {
-              refresh: () => probe(versionCache),
-              refreshInstance: (instanceId) => {
-                assert.equal(instanceId, instanceIds[1]);
-                return probe(versionCache);
-              },
-              refreshWorkspaceSnapshot: (input) => {
-                assert.deepEqual(input, {
-                  instanceId: instanceIds[1],
-                  cwd,
-                  fresh: mode === "workspace-fresh",
-                  awaitNativeInventory: false,
-                });
-                return probe(versionCache);
-              },
+              invalidateModelCaches: (input) =>
+                Effect.sync(() => {
+                  calls.push("invalidate");
+                  invalidations.push(input);
+                }),
+              refresh: () => probe("refresh"),
+              refreshInstance: () => probe("refreshInstance"),
+              refreshWorkspaceSnapshot: () => probe("refreshWorkspaceSnapshot"),
             },
           },
         });
@@ -7954,14 +7889,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             client[WS_METHODS.serverRefreshProviders]({
-              ...(targeted ? { instanceId: instanceIds[1]! } : {}),
+              ...(targeted ? { instanceId } : {}),
               ...(workspaceScoped ? { cwd } : {}),
               ...(mode === "workspace-fresh" ? { fresh: true } : {}),
               ...(mode !== "background" ? { refreshModels: true } : {}),
             }),
           ),
         );
-        assert.isTrue(probed);
+        const probeKind = workspaceScoped
+          ? "refreshWorkspaceSnapshot"
+          : targeted
+            ? "refreshInstance"
+            : "refresh";
+        assert.deepEqual(calls, mode === "background" ? [probeKind] : ["invalidate", probeKind]);
+        assert.deepEqual(
+          invalidations,
+          mode === "background"
+            ? []
+            : [
+                {
+                  instanceId: targeted ? instanceId : undefined,
+                  cwd: workspaceScoped ? cwd : undefined,
+                  fresh: mode === "workspace-fresh" ? true : undefined,
+                },
+              ],
+        );
       }).pipe(Effect.provide(NodeHttpServerTest));
     });
 
