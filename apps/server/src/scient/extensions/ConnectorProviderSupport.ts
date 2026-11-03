@@ -24,6 +24,8 @@ const CONNECTOR_TRANSPORT_SUPPORT: Record<string, ConnectorTransportSupport> = {
   // fx runs on the shared ACP adapter, which adds the same per-connector bridges.
   fx: { status: "supported" },
   grok: { status: "supported" },
+  // Kiro, like fx, runs on the shared ACP adapter and its per-connector bridges.
+  kiro: { status: "supported" },
   muse: { status: "supported" },
   // The Scient extension registers each connector's tools as `<server>__<tool>`.
   omp: { status: "supported" },
