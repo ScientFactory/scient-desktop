@@ -44,13 +44,15 @@ function isRepositoryPath(repository: string): boolean {
   );
 }
 
-/** Signing in through the T3 Code for GitHub app lifts the per-user API rate limit to the app's. */
+// SCIENT-FORK:START — Scient's own GitHub App; the server supplies its client ID.
+/** Signing in through the Scient for GitHub app lifts the per-user API rate limit to the app's. */
 export const APP_SIGN_IN: SourceControlAppSignIn = {
-  appName: "T3 Code for GitHub",
+  appName: "Scient for GitHub",
   hosts: ["github.com"],
-  installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
+  installUrl: "https://github.com/apps/scient-for-github/installations/new",
   revokeUrl: "https://github.com/settings/apps/authorizations",
 };
+// SCIENT-FORK:END
 
 export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
 export type GitHubSettings = typeof settings.Type;
