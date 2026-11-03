@@ -203,8 +203,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         extendEnv: false,
         shell: spawnCommand.shell,
         detached: platform !== "win32",
-        // SCIENT-FORK:START — Effect 4.1.2 ends stdin when the writer is interrupted at close, so
-        // Pi saw EOF before the SIGTERM teardown. Keep stdin open; drop once T3 ships the same fix.
+        // SCIENT-FORK:START — Effect 4.1.2 ends stdin when the writer is interrupted at close. On
+        // stdin EOF Pi quits without its SIGTERM handler, so the later SIGTERM killed it mid-cleanup
+        // and orphaned its running command. Drop once T3 ships the same fix.
         stdin: { stream: "pipe", endOnDone: false },
         // SCIENT-FORK:END
       }),
