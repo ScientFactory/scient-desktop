@@ -56,9 +56,10 @@ it("lists running-browser metadata, imports the selection only after quit and re
   ];
   state.importCookies.mockReset().mockResolvedValue({
     kind: "imported",
-    imported: 1,
+    imported: 4,
     skipped: 0,
     skippedDomains: [],
+    importedSites: 2,
     targetName: "Work",
   });
   using _bridge = stubGlobal("desktopBridge", {
@@ -71,10 +72,6 @@ it("lists running-browser metadata, imports the selection only after quit and re
           name: "Work",
           email: "synthetic@example.invalid",
         },
-      ],
-      signedInSites: async () => [
-        { domain: "example.com", cookies: 3 },
-        { domain: "example.org", cookies: 1 },
       ],
     },
   });
@@ -145,7 +142,6 @@ it("imports a Chromium profile's saved passwords through the Accounts importer, 
         { sourceId: "chrome", directory: "Default", name: "Personal", passwordCount: 7 },
       ],
       readBrowserPasswords: () => passwords.promise,
-      signedInSites: async () => [],
     },
   });
   await using _screen = await render(

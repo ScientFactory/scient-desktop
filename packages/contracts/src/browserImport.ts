@@ -79,6 +79,9 @@ export const BrowserImportResult = Schema.Struct({
   imported: Schema.Int,
   skipped: Schema.Int,
   skippedDomains: Schema.Array(Schema.String),
+  // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+  importedSites: Schema.optional(Schema.Int),
+  // SCIENT-FORK:END
 });
 export type BrowserImportResult = typeof BrowserImportResult.Type;
 

@@ -29,6 +29,16 @@ export function siteCookieRemovals(
   );
 }
 
+/** How many sites these cookie domains or hosts belong to. */
+export function countSites(hosts: Iterable<string>) {
+  const sites = new Set<string>();
+  for (const host of hosts) {
+    const site = siteOf(host);
+    if (site !== undefined) sites.add(site);
+  }
+  return sites.size;
+}
+
 export function groupSignedInSites(
   cookies: ReadonlyArray<{ readonly domain: string }>,
 ): DesktopProfileSignedInSite[] {

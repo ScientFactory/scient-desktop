@@ -38,6 +38,9 @@ import {
   type BrowserImportPathContext,
   type BrowserImportSourceDefinition,
 } from "./Sources.ts";
+// SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+import { countSites } from "../../scient/accounts/signedInSites.ts";
+// SCIENT-FORK:END
 
 export class BrowserImportFailedError extends Schema.TaggedError<BrowserImportFailedError>()(
   "BrowserImportFailedError",
@@ -163,6 +166,9 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   // SCIENT-FORK:END
 ) {
   let imported = 0;
+  // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+  const importedHosts = new Set<string>();
+  // SCIENT-FORK:END
   let skipped = read.undecryptable;
   const skippedDomains = new Set(read.undecryptableHosts);
   for (const cookie of read.cookies) {
@@ -191,6 +197,9 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
     );
     if (written) {
       imported += 1;
+      // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+      importedHosts.add(cookieHost(cookie.url));
+      // SCIENT-FORK:END
     } else {
       skipped += 1;
       skippedDomains.add(cookieHost(cookie.url));
@@ -205,7 +214,14 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
       Effect.ignore,
     );
   }
-  return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
+  return {
+    imported,
+    skipped,
+    skippedDomains: [...skippedDomains].slice(0, 20),
+    // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+    importedSites: countSites(importedHosts),
+    // SCIENT-FORK:END
+  };
 });
 
 /** @public */

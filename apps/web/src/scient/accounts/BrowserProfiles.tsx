@@ -360,12 +360,7 @@ export function BrowserImportDialog({
             const record = sourceRecord(profileId, source.id, profile);
             if (Option.isSome(record)) await updateRecord(record.value);
             else profileError();
-            const sites = outcome.imported
-              ? await window.desktopBridge?.accounts
-                  ?.signedInSites(profileId, environmentId)
-                  .catch(() => undefined)
-              : [];
-            const label = importedLabel(outcome.imported, sites?.length);
+            const label = importedLabel(outcome.imported, outcome.importedSites);
             setBrought((current) => new Map(current).set(key, label));
           }
           done.add(key);
