@@ -19,6 +19,10 @@ import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
 import type * as SourceControlHost from "./SourceControlHost.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+// SCIENT-FORK:START — Scient connectors borrow Source Control's credential.
+import type { SourceControlCredentials } from "./scientCredential.ts";
+export * from "./scientCredential.ts";
+// SCIENT-FORK:END
 
 export interface SourceControlMediaRequest {
   /** A `fetchUrl` this host's definition returned from `mediaUrl`. */
@@ -65,6 +69,9 @@ export interface SourceControlDriverInstance {
   readonly signIn?: SourceControlSignIn;
   /** Whether the server's account on `host` starred `repository` (`owner/name`). */
   readonly isRepositoryStarred?: (host: string, repository: string) => Effect.Effect<boolean>;
+  // SCIENT-FORK:START — Scient connectors borrow Source Control's credential.
+  readonly credential?: SourceControlCredentials;
+  // SCIENT-FORK:END
 }
 
 /** What the server gives every driver. A driver builds anything else it needs itself. */
