@@ -1,12 +1,19 @@
-// @effect-diagnostics nodeBuiltinImport:off -- execution ids are random UUIDs.
+// @effect-diagnostics nodeBuiltinImport:off -- execution ids are random UUIDs, and agents name files by host paths.
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import {
+  AnalysisRunId,
+  AnalysisSourceRevision,
   ComputeExecutionId,
   ComputeLanguageId,
   ComputeSessionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   ComputeToolkitId,
+  computeRunRoutesForPath,
+  isSqliteScript,
+  type AnalysisOperationError,
+  type AnalysisRunSnapshot,
   type ComputeExecutionRecord,
   type ComputeManagedRuntimeStatus,
   type ComputeSessionRecord,
@@ -38,6 +45,12 @@ import {
 } from "./tools.ts";
 
 const DEFAULT_RUN_WAIT_SECONDS = 120;
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "lost",
+]);
 const MAXIMUM_IMAGES = 6;
 const MAXIMUM_IMAGE_BYTES = 4 * 1024 * 1024;
 const RECENT_RUNS = 5;
@@ -269,6 +282,115 @@ export const runScientCompute = Effect.fn("ScientComputeToolkit.run")(function* 
   );
 });
 
+const MAXIMUM_FILE_RUN_OUTPUT = 64 * 1024;
+
+const isFinishedRun = (run: AnalysisRunSnapshot) => TERMINAL_RUN_STATUSES.has(run.receipt.status);
+
+const describeFileRun = (run: AnalysisRunSnapshot) => {
+  const output = run.receipt.output.map((chunk) => chunk.text).join("");
+  return {
+    runtime: `${run.runtime.label}${run.runtime.version ? ` ${run.runtime.version}` : ""}`,
+    run: {
+      run: run.receipt.runId,
+      status: run.receipt.status,
+      source: `agent: ${run.source.relativePath}`,
+      submittedAt: run.receipt.startedAt,
+      finishedAt: run.receipt.finishedAt ?? null,
+      output: [run.receipt.failureMessage, output.slice(-MAXIMUM_FILE_RUN_OUTPUT)]
+        .filter((part) => part !== null && part !== undefined && part.length > 0)
+        .join("\n"),
+      figures: run.artifacts.length,
+    },
+    wrote: [...(run.writtenFiles ?? []), ...run.artifacts.map((artifact) => artifact.label)],
+  };
+};
+
+/**
+ * Agents often hold a file's full path. Only a plain path under the project is shortened: folding
+ * a `..` here could pass through a symlink and land on a different file. Any other absolute path
+ * stays as it is, and reading it is refused.
+ */
+export function projectRelativePath(root: string, path: string, separator = NodePath.sep): string {
+  const prefix = `${root}${separator}`;
+  const inside = path.startsWith(prefix) ? path.slice(prefix.length).split(separator) : null;
+  return inside === null || inside.includes("..") ? path : inside.join("/");
+}
+
+export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(function* (input: {
+  readonly path: string;
+  readonly run?: string | undefined;
+  readonly waitSeconds?: number | undefined;
+}) {
+  const scope = yield* agentScope();
+  const { gateway } = scope;
+  const relativePath = projectRelativePath(scope.cwd, input.path);
+  const waited = (
+    runId: AnalysisRunId,
+    start: Effect.Effect<AnalysisRunSnapshot, AnalysisOperationError>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Subscribe before starting so a fast run cannot finish unobserved.
+        const events = yield* gateway.subscribeFileRuns({
+          cwd: scope.cwd,
+          relativePath,
+        });
+        const started = yield* start;
+        if (isFinishedRun(started)) return started;
+        yield* events.pipe(
+          Stream.filter(
+            (event) =>
+              event._tag !== "run-output" &&
+              event.run.receipt.runId === runId &&
+              TERMINAL_RUN_STATUSES.has(event.run.receipt.status),
+          ),
+          Stream.runHead,
+          Effect.timeoutOption(Duration.seconds(input.waitSeconds ?? DEFAULT_RUN_WAIT_SECONDS)),
+        );
+        return yield* gateway.getFileRun({ cwd: scope.cwd, runId });
+      }),
+    );
+  if (input.run !== undefined) {
+    const runId = AnalysisRunId.make(input.run);
+    const run = yield* waited(runId, gateway.getFileRun({ cwd: scope.cwd, runId })).pipe(
+      Effect.mapError(computeFailed),
+    );
+    return describeFileRun(run);
+  }
+  const file = yield* gateway
+    .readFile({ cwd: scope.cwd, relativePath })
+    .pipe(Effect.mapError(() => toolError("compute-failed", `Cannot read '${input.path}'.`)));
+  const { runtimes } = yield* gateway
+    .inspectFileRuntimes({ cwd: scope.cwd })
+    .pipe(Effect.mapError(computeFailed));
+  const runtime = computeRunRoutesForPath(relativePath)
+    .filter((route) => route.languageId !== "sqlite" || isSqliteScript(file.contents))
+    .flatMap((route) =>
+      runtimes.filter(
+        (candidate) =>
+          candidate.kind === route.languageId && candidate.availability === "available",
+      ),
+    )[0];
+  if (runtime === undefined) {
+    return yield* toolError(
+      "compute-failed",
+      `Nothing on this computer runs '${input.path}'. Python, R, Julia, SQL and MATLAB run through scient_compute_run.`,
+    );
+  }
+  const runId = AnalysisRunId.make(NodeCrypto.randomUUID());
+  const run = yield* waited(
+    runId,
+    gateway.startFileRun({
+      runId,
+      cwd: scope.cwd,
+      relativePath,
+      sourceRevision: AnalysisSourceRevision.make(file.revision),
+      runtimeId: runtime.id,
+    }),
+  ).pipe(Effect.mapError(computeFailed));
+  return describeFileRun(run);
+});
+
 export const readScientComputeOutput = Effect.fn("ScientComputeToolkit.output")(function* (input: {
   readonly session: string;
   readonly run?: string | undefined;
@@ -424,6 +546,7 @@ const handlers = {
   scient_notebook_edit: editScientNotebook,
   scient_notebook_run: runScientNotebook,
   scient_compute_run: runScientCompute,
+  scient_compute_run_file: runScientComputeFile,
   scient_compute_output: readScientComputeOutput,
   scient_compute_sessions: () => listScientComputeSessions(),
   scient_compute_variables: listScientComputeVariables,

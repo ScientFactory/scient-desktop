@@ -20,8 +20,10 @@ import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
+import * as ComputeProjectOutputObserver from "./compute/ComputeProjectOutputObserver.ts";
 import * as NotebookRunRecorder from "./notebook/NotebookRunRecorder.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
+import * as BrowserHistory from "./browserHistory/BrowserHistory.ts";
 import * as AnalysisRunIndex from "./analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./execution/LocalExecutionProcess.ts";
@@ -127,6 +129,7 @@ export function makeScientRouteServices<
   );
 
   const AnalysisServiceLive = AnalysisService.layer.pipe(
+    Layer.provide(ComputeProjectOutputObserver.liveLayer),
     Layer.provide(ToolDiscovery.layer),
     Layer.provide(LocalAnalysisStore.layer),
     Layer.provide(AnalysisRunIndexLive),
@@ -186,11 +189,13 @@ export function makeScientRouteServices<
   /** Scient services behind the routes, provided in order. */
   const provideScientRouteServices = <A, E, R>(self: Layer.Layer<A, E, R>) =>
     self.pipe(
+      Layer.provide(BrowserHistory.layer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(AnalysisServiceLive),
       Layer.provide(ConversationExportServiceLive),
       Layer.provide(ConversationImportStagingLive),
       Layer.provide(WordFileExportLive),
       Layer.provide(ComputeMcpGatewayLive),
+      Layer.provide(AnalysisServiceLive),
       Layer.provide(NotebookRunRecorder.layer),
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(DataTables.layer),

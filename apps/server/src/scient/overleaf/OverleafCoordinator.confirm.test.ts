@@ -8,7 +8,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
 
-import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 
 /** Counts the reviews built (prepare's and any confirm's) under `effect`. */
 const countingBuilds = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
@@ -38,7 +45,7 @@ const confirmAfter = (w: World, between: Effect.Effect<unknown>) =>
     });
   });
 
-describe.skipIf(!canApply)("OverleafCoordinator, confirm", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, confirm", () => {
   it.live("fetches when Overleaf moved since the review, and offers the new state", () =>
     run(
       Effect.gen(function* () {

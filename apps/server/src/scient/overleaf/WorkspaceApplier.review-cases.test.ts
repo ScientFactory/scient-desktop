@@ -9,14 +9,14 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
+import { privateFoldersAndIdentityHost } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import { advanceBase } from "./syncRules.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import { make, type WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 
-const canPublish = await nativePublicationHost();
+const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
 const bytes = (value: string | Buffer) => Buffer.from(value);
 const tree = (files: Record<string, string | Buffer>) =>
   new Map(Object.entries(files).map(([name, value]) => [name, bytesRevision(bytes(value))]));
@@ -42,7 +42,7 @@ async function put(cwd: string, files: Record<string, string | Buffer>) {
 }
 const read = (cwd: string, name: string) => NodeFSP.readFile(NodePath.join(cwd, name), "utf8");
 
-describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier review cases", () => {
   describe("renames", () => {
     const recoveryCases = (
       ["recorded", "after-step", "step-recorded", "base-recorded"] as const

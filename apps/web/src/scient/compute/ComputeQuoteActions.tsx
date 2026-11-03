@@ -32,7 +32,15 @@ function elementOf(node: Node): Element | null {
 
 /** A run's place, written on it by `computeRunAttributes`. */
 export function computeRunPlace(source: HTMLElement): ComputePlace | null {
-  const { assistantCitationSource: executionId, computeSession, computePath } = source.dataset;
+  const {
+    assistantCitationSource: executionId,
+    computeSession,
+    computePath,
+    computeFileRun,
+  } = source.dataset;
+  if (executionId !== undefined && computeFileRun !== undefined && computePath !== undefined) {
+    return { _tag: "file-run", runId: executionId, path: computePath };
+  }
   return executionId === undefined || computeSession === undefined
     ? null
     : {
@@ -53,6 +61,15 @@ export function computeRunAttributes(run: {
     "data-assistant-citation-source": run.executionId,
     "data-compute-session": run.sessionId,
     ...(run.path === null ? {} : { "data-compute-path": run.path }),
+  };
+}
+
+/** Marks a file run with no session as something selected text can be quoted from. */
+export function computeFileRunAttributes(run: { readonly runId: string; readonly path: string }) {
+  return {
+    "data-assistant-citation-source": run.runId,
+    "data-compute-file-run": "",
+    "data-compute-path": run.path,
   };
 }
 

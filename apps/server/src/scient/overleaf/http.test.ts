@@ -8,12 +8,19 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 import { restoreView } from "./http.ts";
 
 const decode = Schema.decodeUnknownSync(ScientOverleafRestoreResult);
 
-describe.skipIf(!canApply)("Overleaf HTTP views", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf HTTP views", () => {
   it.live("a restore whose apply wrote nothing says so, and one that wrote says restored", () =>
     run(
       Effect.gen(function* () {

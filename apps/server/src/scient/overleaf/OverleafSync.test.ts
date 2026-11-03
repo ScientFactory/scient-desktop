@@ -20,7 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 
 import { OverleafReservationOwner } from "./OverleafCoordinator.ts";
-import { canApply } from "./OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity } from "./OverleafCoordinator.testkit.ts";
 import {
   OTHER_PROJECT,
   overleafSyncWorld as world,
@@ -33,7 +33,7 @@ import {
 
 const decodeReview = Schema.decodeUnknownEffect(ScientOverleafReview);
 
-describe.skipIf(!canApply)("OverleafSync", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
   it.live(
     "brings a project in as a new folder, then the first sync fills it and sends nothing",
     () =>

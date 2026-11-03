@@ -961,6 +961,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           : [],
       ),
     );
+    const missing = [];
     for (const pin of after) {
       if (held.get(pin.name) === pin.oid) continue;
       if (
@@ -969,8 +970,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         !(yield* repos.hasObject({ repo, oid: pin.oid }))
       )
         continue;
-      yield* repos.setRef({ repo, ...pin });
+      missing.push(pin);
     }
+    yield* repos.setRefs({ repo, refs: missing });
     yield* store.replaceConnection({ expectedRevision: previous.revision, next });
     const kept = new Set(after.map((pin) => pin.name));
     for (const name of before.keys())

@@ -30,9 +30,13 @@ const mocks = vi.hoisted(() => ({
   openFile: vi.fn(),
   toast: vi.fn(),
   setPrompt: vi.fn(),
+  citeText: vi.fn(() => true),
   artifacts: vi.fn(),
   runs: vi.fn(),
   timestampFormat: "24-hour" as "12-hour" | "24-hour" | "locale",
+}));
+vi.mock("~/composerHandleContext", () => ({
+  useComposerHandleContext: () => ({ current: { citeText: mocks.citeText } }),
 }));
 vi.mock("~/state/analysis", () => ({
   analysisEnvironment: {
@@ -218,6 +222,15 @@ async function click(_fixture: _Fixture, label: string) {
   expect(button, label).toBeDefined();
   await act(async () => button!.click());
 }
+async function clickRunAction(_fixture: _Fixture, label: string) {
+  await page
+    .elementLocator(
+      _fixture.container.querySelector<HTMLElement>('[aria-label="More run actions"]')!,
+    )
+    .click();
+  await page.getByRole("menuitem", { name: label }).click();
+  await expect.poll(() => document.querySelector('[role="menu"]')).toBeNull();
+}
 async function _setupFixture0(_fixture: _Fixture) {
   vi.clearAllMocks();
   const previousDraftState = useComposerDraftStore.getState();
@@ -291,7 +304,7 @@ describe("Compute batch lifecycle", () => {
       }).format(new Date(first.receipt.startedAt));
       expect(history[0]?.textContent).toContain(expected);
       expect(
-        _fixture.container.querySelector('[aria-label="Local MATLAB run history"]')?.textContent,
+        _fixture.container.querySelector('[aria-label="MATLAB runs of this file"]')?.textContent,
       ).toContain(expected);
       expect(mocks.start).not.toHaveBeenCalled();
     },
@@ -730,9 +743,9 @@ describe("Compute batch results", () => {
     );
     expect(_fixture.container.textContent).not.toContain("OTHER_RUN_OUTPUT");
     expect(mocks.artifacts).not.toHaveBeenCalled();
-    expect(_fixture.container.querySelector('[aria-label="Local MATLAB run history"]')).toBeNull();
-    expect(_fixture.container.textContent).toContain("Waiting for this batch run");
-    expect(_fixture.container.textContent).not.toContain("Run MATLAB batch to see output");
+    expect(_fixture.container.querySelector('[aria-label="MATLAB runs of this file"]')).toBeNull();
+    expect(_fixture.container.textContent).toContain("Waiting for this run");
+    expect(_fixture.container.textContent).not.toContain("Run this file to see output");
     await click(_fixture, "Stop");
     expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith({
       environmentId: source.environmentId,
@@ -752,7 +765,7 @@ describe("Compute batch results", () => {
     await render(_fixture, <DefaultResults />);
     expect(
       [..._fixture.container.querySelectorAll("button")].some(
-        (button) => button.textContent === "Run MATLAB batch",
+        (button) => button.textContent === "Run MATLAB",
       ),
     ).toBe(false);
     expect(mocks.start).not.toHaveBeenCalled();
@@ -831,16 +844,100 @@ describe("Compute batch results", () => {
     await click(_fixture, "analysis.m:4");
     expect(mocks.openFile).toHaveBeenCalledWith(source.threadRef, "analysis.m", 4);
     await click(_fixture, "Ask agent");
-    expect(mocks.setPrompt).toHaveBeenCalledWith(
-      source.threadRef,
-      expect.stringContaining("Existing draft\n\nPlease diagnose"),
+    expect(mocks.setPrompt).not.toHaveBeenCalled();
+    expect(mocks.citeText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "compute",
+        text: "MATLAB:error: Bad input",
+        place: { _tag: "file-run", runId: "batch-1", path: source.relativePath },
+      }),
+      expect.anything(),
     );
-    await click(_fixture, "Save to project");
+    await clickRunAction(_fixture, "Save to project");
     expect(mocks.promote).toHaveBeenCalledWith({
       environmentId: source.environmentId,
       input: { cwd: source.cwd, runId: "batch-1" },
     });
     expect(mocks.openFile).toHaveBeenCalledWith(source.threadRef, "results/batch/README.md");
+  });
+  it("says what went wrong in a failed run, and offers a way forward", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const failed = run("failed-run", "failed");
+    mocks.values.set(
+      "runtimes",
+      AsyncResult.success({
+        runtimes: [
+          {
+            ...(mocks.values.get("runtimes") as { value: { runtimes: [object] } }).value
+              .runtimes[0],
+            alternatives: [
+              { executablePath: "/opt/java/21/bin/java", label: "Java 21.0.1", version: "21.0.1" },
+            ],
+          },
+        ],
+      }),
+    );
+    mocks.values.set(
+      "events",
+      AsyncResult.success([
+        {
+          ...failed,
+          receipt: {
+            ...failed.receipt,
+            failureMessage: "MATLAB exited with code 1.",
+            output: [
+              {
+                sequence: 1,
+                stream: "stderr",
+                text: `${source.cwd}/${source.relativePath}:12:5: error: bad\n`,
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    await render(_fixture, <Harness _fixture={_fixture} controls={false} />);
+    expect(_fixture.container.textContent).toContain("Failed");
+    expect(_fixture.container.textContent).not.toContain("exited with code 1");
+    expect(_fixture.container.textContent).not.toContain(source.cwd);
+    await click(_fixture, `${source.relativePath}:12:5`);
+    expect(mocks.openFile).toHaveBeenCalledWith(source.threadRef, source.relativePath, 12);
+    await click(_fixture, "Ask agent");
+    expect(mocks.setPrompt).not.toHaveBeenCalled();
+    expect(mocks.citeText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: `${source.relativePath}:12:5: error: bad`,
+        place: { _tag: "file-run", runId: "failed-run", path: source.relativePath },
+      }),
+      expect.anything(),
+    );
+    await clickRunAction(_fixture, "Run with Java 21.0.1");
+    expect(mocks.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ executablePath: "/opt/java/21/bin/java" }),
+      }),
+    );
+  });
+  it("shows a file's last run when its tab comes back, and starts nothing", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    mocks.values.set(
+      "runs",
+      AsyncResult.success({
+        runs: [run("earlier", "succeeded")],
+        hasMore: false,
+        nextCursor: null,
+      }),
+    );
+    mocks.values.set("run", AsyncResult.success(run("earlier", "succeeded")));
+    await render(_fixture, <Harness _fixture={_fixture} controls={false} />);
+    await expect.poll(() => mocks.start.mock.calls.length).toBe(0);
+    expect(_fixture.container.textContent).not.toContain("Run this file to see output");
   });
   it("loads saved history even when MATLAB is unavailable and never starts on history selection", async () => {
     await using _fixture = _createFixture();
@@ -862,11 +959,16 @@ describe("Compute batch results", () => {
     expect(history[1]?.getAttribute("aria-checked")).toBe("true");
     await userEvent.keyboard("{Escape}");
     await expect.poll(() => document.querySelector('[role="menu"]')).toBeNull();
-    await click(_fixture, "Save to project");
+    await clickRunAction(_fixture, "Save to project");
     expect(mocks.promote).toHaveBeenCalledWith(
       expect.objectContaining({ input: { cwd: source.cwd, runId: "older" } }),
     );
-    await click(_fixture, "Load older runs");
+    await page
+      .elementLocator(
+        _fixture.container.querySelector<HTMLElement>('[aria-label="MATLAB runs of this file"]')!,
+      )
+      .click();
+    await page.getByRole("menuitem", { name: "Load older runs" }).click();
     expect(mocks.runs).toHaveBeenLastCalledWith({
       environmentId: source.environmentId,
       input: { cwd: source.cwd, relativePath: source.relativePath, limit: 30, cursor: "page-2" },
@@ -884,9 +986,7 @@ describe("Compute batch results", () => {
     };
     mocks.values.set("events", AsyncResult.success([removed]));
     await render(_fixture);
-    expect(_fixture.container.textContent).toContain(
-      "Local output and artifact files were removed",
-    );
+    expect(_fixture.container.textContent).toContain("This run's saved output was removed");
     expect(_fixture.container.textContent).not.toContain("Save to project");
   });
   it("allows an explicit run control without requiring another file panel", async () => {
@@ -895,10 +995,8 @@ describe("Compute batch results", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    expect(
-      _fixture.container.querySelector('section[aria-label="MATLAB batch Results"]'),
-    ).not.toBeNull();
-    await click(_fixture, "Run MATLAB batch");
+    expect(_fixture.container.querySelector('section[aria-label="MATLAB results"]')).not.toBeNull();
+    await click(_fixture, "Run MATLAB");
     expect(mocks.start).toHaveBeenCalledTimes(1);
   });
 });
@@ -934,7 +1032,7 @@ type _Fixture = ReturnType<typeof _createFixture>;
 
 async function openRunHistory(_fixture: _Fixture) {
   const trigger = _fixture.container.querySelector<HTMLButtonElement>(
-    '[aria-label="Local MATLAB run history"]',
+    '[aria-label="MATLAB runs of this file"]',
   )!;
   expect(trigger).not.toBeNull();
   await page.elementLocator(trigger).click();

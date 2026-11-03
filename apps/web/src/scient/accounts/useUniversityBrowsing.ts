@@ -16,7 +16,7 @@ const PAGE_SETTLE_MS = 2_500;
 const signedInUniversityHere = (accounts: ReadonlyArray<AccountSummary>, profileId: string) =>
   universitiesOf(accounts).some(
     (account) =>
-      account.lastCheck?.state === "signed-in" &&
+      account.signIn?.state === "signed-in" &&
       (universityDetails(account.details)?.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId,
   );
 

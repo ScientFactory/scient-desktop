@@ -205,9 +205,11 @@ desktop. The count comes from Login Data without decrypting anything.
 When Accounts opens, regains focus, receives account changes or completes a profile-site sign-out,
 its desktop client reads cookie domains and expiry metadata using the same environment/profile
 partition mapping as the signed-in-sites view. No cookie names or values leave the native handler.
-The client supplies this display-only observation to `accounts.snapshot`; the server marks a website
-account Signed out only after an earlier `signed-in` outcome or a previously observed live cookie,
-and only when a successful read finds no unexpired cookies for any of its sites. Session cookies
+The client supplies this observation to `accounts.snapshot`; the server records a website account
+as `signed-out` (`endedWebsiteSessions`, through `recordCheck`) only when its sign-in state is
+`signed-in`, or unknown after a previously observed live cookie, and only when a successful read
+finds no unexpired cookies for any of its sites. A recorded account no longer qualifies, so repeated
+snapshots write nothing, and cookies coming back don't sign it in again: the next look does. Session cookies
 count as live; a cookie on a parent or child domain conservatively suppresses the label. Cookie
 presence does not prove authentication. Failed reads, older desktops and browser-only clients show
 no session status. There is no polling. Manual-session observations are isolated by renderer identity
@@ -372,7 +374,7 @@ when the app is unfocused; clicking opens the requesting thread.
 looks for another Allowed profile that opens the page (new tabs only), then `signInOnPage` signs in
 with the Allowed website account matching the page or the requested address, on the same
 tab, and navigates back to the requested address. `accountsNote` carries the result. Ask accounts
-get a note pointing at `scient_account_sign_in`, which asks; a `lastSignInOutcome` of
+get a note pointing at `scient_account_sign_in`, which asks; a sign-in state of
 `password-rejected` or `code-rejected` stops automatic attempts until the secret changes, since
 retries can lock an account. Login walls include a redirect to `/login`, `/sso` or a sign-in
 subdomain on the same site, before any password field shows.
@@ -430,12 +432,15 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 ### Sign-in status and checks
 
-`AccountSummary.lastCheck` keeps what Scient last saw of a sign-in: `signed-in`, `signed-out`,
-`needs-you`, `rejected`, `limited` or `unknown`, with when and an optional message. Every sign-in outcome
-updates it (`outcomeCheckState`). `accounts.signInSeen` records the user's own sign-in, when a
-submitted saved password leaves no login form six seconds later. A saved password, 2FA secret or
-key resets it. Rows show
-it through `accountStatusLabel`, after anything that needs the user.
+`AccountSummary.signIn` is the one sign-in state: `signed-in`, `signed-out`, `needs-you`,
+`password-rejected`, `code-rejected`, `limited`, `failed` or `unknown`, with when and an optional
+detail. Every sign-in outcome (`outcomeSignInState`) and every look at the site writes it through
+`withSignIn` in `AccountDecisions.ts`, whose doc comments hold the holds and what may replace what:
+a refusal outlasts every look, a limit outlasts all but a working session for an hour. A refused API
+key is `failed` with the service's answer. `accounts.signInSeen` records the user's own sign-in, when
+a submitted saved password leaves no login form six seconds later. A saved password, 2FA secret or
+key resets it. Rows show it through `accountStatusLabel`. Stored accounts from before carried
+`lastSignInOutcome` and `lastCheck`, folded into `signIn` when read (`foldStoredAccounts`).
 
 `accounts.check` (`checkAccounts.ts`) opens each account's site or university sign-in link in its own profile,
 one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
@@ -448,14 +453,17 @@ account with a saved password gets one unattended sign-in, only if the last one 
 tried: one that needed the user or failed would do the same with nobody there. A whole
 run skips imported passwords with no history and stops at 40 accounts.
 
-Autofill submits only on the user's own tab, when the site has one saved sign-in whose
-`lastSignInOutcome` is `signed-in`, at most once per site every 10 minutes, and only a complete form.
+Autofill submits only on the user's own tab, when the site has one saved sign-in whose password
+has worked (`verifiedAt` on the password, set when a sign-in where Scient typed it ends signed in,
+cleared by a new password) and no hold applies (`automaticSignInOnHold`, shared from
+`@t3tools/shared/scientAccountSignIn`), at most once per site every 10 minutes, and only a complete
+form.
 
 Google answers for itself. `googleSessions` (desktop) posts to the account list Chrome reads, with
 the profile's own session and no page, and `watchGoogleSessions`, started by `accountWatchers.ts`, sends the
 result to `accounts.googleSessions.seen` at startup, after a sign-in, and on focus at most every five
 minutes. A profile with no Google cookies isn't asked. The server keeps one password-free website
-row per address and profile, site `google.com`, with `lastCheck` set from what Google said. Those
+row per address and profile, site `google.com`, with `signIn` set from what Google said. Those
 rows tell `pickBrowserProfile` where each account lives, and a saved password stays a separate row
 so autofill doesn't widen to every Google subdomain. Check my accounts leaves those rows to Google.
 
@@ -612,7 +620,7 @@ provider environment. The existing proxy redacts reflected values in responses.
   used.
 - **University access**: a website account with `institution` (from the public directory) or
   `proxyUrl` (a library link with `{url}`) reaches a university's subscriptions; older `library`
-  accounts fold into this shape when read (`foldLibraryAccounts`). `accounts.universities.signIn`
+  accounts fold into this shape when read (`foldStoredAccounts`). `accounts.universities.signIn`
   (`universitySignIn.ts`) opens the sign-in link visibly beside a conversation, in the account's
   profile. An OpenAthens university (`usesOpenAthens`: its directory entity is an OpenAthens one)
   signs in at `my.openathens.net/auth` with the entity preselected, which goes straight to the

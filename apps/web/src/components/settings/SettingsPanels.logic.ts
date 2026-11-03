@@ -130,6 +130,7 @@ export type BrowserDefaultSettings = Pick<
   | "browserRecordingShowMousePresses"
   | "browserLinkTarget"
   | "browserSearchEngine"
+  | "browserSearchSuggestions"
   | "browserCustomSearchUrl"
   | "browserAutoShowFloatingPreview"
   | "pullRequestLinksOpenInApp"
@@ -173,6 +174,11 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
     settings.browserCustomSearchUrl !== DEFAULT_UNIFIED_SETTINGS.browserCustomSearchUrl
       ? ["Search engine"]
       : []),
+    // SCIENT-FORK:START — Scient Browser: search suggestions.
+    ...(settings.browserSearchSuggestions !== DEFAULT_UNIFIED_SETTINGS.browserSearchSuggestions
+      ? ["Search suggestions"]
+      : []),
+    // SCIENT-FORK:END
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
       ? ["Floating preview"]

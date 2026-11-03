@@ -25,8 +25,8 @@ export interface ProfileSignIn {
 
 /**
  * Sign-ins with evidence of a session in their profile: a recorded browser sign-in (no password,
- * no username), a successful Scient sign-in there or a check that found it signed in, unless seen
- * signed out since. A saved password alone says nothing about the profile.
+ * no username), or one last signed in there, by Scient or as a check found, unless seen signed out
+ * since. A saved password alone says nothing about the profile.
  */
 export function profileSignIns(
   accounts: ReadonlyArray<{
@@ -37,19 +37,15 @@ export function profileSignIns(
       readonly username?: string | undefined;
     };
     readonly secrets: Readonly<Record<string, unknown>>;
-    readonly lastSignInOutcome?: string | undefined;
-    readonly lastCheck?: { readonly state: string } | undefined;
-    readonly signedOut?: boolean | undefined;
+    readonly signIn?: { readonly state: string } | undefined;
   }>,
 ): ReadonlyArray<ProfileSignIn> {
-  return accounts.flatMap(({ details, secrets, lastSignInOutcome, lastCheck, signedOut }) =>
+  return accounts.flatMap(({ details, secrets, signIn }) =>
     details.kind === "website" &&
     details.profileId &&
     details.sites &&
-    !signedOut &&
-    lastCheck?.state !== "signed-out" &&
-    (lastCheck?.state === "signed-in" ||
-      lastSignInOutcome === "signed-in" ||
+    signIn?.state !== "signed-out" &&
+    (signIn?.state === "signed-in" ||
       (secrets["password"] === undefined && details.username === undefined))
       ? [{ profileId: details.profileId, sites: details.sites }]
       : [],

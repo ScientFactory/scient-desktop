@@ -1225,6 +1225,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom url"],
   },
   {
+    id: "browser-search-suggestions",
+    title: "Search suggestions",
+    to: "/settings/browser",
+    searchTerms: ["address bar autocomplete typing predictions google history"],
+  },
+  {
     id: "pull-request-links-open-in-app",
     title: "Open pull requests in Scient",
     to: "/settings/diffs",

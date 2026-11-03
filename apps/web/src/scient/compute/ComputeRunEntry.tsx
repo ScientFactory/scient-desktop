@@ -283,6 +283,14 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
             clipped={persisted.data === null && (props.live?.clipped ?? false)}
             threadRef={props.threadRef}
             source={source}
+            onAskAgent={
+              ask === null
+                ? undefined
+                : (text) => {
+                    if (article.current === null) return;
+                    ask({ source: article.current, place: { _tag: "run", ...quotePlace }, text });
+                  }
+            }
           />
         </div>
       )}

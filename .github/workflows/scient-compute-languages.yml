@@ -1,0 +1,101 @@
+name: Scient Compute Languages
+
+# Installs every language Run starts that anyone can install, on each kind of computer, and runs a
+# real file in each through Run. A language that is installed but does not run fails the job; one
+# that could not be installed is a warning, since package sites break for reasons not Scient's.
+on:
+  # A full run is 17 machines, so a pull request runs it only while it has the compute-languages
+  # label. GitHub matches paths against the whole pull request, so a path filter alone would rerun
+  # it on every push.
+  pull_request:
+    types: [labeled, synchronize]
+  push:
+    branches: [main]
+    paths:
+      - "packages/contracts/src/scient/computeRunTable.ts"
+      - "apps/server/src/scient/analysis/RunTableAdapter.ts"
+      - "apps/server/src/scient/analysis/RunTableAdapter.live.test.ts"
+      - "apps/server/src/scient/compute/ToolScan.ts"
+      - "apps/server/src/scient/compute/ToolCatalog.ts"
+      - "apps/server/src/scient/compute/RuntimeDiscovery.ts"
+      - "apps/server/src/scient/execution/**"
+      - "apps/server/scripts/install-run-languages.ts"
+      - ".github/workflows/scient-compute-languages.yml"
+  schedule:
+    # Weekly: package managers move without us, and this catches what that breaks.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  languages:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'compute-languages') ||
+      (github.event.action == 'synchronize' &&
+        contains(github.event.pull_request.labels.*.name, 'compute-languages'))
+    name: ${{ matrix.group }} / ${{ matrix.runner }}
+    # On the job, so a run for another label, which skips it, cancels nothing.
+    concurrency:
+      group: scient-compute-languages-${{ github.ref }}-${{ matrix.group }}-${{ matrix.runner }}
+      cancel-in-progress: true
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      # Leaves room on the shared runners for everyone's CI.
+      max-parallel: 8
+      matrix:
+        runner: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
+        group: [compiled, scripts, math, lab]
+        include:
+          - runner: ubuntu-24.04
+            group: heavy
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      # CmdStan installs through pip, so the lab tools need a plain Python.
+      - name: Setup Python
+        if: ${{ matrix.group == 'lab' }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ${{ matrix.group }}
+        env:
+          # Looks up each tool's newest release without meeting GitHub's limit for anonymous reads.
+          GH_TOKEN: ${{ github.token }}
+        run: node apps/server/scripts/install-run-languages.ts ${{ matrix.group }}
+
+      - name: Run a real file in each
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_RUN_TABLE: "1"
+        # A compiler's first run on a fresh computer, such as runghc or `dotnet run` on Windows, takes up
+        # to two minutes, the project's ceiling, so real programs get five.
+        run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
+
+      - name: Languages not installed
+        if: ${{ !cancelled() && env.SCIENT_RUN_LANGUAGES_NOT_INSTALLED != '' }}
+        run: |
+          echo "::warning::Not tested, could not install: ${SCIENT_RUN_LANGUAGES_NOT_INSTALLED}"

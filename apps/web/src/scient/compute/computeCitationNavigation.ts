@@ -111,6 +111,22 @@ export function openComputeCitation(
     });
     return;
   }
+  if (place._tag === "file-run") {
+    const contextId = computeFileContextId({ ...ref, cwd, relativePath: place.path });
+    show(`file:${place.path}`, () => {
+      const presentation = useComputeFilePresentationStore.getState();
+      if ((presentation.presentations[contextId]?.view ?? "code") === "code") {
+        presentation.setFileView(contextId, "split");
+      }
+      panel.openFile(ref, place.path);
+    });
+    return;
+  }
+  const results = scientComputeSurface({ cwd });
+  if (place._tag === "session") {
+    show(results.id, () => panel.openScient(ref, results));
+    return;
+  }
   const scriptContext = scriptContextFor(ref, cwd, place);
   if (scriptContext !== null && place.path !== null) {
     const { path } = place;
@@ -128,6 +144,5 @@ export function openComputeCitation(
     show(consoleSurface.id, () => panel.openScient(ref, consoleSurface));
     return;
   }
-  const results = scientComputeSurface({ cwd });
   show(results.id, () => panel.openScient(ref, results));
 }

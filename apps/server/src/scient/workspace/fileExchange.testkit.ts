@@ -26,6 +26,8 @@ import {
   directoryIdentity,
   type RetainedMutationHooks,
 } from "./RetainedFileMutation.ts";
+import { buildFilePublicationHelper, builtFromThisCheckout } from "./filePublicationTestBuild.ts";
+import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import {
   closeNativeHelperServers,
   ensureNativePrivateRetentionDirectory,
@@ -34,7 +36,14 @@ import {
 } from "./NativeFilePublication.ts";
 
 const compiled = new Map<boolean, Promise<string | undefined>>();
-/** Compile the shipped boundary, never silently reuse a developer's binary or a pathname fallback. */
+const PROVIDED = {
+  false: "SCIENT_FILE_PUBLICATION_HELPER",
+  true: "SCIENT_FILE_PUBLICATION_PROBE_HELPER",
+} as const;
+/**
+ * The shipped boundary, compiled once per test file; a CI job passes its one build in the
+ * environment. Never a developer's binary, a pathname fallback or a build of older sources.
+ */
 export function filePublicationTestHelper() {
   return compileFilePublicationTestHelper(false);
 }
@@ -50,76 +59,35 @@ function compileFilePublicationTestHelper(probe: boolean) {
   const building = (async () => {
     const platform = HostProcess.Platform.defaultValue();
     if (platform !== "darwin" && platform !== "linux" && platform !== "win32") return undefined;
-    const directory = await NodeFSP.realpath(
-      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-")),
-    );
-    // A running helper locks its binary on Windows.
-    afterAll(async () => {
-      await closeNativeHelperServers();
-      await NodeFSP.rm(directory, { recursive: true, force: true });
-    });
-    const helper = NodePath.join(
-      directory,
-      platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication",
-    );
-    if (platform === "win32") {
-      const installer = NodePath.join(
-        process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
-        "Microsoft Visual Studio/Installer/vswhere.exe",
+    const provided = process.env[PROVIDED[`${probe}`]];
+    let helper: string;
+    if (provided !== undefined && builtFromThisCheckout(provided, probe)) {
+      helper = provided;
+      afterAll(closeNativeHelperServers);
+    } else {
+      const directory = await NodeFSP.realpath(
+        await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-")),
       );
-      const installation = NodeChildProcess.execFileSync(
-        installer,
-        [
-          "-latest",
-          "-products",
-          "*",
-          "-requires",
-          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-          "-property",
-          "installationPath",
-        ],
-        { encoding: "utf8" },
-      ).trim();
-      const vcvars = NodePath.join(installation, "VC/Auxiliary/Build/vcvars64.bat");
-      // Stage through the shipped build so test helpers carry the production receipt and flags.
-      const stage = NodePath.resolve(
-        import.meta.dirname,
-        "../../../../../scripts/stage-file-exchange.ts",
-      );
-      const build = NodePath.join(directory, "build.cmd");
-      await NodeFSP.writeFile(
-        build,
-        `@echo off\r\ncall "${vcvars}" >nul\r\n"${process.execPath}" "${stage}" --destination="${directory}"${probe ? " --probe=true" : ""}\r\n`,
-      );
-      NodeChildProcess.execFileSync("cmd.exe", ["/d", "/c", build], {
-        cwd: directory,
-        stdio: "inherit",
+      // A running helper locks its binary on Windows.
+      afterAll(async () => {
+        await closeNativeHelperServers();
+        await NodeFSP.rm(directory, { recursive: true, force: true });
       });
-      if (!probe) {
-        process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
-        // Windows Server defaults elevated creations to Administrators; fixtures exercise user-owned files.
-        const bootstrap = await compileFilePublicationTestHelper(true);
-        const owner = JSON.parse(
-          NodeChildProcess.execFileSync(
-            bootstrap!,
-            ["--windows=1", "default-owner", String(process.pid)],
-            { encoding: "utf8" },
-          ),
-        );
-        if (owner.code !== 0)
-          throw new Error(`Fixture default-owner setup refused (${owner.code}).`);
-      }
-      return helper;
+      helper = buildFilePublicationHelper(directory, probe);
     }
-    NodeChildProcess.execFileSync(
-      process.execPath,
-      [
-        NodePath.resolve(import.meta.dirname, "../../../../../scripts/stage-file-exchange.ts"),
-        `--destination=${directory}`,
-        ...(probe ? ["--probe=true"] : []),
-      ],
-      { stdio: "inherit" },
-    );
+    if (platform === "win32" && !probe) {
+      process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
+      // Windows Server defaults elevated creations to Administrators; fixtures exercise user-owned files.
+      const bootstrap = await compileFilePublicationTestHelper(true);
+      const owner = JSON.parse(
+        NodeChildProcess.execFileSync(
+          bootstrap!,
+          ["--windows=1", "default-owner", String(process.pid)],
+          { encoding: "utf8" },
+        ),
+      );
+      if (owner.code !== 0) throw new Error(`Fixture default-owner setup refused (${owner.code}).`);
+    }
     return helper;
   })();
   compiled.set(probe, building);
@@ -140,6 +108,40 @@ export async function nativePublicationHost() {
   if (HostProcess.Platform.defaultValue() === "linux" && !admitted)
     throw new Error(
       "Linux publication suites must run: Landlock ABI 3 and the native helper are required.",
+    );
+  return admitted;
+}
+
+/**
+ * Whether the helper gives what plain saves and Overleaf applies use it for here: private
+ * step folders and folder identity. Linux CI must run these suites, so there it throws.
+ */
+export async function privateFoldersAndIdentityHost() {
+  const helper = await filePublicationTestHelper();
+  let admitted = false;
+  if (helper !== undefined) {
+    const scratch = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-helper-gate-")),
+    );
+    try {
+      admitted =
+        (await ensureNativePrivateRetentionDirectory(
+          helper,
+          NodePath.join(scratch, "private"),
+        ).then(
+          () => true,
+          () => false,
+        )) &&
+        (await platformFileIdentity
+          .directory(scratch, async () => "0A1B2C3D-0000-4000-8000-000000000001", helper)
+          .catch(() => null)) !== null;
+    } finally {
+      await NodeFSP.rm(scratch, { recursive: true, force: true });
+    }
+  }
+  if (HostProcess.Platform.defaultValue() === "linux" && !admitted)
+    throw new Error(
+      "Linux plain-save suites must run: the helper's private folders and folder identity are required.",
     );
   return admitted;
 }

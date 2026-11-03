@@ -366,7 +366,8 @@ export function ManagedRuntimeNotice({
     (runtime.cancelling
       ? "Cancelling…"
       : managedRuntimeOperationLabel(runtime.status, runtime.languageId));
-  const failure = showFailure ? runtime.failure : null;
+  // While something is being done about a failure, it is no longer the news.
+  const failure = showFailure && !progress ? runtime.failure : null;
   // Removal always stays behind its confirmation dialog, including retries.
   const retryAction = failure?.retryAction === "remove" ? null : (failure?.retryAction ?? null);
   const retry =
@@ -410,37 +411,43 @@ export function ManagedRuntimeNotice({
                 render={
                   <button
                     type="button"
-                    className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive"
+                    className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive underline-offset-2 hover:underline"
                     role="alert"
                     onClick={retry}
                   />
                 }
               >
-                {headline}
+                {retryAction === "repair"
+                  ? "Repair"
+                  : retryAction === "install"
+                    ? "Install"
+                    : headline}
               </TooltipTrigger>
-              <TooltipPopup>{retry === undefined ? headline : `Retry ${headline}`}</TooltipPopup>
+              <TooltipPopup>{failure.detail}</TooltipPopup>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 shrink-0"
-                    aria-label="Copy error"
-                    onClick={() => copyToClipboard(failure.detail, undefined)}
-                  />
-                }
-              >
-                {isCopied ? (
-                  <CheckIcon aria-hidden className="size-3" />
-                ) : (
-                  <CopyIcon aria-hidden className="size-3" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup>Copy the full error</TooltipPopup>
-            </Tooltip>
-            {failure.detail === failure.summary ? null : (
+            {retry === undefined ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-5 shrink-0"
+                      aria-label="Copy error"
+                      onClick={() => copyToClipboard(failure.detail, undefined)}
+                    />
+                  }
+                >
+                  {isCopied ? (
+                    <CheckIcon aria-hidden className="size-3" />
+                  ) : (
+                    <CopyIcon aria-hidden className="size-3" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup>Copy the full error</TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {retry !== undefined || failure.detail === failure.summary ? null : (
               <Popover>
                 <PopoverTrigger
                   render={

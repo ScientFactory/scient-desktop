@@ -48,9 +48,9 @@ describe("AccountsService persistence", () => {
         ],
       });
       expect(
-        (yield* rows).map(({ details, lastCheck }) => [
+        (yield* rows).map(({ details, signIn }) => [
           details.kind === "website" ? details.username : undefined,
-          lastCheck?.state,
+          signIn?.state,
         ]),
       ).toEqual([
         ["a@example.com", "signed-in"],
@@ -62,7 +62,7 @@ describe("AccountsService persistence", () => {
         sessions: [{ email: "a@example.com", valid: false }],
       });
       const after = yield* rows;
-      expect(after.map(({ lastCheck }) => lastCheck?.state)).toEqual(["signed-out", "signed-out"]);
+      expect(after.map(({ signIn }) => signIn?.state)).toEqual(["signed-out", "signed-out"]);
       expect(after).toHaveLength(2);
       // Another profile keeps its own row; the saved password is never touched.
       yield* service.googleSessionsSeen({
@@ -72,7 +72,7 @@ describe("AccountsService persistence", () => {
       expect(yield* rows).toHaveLength(3);
       expect(
         (yield* service.snapshot).accounts.find(({ accountId }) => accountId === saved.accountId)
-          ?.lastCheck,
+          ?.signIn,
       ).toBeUndefined();
     }),
   );
@@ -616,7 +616,7 @@ describe("AccountsService grants and approvals", () => {
         const target = { type: "account" as const, accountId };
         for (const signInOutcome of ["password-rejected", "signed-in", "code-rejected"] as const) {
           const recorded = yield* service.changes.pipe(
-            Stream.filter((snapshot) => snapshot.accounts[0]?.lastSignInOutcome === signInOutcome),
+            Stream.filter((snapshot) => snapshot.accounts[0]?.signIn?.state === signInOutcome),
             Stream.take(1),
             Stream.runDrain,
             Effect.forkChild,
@@ -626,14 +626,36 @@ describe("AccountsService grants and approvals", () => {
             action: "sign-in",
             outcome: signInOutcome === "signed-in" ? "ok" : "error",
             signInOutcome,
+            ...(signInOutcome === "signed-in" ? { savedPasswordUsed: true } : {}),
           });
           yield* Fiber.join(recorded);
           expect((yield* service.activity({ target }))[0]?.signInOutcome).toBe(signInOutcome);
         }
+        const password = Effect.map(
+          service.snapshot,
+          ({ accounts }) => accounts[0]?.secrets.password?.verifiedAt,
+        );
+        // Signed in with the saved password typed by Scient: that password has worked.
+        expect(yield* password).toBeDefined();
         yield* service.save({ ...input, accountId, secrets: {} });
-        expect((yield* service.snapshot).accounts[0]?.lastSignInOutcome).toBe("code-rejected");
+        expect((yield* service.snapshot).accounts[0]?.signIn?.state).toBe("code-rejected");
         yield* service.save({ ...input, accountId });
-        expect((yield* service.snapshot).accounts[0]?.lastSignInOutcome).toBeUndefined();
+        expect((yield* service.snapshot).accounts[0]?.signIn).toBeUndefined();
+        // A sign-in Scient didn't type the password for says nothing about the new one.
+        const seen = yield* service.changes.pipe(
+          Stream.filter((snapshot) => snapshot.accounts[0]?.signIn?.state === "signed-in"),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+        yield* service.recordUse({
+          target,
+          action: "sign-in",
+          outcome: "ok",
+          signInOutcome: "signed-in",
+        });
+        yield* Fiber.join(seen);
+        expect(yield* password).toBeUndefined();
       }),
   );
   it.effect("keeps denial local to the pending request and audits bounded, safe activity", () =>

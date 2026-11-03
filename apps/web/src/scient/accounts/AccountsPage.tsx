@@ -130,8 +130,7 @@ export function AccountRow({
   const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
   const university = universityDetails(details);
   const universitySignIn = useUniversitySignIn(environmentId);
-  const signInAgain =
-    account.signedOut || ["signed-out", "needs-you"].includes(account.lastCheck?.state ?? "");
+  const signInAgain = ["signed-out", "needs-you"].includes(account.signIn?.state ?? "");
   const openSite = async (url = site) => {
     if (!url) return;
     await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
@@ -193,9 +192,7 @@ export function AccountRow({
               <TooltipTrigger render={<span className="shrink-0 text-xs text-muted-foreground" />}>
                 {statusLabel}
               </TooltipTrigger>
-              {account.lastCheck?.message ? (
-                <TooltipPopup>{account.lastCheck.message}</TooltipPopup>
-              ) : null}
+              {account.signIn?.detail ? <TooltipPopup>{account.signIn.detail}</TooltipPopup> : null}
             </Tooltip>
           ) : null}
           {account.status === "needs-attention" ? (

@@ -26,6 +26,8 @@ export function useComputePanelSessions(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly contextId: ComputeContextId | undefined;
+  /** The file this surface shows, whose last session comes back when it is reopened. */
+  readonly sourcePath?: string | undefined;
 }) {
   const [chosenSessionId, setChosenSessionId] = useState<string | null>(null);
   const contextBinding = useComputeContextStore((state) =>
@@ -97,7 +99,17 @@ export function useComputePanelSessions(input: {
       : (contextSessions.find(
           (session) => !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status),
         ) ?? null);
-  const selectedSession = chosenSession ?? liveSession ?? contextSessions[0] ?? null;
+  const lastFileSession =
+    boundSessionId === null
+      ? allSessions.find(
+          (session) =>
+            TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status) &&
+            session.owner?._tag === "file" &&
+            session.owner.path === input.sourcePath,
+        )
+      : undefined;
+  const selectedSession =
+    chosenSession ?? liveSession ?? contextSessions[0] ?? lastFileSession ?? null;
   const selectedIsLive =
     liveSession !== null && selectedSession?.sessionId === liveSession.sessionId;
 

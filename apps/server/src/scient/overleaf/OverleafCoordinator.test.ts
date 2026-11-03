@@ -22,7 +22,7 @@ import {
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import type * as OverleafCoordinator from "./OverleafCoordinator.ts";
 import {
-  canApply,
+  hasPrivateFoldersAndIdentity,
   CONNECTION,
   firstKept,
   type Point,
@@ -36,7 +36,7 @@ import * as OverleafStateStore from "./OverleafStateStore.ts";
 import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import { WorkspaceApplier } from "./WorkspaceApplier.ts";
 
-describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half", () => {
   it.live("applies a confirmed review and adopts the result once", () =>
     run(
       Effect.gen(function* () {

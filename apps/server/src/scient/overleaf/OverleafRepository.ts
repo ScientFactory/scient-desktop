@@ -291,6 +291,11 @@ export class OverleafRepository extends Context.Service<
       readonly name: string;
       readonly oid: string;
     }) => Effect.Effect<void, OverleafRepositoryError | OverleafGitError>;
+    /** Several of Scient's references at once: all are written or none. */
+    readonly setRefs: (input: {
+      readonly repo: string;
+      readonly refs: ReadonlyArray<{ readonly name: string; readonly oid: string }>;
+    }) => Effect.Effect<void, OverleafRepositoryError | OverleafGitError>;
     readonly readRef: (input: {
       readonly repo: string;
       readonly name: string;
@@ -343,6 +348,40 @@ export const make = Effect.gen(function* () {
   const fileSystemFailure = (detail: string) => (cause: unknown) =>
     new OverleafRepositoryError({ reason: "git-failed", detail, cause });
 
+  /**
+   * Listings by repository and tree ID. An ID fixes a tree's entries and objects are only ever
+   * added (`gc.auto` is off), so a listing holds while its repository stands as it was made.
+   */
+  const treeListings = new Map<string, ReadonlyArray<TreeEntry>>();
+  const sizeListings = new Map<string, ReadonlyMap<string, number>>();
+  const LISTINGS_KEPT = 32;
+  const forgetListings = (repo: string) => {
+    for (const listings of [treeListings, sizeListings])
+      for (const key of listings.keys()) if (key.startsWith(`${repo}\0`)) listings.delete(key);
+  };
+  const listed = Effect.fnUntraced(function* <A, E, R>(
+    listings: Map<string, A>,
+    input: { readonly repo: string; readonly tree: string },
+    read: Effect.Effect<A, E, R>,
+  ): Effect.fn.Return<A, E, R> {
+    const key = `${input.repo}\0${input.tree}`;
+    const known = listings.get(key);
+    // A repository removed since stops answering, as Git would.
+    if (
+      known !== undefined &&
+      (yield* fs.exists(path.join(input.repo, "HEAD")).pipe(Effect.orElseSucceed(() => false)))
+    )
+      return known;
+    const fresh = yield* read;
+    listings.delete(key);
+    listings.set(key, fresh);
+    for (const oldest of listings.keys()) {
+      if (listings.size <= LISTINGS_KEPT) break;
+      listings.delete(oldest);
+    }
+    return fresh;
+  });
+
   const initialize: OverleafRepository["Service"]["initialize"] = Effect.fn(
     "OverleafRepository.initialize",
   )(function* (input) {
@@ -354,6 +393,7 @@ export const make = Effect.gen(function* () {
       .exists(path.join(input.repo, "HEAD"))
       .pipe(Effect.mapError(fileSystemFailure("Could not inspect the repository folder.")));
     if (!exists) {
+      forgetListings(input.repo);
       yield* git.execute({ cwd: parent, args: ["init", "-q", "--bare", input.repo] });
     }
     const current = yield* run(input.repo, ["remote", "get-url", "origin"], {
@@ -389,9 +429,10 @@ export const make = Effect.gen(function* () {
     return oids;
   });
 
-  const readTree: OverleafRepository["Service"]["readTree"] = Effect.fn(
-    "OverleafRepository.readTree",
-  )(function* (input) {
+  const listTree = Effect.fnUntraced(function* (input: {
+    readonly repo: string;
+    readonly tree: string;
+  }) {
     const result = yield* run(input.repo, ["ls-tree", "-r", "-z", "--full-tree", input.tree]);
     const entries: TreeEntry[] = [];
     for (const record of text(result.stdout).split("\0")) {
@@ -422,10 +463,14 @@ export const make = Effect.gen(function* () {
     }
     return entries;
   });
+  const readTree: OverleafRepository["Service"]["readTree"] = Effect.fn(
+    "OverleafRepository.readTree",
+  )((input) => listed(treeListings, input, listTree(input)));
 
-  const treeSizes: OverleafRepository["Service"]["treeSizes"] = Effect.fn(
-    "OverleafRepository.treeSizes",
-  )(function* (input) {
+  const listSizes = Effect.fnUntraced(function* (input: {
+    readonly repo: string;
+    readonly tree: string;
+  }) {
     const result = yield* run(input.repo, ["ls-tree", "-r", "-z", "-l", "--full-tree", input.tree]);
     const sizes = new Map<string, number>();
     for (const record of text(result.stdout).split("\0")) {
@@ -436,6 +481,9 @@ export const make = Effect.gen(function* () {
     }
     return sizes;
   });
+  const treeSizes: OverleafRepository["Service"]["treeSizes"] = Effect.fn(
+    "OverleafRepository.treeSizes",
+  )((input) => listed(sizeListings, input, listSizes(input)));
 
   const writeTree: OverleafRepository["Service"]["writeTree"] = Effect.fn(
     "OverleafRepository.writeTree",
@@ -700,6 +748,19 @@ export const make = Effect.gen(function* () {
 
   const setRef: OverleafRepository["Service"]["setRef"] = (input) =>
     run(input.repo, ["update-ref", refName(input.name), input.oid]).pipe(Effect.asVoid);
+  const setRefs: OverleafRepository["Service"]["setRefs"] = Effect.fn("OverleafRepository.setRefs")(
+    function* (input) {
+      if (input.refs.length === 0) return;
+      if (input.refs.some((ref) => !OID.test(ref.oid) || /\s/u.test(ref.name)))
+        return yield* new OverleafRepositoryError({
+          reason: "invalid-tree",
+          detail: "A reference to write needs a single-word name and an object id.",
+        });
+      yield* run(input.repo, ["update-ref", "--stdin"], {
+        stdin: encode(input.refs.map((ref) => `update ${refName(ref.name)} ${ref.oid}\n`).join("")),
+      });
+    },
+  );
   const readRef: OverleafRepository["Service"]["readRef"] = (input) =>
     run(input.repo, ["rev-parse", "--verify", "-q", refName(input.name)], {
       acceptExitCodes: [1],
@@ -751,6 +812,7 @@ export const make = Effect.gen(function* () {
     isAncestor,
     treesSince,
     setRef,
+    setRefs,
     readRef,
     deleteRef,
     hasObject,

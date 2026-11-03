@@ -119,7 +119,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
           issuedAt: 0,
         }),
       );
-    expect((yield* run()).outcome).toBe("signed-in");
+    // Scient typed the saved password, so the sign-in vouches for it.
+    expect(yield* run()).toMatchObject({ outcome: "signed-in", savedPasswordUsed: true });
     expect(fills).toBe(3);
     stuck = true;
     steps = 0;
@@ -382,7 +383,10 @@ it.effect(
           issuedAt: 0,
         }),
       );
-      expect((yield* run).outcome).toBe("signed-in");
+      const passedThrough = yield* run;
+      expect(passedThrough.outcome).toBe("signed-in");
+      // Already signed in: no password was typed, so nothing is vouched for.
+      expect(passedThrough).not.toHaveProperty("savedPasswordUsed");
       expect(opened).toEqual([
         account.details.kind === "website" ? account.details.loginUrl : "",
         "https://example.com",

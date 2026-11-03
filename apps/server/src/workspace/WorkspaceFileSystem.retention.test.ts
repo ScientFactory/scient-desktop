@@ -6,10 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
-import {
-  filePublicationTestHelper,
-  nativePublicationHost,
-} from "../scient/workspace/fileExchange.testkit.ts";
+import { filePublicationTestHelper } from "../scient/workspace/fileExchange.testkit.ts";
 import { revisionForBytes } from "../scient/workspace/WorkspaceFileMutations.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -19,7 +16,6 @@ import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 const helper = await filePublicationTestHelper();
-const nativeHost = await nativePublicationHost();
 const layer = Layer.empty.pipe(
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
@@ -67,8 +63,8 @@ const fixture = Effect.fn("WorkspaceFileSystem.retentionFixture")(function* (
   return { fs, path, root, cwd, home, alias, retention, api };
 });
 
-// These contracts require the host's real retained-publication primitives; other hosts use plain saves.
-describe.skipIf(!nativeHost)("WorkspaceFileSystem canonical retention", () => {
+// Saves are plain on every host, so these run wherever the helper is or isn't.
+describe("WorkspaceFileSystem canonical retention", () => {
   it.layer(layer, { excludeTestServices: true })("native owner", (it) => {
     it.effect("keeps working when a record's folder was deleted", () =>
       Effect.gen(function* () {

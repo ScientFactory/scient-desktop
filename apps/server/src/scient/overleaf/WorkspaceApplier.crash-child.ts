@@ -7,6 +7,7 @@
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -30,7 +31,12 @@ export interface CrashJob {
    * Instead of a hook, die inside a file operation: just before renaming onto,
    * or just after opening, a path ending in `suffix`. Reaches windows between hooks.
    */
-  readonly killIn?: { readonly operation: "rename" | "open"; readonly suffix: string };
+  readonly killIn?: {
+    readonly operation: "rename" | "open";
+    readonly suffix: string;
+    /** With `open`: only an open that can write, as a write in place makes. */
+    readonly writing?: boolean;
+  };
   readonly plan: {
     readonly base: Record<string, string>;
     readonly remote: Record<string, string>;
@@ -89,9 +95,13 @@ if (jobPath !== undefined) {
     };
   } else if (killIn?.operation === "open") {
     const open = MutableFSP.open;
+    const writes = (flags: unknown) =>
+      typeof flags === "number"
+        ? (flags & (NodeFS.constants.O_WRONLY | NodeFS.constants.O_RDWR)) !== 0
+        : typeof flags === "string" && /[wa+]/u.test(flags);
     MutableFSP.open = async (path, ...rest) => {
       const handle = await open(path, ...rest);
-      if (matchesKillPath(String(path))) kill();
+      if (matchesKillPath(String(path)) && (!killIn.writing || writes(rest[0]))) kill();
       return handle;
     };
   }
