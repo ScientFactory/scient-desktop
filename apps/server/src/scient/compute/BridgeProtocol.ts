@@ -121,7 +121,7 @@ const NULLABLE_REQUEST_ID_TYPES: ReadonlySet<BridgeMessageType> = new Set([
 const Label = Schema.String.check(Schema.isMaxLength(256));
 const ShortText = Schema.String.check(Schema.isMaxLength(MaxDetailLength));
 
-export const HelloPayload = Schema.Struct({
+const HelloPayload = Schema.Struct({
   buildId: Label,
   frameLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   requiredCapabilities: Schema.Array(ComputeCapability),
@@ -342,7 +342,7 @@ export type ExecutionCompletePayload = typeof ExecutionCompletePayload.Type;
 export const InterruptPayload = Schema.Struct({});
 export type InterruptPayload = typeof InterruptPayload.Type;
 
-export const InterruptResultPayload = Schema.Struct({
+const InterruptResultPayload = Schema.Struct({
   result: Schema.Literals(["interrupted", "terminal", "rejected", "timeout"]),
 });
 

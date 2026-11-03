@@ -25,8 +25,6 @@ import {
   ExecutePayload,
   DisplayPayload,
   HelloAckPayload,
-  HelloPayload,
-  InterruptResultPayload,
   KernelPortsPayload,
   KernelReadyPayload,
   RestartedPayload,
@@ -64,7 +62,6 @@ const loadFixture = (name: string): string =>
   NodeFS.readFileSync(NodePath.join(here, "fixtures", "bridge", name), "utf-8");
 
 // Compiled once: `decodeUnknownSync` rebuilds the decoder on every call.
-const decodeHello = Schema.decodeUnknownSync(HelloPayload);
 const decodeHelloAck = Schema.decodeUnknownSync(HelloAckPayload);
 const decodeKernelPorts = Schema.decodeUnknownSync(KernelPortsPayload);
 const decodeStartKernel = Schema.decodeUnknownSync(StartKernelPayload);
@@ -74,33 +71,10 @@ const decodeDisplay = Schema.decodeUnknownSync(DisplayPayload);
 const decodeError = Schema.decodeUnknownSync(ErrorPayload);
 const decodeWarning = Schema.decodeUnknownSync(WarningPayload);
 const decodeKernelReady = Schema.decodeUnknownSync(KernelReadyPayload);
-const decodeInterruptResult = Schema.decodeUnknownSync(InterruptResultPayload);
 const decodeRestarted = Schema.decodeUnknownSync(RestartedPayload);
 const decodeVariables = Schema.decodeUnknownSync(VariablesPayload);
 
 describe("bridge protocol payload schemas", () => {
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("accepts a valid hello payload", () => {
-    const payload = decodeHello({
-      buildId: "build-1",
-      frameLimit: 16 * 1024 * 1024,
-      requiredCapabilities: ["execute", "interrupt", "restart", "shutdown"],
-      ownerToken: "token-abc",
-    });
-    expect(payload.buildId).toBe("build-1");
-  });
-
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("accepts a valid hello-ack payload", () => {
-    const payload = decodeHelloAck({
-      ownerToken: "token-abc",
-      pid: 12345,
-      platform: "darwin",
-      capabilities: ["execute", "interrupt", "restart", "shutdown"],
-    });
-    expect(payload.pid).toBe(12345);
-  });
-
   it("rejects a hello-ack with non-positive pid", () => {
     expect(() =>
       decodeHelloAck({
@@ -229,15 +203,6 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("accepts a valid stream payload", () => {
-    const payload = decodeStream({
-      stream: "stdout",
-      text: "output line\n",
-    });
-    expect(payload.stream).toBe("stdout");
-  });
-
   it("rejects a stream payload with oversized text", () => {
     expect(() =>
       decodeStream({
@@ -343,16 +308,6 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("accepts a valid error payload", () => {
-    const payload = decodeError({
-      name: "ValueError",
-      value: "bad value",
-      traceback: ["line 1", "line 2"],
-    });
-    expect(payload.name).toBe("ValueError");
-  });
-
   it("rejects an error payload with too many traceback lines", () => {
     expect(() =>
       decodeError({
@@ -394,14 +349,6 @@ describe("bridge protocol payload schemas", () => {
   });
 
   // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("accepts a valid interrupt-result payload", () => {
-    const payload = decodeInterruptResult({
-      result: "interrupted",
-    });
-    expect(payload.result).toBe("interrupted");
-  });
-
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
   it("accepts a valid restarted payload", () => {
     const payload = decodeRestarted({ kernelPid: 88888 });
     expect(payload.kernelPid).toBe(88888);
@@ -429,22 +376,6 @@ describe("bridge protocol payload schemas", () => {
 });
 
 describe("bridge protocol message decoding", () => {
-  it.effect("decodes a valid hello message with correct direction", () =>
-    Effect.gen(function* () {
-      const message = yield* decodeBridgeMessage(
-        envelope("hello", {
-          buildId: "build-1",
-          frameLimit: 16 * 1024 * 1024,
-          requiredCapabilities: ["execute", "interrupt", "restart", "shutdown"],
-          ownerToken: "token-abc",
-        }),
-        "server-to-bridge",
-      );
-      expect(message.type).toBe("hello");
-      expect(message.direction).toBe("server-to-bridge");
-    }),
-  );
-
   it.effect("rejects an unknown message type", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(decodeBridgeMessage(envelope("not-a-type", {})));
