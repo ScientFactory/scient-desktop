@@ -275,7 +275,7 @@ function makeTransport(input?: { active?: boolean }) {
       const session: RpcSession = {
         client,
         initialConfig: Effect.succeed(serverConfig),
-        subscribeServerConfig: client.subscribeServerConfig,
+        subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
         ready: Effect.void,
         probe: Effect.void,
         inboundFrames: Effect.succeed(0),
