@@ -11,15 +11,15 @@ import {
   testGatePasses,
 } from "./compute-ci-gate.mjs";
 
-const neither = { realKernel: false, managedPython: false };
-const kernel = { realKernel: true, managedPython: false };
-const managed = { realKernel: false, managedPython: true };
-const both = { realKernel: true, managedPython: true };
+const neither = { realKernel: false, managedPython: false, platforms: "none" };
+const kernel = { realKernel: true, managedPython: false, platforms: "all" };
+const managed = { realKernel: false, managedPython: true, platforms: "all" };
+const both = { realKernel: true, managedPython: true, platforms: "all" };
+const linux = { realKernel: true, managedPython: true, platforms: "linux" };
 
 NodeTest.test("known suite-specific inputs select only their consumer", () => {
   for (const path of [
     "apps/server/src/preview/PortScanner.ts",
-    "apps/server/src/preview/PortScanner.test.ts",
     "apps/server/src/preview/PortScannerPythonCompute.integration.test.ts",
     "apps/server/src/scient/compute/PythonKernel.integration.test.ts",
     "apps/server/src/scient/compute/PythonComputeService.integration.test.ts",
@@ -36,7 +36,7 @@ NodeTest.test("known suite-specific inputs select only their consumer", () => {
     NodeAssert.deepEqual(computeQualificationSuites([path]), managed, path);
 });
 
-NodeTest.test("shared runtime, setup and uncertain dependencies retain both suites", () => {
+NodeTest.test("Compute's own code and how it runs select both suites on every platform", () => {
   for (const path of [
     "apps/server/src/scient/compute/ComputeSessionService.ts",
     "apps/server/src/scient/compute/ManagedPythonEnvironment.ts",
@@ -47,20 +47,48 @@ NodeTest.test("shared runtime, setup and uncertain dependencies retain both suit
     "apps/server/src/scient/compute/bridge/scient_compute_bridge.py",
     "apps/server/src/scient/execution/LocalOwnedProcess.ts",
     "apps/server/src/atomicWrite.ts",
-    "apps/server/src/config.ts",
-    "apps/server/src/serverSettings.ts",
-    "apps/server/src/workspace/WorkspacePaths.ts",
-    "apps/server/src/testUtils/gitConfig.setup.ts",
+    "apps/server/vite.config.ts",
     "packages/scient-execution/src/index.ts",
     "packages/scient-project-init/src/index.ts",
     "packages/scient-provider-runtime/src/index.ts",
     "packages/shared/src/hostProcess.ts",
-    "vite.config.ts",
-    "pnpm-lock.yaml",
     "apps/server/scripts/compute-recipes.ts",
-    ".github/workflows/ci.yml",
+    ".github/workflows/scient-compute-python-kernel.yml",
   ])
     NodeAssert.deepEqual(computeQualificationSuites([path]), both, path);
+});
+
+NodeTest.test("dependencies, configuration and workspace code select both suites on Linux", () => {
+  for (const path of [
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "package.json",
+    "apps/server/package.json",
+    "vite.config.ts",
+    "apps/server/src/config.ts",
+    "apps/server/src/serverSettings.ts",
+    "apps/server/src/workspace/WorkspacePaths.ts",
+    "apps/server/src/testUtils/gitConfig.setup.ts",
+    ".github/workflows/ci.yml",
+  ])
+    NodeAssert.deepEqual(computeQualificationSuites([path]), linux, path);
+  // An alignment's lockfile beside a Compute file still runs every platform.
+  NodeAssert.deepEqual(
+    computeQualificationSuites(["pnpm-lock.yaml", "apps/server/src/scient/compute/Kernel.ts"]),
+    both,
+  );
+});
+
+NodeTest.test("unit tests and the server's RPC fixture select nothing", () => {
+  for (const path of [
+    "apps/server/src/scient/compute/ComputeSessionService.test.ts",
+    "apps/server/src/scient/compute/ComputeRpcServerTests.ts",
+    "apps/server/src/preview/PortScanner.test.ts",
+    "apps/server/src/atomicWrite.test.ts",
+    "apps/server/src/workspace/WorkspaceEntries.test.ts",
+    "scripts/compute-ci-workflows.test.ts",
+  ])
+    NodeAssert.deepEqual(computeQualificationSuites([path]), neither, path);
 });
 
 NodeTest.test("selection is a union: adding files never removes required coverage", () => {
@@ -69,14 +97,21 @@ NodeTest.test("selection is a union: adding files never removes required coverag
     "apps/server/src/preview/PortScanner.ts",
     "apps/server/src/scient/compute/managed-python/uv.lock",
     "apps/server/src/scient/compute/PythonComputeRuntime.ts",
+    "pnpm-lock.yaml",
   ];
   for (const first of paths)
     for (const second of paths) {
       const a = computeQualificationSuites([first]);
       const b = computeQualificationSuites([second]);
+      const platforms = [a.platforms, b.platforms].includes("all")
+        ? "all"
+        : [a.platforms, b.platforms].includes("linux")
+          ? "linux"
+          : "none";
       NodeAssert.deepEqual(computeQualificationSuites([first, second]), {
         realKernel: a.realKernel || b.realKernel,
         managedPython: a.managedPython || b.managedPython,
+        platforms,
       });
     }
   NodeAssert.deepEqual(computeQualificationSuites([]), neither);
@@ -89,7 +124,6 @@ NodeTest.test(
       "apps/server/src/scient/compute/PythonKernel.integration.test.ts",
       "apps/server/src/scient/execution/LocalOwnedProcess.ts",
       "apps/server/src/atomicWrite.ts",
-      "apps/server/src/atomicWrite.test.ts",
       "apps/server/src/preview/PortScannerPythonCompute.integration.test.ts",
       "apps/server/src/localEndpoints/OwnedLocalEndpointRegistry.ts",
       "apps/server/scripts/compute-recipes.ts",
@@ -172,6 +206,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
       changed: "false",
       real_kernel: "false",
       managed_python: "false",
+      platforms: "none",
     });
     NodeFS.renameSync(
       NodePath.join(directory, "apps/server/src/atomicWrite.ts"),
@@ -180,7 +215,7 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
     git("add", "apps", "moved.txt");
     git("-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "move out of scope");
     const head = git("rev-parse", "HEAD");
-    const all = { changed: "true", real_kernel: "true", managed_python: "true" };
+    const all = { changed: "true", real_kernel: "true", managed_python: "true", platforms: "all" };
     NodeAssert.deepEqual(detect({ pull_request: { base: { sha: base } } }, head), all);
     NodeAssert.deepEqual(detect({ before: base }, head), all);
     NodeAssert.deepEqual(detect({ before: "0".repeat(40) }, head), all);
@@ -194,7 +229,12 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
     git("add", "apps");
     git("-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "scanner change");
     const scannerHead = git("rev-parse", "HEAD");
-    const scanner = { changed: "true", real_kernel: "true", managed_python: "false" };
+    const scanner = {
+      changed: "true",
+      real_kernel: "true",
+      managed_python: "false",
+      platforms: "all",
+    };
     NodeAssert.deepEqual(detect({ before: head }, scannerHead), scanner);
     NodeAssert.deepEqual(detect({ pull_request: { base: { sha: head } } }, scannerHead), scanner);
     NodeFS.mkdirSync(NodePath.join(directory, "apps/server/src/scient/compute/managed-python"), {
@@ -207,7 +247,12 @@ NodeTest.test("detector handles PRs, pushes, deletions/renames and unresolved co
     git("add", "apps");
     git("-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "managed recipe change");
     const recipeHead = git("rev-parse", "HEAD");
-    const recipe = { changed: "true", real_kernel: "false", managed_python: "true" };
+    const recipe = {
+      changed: "true",
+      real_kernel: "false",
+      managed_python: "true",
+      platforms: "all",
+    };
     NodeAssert.deepEqual(detect({ before: scannerHead }, recipeHead), recipe);
     NodeAssert.deepEqual(
       detect({ pull_request: { base: { sha: scannerHead } } }, recipeHead),

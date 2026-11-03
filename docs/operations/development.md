@@ -337,15 +337,22 @@ in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
   Linux/macOS/Windows real-kernel matrix, without provisioning managed toolkits.
 - Managed live-test files and the managed `pyproject.toml`/`uv.lock` fixtures run
   managed Python qualification, without the system-Python matrix.
-- Shared runtime, process ownership, persistence, workspace dependencies, Compute
-  contracts and test infrastructure run both. `ManagedPython*.ts` is shared too:
-  the existing-Python runtime imports it even when not provisioning an environment.
-- Unrelated UI/docs changes run neither. Mixed changes take the union; uncertain
-  diffs and JavaScript dependency lockfile changes retain both suites.
+- Shared runtime, process ownership, persistence and Compute contracts run both.
+  `ManagedPython*.ts` is shared too: the existing-Python runtime imports it even
+  when not provisioning an environment.
+- Broad inputs run both suites on Linux only: package manifests, the lockfile,
+  workspace configuration, root Vite configuration, server configuration and
+  settings, `ci.yml`, workspace code and test infrastructure. They are rarely
+  Compute changes but every upstream alignment touches them, and a push to main
+  still runs all four computers, so a platform-only break shows there after merge.
+- Unit tests, which run in the ordinary lanes, and the server's RPC fixture
+  `ComputeRpcServerTests.ts` run neither, as do unrelated UI and docs changes.
+  Mixed changes take the union, so a Compute file beside the lockfile still runs
+  every platform; uncertain diffs run everything.
 
-Both suites remain enabled by default for reusable callers and manual dispatch;
-manual dispatch can also select either suite. Relevant pushes to main retain
-post-merge verification of the integrated tree. No cross-revision success cache or
+Both suites remain enabled on every platform by default for reusable callers and
+manual dispatch; manual dispatch can also select either suite. Every push to main
+runs both suites on all four computers. No cross-revision success cache or
 dependency-lock graph is used to skip checks. This uses the existing required
 `Test` check without separate branch-protection settings for conditional jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused

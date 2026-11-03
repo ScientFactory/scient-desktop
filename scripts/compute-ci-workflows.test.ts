@@ -14,6 +14,7 @@ describe("Compute CI suite selection", () => {
           inputs: {
             real_kernel: { type: "boolean", default: true },
             managed_python: { type: "boolean", default: true },
+            platforms: { type: "string", default: "all" },
           },
         },
         workflow_dispatch: {
@@ -41,6 +42,8 @@ describe("Compute CI suite selection", () => {
               "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}",
             managed_python:
               "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}",
+            compute_platforms:
+              "${{ github.event_name == 'push' && 'all' || steps.compute.outputs.platforms }}",
           },
         },
         compute_native: {
@@ -50,6 +53,8 @@ describe("Compute CI suite selection", () => {
           with: {
             real_kernel: "${{ needs.changes.outputs.real_kernel != 'false' }}",
             managed_python: "${{ needs.changes.outputs.managed_python != 'false' }}",
+            platforms:
+              "${{ needs.changes.outputs.compute_platforms == 'linux' && 'linux' || 'all' }}",
           },
         },
         check: {
@@ -59,6 +64,31 @@ describe("Compute CI suite selection", () => {
         },
       },
     });
+  });
+
+  it("narrows every native matrix to Linux only on an explicit linux", () => {
+    const jobs = (
+      workflow("scient-compute-python-kernel.yml") as {
+        jobs: Record<string, { strategy: { matrix: { runner: string } } }>;
+      }
+    ).jobs;
+    const runners = (platforms: string, expression: string) =>
+      JSON.parse(
+        // The one expression shape these matrices use: a && 'linux list' || 'full list'.
+        /^\$\{\{ fromJSON\(inputs\.platforms == 'linux' && '(.*)' \|\| '(.*)'\) \}\}$/
+          .exec(expression)!
+          .at(platforms === "linux" ? 1 : 2)!,
+      ) as string[];
+    for (const id of ["managed_python", "real_kernel", "real_languages"]) {
+      const matrix = jobs[id]!.strategy.matrix.runner;
+      expect(runners("linux", matrix), id).toEqual(["ubuntu-24.04"]);
+      expect(runners("all", matrix), id).toEqual([
+        "ubuntu-24.04",
+        "macos-15",
+        "macos-15-intel",
+        "windows-2025",
+      ]);
+    }
   });
 
   it("qualifies recipes and the opted-in managed product in their respective lanes", () => {

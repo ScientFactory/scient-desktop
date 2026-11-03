@@ -20,6 +20,11 @@ on:
       managed_python:
         type: boolean
         default: true
+      # `linux` when only broad inputs (dependencies, configuration, workspace
+      # code) changed; see compute-ci-gate.mjs. Anything else runs all four.
+      platforms:
+        type: string
+        default: all
   workflow_dispatch:
     inputs:
       real_kernel:
@@ -47,15 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: linux-x64
-          - runner: macos-15
-            target: darwin-arm64
-          - runner: macos-15-intel
-            target: darwin-x64
-          - runner: windows-2025
-            target: win32-x64
+        runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
     defaults:
       run:
         shell: bash
@@ -82,7 +79,7 @@ jobs:
         run: node apps/server/scripts/compute-recipes.ts seal
       - name: Assert native qualification target
         env:
-          EXPECTED_TARGET: ${{ matrix.target }}
+          EXPECTED_TARGET: ${{ fromJSON('{"ubuntu-24.04":"linux-x64","macos-15":"darwin-arm64","macos-15-intel":"darwin-x64","windows-2025":"win32-x64"}')[matrix.runner] }}
         run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, process.env.EXPECTED_TARGET)'
       - name: Qualify base, every toolkit combination, and retained kernels
         working-directory: apps/server
@@ -101,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
+        runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
         # Both ends of the supported range, because the failures this suite
         # catches are version-dependent asyncio and kernel-startup behaviour:
         # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
@@ -166,7 +163,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15, macos-15-intel, windows-2025]
+        runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
     defaults:
       run:
         shell: bash
