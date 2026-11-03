@@ -149,6 +149,7 @@ jobs:
       compute_changed: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.changed }}
       real_kernel: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}
       managed_python: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}
+      compute_platforms: ${{ github.event_name == 'push' && 'all' || steps.compute.outputs.platforms }}
       windows_changed: ${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.changed }}
       linux_changed: ${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.linux_changed }}
       # SCIENT-FORK:END
@@ -827,6 +828,8 @@ jobs:
     with:
       real_kernel: ${{ needs.changes.outputs.real_kernel != 'false' }}
       managed_python: ${{ needs.changes.outputs.managed_python != 'false' }}
+      # Only an explicit `linux` narrows it; a missing output runs all four.
+      platforms: ${{ needs.changes.outputs.compute_platforms == 'linux' && 'linux' || 'all' }}
 
   windows_packaging:
     needs: [queue_ci, release_notes, changes]
