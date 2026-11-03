@@ -211,6 +211,7 @@ import { useChatContentDirection } from "../scient/bidi/useChatContentDirection"
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import {
+  preloadScientRichFenceRuntime,
   resolveScientRichFenceKind,
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
@@ -1916,16 +1917,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     // SCIENT-FORK:START — the code block is Scient's (scient/presentation/MarkdownCodeBlock.tsx).
-    // Complete Mermaid fences may render during streaming, but unfinished source stays readable.
-    // Other visual grammars still wait for the settled message.
+    // A visual fence renders once it closes, even mid-stream; unfinished source stays readable
+    // while its renderer loads.
     const fenceMeta = extractPreCodeMeta(node);
     const fenceTitle = extractFenceTitle(fenceMeta);
     const richFenceKind = resolveScientRichFenceKind(language);
-    if (
-      richFenceKind != null &&
-      (!isStreaming ||
-        (richFenceKind === "mermaid" && isClosedCodeFence(node, text, codeBlock.code)))
-    ) {
+    const richFenceReady =
+      richFenceKind != null && (!isStreaming || isClosedCodeFence(node, text, codeBlock.code));
+    if (richFenceKind != null && !richFenceReady) preloadScientRichFenceRuntime(richFenceKind);
+    if (richFenceReady) {
       return (
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, codeBlock.className, diffThemeName, isStreaming]}

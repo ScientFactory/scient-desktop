@@ -228,23 +228,23 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
-describe("ChatMarkdown settled chart fences", () => {
+describe("ChatMarkdown streaming chart fences", () => {
   it.each([
     {
       language: "plotly",
       source: '{"data":[{"type":"scatter","x":[1,2],"y":[3,4]}]}',
-      imageLabel: "Settled Plotly",
+      imageLabel: "Streamed Plotly",
       expandLabel: "Expand interactive figure",
     },
     {
       language: "vega-lite",
       source:
         '{"data":{"values":[{"x":1,"y":2}]},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}',
-      imageLabel: "Settled Vega-Lite",
+      imageLabel: "Streamed Vega-Lite",
       expandLabel: "Expand interactive chart",
     },
   ])(
-    "keeps a closed $language fence literal until settlement",
+    "draws a $language fence once it closes mid-stream and keeps it through stream end",
     async ({ language, source, imageLabel, expandLabel }) => {
       setup();
       const disposePlotly = vi.fn();
@@ -281,18 +281,24 @@ describe("ChatMarkdown settled chart fences", () => {
           warnings: [],
         };
       });
-      const text = `\`\`\`${language}\n${source}\n\`\`\``;
-      const message = (isStreaming: boolean) => (
-        <ChatMarkdown cwd={undefined} text={text} isStreaming={isStreaming} />
+      const open = `\`\`\`${language}\n${source}`;
+      const text = `${open}\n\`\`\``;
+      const message = (body: string, isStreaming: boolean) => (
+        <ChatMarkdown cwd={undefined} text={body} isStreaming={isStreaming} />
       );
-      await using screen = await render(message(true));
+      await using screen = await render(message(open, true));
       expect(screen.container.querySelector("pre")?.textContent).toContain(source);
       expect(screen.container.querySelector('[role="figure"]')).toBeNull();
       expect(mountPlotly).not.toHaveBeenCalled();
       expect(mountVegaLite).not.toHaveBeenCalled();
 
-      await screen.rerender(message(false));
+      const answer = `${text}\n\nThe remaining explanation.`;
+      await screen.rerender(message(answer, true));
       await expect.element(screen.getByRole("img", { name: imageLabel })).toBeVisible();
+      const chart = screen.container.querySelector('svg[role="img"]');
+      await screen.rerender(message(answer, false));
+      expect(screen.container.querySelector('svg[role="img"]')).toBe(chart);
+      expect(screen.container.textContent).toContain("The remaining explanation.");
       await expect
         .element(screen.getByRole("button", { name: expandLabel, exact: true }))
         .toBeEnabled();
