@@ -125,6 +125,10 @@ export interface AccountsServiceShape {
   }) => Effect.Effect<void, AccountsError>;
   /** Records Accounts' Sign out on Main, so imports and back-fills never copy the site back. */
   readonly mainSignedOut: (site: string) => Effect.Effect<void, AccountsError>;
+  /** Records the profiles the one-time back-fill copied into Main; an empty list marks it done. */
+  readonly mainBackfilled: (
+    profileIds: ReadonlyArray<BrowserProfileId>,
+  ) => Effect.Effect<void, AccountsError>;
   /** Keeps one row per Google address in a profile, with the state Google reports. */
   readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
   /** Without an account, the variable keeps its value and stops following one. */

@@ -9,7 +9,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { fillMainFromProfile, mainFillTrigger, replaceAllowedSince } from "./mainFill";
+import {
+  backfillMain,
+  backfillOrder,
+  fillMainFromProfile,
+  mainFillTrigger,
+  replaceAllowedSince,
+} from "./mainFill";
 
 const state = vi.hoisted(() => ({
   snapshot: undefined as unknown,
@@ -221,5 +227,87 @@ describe("trigger 1: after an import into another profile", () => {
       { environmentId, input: { accountId: session.accountId, profileName: "Work" } },
     ]);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("trigger 3: the one-time back-fill", () => {
+  const record = (profileId: string, patch: object = {}) => ({
+    profileId: BrowserProfileId.make(profileId),
+    access: "allowed" as const,
+    scope: { type: "all-projects" as const },
+    scriptSignIn: true,
+    ...patch,
+  });
+  const imported = (importedAt: string) => ({
+    source: { browser: "chrome", profileName: "Chrome", importedAt },
+  });
+  const profiles = ["unlinked", "late", "early", "limited", "incognito"].map((id) => ({
+    id,
+    name: id,
+    kind: id === "incognito" ? ("incognito" as const) : ("persistent" as const),
+  }));
+  const records = [
+    record("late", imported("2026-11-03T11:00:00.000Z")),
+    record("early", imported("2026-11-03T10:00:00.000Z")),
+    record("limited", { access: "ask" }),
+  ];
+
+  it("goes imported profiles first by import time, then the rest, never a limited one", () => {
+    // "unlinked" has no source: its origin can't be told, and it is copied like any other.
+    expect(backfillOrder(snapshot([], records), profiles)).toEqual(["early", "late", "unlinked"]);
+  });
+
+  it("runs once per environment and profile, and makes Main the default only the first time", async () => {
+    const run = async (main: object) => {
+      const filled: string[] = [];
+      const done: Array<ReadonlyArray<string>> = [];
+      let defaults = 0;
+      await backfillMain(snapshot([], [...records, record("default", main)]), {
+        profiles,
+        fill: async (id) => {
+          filled.push(id);
+          return true;
+        },
+        done: async (ids) => {
+          done.push(ids);
+          return true;
+        },
+        makeMainDefault: async () => void (defaults += 1),
+      });
+      return { filled, done, defaults };
+    };
+    // A crash before anything was recorded runs it all again; each copy then finds the same.
+    expect(await run({})).toEqual({
+      filled: ["early", "late", "unlinked"],
+      done: [["early"], ["late"], ["unlinked"]],
+      defaults: 1,
+    });
+    expect(await run({ backfilled: ["early", "late", "unlinked"] })).toEqual({
+      filled: [],
+      done: [],
+      defaults: 0,
+    });
+    expect(await run({ backfilled: ["early"] })).toEqual({
+      filled: ["late", "unlinked"],
+      done: [["late"], ["unlinked"]],
+      defaults: 0,
+    });
+  });
+
+  it("waits for an offline environment's first snapshot, then runs once", async () => {
+    let runs = 0;
+    const trigger = mainFillTrigger({
+      environmentId,
+      fillMain: async () => null,
+      current: () => undefined,
+      record: async () => undefined,
+      later: () => undefined,
+      backfill: async () => void (runs += 1),
+    });
+    expect(runs).toBe(0);
+    await trigger.seen(snapshot([]));
+    trigger.reset();
+    await trigger.seen(snapshot([]));
+    expect(runs).toBe(1);
   });
 });

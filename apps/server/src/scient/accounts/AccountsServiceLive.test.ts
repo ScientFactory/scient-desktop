@@ -388,6 +388,21 @@ describe("AccountsService and Main", () => {
     }),
   );
 
+  it.effect("records the back-fill once per profile, and an empty one as done", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const backfilled = Effect.map(
+        service.snapshot,
+        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.backfilled,
+      );
+      yield* service.mainBackfilled([]);
+      expect(yield* backfilled).toEqual([]);
+      yield* service.mainBackfilled([BrowserProfileId.make("profile-work")]);
+      yield* service.mainBackfilled([BrowserProfileId.make("profile-work")]);
+      expect(yield* backfilled).toEqual(["profile-work"]);
+    }),
+  );
+
   it.effect("keeps Accounts' sign-outs on Main until any path sees a sign-in there", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();

@@ -254,6 +254,12 @@ export const makeAccountsRpcHandlers = ({
         accounts.mainSignedOut(input.site).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsMainBackfilled]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainBackfilled,
+        accounts.mainBackfilled(input.profileIds).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsProfileChoose]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsProfileChoose,
@@ -422,6 +428,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         chooseProfile: unavailable,
         mainFilled: unavailable,
         mainSignedOut: unavailable,
+        mainBackfilled: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
         setPaperQueue: Effect.fn("AccountsService.setPaperQueue")(() => Effect.void),

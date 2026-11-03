@@ -36,6 +36,7 @@ import {
   UniversitySignInInput,
   UniversityBrowseInput,
   AccountKeyUnlinkInput,
+  AccountMainBackfilledInput,
   AccountMainFilledInput,
   AccountMainSignedOutInput,
   AccountSignInSeenInput,
@@ -87,6 +88,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileChoose: "accounts.profiles.choose",
   accountsMainFilled: "accounts.main.filled",
   accountsMainSignedOut: "accounts.main.signedOut",
+  accountsMainBackfilled: "accounts.main.backfilled",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -342,4 +344,9 @@ export const WsAccountsMainFilledRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
 export const WsAccountsMainSignedOutRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsMainSignedOut,
   { payload: AccountMainSignedOutInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsMainBackfilledRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsMainBackfilled,
+  { payload: AccountMainBackfilledInput, success: Empty, error: AccountsRpcError },
 );

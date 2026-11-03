@@ -1,8 +1,6 @@
 import {
   BROWSER_PROFILE_MAX_COUNT,
   BrowserProfileId,
-  type ClientSettings,
-  DEFAULT_BROWSER_PROFILE_ID,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -15,17 +13,6 @@ import { accountsState } from "./accountsState";
 import { importProfileName, mergeProfiles } from "./accountsView";
 
 /**
- * The built-in Main profile is only the starting point: once the user has a profile of their
- * own, the first one opens new tabs instead.
- */
-export function withOwnDefault(current: ClientSettings): ClientSettings {
-  const own = current.browserProfiles.filter((profile) => profile.kind === "persistent");
-  return current.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID && own[0]
-    ? { ...current, browserDefaultProfileId: own[0].id }
-    : current;
-}
-
-/**
  * Adds a profile named Profile, Profile 2, … and returns its id, or null once there are enough.
  * Its record says Scient made it, which an imported profile can't show.
  */
@@ -35,7 +22,7 @@ export async function addBrowserProfile(environmentId: EnvironmentId): Promise<s
   await persistClientSettingsUpdate((current) => {
     if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return current;
     added = true;
-    return withOwnDefault({
+    return {
       ...current,
       browserProfiles: [
         ...current.browserProfiles,
@@ -48,7 +35,7 @@ export async function addBrowserProfile(environmentId: EnvironmentId): Promise<s
           kind: "persistent",
         },
       ],
-    });
+    };
   });
   if (!added) return null;
   await accountsState.updateProfile

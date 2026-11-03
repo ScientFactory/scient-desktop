@@ -55,7 +55,7 @@ import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
-import { addBrowserProfile, withOwnDefault } from "./addBrowserProfile";
+import { addBrowserProfile } from "./addBrowserProfile";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
@@ -372,7 +372,6 @@ export function BrowserImportDialog({
           if (passwords && readPasswords && profile.passwordCount !== undefined)
             passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
-      if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
       if (passwordSources.length) setImportingPasswords(true);
       for (const { profileId, ...input } of passwordSources) {
         const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
@@ -1046,17 +1045,15 @@ export function BrowserProfiles({
                         await clear(profile.id);
                         const result = await removeRecord({ profileId: profile.id });
                         if (!result.ok) return;
-                        await persistClientSettingsUpdate((current) =>
-                          withOwnDefault({
-                            ...current,
-                            browserProfiles: current.browserProfiles.filter(
-                              (item) => item.id !== profile.id,
-                            ),
-                            ...(current.browserDefaultProfileId === profile.id
-                              ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
-                              : {}),
-                          }),
-                        );
+                        await persistClientSettingsUpdate((current) => ({
+                          ...current,
+                          browserProfiles: current.browserProfiles.filter(
+                            (item) => item.id !== profile.id,
+                          ),
+                          ...(current.browserDefaultProfileId === profile.id
+                            ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
+                            : {}),
+                        }));
                         forgetBrowsing(profile.id);
                       })
                     }

@@ -1,11 +1,19 @@
 import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, type BrowserProfile } from "@t3tools/contracts";
 import { importBrowserCookiesIntoTarget } from "~/components/settings/IntegrationsSettings";
+import { addBrowserProfile } from "./addBrowserProfile";
 
 const state = vi.hoisted(() => ({
   profiles: [] as ReadonlyArray<BrowserProfile>,
+  defaultProfileId: "default",
+  records: [] as unknown[],
   filledFrom: [] as string[],
   importedIntoMain: [] as string[],
+}));
+vi.mock("./accountsState", () => ({
+  accountsState: {
+    updateProfile: { run: async (_registry: unknown, input: unknown) => state.records.push(input) },
+  },
 }));
 vi.mock("./mainFill", () => ({
   fillMainFromProfile: async (_environmentId: string, profileId: string) =>
@@ -24,12 +32,18 @@ vi.mock("./mainFill", () => ({
 vi.mock("~/hooks/useSettings", () => ({
   getClientSettings: () => ({ browserProfiles: state.profiles }),
   persistClientSettingsUpdate: async (
-    update: (current: { browserProfiles: ReadonlyArray<BrowserProfile> }) => {
+    update: (current: {
       browserProfiles: ReadonlyArray<BrowserProfile>;
-    },
+      browserDefaultProfileId: string;
+    }) => { browserProfiles: ReadonlyArray<BrowserProfile>; browserDefaultProfileId: string },
   ) => {
-    state.profiles = update({ browserProfiles: state.profiles }).browserProfiles;
-    return { browserProfiles: state.profiles };
+    const next = update({
+      browserProfiles: state.profiles,
+      browserDefaultProfileId: state.defaultProfileId,
+    });
+    state.profiles = next.browserProfiles;
+    state.defaultProfileId = next.browserDefaultProfileId;
+    return next;
   },
 }));
 
@@ -100,4 +114,17 @@ it("fills Main after an import elsewhere, and imports into Main only through the
     skippedDomains: ["gitlab.com"],
     targetName: "Main",
   });
+});
+
+it("adds a profile marked as made in Scient, and leaves the new-tab default alone", async () => {
+  state.profiles = [];
+  state.defaultProfileId = "default";
+  state.records = [];
+  const environmentId = EnvironmentId.make("synthetic");
+  const id = await addBrowserProfile(environmentId);
+  expect(state.profiles.map((profile) => profile.id)).toEqual([id]);
+  expect(state.defaultProfileId).toBe("default");
+  expect(state.records).toEqual([
+    { environmentId, input: { profileId: id, madeInScient: expect.any(String) } },
+  ]);
 });

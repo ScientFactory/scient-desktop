@@ -958,6 +958,26 @@ export const layer = Layer.effect(
           }),
         ),
       ),
+      mainBackfilled: Effect.fn("AccountsService.mainBackfilled")((profileIds) =>
+        locked(
+          Effect.suspend(() => {
+            const main = effectiveProfile(state.profiles, DEFAULT_BROWSER_PROFILE_ID);
+            return commit(
+              {
+                ...state,
+                profiles: [
+                  ...state.profiles.filter((profile) => profile.profileId !== main.profileId),
+                  {
+                    ...main,
+                    backfilled: [...new Set([...(main.backfilled ?? []), ...profileIds])],
+                  },
+                ],
+              },
+              true,
+            );
+          }),
+        ),
+      ),
       mainSignedOut: Effect.fn("AccountsService.mainSignedOut")((site) =>
         locked(
           Effect.suspend(() =>

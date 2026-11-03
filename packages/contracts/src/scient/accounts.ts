@@ -354,6 +354,8 @@ export const BrowserProfileRecord = Schema.Struct({
    * never copies back. A sign-in seen in Main clears its site.
    */
   signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Main only: the profiles whose sessions have been copied into Main once, in this environment. */
+  backfilled: Schema.optional(Schema.Array(BrowserProfileId)),
 });
 export type BrowserProfileRecord = typeof BrowserProfileRecord.Type;
 
@@ -804,6 +806,11 @@ export const AccountMainFilledInput = Schema.Struct({
   accountId: AccountId,
   /** The source profile's name, for "Copied from …". */
   profileName: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+});
+
+/** Profiles whose sessions the one-time back-fill has copied into Main; empty when there were none. */
+export const AccountMainBackfilledInput = Schema.Struct({
+  profileIds: Schema.Array(BrowserProfileId).check(Schema.isMaxLength(64)),
 });
 
 /** Accounts' Sign out on Main, recorded before the cookies go. */

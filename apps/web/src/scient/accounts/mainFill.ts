@@ -1,9 +1,11 @@
 import {
+  BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   type AccountsSnapshot,
   type AccountSummary,
+  type BrowserProfile,
   type BrowserImportSourceId,
   type BrowserProfileRecord,
   type DesktopAccountsBridge,
@@ -14,8 +16,10 @@ import {
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
-import { getClientSettings } from "~/hooks/useSettings";
+import { resolveBrowserDefaults } from "~/browser/browserDefaults";
+import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readPrimaryEnvironmentId } from "~/state/environments";
 
 import { accountsState } from "./accountsState";
 
@@ -141,8 +145,11 @@ export function mainFillTrigger(deps: {
   ) => Promise<void>;
   readonly later: (run: () => Promise<void>, ms: number) => void;
   readonly eligible?: (profileId: string) => boolean;
+  /** Trigger 3, run once the environment's first snapshot arrives. */
+  readonly backfill?: (snapshot: AccountsSnapshot) => Promise<void>;
 }) {
   let previous: AccountsSnapshot | undefined;
+  let backfill: Promise<void> | undefined;
   /** In-flight and retrying copies, by row and revision; the oldest goes first past the limit. */
   const pending = new Map<string, number>();
   const keyOf = (row: AccountSummary) =>
@@ -189,7 +196,8 @@ export function mainFillTrigger(deps: {
     seen: (snapshot: AccountsSnapshot) => {
       const events = previous ? signInEvents(previous, snapshot, deps.eligible) : [];
       previous = snapshot;
-      const copies: Array<Promise<void>> = [];
+      backfill ??= deps.backfill?.(snapshot).catch(() => undefined);
+      const copies: Array<Promise<void>> = backfill ? [backfill] : [];
       for (const row of events) {
         const key = keyOf(row);
         if (pending.has(key)) continue;
@@ -217,6 +225,27 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
     current: read,
     record: (result, rows, from) => recordCopies(registry, environmentId, result, rows, from),
     later: (run, ms) => void setTimeout(() => void run(), ms),
+    backfill: async (snapshot) =>
+      backfillMain(snapshot, {
+        profiles: resolveBrowserProfiles((await resolveBrowserDefaults()).profiles),
+        fill: (profileId) => fillFromProfile(registry, environmentId, snapshot, profileId),
+        done: async (profileIds) =>
+          (
+            await accountsState.mainBackfilled.run(registry, {
+              environmentId,
+              input: { profileIds: profileIds.map((id) => BrowserProfileId.make(id)) },
+            })
+          )._tag === "Success",
+        ...(environmentId === readPrimaryEnvironmentId()
+          ? {
+              makeMainDefault: () =>
+                persistClientSettingsUpdate((current) => ({
+                  ...current,
+                  browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
+                })).then(() => undefined),
+            }
+          : {}),
+      }),
   });
   return registry.subscribe(
     atom,
@@ -236,15 +265,18 @@ const readSnapshot = async (environmentId: EnvironmentId) => {
 };
 
 /**
- * Trigger 1, an import or Refresh into another profile: then the same sign-ins fill Main where
- * it has none, except the sites the user signed out of there. A restricted profile gives none.
+ * One profile's whole jar fills Main where it has nothing, except the sites the user signed out
+ * of there; its multi-site sign-ins go whole. A restricted profile gives none.
  */
-export async function fillMainFromProfile(environmentId: EnvironmentId, profileId: string) {
+async function fillFromProfile(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  snapshot: AccountsSnapshot,
+  profileId: string,
+) {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
-  const snapshot = await readSnapshot(environmentId);
-  if (!fillMain || !snapshot || !otherPersistentProfile(profileId)) return;
   const record = recordOf(snapshot, profileId);
-  if (!isUnrestricted(record)) return;
+  if (!fillMain || !otherPersistentProfile(profileId) || !isUnrestricted(record)) return false;
   const rows = snapshot.accounts.filter(
     (row) => website(row)?.profileId === profileId && profileSignIns([row]).length > 0,
   );
@@ -261,7 +293,61 @@ export async function fillMainFromProfile(environmentId: EnvironmentId, profileI
     skipSites: mainSignOuts(snapshot),
   };
   const result = await fillMain(input).catch(() => null);
-  if (result) await recordCopies(appAtomRegistry, environmentId, result, rows, profileId);
+  if (!result) return false;
+  await recordCopies(registry, environmentId, result, rows, profileId);
+  return true;
+}
+
+/** Trigger 1, an import or Refresh into another profile: then its sign-ins fill Main. */
+export async function fillMainFromProfile(environmentId: EnvironmentId, profileId: string) {
+  const snapshot = await readSnapshot(environmentId);
+  if (snapshot) await fillFromProfile(appAtomRegistry, environmentId, snapshot, profileId);
+}
+
+/** Imported profiles first, by when they were imported, then the rest in list order. */
+export function backfillOrder(
+  snapshot: Pick<AccountsSnapshot, "profiles">,
+  profiles: ReadonlyArray<BrowserProfile>,
+) {
+  const done = new Set(recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).backfilled ?? []);
+  const waiting = profiles.filter(
+    ({ id, kind }) =>
+      kind === "persistent" &&
+      id !== DEFAULT_BROWSER_PROFILE_ID &&
+      !done.has(id) &&
+      isUnrestricted(recordOf(snapshot, id)),
+  );
+  const importedAt = (id: string) => recordOf(snapshot, id).source?.importedAt;
+  return [
+    ...waiting
+      .filter(({ id }) => importedAt(id))
+      .sort((a, b) => importedAt(a.id)!.localeCompare(importedAt(b.id)!)),
+    ...waiting.filter(({ id }) => !importedAt(id)),
+  ].map(({ id }) => id);
+}
+
+/**
+ * Trigger 3: once per environment and profile, each unrestricted profile's sessions fill Main;
+ * no source profile is changed. The primary environment's first back-fill also makes Main the
+ * new-tab default, once; "Use for new tabs" changes it back.
+ */
+export async function backfillMain(
+  snapshot: AccountsSnapshot,
+  deps: {
+    readonly profiles: ReadonlyArray<BrowserProfile>;
+    readonly fill: (profileId: string) => Promise<boolean>;
+    readonly done: (profileIds: ReadonlyArray<string>) => Promise<boolean>;
+    readonly makeMainDefault?: () => Promise<void>;
+  },
+) {
+  const first = recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).backfilled === undefined;
+  let recorded = false;
+  for (const profileId of backfillOrder(snapshot, deps.profiles)) {
+    if (!(await deps.fill(profileId))) continue;
+    recorded = (await deps.done([profileId])) || recorded;
+  }
+  if (first && !recorded) recorded = await deps.done([]);
+  if (first && recorded) await deps.makeMainDefault?.();
 }
 
 /** Trigger 1, an import whose target is Main: through the coordinator, never the upstream writer. */

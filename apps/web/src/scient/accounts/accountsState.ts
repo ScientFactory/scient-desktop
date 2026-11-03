@@ -194,6 +194,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsMainSignedOut,
     ...lane,
   }),
+  mainBackfilled: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainBackfilled",
+    tag: WS_METHODS.accountsMainBackfilled,
+    ...lane,
+  }),
   showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:showHandoff",
     tag: WS_METHODS.accountsHandoffShow,
