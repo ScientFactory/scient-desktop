@@ -121,16 +121,6 @@ function hasOwn(record: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
 }
 
-export function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
-  const lowerOutput = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  return (
-    lowerOutput.includes("unknown option '--format'") ||
-    lowerOutput.includes("unexpected argument '--format'") ||
-    lowerOutput.includes("unrecognized option '--format'") ||
-    lowerOutput.includes("unknown argument '--format'")
-  );
-}
-
 export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
   readonly version: string | null | undefined;
   readonly channel: string | null | undefined;

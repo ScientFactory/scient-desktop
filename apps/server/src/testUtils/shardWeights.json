@@ -923,8 +923,6 @@
   "src/scient/providerLifecycle/ClaudeConnectionActions.test.ts": 0.737,
   "src/scient/providerLifecycle/CodexConnectionActions.test.ts": 0.999,
   "src/scient/providerLifecycle/CodexManagedRuntimeActions.test.ts": 1.313,
-  "src/scient/providerLifecycle/CursorConnectionActions.live.test.ts": 0.001,
-  "src/scient/providerLifecycle/CursorConnectionActions.test.ts": 1.041,
   "src/scient/providerLifecycle/CursorManagedRuntimeActions.test.ts": 1.126,
   "src/scient/providerLifecycle/CursorSdkConnectionActions.test.ts": 1.094,
   "src/scient/providerLifecycle/DroidConnectionActions.test.ts": 0.91,

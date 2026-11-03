@@ -5,7 +5,7 @@ import {
   managedRuntimeTargetKey,
   resolveReviewedCursorArtifact,
 } from "@scientfactory/provider-runtime";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderConnectionMethod } from "@t3tools/contracts";
 import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -17,7 +17,6 @@ import {
   makeProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderMaintenanceCapabilitiesResolver } from "@t3tools/provider-core/server/maintenanceResolver";
-import { assistedCursorConnectionMethods } from "./CursorConnectionActions.ts";
 import {
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
@@ -26,6 +25,13 @@ import {
 
 const DEFAULT_CURSOR_BINARY = "cursor-agent";
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
+
+function assistedCursorConnectionMethods(
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<ProviderConnectionMethod> {
+  // CLI endpoints and tokens do not own the SDK's account.
+  return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
+}
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {

@@ -9,12 +9,3 @@ export function cursorRuntimeEnvironment(
   const { [SCIENT_MANAGED_CURSOR_RUNTIME]: _ignored, ...externalEnvironment } = environment;
   return externalEnvironment;
 }
-
-export function cursorCliArgs(
-  args: ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
-): ReadonlyArray<string> {
-  return environment?.[SCIENT_MANAGED_CURSOR_RUNTIME] === "1"
-    ? ["--disable-auto-update", ...args]
-    : args;
-}
