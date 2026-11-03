@@ -7,7 +7,7 @@
  */
 import * as NodePath from "node:path";
 
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -30,7 +30,8 @@ import {
 
 const asThread = (threadId: string) =>
   AgentInvocationContext.AgentInvocationContext.of({
-    nativeSessionId: `session-${threadId}`,
+    providerSessionId: `session-${threadId}`,
+    providerInstanceId: ProviderInstanceId.make("codex"),
     environmentId: EnvironmentId.make("environment-1"),
     threadId: ThreadId.make(threadId),
     issuedAt: 1,

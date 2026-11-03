@@ -88,10 +88,7 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
 import { ScientThreadsToolkit } from "../../mcp/toolkits/threads/tools.ts";
 // SCIENT-FORK:START — Scient's copy of upstream's device rules.
-import {
-  SCIENT_DEVICE_TOOL_INSTRUCTIONS,
-  SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-} from "../../provider/ScientProviderInstructions.ts";
+import { SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "../../provider/ScientProviderInstructions.ts";
 // SCIENT-FORK:END
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
@@ -778,9 +775,9 @@ describe("ClaudeAdapterV2 device instructions", () => {
     (options(input).systemPrompt as { readonly append?: string }).append ?? "";
 
   // SCIENT-FORK:START — Scient copy, delivered once through awareness.
-  it("gives a session with device access the device block once", () => {
+  it("gives a session with device access the ToolSearch device block once", () => {
     const text = append({ mcp: true, deviceToolsAvailable: true });
-    assert.include(text, SCIENT_DEVICE_TOOL_INSTRUCTIONS);
+    assert.include(text, SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH);
     assert.equal(text.split("## Scient devices").length, 2);
     assert.include(text, "Use `delegate_task`");
   });

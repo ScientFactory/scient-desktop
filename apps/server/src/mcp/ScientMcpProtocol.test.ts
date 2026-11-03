@@ -22,15 +22,22 @@ import { WorkspaceBindingResolutionError } from "../scient/projectScope/Workspac
 import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import {
   ScientSkillsToolkitRegistrationLive,
+  hostMcpToolGrants,
+  hostMcpTools,
   layerPreviewToolkit,
   registerScientToolkit,
   toolkitRegistration,
 } from "./McpHttpServer.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as ServerConfig from "../config.ts";
-import { ScientMcpProtocol, makeScientToolListLayer } from "./ScientMcpProtocol.ts";
+import {
+  ScientMcpProtocol,
+  hostToolVisibility,
+  makeScientToolListLayer,
+} from "./ScientMcpProtocol.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 
 const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
 class HostDenied extends Schema.TaggedError<HostDenied>()("HostDenied", {
@@ -43,7 +50,13 @@ const HostStatus = Tool.make("host_status", {
   failure: HostDenied,
   dependencies: [McpInvocationContext],
 });
-const HostToolkit = Toolkit.make(HostStatus);
+// Every call of this host tool needs `orchestration`, as upstream's thread tools do.
+const HostThreads = Tool.make("host_threads", {
+  parameters: Schema.Struct({ detail: Schema.optional(Schema.Boolean) }),
+  success: Schema.String,
+  dependencies: [McpInvocationContext],
+});
+const HostToolkit = Toolkit.make(HostStatus, HostThreads);
 const deviceParameters = Schema.Struct({ target: Schema.optional(Schema.String) });
 const makeDeviceTool = <const Name extends string>(name: Name) =>
   Tool.make(name, {
@@ -57,16 +70,25 @@ const DeviceScreenshot = makeDeviceTool("device_screenshot");
 const DeviceClose = makeDeviceTool("device_close");
 const DeviceToolkit = Toolkit.make(DeviceList, DeviceOpen, DeviceScreenshot, DeviceClose);
 const deviceTools = Object.values(DeviceToolkit.tools);
+const previewTools = Object.values(PreviewToolkit.tools);
 
 const scope = (actor: string): McpInvocationScope => ({
   environmentId: EnvironmentId.make("protocol-test"),
   requestNamespace: actor,
-  thread: {
-    threadId: ThreadId.make(actor),
-    providerSessionId: actor,
-    providerInstanceId: ProviderInstanceId.make("codex"),
-  },
-  client: undefined,
+  // A thread-less OAuth client holds what McpOAuth grants it.
+  ...(actor === "oauth"
+    ? {
+        thread: undefined,
+        client: { sessionId: actor, label: actor, access: "full-access" as const },
+      }
+    : {
+        thread: {
+          threadId: ThreadId.make(actor),
+          providerSessionId: actor,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+      }),
   issuedAt: 1,
   capabilities: new Set<McpCapability>(
     actor === "browser"
@@ -77,7 +99,9 @@ const scope = (actor: string): McpInvocationScope => ({
           ? ["skills:read"]
           : actor === "device"
             ? ["device"]
-            : [],
+            : actor === "oauth"
+              ? ["orchestration", "worktree", "pull-requests"]
+              : [],
   ),
   ...(actor === "skills"
     ? {
@@ -116,13 +140,20 @@ const transport = McpServer.layerHttp({
   protocols: [ScientMcpProtocol],
 }).pipe(
   Layer.provide(Auth),
-  Layer.provide(makeScientToolListLayer([HostStatus, ...deviceTools], deviceTools)),
+  Layer.provide(
+    makeScientToolListLayer([HostStatus, HostThreads, ...previewTools, ...deviceTools], {
+      orchestration: [HostThreads],
+      preview: previewTools,
+      device: deviceTools,
+    }),
+  ),
 );
 const workspaceToolkit = Toolkit.make(ScientSourcesListTool);
 const routes = Layer.mergeAll(
   toolkitRegistration(
     HostToolkit,
     McpToolAccess.toLayer(HostToolkit, {
+      host_threads: McpToolAccess.reads(() => Effect.succeed("threads")),
       host_status: McpToolAccess.reads(() =>
         Effect.gen(function* () {
           const invocation = yield* McpInvocationContext;
@@ -210,7 +241,7 @@ it.effect("isolates concurrent MCP discovery and rejects calls outside each curr
         ),
       });
     const sessions = yield* Effect.forEach(
-      ["browser", "skills", "device", "none"],
+      ["browser", "skills", "device", "none", "oauth"],
       (actor) =>
         Effect.gen(function* () {
           const initialized = yield* request(actor, "initialize", {
@@ -258,6 +289,10 @@ it.effect("isolates concurrent MCP discovery and rejects calls outside each curr
     expect(lists[2]).toContain("host_status");
     expect(lists[2]).not.toContain("scient_skills_list");
     expect(lists[3]?.sort()).toEqual(["host_status"]);
+    // A preview-only credential sees no orchestration-gated tool; a thread-less OAuth
+    // client sees those it holds the grant for and no Scient tools.
+    expect(lists[0]).not.toContain("host_threads");
+    expect(lists[4]?.sort()).toEqual(["host_status", "host_threads"]);
     yield* Effect.forEach(
       Array.from({ length: 64 }, (_, index) => sessions[index % sessions.length]!),
       ({ actor, session }) =>
@@ -360,7 +395,53 @@ it("rejects ambiguous tool ownership at composition", () => {
   expect(() => makeScientToolListLayer([ScientSourcesListTool])).toThrow(
     "Ambiguous MCP tool ownership",
   );
-  expect(() => makeScientToolListLayer([HostStatus], [DeviceList])).toThrow(
-    "MCP device tool is not declared as a host tool",
+  expect(() => makeScientToolListLayer([HostStatus], { device: [DeviceList] })).toThrow(
+    "MCP gated tool is not declared as a host tool",
   );
+});
+
+it("lists each upstream tool only for credentials holding its mandatory grant", () => {
+  const visibility = hostToolVisibility(hostMcpTools, hostMcpToolGrants);
+  const listed = (capabilities: ReadonlyArray<McpCapability>) =>
+    new Set(
+      hostMcpTools
+        .map((tool) => tool.name)
+        .filter((name) => visibility.listed(name, new Set(capabilities))),
+    );
+  // McpSessionRegistry's default credential: preview alone.
+  const previewOnly = listed(["preview"]);
+  // Pull-request tools and scient_worktree_list stay listed: forwarded to a linked
+  // environment, they need only `orchestration` here.
+  for (const name of [
+    "preview_open",
+    "scient_preview_list",
+    "scient_preview_close",
+    "html_render",
+    "link_pull_request",
+    "scient_worktree_list",
+  ])
+    expect(previewOnly).toContain(name);
+  for (const name of [
+    "scient_thread_list",
+    "delegate_task",
+    "scient_project_list",
+    "scient_environment_read",
+    "scient_attachment_prepare_upload",
+    "scient_worktree_status",
+    "device_list",
+  ])
+    expect(previewOnly).not.toContain(name);
+  // McpOAuth's thread-less client: orchestration, worktree and pull requests.
+  const oauth = listed(["orchestration", "worktree", "pull-requests"]);
+  for (const name of [
+    "scient_thread_list",
+    "scient_project_list",
+    "link_pull_request",
+    "read_pull_request_guide",
+    "scient_worktree_status",
+    "html_render",
+  ])
+    expect(oauth).toContain(name);
+  for (const name of ["preview_open", "scient_preview_list", "device_list"])
+    expect(oauth).not.toContain(name);
 });

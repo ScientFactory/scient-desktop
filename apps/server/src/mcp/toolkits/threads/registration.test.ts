@@ -50,14 +50,11 @@ it("admits scient_handoff_summary_read only with the threads:read session grant"
   const operation = scientOperationCatalog.forTool("scient_handoff_summary_read");
   expect(operation).toMatchObject({
     id: "threads.handoff-summary.read",
-    family: "threads",
     scope: "thread",
     requiredCapabilities: ["threads:read"],
-    effects: { readOnly: true, destructive: false, idempotent: true, openWorld: false },
   });
   expect(scientOperationCatalog.forTool("scient_thread_read")).toBeUndefined();
   expect(scientOperationCatalog.forTool("t3_thread_read")).toBeUndefined();
-  expect(operation?.input).toBe(ScientHandoffSummaryReadTool.parametersSchema);
   expect(Tool.getJsonSchema(ScientHandoffSummaryReadTool).type).toBe("object");
   expect(hasOperationCapabilities(operation!, new Set(["threads:read"]))).toBe(true);
   expect(

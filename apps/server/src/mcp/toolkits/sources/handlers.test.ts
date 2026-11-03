@@ -273,7 +273,7 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
-  it.effect("rejects a legacy projectless thread and credentials without Sources capability", () =>
+  it.effect("rejects a legacy projectless thread", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-legacy-projectless");
       const thread = makeThread({ threadId, projectId: null });
@@ -285,15 +285,6 @@ describe("Scient Sources MCP handlers", () => {
       expect(projectlessThread._tag).toBe("Failure");
       if (projectlessThread._tag === "Failure") {
         expect(projectlessThread.failure.code).toBe("project-required");
-      }
-
-      const missingCapability = yield* provideContext(resolveScientSourcesProject(), {
-        invocation: makeInvocation(threadId, new Set(["preview"])),
-        query,
-      }).pipe(Effect.result);
-      expect(missingCapability._tag).toBe("Failure");
-      if (missingCapability._tag === "Failure") {
-        expect(missingCapability.failure.code).toBe("capability-unavailable");
       }
     }),
   );

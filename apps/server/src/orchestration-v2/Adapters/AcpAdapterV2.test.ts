@@ -2176,7 +2176,10 @@ describe("AcpAdapterV2", () => {
         const firstDefault = yield* runTurn(2, defaultPolicy, "First default request.");
         assert.equal(firstDefault.textBlockCount, 2);
         assert.include(firstDefault.prompt, "Scient interaction mode: Default");
-        assert.include(firstDefault.prompt, "## Scient browser");
+        // SCIENT-FORK:START — Scient's awareness rides the prompt; browser text needs its grant.
+        assert.include(firstDefault.prompt, "## Scient\nYou are in Scient");
+        assert.notInclude(firstDefault.prompt, "## Scient browser");
+        // SCIENT-FORK:END
         assert.include(firstDefault.prompt, "Scient orchestration");
         assert.notInclude(
           firstDefault.methods,

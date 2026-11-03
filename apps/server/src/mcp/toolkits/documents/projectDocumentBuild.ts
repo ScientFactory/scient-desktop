@@ -23,7 +23,6 @@ export class ProjectDocumentBuildBoundaryError extends Schema.TaggedError<Projec
   "ProjectDocumentBuildBoundaryError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-output-path",
@@ -78,12 +77,6 @@ export const isInsideRoot = (root: string, candidate: string, path: Path.Path): 
 export const resolveDocumentBuildProject = Effect.fn("ProjectDocumentBuild.resolveProject")(
   function* () {
     const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-    if (!invocation.capabilities.has("documents:build")) {
-      return yield* boundaryError(
-        "capability-unavailable",
-        "This provider session does not grant document build access.",
-      );
-    }
     const resolved = yield* consumeAgentWorkspace().pipe(
       Effect.mapError((cause) => boundaryError(cause.code, cause.message)),
     );

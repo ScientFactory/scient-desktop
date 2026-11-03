@@ -557,7 +557,7 @@ describe("Scient PDF build handler", () => {
       }),
   );
 
-  it.effect("rejects missing authority and projectless invocations before rendering", () =>
+  it.effect("rejects projectless invocations before rendering", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-authority-"));
       yield* Effect.promise(() => writeHtml(root));
@@ -566,17 +566,6 @@ describe("Scient PDF build handler", () => {
       const query = makeQuery({ project: null, thread });
       const store = makeStore();
       const broker = makeBroker();
-
-      const missingCapability = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
-        invocation: makeInvocation(threadId, new Set()),
-        query,
-        store: store.store,
-        broker: broker.broker,
-      }).pipe(Effect.result);
-      expect(missingCapability).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "ScientPdfBuildToolError", code: "capability-unavailable" },
-      });
 
       const projectless = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
         invocation: makeInvocation(threadId),

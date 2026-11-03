@@ -26,12 +26,6 @@ export const computeFailed = (error: { readonly message: string }) =>
 /** The thread's project and identity; every compute tool acts in the caller's own project. */
 export const agentScope = Effect.fn("ScientComputeToolkit.scope")(function* () {
   const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-  if (!invocation.capabilities.has("compute")) {
-    return yield* toolError(
-      "capability-unavailable",
-      "This provider session does not grant Scient Compute access.",
-    );
-  }
   const workspace = yield* consumeAgentWorkspace().pipe(
     Effect.mapError((error) => toolError(error.code, error.message)),
   );

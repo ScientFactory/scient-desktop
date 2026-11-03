@@ -48,13 +48,11 @@ it.effect(
           ].includes(tool.name),
         });
         // The composer's access setting is the only control: the tools need only the
-        // document grant every session already has, and describe no approval step.
+        // document grant every session already has.
         const operation = scientOperationCatalog.forTool(tool.name)!;
         expect(operation).toMatchObject({
-          family: "overleaf",
           scope: "workspace",
           requiredCapabilities: ["documents:build"],
-          approval: "session-grant",
         });
       }
     }).pipe(Effect.provide(TestLayer)),

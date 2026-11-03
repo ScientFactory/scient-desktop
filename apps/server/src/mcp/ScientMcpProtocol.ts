@@ -11,7 +11,7 @@ import { AgentInvocationContext } from "../scient/operations/AgentInvocationCont
 import { listAvailableScientOperations } from "../scient/operations/AgentOperationDispatcher.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { scientOperationCatalog } from "./ScientOperationCatalog.ts";
-import { McpInvocationContext } from "./McpInvocationContext.ts";
+import { McpInvocationContext, type McpCapability } from "./McpInvocationContext.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 
 class ScientToolList extends RpcMiddleware.Service<ScientToolList>()("scient/mcp/ToolList") {}
@@ -24,10 +24,12 @@ const isToolListResult = Schema.is(
 );
 
 /** Host tools keep their own handlers and admission. Declare their actual Tool
- * objects at composition, never infer ownership from an unrecognized name. */
-export function makeScientToolListLayer(
-  hostTools: ReadonlyArray<Tool.Any> = [],
-  deviceTools: ReadonlyArray<Tool.Any> = [],
+ * objects at composition, never infer ownership from an unrecognized name.
+ * `gated` lists host tools whose every call needs one grant; the list hides them
+ * without it. Call-time checks still decide. */
+export function hostToolVisibility(
+  hostTools: ReadonlyArray<Tool.Any>,
+  gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>>,
 ) {
   const hostNames = new Set<string>();
   for (const tool of hostTools) {
@@ -35,12 +37,30 @@ export function makeScientToolListLayer(
       throw new Error(`Ambiguous MCP tool ownership: ${tool.name}`);
     hostNames.add(tool.name);
   }
-  const deviceNames = new Set<string>();
-  for (const tool of deviceTools) {
-    if (!hostNames.has(tool.name))
-      throw new Error(`MCP device tool is not declared as a host tool: ${tool.name}`);
-    deviceNames.add(tool.name);
+  const requiredGrant = new Map<string, McpCapability>();
+  for (const [capability, tools] of Object.entries(gated) as Array<
+    [McpCapability, ReadonlyArray<Tool.Any>]
+  >) {
+    for (const tool of tools) {
+      if (!hostNames.has(tool.name))
+        throw new Error(`MCP gated tool is not declared as a host tool: ${tool.name}`);
+      requiredGrant.set(tool.name, capability);
+    }
   }
+  return {
+    owns: (name: string) => hostNames.has(name),
+    listed: (name: string, capabilities: ReadonlySet<McpCapability>) => {
+      const grant = requiredGrant.get(name);
+      return grant === undefined || capabilities.has(grant);
+    },
+  };
+}
+
+export function makeScientToolListLayer(
+  hostTools: ReadonlyArray<Tool.Any> = [],
+  gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>> = {},
+) {
+  const host = hostToolVisibility(hostTools, gated);
   return Layer.effect(
     ScientToolList,
     Effect.gen(function* () {
@@ -58,7 +78,6 @@ export function makeScientToolListLayer(
             mcpInvocation.thread === undefined
               ? undefined
               : scientInvocationForMcp({ ...mcpInvocation, thread: mcpInvocation.thread });
-          const hasDeviceAccess = mcpInvocation.capabilities.has("device");
           const available =
             invocation === undefined
               ? []
@@ -68,7 +87,7 @@ export function makeScientToolListLayer(
                 );
           const ids = new Set(available.map((operation) => operation.id));
           for (const tool of listed.tools) {
-            if (!scientOperationCatalog.forTool(tool.name) && !hostNames.has(tool.name))
+            if (!scientOperationCatalog.forTool(tool.name) && !host.owns(tool.name))
               return yield* Effect.die(new Error(`Undeclared MCP tool ownership: ${tool.name}`));
           }
           // Upstream tool text is renamed here, at the one listing every agent reads.
@@ -78,7 +97,7 @@ export function makeScientToolListLayer(
               .filter((tool) => {
                 const operation = scientOperationCatalog.forTool(tool.name);
                 return operation === undefined
-                  ? hostNames.has(tool.name) && (!deviceNames.has(tool.name) || hasDeviceAccess)
+                  ? host.listed(tool.name, mcpInvocation.capabilities)
                   : ids.has(operation.id);
               })
               .map(scientAgentToolCopy),
