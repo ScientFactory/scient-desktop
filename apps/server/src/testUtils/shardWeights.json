@@ -8,7 +8,6 @@
   "src/assets/AssetAccess.test.ts": 3.961,
   "src/assets/AttachmentUpload.test.ts": 1.03,
   "src/assets/assetRoute.test.ts": 1.912,
-  "src/assets/byteRange.test.ts": 0.181,
   "src/assets/icns.test.ts": 0.196,
   "src/attachmentStore.test.ts": 0.651,
   "src/auth/EnvironmentAuth.test.ts": 3.665,
