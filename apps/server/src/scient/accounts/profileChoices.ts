@@ -15,21 +15,26 @@ const latest = <V>(
     [...entries.filter(([entry]) => entry !== key), [key, value] as const].slice(-max),
   );
 
-/** A switch in a conversation becomes its profile and, for the page's site, that site's profile. */
+/**
+ * A switch in a conversation becomes its profile and, for the page's site, that site's profile.
+ * A site-only choice leaves the conversation's profile as it was.
+ */
 export function withThreadChoice(
   choices: BrowserProfileChoices,
   input: Extract<BrowserProfileChoiceInput, { readonly threadId: unknown }>,
   at: string,
 ): BrowserProfileChoices {
   const site = pageSite(input.url)?.hostname;
-  const sites = choices.threads[input.threadId]?.sites ?? {};
+  const thread = choices.threads[input.threadId];
+  const sites = thread?.sites ?? {};
+  const profileId = input.siteOnly ? thread?.profileId : input.profileId;
   return {
     ...choices,
     threads: latest(
       Object.entries(choices.threads),
       input.threadId,
       {
-        profileId: input.profileId,
+        ...(profileId === undefined ? {} : { profileId }),
         sites:
           site === undefined
             ? sites

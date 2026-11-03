@@ -245,6 +245,11 @@
       "purpose": "Carry an imported cookie's partition key."
     },
     {
+      "path": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+      "anchor": "<ProjectBrowserProfile",
+      "purpose": "Set the project's browser profile in Project settings."
+    },
+    {
       "path": "packages/contracts/src/browserImport.ts",
       "anchor": "keepSites",
       "purpose": "Carry the sites a refresh must leave alone."

@@ -502,7 +502,8 @@ export const BrowserProfileChoices = Schema.Struct({
   threads: Schema.Record(
     ThreadId,
     Schema.Struct({
-      profileId: BrowserProfileId,
+      /** Absent while only sites were chosen; the project's profile then applies. */
+      profileId: Schema.optional(BrowserProfileId),
       sites: Schema.Record(
         Schema.String,
         Schema.Struct({ profileId: BrowserProfileId, at: IsoDateTime }),
@@ -518,6 +519,8 @@ export const BrowserProfileChoiceInput = Schema.Union([
     threadId: ThreadId,
     profileId: BrowserProfileId,
     url: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+    /** Only this page's site: the conversation's own profile stays as it is. */
+    siteOnly: Schema.optional(Schema.Boolean),
   }),
   /** "Use in this project"; null clears it. */
   Schema.Struct({ projectId: ProjectId, profileId: Schema.NullOr(BrowserProfileId) }),

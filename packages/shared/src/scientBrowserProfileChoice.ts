@@ -7,7 +7,7 @@ export interface ProfileChoiceState {
     Record<
       string,
       {
-        readonly profileId: string;
+        readonly profileId?: string | undefined;
         readonly sites: Readonly<
           Record<string, { readonly profileId: string; readonly at: string }>
         >;
@@ -21,12 +21,17 @@ export interface ProfileSignIn {
   readonly profileId: string;
   readonly sites: ReadonlyArray<string>;
   readonly signedOut?: boolean | undefined;
+  /** When the row was made; older identities come first. */
+  readonly createdAt?: string | undefined;
 }
+
+/** States that say the sign-in is refused or held back, so the row is no identity. */
+const NOT_SIGNED_IN = new Set(["signed-out", "password-rejected", "code-rejected", "limited"]);
 
 /**
  * Sign-ins with evidence of a session in their profile: a recorded browser sign-in (no password,
- * no username), or one last signed in there, by Scient or as a check found, unless seen signed out
- * since. A saved password alone says nothing about the profile.
+ * no username), or one last signed in there, by Scient or as a check found, unless seen signed
+ * out, refused or limited since. A saved password alone says nothing about the profile.
  */
 export function profileSignIns(
   accounts: ReadonlyArray<{
@@ -38,24 +43,48 @@ export function profileSignIns(
     };
     readonly secrets: Readonly<Record<string, unknown>>;
     readonly signIn?: { readonly state: string } | undefined;
+    readonly createdAt?: string | undefined;
   }>,
 ): ReadonlyArray<ProfileSignIn> {
-  return accounts.flatMap(({ details, secrets, signIn }) =>
+  return accounts.flatMap(({ details, secrets, signIn, createdAt }) =>
     details.kind === "website" &&
     details.profileId &&
     details.sites &&
-    signIn?.state !== "signed-out" &&
+    !NOT_SIGNED_IN.has(signIn?.state ?? "") &&
     (signIn?.state === "signed-in" ||
       (secrets["password"] === undefined && details.username === undefined))
-      ? [{ profileId: details.profileId, sites: details.sites }]
+      ? [
+          {
+            profileId: details.profileId,
+            sites: details.sites,
+            ...(createdAt === undefined ? {} : { createdAt }),
+          },
+        ]
       : [],
   );
 }
 
+/** The sign-ins for a page, oldest identity first. */
+const signInsFor = (signIns: ReadonlyArray<ProfileSignIn>, page: URL) =>
+  signIns
+    .filter((signIn) => !signIn.signedOut && anySiteMatches(signIn.sites, page))
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+
+/** A site's identities: its rows with evidence of a session, oldest first, as their profiles. */
+export function siteIdentities(
+  accounts: Parameters<typeof profileSignIns>[0],
+  url: string | undefined,
+): ReadonlyArray<ProfileSignIn> {
+  const page = pageSite(url);
+  return page ? signInsFor(profileSignIns(accounts), page) : [];
+}
+
+/** Why a tab opened in its profile, for the profile switcher to say. */
+export type ProfilePickReason = "site" | "conversation" | "project" | "signed-in" | "default";
+
 export interface ProfilePick {
   readonly profileId: string;
-  /** Set when the page's site decided the profile. */
-  readonly signedInSite?: string;
+  readonly reason: ProfilePickReason;
 }
 
 export function pageSite(url: string | undefined) {
@@ -68,27 +97,11 @@ export function pageSite(url: string | undefined) {
   }
 }
 
-/** The profiles signed in to a page, in `profiles` order. */
-export function profilesSignedIn(
-  url: string | undefined,
-  profiles: ReadonlyArray<string>,
-  signIns: ReadonlyArray<ProfileSignIn>,
-) {
-  const page = pageSite(url);
-  if (!page) return [];
-  return profiles.filter((id) =>
-    signIns.some(
-      (signIn) =>
-        signIn.profileId === id && !signIn.signedOut && anySiteMatches(signIn.sites, page),
-    ),
-  );
-}
-
 /**
- * The profile a new tab opens in: the user's switch for this site here; the only profile signed
- * in to the site (ties: latest switch, conversation, project, default, list order); the latest
- * switch for the site in any conversation; then the conversation's, the project's, the default.
- * `profiles` are the eligible ones, in order.
+ * The profile a new tab opens in. This conversation's choice for the site wins. Otherwise the
+ * conversation's profile, else the project's, is kept unless another profile is signed in to the
+ * page and it is not; then Main (the default) if it is signed in, else the oldest identity.
+ * `profiles` are the eligible ones.
  */
 export function pickBrowserProfile(input: {
   readonly url: string | undefined;
@@ -104,40 +117,27 @@ export function pickBrowserProfile(input: {
   const thread = input.choices?.threads[input.threadId];
   const project =
     input.projectId === undefined ? undefined : input.choices?.projects[input.projectId];
+  const paired: ProfilePick | undefined = eligible(thread?.profileId)
+    ? { profileId: thread.profileId, reason: "conversation" }
+    : eligible(project)
+      ? { profileId: project, reason: "project" }
+      : undefined;
+  const fallback = paired ?? { profileId: input.defaultProfileId, reason: "default" };
   const page = pageSite(input.url);
-  if (page) {
-    const switched = thread?.sites[page.hostname]?.profileId;
-    if (eligible(switched)) return { profileId: switched };
-    const signIns = input.signIns.filter(
-      (signIn) => !signIn.signedOut && anySiteMatches(signIn.sites, page),
-    );
-    const signedIn = profilesSignedIn(input.url, input.profiles, signIns);
-    // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
-    const sameService = (host: string) =>
-      host === page.hostname ||
-      signIns.some((signIn) => anySiteMatches(signIn.sites, `https://${host}`));
-    const lastSwitch = Object.values(input.choices?.threads ?? {})
-      .flatMap((entry) =>
-        Object.entries(entry.sites).flatMap(([host, choice]) =>
-          sameService(host) ? [choice] : [],
-        ),
-      )
-      .sort((a, b) => b.at.localeCompare(a.at))
-      .find(({ profileId }) =>
-        signedIn.length > 0 ? signedIn.includes(profileId) : eligible(profileId),
-      )?.profileId;
-    if (signedIn.length === 0 && lastSwitch !== undefined) return { profileId: lastSwitch };
-    if (signedIn.length > 0) {
-      const profileId =
-        signedIn.length === 1
-          ? signedIn[0]!
-          : ([lastSwitch, thread?.profileId, project, input.defaultProfileId].find(
-              (id) => id !== undefined && signedIn.includes(id),
-            ) ?? signedIn[0]!);
-      return { profileId, signedInSite: page.hostname };
-    }
-  }
+  if (!page) return fallback;
+  const signIns = signInsFor(input.signIns, page);
+  // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
+  const sameService = (host: string) =>
+    host === page.hostname ||
+    signIns.some((signIn) => anySiteMatches(signIn.sites, `https://${host}`));
+  const switched = Object.entries(thread?.sites ?? {})
+    .filter(([host, choice]) => sameService(host) && eligible(choice.profileId))
+    .sort(([, a], [, b]) => b.at.localeCompare(a.at))[0]?.[1].profileId;
+  if (switched !== undefined) return { profileId: switched, reason: "site" };
+  const signedIn = [...new Set(signIns.map((signIn) => signIn.profileId))].filter(eligible);
+  if (signedIn.length === 0 || (paired && signedIn.includes(paired.profileId))) return fallback;
   return {
-    profileId: [thread?.profileId, project].find((id) => eligible(id)) ?? input.defaultProfileId,
+    profileId: signedIn.includes(input.defaultProfileId) ? input.defaultProfileId : signedIn[0]!,
+    reason: "signed-in",
   };
 }

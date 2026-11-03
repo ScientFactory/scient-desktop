@@ -21,7 +21,7 @@ vi.mock("~/components/preview/previewBridge", () => ({ previewBridge: {} }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<object>()),
   useClientSettings: (select: (settings: object) => unknown) =>
-    select({ browserProfiles: state.profiles }),
+    select({ browserProfiles: state.profiles, browserDefaultProfileId: "default" }),
 }));
 vi.mock("~/state/entities", async (original) => ({
   ...(await original<object>()),
@@ -104,4 +104,18 @@ it("stays out of an incognito tab", async () => {
   reset();
   await using screen = await render(switcher("incognito"));
   expect(screen.container.querySelector("button")).toBeNull();
+});
+
+it("says why the tab opened in its profile", async () => {
+  reset();
+  state.accounts = [
+    { ...signedInOnWork, signIn: { state: "signed-in", at: "2026-11-03T11:41:00Z" } },
+  ];
+  state.profiles = [
+    { id: "home", name: "Home" },
+    { id: "work", name: "Work" },
+  ];
+  await using _screen = await render(switcher("work"));
+  await page.getByRole("button", { name: "Profile: Work" }).click();
+  await expect.element(page.getByText("Work · signed in to example.com")).toBeVisible();
 });
