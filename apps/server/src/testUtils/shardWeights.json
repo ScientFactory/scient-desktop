@@ -729,7 +729,6 @@
   "src/scient/analysis/LocalAnalysisStore.test.ts": 0.935,
   "src/scient/analysis/MatlabAdapter.test.ts": 0.384,
   "src/scient/analysis/analysisOutputBuffer.test.ts": 0.25,
-  "src/scient/answerAttention/completedAnswerSql.test.ts": 1.207,
   "src/scient/compute/BridgeProtocol.test.ts": 0.317,
   "src/scient/compute/ComputeBridgeTransport.test.ts": 0.523,
   "src/scient/compute/ComputeEnvironmentPolicy.test.ts": 0.296,
