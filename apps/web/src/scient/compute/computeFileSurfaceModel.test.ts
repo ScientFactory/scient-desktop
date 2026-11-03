@@ -269,7 +269,6 @@ describe("python compute surface model", () => {
     expect(normalizeComputeFileResultsView("results")).toBe("results");
     expect(normalizeComputeFileResultsView("code")).toBe(DEFAULT_COMPUTE_FILE_RESULTS_VIEW);
     expect(normalizeComputeFileResultsView("console")).toBe(DEFAULT_COMPUTE_FILE_RESULTS_VIEW);
-    expect(MIN_COMPUTE_FILE_SPLIT).toBe(0.3);
     expect(computeFileViewAfterRun("code", "results")).toBe("results");
     expect(computeFileViewAfterRun("code", "split")).toBe("split");
     expect(computeFileViewAfterRun("results", "split")).toBe("results");

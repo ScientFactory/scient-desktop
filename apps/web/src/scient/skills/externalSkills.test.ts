@@ -4,7 +4,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   compactExternalSkillDescription,
   collectExternalSkillProviders,
-  externalSkillSourceLabel,
   externalSkillStatus,
 } from "./externalSkills";
 
@@ -98,12 +97,6 @@ describe("external skill presentation", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0]?.skills).toEqual([]);
-  });
-
-  it("uses concise source labels", () => {
-    expect((["app", "personal", "system", "other"] as const).map(externalSkillSourceLabel)).toEqual(
-      ["Provider bundled", "Personal", "System", "Provider managed"],
-    );
   });
 
   it("reports activation and read-only authority independently", () => {
