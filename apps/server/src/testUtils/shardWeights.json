@@ -633,7 +633,6 @@
   "src/provider/omp/OmpMcpAuthority.native.live.test.ts": 0.001,
   "src/provider/omp/OmpModel.test.ts": 0.714,
   "src/provider/omp/OmpModels.live.test.ts": 0.001,
-  "src/provider/omp/OmpOwnership.test.ts": 0.225,
   "src/provider/omp/OmpRealSmoke.test.ts": 0.001,
   "src/provider/omp/OmpRpcProcess.test.ts": 1.162,
   "src/provider/omp/OmpScientExtension.live.test.ts": 0.001,
