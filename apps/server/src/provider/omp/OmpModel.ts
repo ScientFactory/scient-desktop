@@ -9,7 +9,7 @@ import {
   isValidModelSegment,
   splitAgentModelSlug,
   thinkingLevelCapabilities,
-} from "../agentModel.ts";
+} from "@t3tools/provider-core/server/agentModel";
 
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 

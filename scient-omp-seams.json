@@ -231,7 +231,7 @@
       "purpose": "Include Oh My Pi in the scheduled managed runtime catalog refresh."
     },
     {
-      "path": "apps/server/src/provider/agentModel.ts",
+      "path": "packages/provider-core/src/server/agentModel.ts",
       "anchor": "splitAgentModelSlug",
       "purpose": "Share the provider/model slug codec and reasoning descriptors between Pi and Oh My Pi."
     },

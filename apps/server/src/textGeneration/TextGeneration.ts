@@ -23,7 +23,10 @@ import type { ModelSelection } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
-import { encodeAgentModelSlug, splitAgentModelSlug } from "../provider/agentModel.ts";
+import {
+  encodeAgentModelSlug,
+  splitAgentModelSlug,
+} from "@t3tools/provider-core/server/agentModel";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";

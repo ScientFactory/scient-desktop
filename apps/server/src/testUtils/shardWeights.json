@@ -587,7 +587,6 @@
   "src/provider/acp/CursorAcpCliProbe.test.ts": 0.001,
   "src/provider/acp/DroidAcpCliProbe.test.ts": 0.001,
   "src/provider/acp/DroidAcpSupport.test.ts": 0.922,
-  "src/provider/agentModel.test.ts": 0.181,
   "src/provider/agentProcessEnvironment.test.ts": 0.291,
   "src/provider/antigravity/AgyCliProbe.test.ts": 0.001,
   "src/provider/antigravity/AgySession.test.ts": 0.77,
