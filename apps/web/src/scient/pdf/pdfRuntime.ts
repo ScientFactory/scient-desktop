@@ -29,6 +29,20 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // leaves a worker the caller supplied running.
 let sharedWorker: PDFWorker | undefined;
 
+// pdf.js tracks worker failures only while the worker starts, so a worker that later reports an
+// error is retired here: the next PDF opens on a fresh worker instead of one that cannot answer.
+function acquireSharedWorker(): PDFWorker {
+  if (sharedWorker !== undefined && !sharedWorker.destroyed) return sharedWorker;
+  const worker = new PDFWorker();
+  sharedWorker = worker;
+  const retire = () => {
+    if (sharedWorker === worker) sharedWorker = undefined;
+    worker.destroy();
+  };
+  worker.promise.then(() => worker.port?.addEventListener("error", retire), retire);
+  return worker;
+}
+
 export type PdfPasswordReason = "required" | "incorrect";
 
 export interface PdfPasswordChallenge {
@@ -75,10 +89,9 @@ export function startPdfDocumentLoad(
   callbacks: PdfLoadCallbacks,
 ): PDFDocumentLoadingTask {
   const assetRoot = pdfAssetRoot();
-  if (sharedWorker === undefined || sharedWorker.destroyed) sharedWorker = new PDFWorker();
   const loadingTask = getDocument({
     url,
-    worker: sharedWorker,
+    worker: acquireSharedWorker(),
     cMapPacked: true,
     cMapUrl: `${assetRoot}cmaps/`,
     standardFontDataUrl: `${assetRoot}standard_fonts/`,

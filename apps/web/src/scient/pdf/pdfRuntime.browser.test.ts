@@ -26,20 +26,23 @@ function onePagePdf() {
 }
 
 function countWorkerStarts() {
-  const counter = { started: 0, [Symbol.dispose]: () => vi.unstubAllGlobals() };
+  const counter = {
+    started: [] as Array<Worker>,
+    [Symbol.dispose]: () => vi.unstubAllGlobals(),
+  };
   vi.stubGlobal(
     "Worker",
     class extends Worker {
       constructor(...args: ConstructorParameters<typeof Worker>) {
         super(...args);
-        counter.started += 1;
+        counter.started.push(this);
       }
     },
   );
   return counter;
 }
 
-it("opens every document on one pdf.js worker that outlives closed documents", async () => {
+it("opens every document on one pdf.js worker, replaced only after it reports an error", async () => {
   using workers = countWorkerStarts();
   using pdf = onePagePdf();
   const callbacks = { onPassword: () => {}, onProgress: () => {} };
@@ -53,6 +56,11 @@ it("opens every document on one pdf.js worker that outlives closed documents", a
   expect((await second.promise).numPages).toBe(1);
   expect((await third.promise).numPages).toBe(1);
   await Promise.all([second.destroy(), third.destroy()]);
+  expect(workers.started).toHaveLength(1);
 
-  expect(workers.started).toBe(1);
+  workers.started[0]!.dispatchEvent(new Event("error"));
+  const afterError = startPdfDocumentLoad(pdf.url, callbacks);
+  expect((await afterError.promise).numPages).toBe(1);
+  await afterError.destroy();
+  expect(workers.started).toHaveLength(2);
 });
