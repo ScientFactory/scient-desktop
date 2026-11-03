@@ -108,6 +108,8 @@ export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
             : `Header ${auth.headerName ?? ""}`.trim();
       return auth.storage === "bound" ? `${kind} from Accounts` : kind;
     }
+    case "source-control":
+      return `${auth.account} from Source Control`;
   }
 }
 
