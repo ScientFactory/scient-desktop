@@ -43,7 +43,11 @@ import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
-import budget from "./agentContextBudget.json" with { type: "json" };
+// SCIENT-FORK:START Scient's budget file holds these measurements beside its own.
+import scientBudget from "./agentContextBudget.scient.json" with { type: "json" };
+const { claudeSystemAppendBytes, codexAdditionalContextBytes, mcpToolListJsonBytes } = scientBudget;
+const budget = { claudeSystemAppendBytes, codexAdditionalContextBytes, mcpToolListJsonBytes };
+// SCIENT-FORK:END
 // SCIENT-FORK:START Scient tool handler services
 import { ComputeMcpGateway } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
 import { LegacyV1ThreadImporter } from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
