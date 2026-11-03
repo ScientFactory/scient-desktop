@@ -148,11 +148,16 @@ function SignedInSitesDialog({
   useEffect(() => {
     void load();
   }, []);
+  const recordSignOut = useAccountCommand(accountsState.mainSignedOut, environmentId);
   const signOut = async (site: string) => {
     setBusy(site);
-    const done = await window.desktopBridge?.accounts
-      ?.signOutSite?.(profile.id, site, environmentId)
-      .catch(() => false);
+    const accounts = window.desktopBridge?.accounts;
+    // Main's sign-out is recorded first, so no import or back-fill brings the site back.
+    const done =
+      profile.id === DEFAULT_BROWSER_PROFILE_ID
+        ? (await recordSignOut({ site })).ok &&
+          (await accounts?.signOutMainSite?.(site, environmentId).catch(() => false))
+        : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false);
     if (!done) profileError();
     else window.dispatchEvent(new Event("scient-accounts-session-changed"));
     await load();
@@ -867,7 +872,7 @@ export function BrowserProfiles({
               <MenuItem
                 onClick={() =>
                   void act(async () => {
-                    await addBrowserProfile();
+                    await addBrowserProfile(environmentId);
                   })
                 }
               >

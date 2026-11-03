@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AccountsError,
   AccountsSnapshot,
   BrowserProfileId,
   ProjectId,
@@ -320,6 +321,123 @@ describe("AccountsService profiles and evidence", () => {
       expect(accounts[0]?.details.kind === "website" && accounts[0].details.profileId).toBe(
         undefined,
       );
+    }),
+  );
+});
+
+describe("AccountsService and Main", () => {
+  const MAIN = BrowserProfileId.make("default");
+  const row = (profileId: string, sites: string[], username?: string) => ({
+    name: sites[0]!,
+    details: {
+      kind: "website" as const,
+      sites,
+      profileId: BrowserProfileId.make(profileId),
+      ...(username === undefined ? {} : { username }),
+    },
+    secrets: {},
+  });
+
+  it.effect("updates Main's row for a copied sign-in, or makes one, and never duplicates it", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const work = yield* service.save(row("profile-work", ["overleaf.com"], "person@example.com"));
+      // Main already keeps a saved password for the same person.
+      const saved = yield* service.save({
+        ...website(),
+        details: {
+          ...website().details,
+          sites: ["overleaf.com"],
+          username: "person@example.com",
+          profileId: MAIN,
+        },
+      });
+      yield* service.mainFilled({ accountId: work.accountId, profileName: "Work" });
+      yield* service.mainFilled({ accountId: work.accountId, profileName: "Work" });
+      const github = yield* service.save(row("profile-work", ["github.com"]));
+      yield* service.mainFilled({ accountId: github.accountId, profileName: "Work" });
+      const university = yield* service.save({
+        ...row("profile-work", ["university.example"]),
+        details: {
+          ...row("profile-work", ["university.example"]).details,
+          institution: {
+            name: "Synthetic University",
+            entityId: "https://idp.university.example/entity",
+            domain: "university.example",
+          },
+        },
+      });
+      yield* service.mainFilled({ accountId: university.accountId, profileName: "Work" });
+      const main = (yield* service.snapshot).accounts.filter(
+        ({ details }) => details.kind === "website" && details.profileId === MAIN,
+      );
+      expect(
+        main.map(({ accountId, details, signIn, secrets }) => [
+          accountId === saved.accountId,
+          details.kind === "website" ? details.sites : [],
+          signIn?.state,
+          signIn?.detail,
+          Object.keys(secrets),
+          details.kind === "website" ? details.origin : undefined,
+        ]),
+      ).toEqual([
+        // A saved password stays fillable; a copy with nothing to type is the session.
+        [true, ["overleaf.com"], "unknown", "Copied from Work", ["password"], undefined],
+        [false, ["github.com"], "unknown", "Copied from Work", [], "browser-session"],
+      ]);
+    }),
+  );
+
+  it.effect("keeps Accounts' sign-outs on Main until any path sees a sign-in there", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const signedOut = Effect.map(
+        service.snapshot,
+        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.signedOutSites,
+      );
+      const cleared = (run: Effect.Effect<void, AccountsError>, site = "github.com") =>
+        Effect.gen(function* () {
+          yield* service.mainSignedOut(site);
+          expect(yield* signedOut).toEqual([site]);
+          yield* run;
+          expect(yield* signedOut).toBeUndefined();
+        });
+      // A recorded session: a new passwordless row in Main.
+      yield* cleared(Effect.asVoid(service.save(row("default", ["github.com"]))));
+      const main = (yield* service.save(row("default", ["github.com"], "person"))).accountId;
+      yield* TestClock.adjust("1 minute");
+      yield* cleared(service.recordCheck(main, { state: "signed-in" }));
+      yield* TestClock.adjust("1 minute");
+      yield* service.mainSignedOut("github.com");
+      const settled = yield* service.changes.pipe(
+        Stream.filter(({ profiles }) => profiles.every((profile) => !profile.signedOutSites)),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* service.recordUse({
+        target: { type: "account", accountId: main },
+        action: "sign-in",
+        outcome: "ok",
+        signInOutcome: "signed-in",
+      });
+      yield* Fiber.join(settled);
+      yield* cleared(
+        Effect.asVoid(
+          service.googleSessionsSeen({
+            profileId: MAIN,
+            sessions: [{ email: "person@example.com", valid: true }],
+          }),
+        ),
+        "google.com",
+      );
+      yield* service.mainSignedOut("github.com");
+      // A sign-in in another profile leaves Main's record alone.
+      yield* service.recordCheck(
+        (yield* service.save(row("profile-work", ["github.com"], "other"))).accountId,
+        { state: "signed-in" },
+      );
+      expect(yield* signedOut).toEqual(["github.com"]);
     }),
   );
 });

@@ -208,6 +208,8 @@ export function fakeAccounts(
     updateProfile: () => unsupported,
     removeProfile: () => unsupported,
     chooseProfile: () => unsupported,
+    mainFilled: () => unsupported,
+    mainSignedOut: () => unsupported,
     googleSessionsSeen: () => unsupported,
     setCodeSources: () => unsupported,
     setKeyLink: () => Effect.void,

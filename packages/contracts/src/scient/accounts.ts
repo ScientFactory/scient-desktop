@@ -347,6 +347,13 @@ export const BrowserProfileRecord = Schema.Struct({
   picture: Schema.optional(ProfilePictureDataUri),
   color: Schema.optional(ProfileColor),
   source: Schema.optional(BrowserProfileSource),
+  /** When Scient made the profile; one imported or made elsewhere has none. */
+  madeInScient: Schema.optional(IsoDateTime),
+  /**
+   * Main only: sites the user signed out of with Accounts' Sign out, which an import or back-fill
+   * never copies back. A sign-in seen in Main clears its site.
+   */
+  signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type BrowserProfileRecord = typeof BrowserProfileRecord.Type;
 
@@ -786,10 +793,23 @@ export const BrowserProfileRecordUpdateInput = Schema.Struct({
   picture: Schema.optional(Schema.NullOr(ProfilePictureDataUri)),
   color: Schema.optional(Schema.NullOr(ProfileColor)),
   source: Schema.optional(Schema.NullOr(BrowserProfileSource)),
+  madeInScient: Schema.optional(IsoDateTime),
 });
 export type BrowserProfileRecordUpdateInput = typeof BrowserProfileRecordUpdateInput.Type;
 
 export const BrowserProfileRecordRemoveInput = Schema.Struct({ profileId: BrowserProfileId });
+
+/** A row's sign-in was copied into Main, or Main already held the same one. */
+export const AccountMainFilledInput = Schema.Struct({
+  accountId: AccountId,
+  /** The source profile's name, for "Copied from …". */
+  profileName: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+});
+
+/** Accounts' Sign out on Main, recorded before the cookies go. */
+export const AccountMainSignedOutInput = Schema.Struct({
+  site: TrimmedNonEmptyString.check(Schema.isMaxLength(253)),
+});
 
 export const AccountApprovalRespondInput = Schema.Struct({
   approvalId: AccountApprovalId,

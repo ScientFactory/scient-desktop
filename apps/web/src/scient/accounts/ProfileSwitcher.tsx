@@ -85,7 +85,7 @@ export function ProfileSwitcher({
     onOpenInProfile(profileId);
   };
   const addProfile = () =>
-    addBrowserProfile()
+    addBrowserProfile(environmentId)
       .then((profileId) => {
         if (profileId) openIn(profileId);
       })

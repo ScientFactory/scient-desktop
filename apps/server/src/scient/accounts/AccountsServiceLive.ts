@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   GOOGLE_SITE,
   ACCOUNT_SECRET_FIELDS,
+  DEFAULT_BROWSER_PROFILE_ID,
   AccountId,
   AccountSaveInput,
   AccountMatchSignInInput,
@@ -45,6 +46,7 @@ import {
   type AccountAuthorization,
 } from "./AccountsService.ts";
 import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
+import { mainRowFor, withMainSignOutsCleared, withSignedOutSite } from "./mainRecord.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
   AccountPersistence,
@@ -252,9 +254,11 @@ export const layer = Layer.effect(
      */
     let batch: { dirty: boolean; removals: Array<string> } | undefined;
     const commit = Effect.fn("AccountsService.commit")(function* (
-      next: AccountsState,
+      proposed: AccountsState,
       usageOnly = false,
     ) {
+      // Every path that records a sign-in in Main passes here, in the same locked write.
+      const next = withMainSignOutsCleared(state, proposed);
       // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
       if (!usageOnly) bindingRevision++;
       if (batch) {
@@ -866,6 +870,7 @@ export const layer = Layer.effect(
             for (const key of ["picture", "color", "source"] as const) {
               if (input[key] === null) delete next[key];
             }
+            if (input.madeInScient) next.madeInScient = input.madeInScient;
             yield* commit({
               ...state,
               profiles: [
@@ -892,6 +897,71 @@ export const layer = Layer.effect(
                 ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
                 : {}),
             }),
+          ),
+        ),
+      ),
+      mainFilled: Effect.fn("AccountsService.mainFilled")(({ accountId, profileName }) =>
+        locked(
+          Effect.gen(function* () {
+            const source = findAccount(accountId);
+            if (!source) return yield* missing();
+            const { details } = source.summary;
+            // University rows are made in Main by their own sign-in, never by a copy.
+            if (details.kind !== "website" || details.institution) return;
+            const signIn = {
+              state: "unknown" as const,
+              at: yield* now,
+              detail: `Copied from ${profileName}`,
+            };
+            const existing = mainRowFor(state.accounts, source.summary);
+            if (!existing) {
+              const { accountId: created } = yield* save({
+                name: source.summary.name,
+                details: {
+                  kind: "website",
+                  sites: details.sites,
+                  ...(details.loginUrl ? { loginUrl: details.loginUrl } : {}),
+                  ...(details.username === undefined ? {} : { username: details.username }),
+                  profileId: DEFAULT_BROWSER_PROFILE_ID,
+                  origin: "browser-session",
+                },
+                secrets: {},
+              });
+              const row = findAccount(created);
+              if (row)
+                yield* commit(replaceAccount({ ...row, summary: { ...row.summary, signIn } }));
+              return;
+            }
+            const main = existing.summary;
+            if (main.details.kind !== "website") return;
+            const username = main.details.username ?? details.username;
+            yield* commit(
+              replaceAccount({
+                ...existing,
+                summary: {
+                  ...main,
+                  details: {
+                    ...main.details,
+                    sites: [...new Set([...main.details.sites, ...details.sites])].slice(0, 16),
+                    ...(username === undefined ? {} : { username }),
+                    // A row with nothing to type is now the copied session; a saved password stays fillable.
+                    ...(Object.keys(main.secrets).length === 0
+                      ? { origin: "browser-session" as const }
+                      : {}),
+                  },
+                  // A copy says nothing new about a Main session already seen working.
+                  ...(main.signIn?.state === "signed-in" ? {} : { signIn }),
+                  updatedAt: signIn.at,
+                },
+              }),
+            );
+          }),
+        ),
+      ),
+      mainSignedOut: Effect.fn("AccountsService.mainSignedOut")((site) =>
+        locked(
+          Effect.suspend(() =>
+            commit({ ...state, profiles: withSignedOutSite(state.profiles, site) }),
           ),
         ),
       ),

@@ -14,7 +14,6 @@ import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
-import { useClientSettings } from "~/hooks/useSettings";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { libraryLinkTemplate, signedIntoUniversity } from "./accountsView";
@@ -79,8 +78,8 @@ export function UniversityPicker({
   const search = useAccountCommand(accountsState.searchUniversities, environmentId);
   const save = useAccountCommand(accountsState.save, environmentId);
   const startSignIn = useUniversitySignIn(environmentId);
-  const profileId =
-    useClientSettings((settings) => settings.browserDefaultProfileId) ?? DEFAULT_BROWSER_PROFILE_ID;
+  // A university sign-in lives in Main, so every conversation and profile choice reaches it.
+  const profileId = DEFAULT_BROWSER_PROFILE_ID;
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<ReadonlyArray<Institution>>([]);
   const [showLink, setShowLink] = useState(false);
@@ -155,6 +154,9 @@ export function UniversityPicker({
           if (!query && guess) find(guess);
         }}
       />
+      <p className="px-2 text-xs text-muted-foreground">
+        You sign in in Main, so every conversation can use it.
+      </p>
       {found.map((university) => (
         <button
           key={university.entityId}

@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   open: vi.fn(),
   external: vi.fn(),
   settings: {} as Partial<ClientSettings>,
+  calls: [] as unknown[],
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -52,7 +53,10 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("./useAccounts", () => ({
   useAccounts: () => ({ data: null, canWrite: true }),
-  useAccountCommand: () => async () => ({ ok: true, value: {} }),
+  useAccountCommand: () => async (input: unknown) => {
+    state.calls.push(["record", input]);
+    return { ok: true, value: {} };
+  },
   usePasswordStorePermission: () => true,
 }));
 
@@ -231,4 +235,38 @@ it("lists Main beside imported profiles, each showing where it came from", async
     .toBeVisible();
   expect(picture("Main")?.getAttribute("src")).toContain("scient-symbol");
   expect(picture("Personal")?.getAttribute("src")).toBe(browserIconUrl("safari"));
+});
+
+it("records a sign-out on Main before its cookies go", async () => {
+  state.settings = {};
+  state.calls = [];
+  using _desktop = fixture();
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: {
+      accounts: {
+        signedInSites: async () => [{ domain: "github.com", cookies: 3 }],
+        signOutSite: async () => true,
+        signOutMainSite: async (site: string) => {
+          state.calls.push(["remove", site]);
+          return true;
+        },
+      },
+    },
+  });
+  await using _screen = await render(
+    <BrowserProfiles
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={{ profiles: [], accounts: [] } as unknown as AccountsSnapshot}
+      canWrite
+      onImport={() => undefined}
+    />,
+  );
+  await page.getByRole("button", { name: "Signed-in sites for Main" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await vi.waitFor(() => expect(state.calls).toHaveLength(2));
+  expect(state.calls).toEqual([
+    ["record", { site: "github.com" }],
+    ["remove", "github.com"],
+  ]);
 });

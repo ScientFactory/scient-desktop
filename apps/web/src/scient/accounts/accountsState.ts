@@ -184,6 +184,16 @@ export const accountsState = {
     tag: WS_METHODS.accountsProfileChoose,
     ...lane,
   }),
+  mainFilled: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainFilled",
+    tag: WS_METHODS.accountsMainFilled,
+    ...lane,
+  }),
+  mainSignedOut: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainSignedOut",
+    tag: WS_METHODS.accountsMainSignedOut,
+    ...lane,
+  }),
   showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:showHandoff",
     tag: WS_METHODS.accountsHandoffShow,

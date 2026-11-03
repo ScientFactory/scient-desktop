@@ -242,6 +242,18 @@ export const makeAccountsRpcHandlers = ({
         accounts.removeProfile(input.profileId).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsMainFilled]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainFilled,
+        accounts.mainFilled(input).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsMainSignedOut]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainSignedOut,
+        accounts.mainSignedOut(input.site).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsProfileChoose]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsProfileChoose,
@@ -408,6 +420,8 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         updateProfile: unavailable,
         removeProfile: unavailable,
         chooseProfile: unavailable,
+        mainFilled: unavailable,
+        mainSignedOut: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
         setPaperQueue: Effect.fn("AccountsService.setPaperQueue")(() => Effect.void),

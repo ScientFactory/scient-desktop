@@ -115,6 +115,16 @@ export interface AccountsServiceShape {
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
   readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
+  /**
+   * A row's sign-in was copied into Main: Main's row for it gains its sites and username, or a
+   * passwordless one is made, saying "Copied from …" until a look sees Main signed in.
+   */
+  readonly mainFilled: (input: {
+    readonly accountId: AccountId;
+    readonly profileName: string;
+  }) => Effect.Effect<void, AccountsError>;
+  /** Records Accounts' Sign out on Main, so imports and back-fills never copy the site back. */
+  readonly mainSignedOut: (site: string) => Effect.Effect<void, AccountsError>;
   /** Keeps one row per Google address in a profile, with the state Google reports. */
   readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
   /** Without an account, the variable keeps its value and stops following one. */

@@ -1,12 +1,17 @@
 import {
   BROWSER_PROFILE_MAX_COUNT,
+  BrowserProfileId,
   type ClientSettings,
   DEFAULT_BROWSER_PROFILE_ID,
+  type EnvironmentId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { randomUUID } from "~/lib/utils";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 
+import { accountsState } from "./accountsState";
 import { importProfileName, mergeProfiles } from "./accountsView";
 
 /**
@@ -20,8 +25,11 @@ export function withOwnDefault(current: ClientSettings): ClientSettings {
     : current;
 }
 
-/** Adds a profile named Profile, Profile 2, … and returns its id, or null once there are enough. */
-export async function addBrowserProfile(): Promise<string | null> {
+/**
+ * Adds a profile named Profile, Profile 2, … and returns its id, or null once there are enough.
+ * Its record says Scient made it, which an imported profile can't show.
+ */
+export async function addBrowserProfile(environmentId: EnvironmentId): Promise<string | null> {
   const id = `profile-${randomUUID()}`;
   let added = false;
   await persistClientSettingsUpdate((current) => {
@@ -42,5 +50,15 @@ export async function addBrowserProfile(): Promise<string | null> {
       ],
     });
   });
-  return added ? id : null;
+  if (!added) return null;
+  await accountsState.updateProfile
+    .run(appAtomRegistry, {
+      environmentId,
+      input: {
+        profileId: BrowserProfileId.make(id),
+        madeInScient: DateTime.formatIso(DateTime.nowUnsafe()),
+      },
+    })
+    .catch(() => undefined);
+  return id;
 }
