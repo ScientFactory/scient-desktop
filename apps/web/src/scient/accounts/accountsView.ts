@@ -510,11 +510,9 @@ export function isSavedPassword(account: AccountSummary) {
   );
 }
 
-/** Only a profile's session: no password, and no username but Google's. */
+/** Only a profile's session: no password, whoever it is signed in as. */
 const hasNothingToType = ({ details, secrets }: AccountSummary) =>
-  details.kind === "website" &&
-  secrets.password === undefined &&
-  (details.username === undefined || details.sites.includes(GOOGLE_SITE));
+  details.kind === "website" && secrets.password === undefined;
 
 /** A site signed in from a profile. A university has its own row. */
 export function isBrowserSignIn(account: AccountSummary) {

@@ -91,7 +91,7 @@ describe("Accounts decisions", () => {
     ]);
   });
 
-  it("groups Google rows with browser sign-ins, and says when a profile lost Google", () => {
+  it("groups passwordless rows, Google's or any site's, with browser sign-ins, and says when a profile lost Google", () => {
     const google = (state: "signed-in" | "signed-out", profileId = "work") => ({
       ...website(profileId),
       details: {
@@ -108,7 +108,7 @@ describe("Accounts decisions", () => {
         ...website("work"),
         details: { ...website("work").details, username: "a" },
       } as AccountSummary),
-    ).toBe(false);
+    ).toBe(true);
     expect(signedOutOfGoogle([google("signed-out")], "work")).toBe(true);
     expect(signedOutOfGoogle([google("signed-out"), google("signed-in")], "work")).toBe(false);
     expect(signedOutOfGoogle([google("signed-out", "home")], "work")).toBe(false);
