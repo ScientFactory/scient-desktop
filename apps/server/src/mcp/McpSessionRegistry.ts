@@ -14,7 +14,9 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+// SCIENT-FORK:START — type-only: the registry builds configs, it calls no session helper.
 import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+// SCIENT-FORK:END
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
@@ -22,7 +24,9 @@ export interface McpCredentialRequest {
   /** False omits the preview capability wherever the token is honored. Defaults to full access. */
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
+  // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
   readonly skillScope?: McpInvocationContext.McpScientSkillScope;
+  // SCIENT-FORK:END
   // SCIENT-FORK:START Scient Extensions connectors
   /**
    * Connectors delivered with this credential. The registry derives each
@@ -52,11 +56,13 @@ export interface McpSessionRegistryShape {
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
   /** Replaces the exact skill scope used by the next turn on this thread. */
   readonly replaceSkillScope: (
     threadId: ThreadId,
     skillScope: McpInvocationContext.McpScientSkillScope,
   ) => Effect.Effect<void>;
+  // SCIENT-FORK:END
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -110,6 +116,7 @@ export const connectorProxyUrl = (endpoint: string, connectorId: string): string
   new URL(`/mcp/connectors/${encodeURIComponent(connectorId)}`, endpoint).toString();
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
 const copySkillScope = (
   skillScope: McpInvocationContext.McpScientSkillScope,
 ): McpInvocationContext.McpScientSkillScope => ({
@@ -119,6 +126,7 @@ const copySkillScope = (
   releases: new Map(skillScope.releases),
   skills: skillScope.skills.map((skill) => ({ ...skill })),
 });
+// SCIENT-FORK:END
 
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
@@ -179,13 +187,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           subagent: request.subagent === true,
         },
         client: undefined,
+        // SCIENT-FORK:START — the caller's explicit grant is the whole grant; no base
+        // orchestration/worktree/pull-requests is added behind it.
         capabilities: new Set<McpInvocationContext.McpCapability>(
           request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : []),
         ),
+        // SCIENT-FORK:END
         // SCIENT-FORK:START Scient Extensions connectors
         connectorIds: new Set(connectors.map((connector) => connector.connectorId)),
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
         ...(request.skillScope ? { skillScope: copySkillScope(request.skillScope) } : {}),
+        // SCIENT-FORK:END
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -201,10 +214,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.thread.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
-          // Keep the provider-facing manifest independent from the
-          // authorization record. `ReadonlySet` is compile-time only; sharing
-          // one mutable Set would let an adapter accidentally widen its token.
+          // SCIENT-FORK:START — the provider-facing manifest is a copy, never the
+          // authorization record: sharing one mutable Set could widen the token.
           capabilities: new Set(scope.capabilities),
+          // SCIENT-FORK:END
           // SCIENT-FORK:START Scient Extensions connectors
           connectors,
           // SCIENT-FORK:END
@@ -232,6 +245,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         // SCIENT-FORK:END
         const next = new Map(records);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+        // SCIENT-FORK:START — callers receive copies of the authorization record.
         return [
           {
             ...record.scope,
@@ -249,6 +263,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           },
           { records: next },
         ] as const;
+        // SCIENT-FORK:END
       });
       // SCIENT-FORK:START — release session-scoped key material before returning an expired lookup.
       if (expired) yield* notifyRevoked([expired], "expired");
@@ -272,6 +287,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     },
   );
 
+  // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
   const replaceSkillScope: McpSessionRegistryShape["replaceSkillScope"] = Effect.fn(
     "McpSessionRegistry.replaceSkillScope",
   )(function* (threadId, skillScope) {
@@ -297,6 +313,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       return { records: next };
     });
   });
+  // SCIENT-FORK:END
 
   // SCIENT-FORK:START — revocation observers cover exact-token, thread and global release.
   const revokeWhere = Effect.fn("McpSessionRegistry.revokeWhere")(function* (
@@ -320,7 +337,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
+    // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
     replaceSkillScope,
+    // SCIENT-FORK:END
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);
@@ -367,6 +386,7 @@ export const layer = Layer.effect(McpSessionRegistry, make);
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
+// SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
 export const replaceActiveMcpSkillScope = (
   threadId: ThreadId,
   skillScope: McpInvocationContext.McpScientSkillScope,
@@ -374,6 +394,7 @@ export const replaceActiveMcpSkillScope = (
   activeMcpSessionRegistry
     ? activeMcpSessionRegistry.replaceSkillScope(threadId, skillScope)
     : Effect.void;
+// SCIENT-FORK:END
 
 export const __testing = {
   make: makeWithOptions,
