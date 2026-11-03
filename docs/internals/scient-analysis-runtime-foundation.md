@@ -69,10 +69,7 @@ those generic changes remain candidates for separate upstream contribution.
    truncated, non-text, outside-project, unsupported, or already-active source.
 4. The registry resolves the requested adapter. The MATLAB adapter discovers an explicit path,
    `PATH`, or conventional installation without launching MATLAB. Discovery means “found,” not
-   “ready”: an explicit **Verify** action starts a private 90-second probe and reports release,
-   version, architecture, installation root, Java availability, toolbox inventory, duration, and
-   actionable sign-in, license, dependency, startup, or timeout states. Results are cached by the
-   resolved executable identity and invalidated on configuration or launch failure.
+   “ready”; a cached profile is dropped on configuration change or launch failure.
 5. Starts enter one FIFO worker queue per runtime. A single local MATLAB process runs at a time;
    queued positions are explicit and a queued run can be cancelled without launching MATLAB.
 6. The host creates a private runner, then spawns the exact executable directly, never through a
@@ -190,8 +187,7 @@ not turn `AnalysisService` into a viewer, manuscript editor, or universal artifa
   still requires native Windows acceptance.
 - Linux discovery checks `PATH` and `/usr/local/MATLAB/<release>/bin/matlab` candidates.
 - A release such as `R2025b` is recorded when it can be derived honestly from the executable path.
-  Unknown versions remain `null` until the user explicitly verifies the runtime; opening a file
-  never launches MATLAB merely to decorate the UI.
+  Unknown versions remain `null`; opening a file never launches MATLAB merely to decorate the UI.
 - GUI shell environment differences are handled by conventional discovery and an explicit path
   setting.
   WSL, remote runtimes, and environment modules need later adapters and acceptance fixtures.
@@ -199,7 +195,7 @@ not turn `AnalysisService` into a viewer, manuscript editor, or universal artifa
 ## Current boundary
 
 This foundation includes Run file, Stop, deterministic runtime-level FIFO queueing, stdout/stderr,
-explicit startup/license/Java/toolbox verification, structured clickable errors, durable indexed
+structured clickable errors, durable indexed
 and keyset-paginated terminal history, crash recovery, revision-safe source execution, exact-file
 refresh, bounded PNG/FIG figure capture with explicit artifact-collection status, and deliberate
 portable project-result promotion. It does not

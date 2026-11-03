@@ -240,8 +240,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsDiscardFileVersion]: "projects",
   [WS_METHODS.projectsResolveFileMutation]: "projects",
   [WS_METHODS.analysisInspectRuntimes]: "analysis",
-  [WS_METHODS.analysisConfigureRuntime]: "analysis",
-  [WS_METHODS.analysisVerifyRuntime]: "analysis",
   [WS_METHODS.analysisStartRun]: "analysis",
   [WS_METHODS.analysisCancelRun]: "analysis",
   [WS_METHODS.analysisListRuns]: "analysis",

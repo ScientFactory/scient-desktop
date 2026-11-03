@@ -13,7 +13,6 @@ import {
   type AnalysisCleanupProjectInput,
   type AnalysisCleanupResult,
   type AnalysisCleanupRunInput,
-  type AnalysisConfigureRuntimeInput,
   type AnalysisGetRunInput,
   type AnalysisInspectRuntimesInput,
   type AnalysisListRunsInput,
@@ -26,12 +25,10 @@ import {
   type AnalysisRuntimeAdapter,
   type AnalysisRuntimeInspection,
   type AnalysisRuntimeProfile,
-  type AnalysisRuntimeVerification,
   type AnalysisStartRunInput,
   type AnalysisStorageSummary,
   type AnalysisStorageSummaryInput,
   type AnalysisSubscribeRunsInput,
-  type AnalysisVerifyRuntimeInput,
 } from "@scientfactory/analysis";
 import {
   ExecutionRunId,
@@ -52,7 +49,6 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -74,10 +70,7 @@ import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
-import {
-  appendBoundedAnalysisOutput,
-  completeUtf8PrefixByteLength,
-} from "./analysisOutputBuffer.ts";
+import { appendBoundedAnalysisOutput } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
 import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
@@ -86,7 +79,6 @@ import { makeRunTableAdapters } from "./RunTableAdapter.ts";
 const RUN_HISTORY_DEFAULT_LIMIT = 20;
 const OUTPUT_COALESCE_MAX_CHUNK = 64;
 const OUTPUT_COALESCE_WINDOW = Duration.millis(25);
-const MAXIMUM_VERIFICATION_OUTPUT_BYTES = 512 * 1024;
 const MAXIMUM_QUEUED_RUNS_PER_RUNTIME = 100;
 
 interface QueuedAnalysisRun {
@@ -153,12 +145,6 @@ export class AnalysisService extends Context.Service<
     readonly inspectRuntimes: (
       input: AnalysisInspectRuntimesInput,
     ) => Effect.Effect<AnalysisRuntimeInspection, AnalysisOperationError>;
-    readonly configureRuntime: (
-      input: AnalysisConfigureRuntimeInput,
-    ) => Effect.Effect<AnalysisRuntimeInspection, AnalysisOperationError>;
-    readonly verifyRuntime: (
-      input: AnalysisVerifyRuntimeInput,
-    ) => Effect.Effect<AnalysisRuntimeProfile, AnalysisOperationError>;
     readonly startRun: (
       input: AnalysisStartRunInput,
     ) => Effect.Effect<AnalysisRunSnapshot, AnalysisOperationError>;
@@ -266,26 +252,6 @@ const make = Effect.gen(function* () {
     new Map<
       string,
       { readonly executablePreference: string | null; readonly profile: AnalysisRuntimeProfile }
-    >(),
-  );
-  const cacheVerification = (
-    profile: AnalysisRuntimeProfile,
-    verifiedProfile: AnalysisRuntimeProfile,
-  ) =>
-    Ref.update(runtimeProfilesRef, (profiles) => {
-      const current = profiles.get(profile.kind);
-      // A late verification must not replace a subsequently selected runtime.
-      return current?.profile === profile
-        ? new Map(profiles).set(profile.kind, { ...current, profile: verifiedProfile })
-        : profiles;
-    });
-  const verificationCacheRef = yield* Ref.make(
-    new Map<
-      string,
-      {
-        readonly executablePath: string;
-        readonly verification: AnalysisRuntimeVerification;
-      }
     >(),
   );
   const eventSequenceRef = yield* Ref.make(0);
@@ -567,226 +533,6 @@ const make = Effect.gen(function* () {
       Effect.forEach(runtimeAdapters, (adapter) => inspectProfile(adapter, input.refresh === true)),
       (runtimes) => ({ contractVersion: 1 as const, runtimes }),
     );
-
-  const configureRuntime = Effect.fn("AnalysisService.configureRuntime")(function* (
-    input: AnalysisConfigureRuntimeInput,
-  ) {
-    const adapter = runtimeAdapters.find((candidate) => candidate.kind === input.runtimeKind);
-    if (adapter === undefined) {
-      return yield* analysisError(
-        "configure",
-        "runtime-invalid",
-        `Unsupported analysis runtime '${input.runtimeKind}'.`,
-      );
-    }
-    yield* runtimePreferences
-      .writeRuntimeExecutablePath(adapter.kind, input.executablePath)
-      .pipe(
-        Effect.mapError((cause) =>
-          analysisError(
-            "configure",
-            "persistence-failed",
-            `Unable to save ${adapter.kind} settings.`,
-            cause,
-          ),
-        ),
-      );
-    yield* Ref.update(runtimeProfilesRef, (profiles) => {
-      const next = new Map(profiles);
-      next.delete(adapter.kind);
-      return next;
-    });
-    yield* Ref.update(verificationCacheRef, (cache) => {
-      const next = new Map(cache);
-      next.delete(adapter.id);
-      return next;
-    });
-    return yield* inspectRuntimes({ cwd: input.cwd, refresh: true });
-  });
-
-  const verifyRuntime = Effect.fn("AnalysisService.verifyRuntime")(function* (
-    input: AnalysisVerifyRuntimeInput,
-  ) {
-    yield* identityForCwd("verify", input.cwd);
-    const adapter = runtimeAdapters.find((candidate) => candidate.id === input.runtimeId);
-    if (adapter === undefined || adapter.prepareVerification === undefined) {
-      return yield* analysisError(
-        "verify",
-        "runtime-invalid",
-        "The selected analysis runtime cannot be verified by this Scient build.",
-      );
-    }
-    const profile = yield* inspectProfile(adapter, false);
-    if (profile.availability !== "available" || profile.executablePath === null) {
-      return yield* analysisError(
-        "verify",
-        profile.availability === "invalid" ? "runtime-invalid" : "runtime-missing",
-        profile.detail ?? `${profile.label} is unavailable.`,
-      );
-    }
-    const semaphore = runtimeSemaphores.get(adapter.id);
-    if (!semaphore) {
-      return yield* analysisError(
-        "verify",
-        "runtime-invalid",
-        `${profile.label} has no local execution lease.`,
-      );
-    }
-    return yield* semaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const prepared = yield* Effect.tryPromise({
-          try: () => adapter.prepareVerification!(profile),
-          catch: (cause) =>
-            analysisError(
-              "verify",
-              "process-failed",
-              `Unable to prepare the ${profile.label} startup check.`,
-              cause,
-            ),
-        });
-        return yield* Effect.gen(function* () {
-          const cached = (yield* Ref.get(verificationCacheRef)).get(adapter.id);
-          if (
-            input.refresh !== true &&
-            cached?.executablePath === profile.executablePath &&
-            cached.verification.executableIdentity === prepared.executableIdentity
-          ) {
-            const verifiedProfile = { ...profile, verification: cached.verification };
-            yield* cacheVerification(profile, verifiedProfile);
-            return verifiedProfile;
-          }
-
-          const startedAt = yield* Clock.currentTimeMillis;
-          const verifiedAt = yield* nowIso;
-          const verificationRunId = ExecutionRunId.make(yield* random.uuidV4());
-          const outputsRef = yield* Ref.make<ReadonlyArray<ExecutionProcessOutput>>([]);
-          const outputBytesRef = yield* Ref.make(0);
-          const captureOutput = Effect.fn("AnalysisService.captureOutput")(function* (
-            output: ExecutionProcessOutput,
-          ) {
-            const usedBytes = yield* Ref.get(outputBytesRef);
-            const remaining = Math.max(0, MAXIMUM_VERIFICATION_OUTPUT_BYTES - usedBytes);
-            if (remaining === 0) return;
-            const encoded = new TextEncoder().encode(output.text);
-            const accepted = completeUtf8PrefixByteLength(
-              encoded,
-              Math.min(encoded.byteLength, remaining),
-            );
-            if (accepted === 0) return;
-            const text = new TextDecoder().decode(encoded.subarray(0, accepted));
-            yield* Ref.update(outputsRef, (outputs) => [...outputs, { ...output, text }]);
-            yield* Ref.update(outputBytesRef, (bytes) => bytes + accepted);
-          });
-
-          const processResult = yield* processes
-            .start({
-              runId: verificationRunId,
-              executable: prepared.executable,
-              args: prepared.args,
-              cwd: prepared.cwd,
-              environment: prepared.environment,
-            })
-            .pipe(
-              Effect.flatMap((handle) =>
-                Effect.gen(function* () {
-                  const outputFiber = yield* handle.output.pipe(
-                    Stream.runForEach(captureOutput),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("runtime verification output failed", { cause }),
-                    ),
-                    Effect.forkScoped,
-                  );
-                  const outcome = yield* Effect.raceFirst(
-                    handle.exitCode.pipe(
-                      Effect.map((exitCode) => ({ exitCode, timedOut: false as const })),
-                    ),
-                    Effect.sleep(Duration.millis(prepared.timeoutMs)).pipe(
-                      Effect.as({ exitCode: null, timedOut: true as const }),
-                    ),
-                  );
-                  if (outcome.timedOut) yield* handle.cancel.pipe(Effect.ignoreCause());
-                  yield* Fiber.join(outputFiber).pipe(Effect.ignoreCause());
-                  return outcome;
-                }),
-              ),
-              Effect.catch((cause) =>
-                Ref.update(outputsRef, (outputs) => [
-                  ...outputs,
-                  { stream: "stderr" as const, text: cause.message },
-                ]).pipe(Effect.as({ exitCode: null, timedOut: false as const })),
-              ),
-              (check) =>
-                Effect.acquireUseRelease(
-                  Effect.gen(function* () {
-                    const release = yield* hostCapacity
-                      .acquire()
-                      .pipe(
-                        Effect.mapError((cause) =>
-                          analysisError("verify", "process-failed", cause.message, cause),
-                        ),
-                      );
-                    return { release, scope: yield* Scope.make("sequential") };
-                  }),
-                  ({ scope }) => check.pipe(Effect.provideService(Scope.Scope, scope)),
-                  ({ release, scope }, exit) =>
-                    Scope.close(scope, exit).pipe(Effect.andThen(release)),
-                ),
-            );
-          const outputs = yield* Ref.get(outputsRef);
-          const finishedAt = yield* Clock.currentTimeMillis;
-          const verification = yield* Effect.tryPromise({
-            try: () =>
-              prepared.collect({
-                ...processResult,
-                output: outputs,
-                verifiedAt,
-                durationMs: Math.max(0, finishedAt - startedAt),
-              }),
-            catch: (cause) =>
-              analysisError(
-                "verify",
-                "operation-failed",
-                `Unable to read the ${profile.label} startup check.`,
-                cause,
-              ),
-          });
-          const verifiedProfile = {
-            ...profile,
-            version: verification.version ?? profile.version,
-            detail: verification.detail,
-            verification,
-          } satisfies AnalysisRuntimeProfile;
-          yield* cacheVerification(profile, verifiedProfile);
-          yield* Ref.update(verificationCacheRef, (cache) => {
-            const next = new Map(cache);
-            if (verification.status === "ready") {
-              next.set(adapter.id, {
-                executablePath: profile.executablePath!,
-                verification,
-              });
-            } else {
-              next.delete(adapter.id);
-            }
-            return next;
-          });
-          return verifiedProfile;
-        }).pipe(
-          Effect.ensuring(
-            Effect.tryPromise({
-              try: prepared.cleanup,
-              catch: (cause) =>
-                analysisError(
-                  "verify",
-                  "operation-failed",
-                  "Unable to remove temporary runtime verification files.",
-                  cause,
-                ),
-            }).pipe(Effect.ignoreCause()),
-          ),
-        );
-      }),
-    );
-  });
 
   const projectRunsNeedLoad = Effect.fn("AnalysisService.projectRunsNeedLoad")(function* (
     projectId: string,
@@ -1350,11 +1096,6 @@ const make = Effect.gen(function* () {
             yield* Ref.update(runtimeProfilesRef, (profiles) => {
               const next = new Map(profiles);
               next.delete(adapter.kind);
-              return next;
-            });
-            yield* Ref.update(verificationCacheRef, (cache) => {
-              const next = new Map(cache);
-              next.delete(adapter.id);
               return next;
             });
           }
@@ -2144,8 +1885,6 @@ const make = Effect.gen(function* () {
 
   return AnalysisService.of({
     inspectRuntimes,
-    configureRuntime,
-    verifyRuntime,
     startRun,
     cancelRun,
     listRuns,

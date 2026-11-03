@@ -88,29 +88,6 @@ const testAdapter: AnalysisRuntimeAdapter = {
   fileExtensions: [".m"],
   inspect: async ({ customExecutablePath, inspectedAt }) =>
     runtimeProfile(inspectedAt, customExecutablePath),
-  prepareVerification: async (profile) => ({
-    executableIdentity: `identity:${profile.executablePath ?? "missing"}`,
-    executable: profile.executablePath ?? "/test/matlab",
-    args: ["verify"],
-    cwd: "/tmp",
-    environment: {},
-    timeoutMs: 1_000,
-    collect: async (result) => ({
-      status: result.exitCode === 0 ? "ready" : "startup-failed",
-      verifiedAt: result.verifiedAt,
-      durationMs: result.durationMs,
-      executableIdentity: `identity:${profile.executablePath ?? "missing"}`,
-      release: "test",
-      version: "test",
-      architecture: "test",
-      installationRoot: profile.executablePath,
-      javaAvailable: true,
-      javaVersion: "test",
-      toolboxes: [],
-      detail: "Test runtime is ready.",
-    }),
-    cleanup: async () => undefined,
-  }),
   prepare: (context) => ({
     executable: "/test/matlab",
     args: [context.source.relativePath],
@@ -170,13 +147,6 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     start: (request) =>
       Effect.gen(function* () {
         yield* Ref.update(processStartCount, (count) => count + 1);
-        if (request.args[0] === "verify") {
-          return {
-            output: Stream.empty,
-            exitCode: Effect.succeed(0),
-            cancel: Effect.void,
-          };
-        }
         const exitCode = yield* Deferred.make<number>();
         if (onProcessClose !== undefined) yield* Effect.addFinalizer(() => onProcessClose);
         processExits.set(request.runId, exitCode);
@@ -1154,42 +1124,6 @@ describe("analysis service coordination", () => {
         ),
       );
       expect(analytics.events).toEqual([]);
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
-  );
-
-  it.effect("reuses verification only until runtime configuration changes", () =>
-    Effect.gen(function* () {
-      const harness = yield* serviceTestLayer;
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const service = yield* AnalysisService;
-          const first = yield* service.verifyRuntime({
-            cwd: harness.projectRoot,
-            runtimeId,
-          });
-          const cached = yield* service.verifyRuntime({
-            cwd: harness.projectRoot,
-            runtimeId,
-          });
-          expect(first.verification?.status).toBe("ready");
-          expect(cached.verification?.executableIdentity).toBe(
-            first.verification?.executableIdentity,
-          );
-          expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-
-          yield* service.configureRuntime({
-            cwd: harness.projectRoot,
-            runtimeKind: "matlab",
-            executablePath: "/test/other-matlab",
-          });
-          const refreshed = yield* service.verifyRuntime({
-            cwd: harness.projectRoot,
-            runtimeId,
-          });
-          expect(refreshed.verification?.executableIdentity).toBe("identity:/test/other-matlab");
-          expect(yield* Ref.get(harness.processStartCount)).toBe(2);
-        }).pipe(Effect.provide(harness.analysisLayer)),
-      );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
