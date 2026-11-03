@@ -13,12 +13,15 @@ const tick = async () => {
 describe("UI analytics gate", () => {
   it("observes only the current visible view after discovery, with no historic replay", async () => {
     let resolve!: (status: ScientAnalyticsStatus) => void;
+    let next: ScientAnalyticsStatus | null = null;
     const record = vi.fn(async () => undefined);
     const gate = createAnalyticsClientGate({
       status: () =>
-        new Promise<ScientAnalyticsStatus>((done) => {
-          resolve = done;
-        }),
+        next === null
+          ? new Promise<ScientAnalyticsStatus>((done) => {
+              resolve = done;
+            })
+          : Promise.resolve(next),
       record,
     });
     const connection = {};
@@ -36,14 +39,10 @@ describe("UI analytics gate", () => {
     view.refresh();
     await tick();
     expect(record).toHaveBeenCalledOnce();
-    gate.beginControl(connection);
-    gate.endControl(connection, { available: true, consent: "off" });
-    gate.beginControl(connection);
-    gate.endControl(connection, {
-      available: true,
-      consent: "product",
-      collectionContext: "second",
-    });
+    next = { available: true, consent: "off" };
+    await gate.readStatus(connection);
+    next = { available: true, consent: "product", collectionContext: "second" };
+    await gate.readStatus(connection);
     await tick();
     expect(record).toHaveBeenCalledTimes(2);
     expect(record.mock.calls[1]).toEqual([
@@ -101,7 +100,7 @@ describe("UI analytics gate", () => {
     expect(record).not.toHaveBeenCalled();
   });
 
-  it("keeps environments and consent generations separate without replay", async () => {
+  it("keeps environments separate without replay", async () => {
     const status = vi.fn(async (): Promise<ScientAnalyticsStatus> => ({
       available: true,
       consent: "product",
@@ -120,12 +119,6 @@ describe("UI analytics gate", () => {
     gate.record(second, event);
     await tick();
     expect(record).toHaveBeenCalledTimes(2);
-    gate.beginControl(first);
-    gate.record(first, event);
-    gate.endControl(first, { available: true, consent: "product" });
-    gate.record(first, event);
-    await tick();
-    expect(record).toHaveBeenCalledTimes(3);
   });
 
   it("recovers failed discovery on later activity without a timer or a retry storm", async () => {
@@ -151,30 +144,6 @@ describe("UI analytics gate", () => {
     gate.record(connection, event);
     await tick();
     expect(record).toHaveBeenCalledOnce();
-  });
-
-  it("does not let stale discovery or deferred sends bypass a consent change", async () => {
-    let resolve!: (status: ScientAnalyticsStatus) => void;
-    const status = vi.fn(
-      () =>
-        new Promise<ScientAnalyticsStatus>((done) => {
-          resolve = done;
-        }),
-    );
-    const record = vi.fn(async () => undefined);
-    const gate = createAnalyticsClientGate({ status, record });
-    const connection = {};
-    gate.prime(connection);
-    gate.beginControl(connection);
-    gate.endControl(connection, { available: true, consent: "off" });
-    resolve({ available: true, consent: "product" });
-    await tick();
-    gate.record(connection, event);
-    gate.endControl(connection, { available: true, consent: "product" });
-    gate.record(connection, event);
-    gate.beginControl(connection);
-    await tick();
-    expect(record).not.toHaveBeenCalled();
   });
 
   it("bounds in-flight work and isolates even synchronously throwing transports", async () => {
@@ -203,43 +172,6 @@ describe("UI analytics gate", () => {
 });
 
 describe("UI operation outcomes", () => {
-  it("recovers failed consent/deletion controls on later activity without replay", async () => {
-    let now = 0;
-    const status = vi.fn(async (): Promise<ScientAnalyticsStatus> => ({
-      available: true,
-      consent: "product",
-      collectionContext: "context-1",
-    }));
-    const record = vi.fn(async () => undefined);
-    const gate = createAnalyticsClientGate({ status, record, now: () => now });
-    const connection = {};
-    await gate.readStatus(connection);
-    const old = gate.beginOperation(connection, "pdf-export");
-    gate.beginControl(connection);
-    gate.endControl(connection);
-    old("completed");
-    for (let i = 0; i < 1000; i += 1) gate.record(connection, event);
-    await tick();
-    expect(record).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledOnce();
-    now = 60_000;
-    const uncertain = gate.beginOperation(connection, "pdf-export");
-    await tick();
-    uncertain("completed");
-    expect(record).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledTimes(2);
-    gate.beginOperation(connection, "pdf-export")("completed");
-    await tick();
-    expect(record).toHaveBeenCalledTimes(2);
-    gate.beginControl(connection);
-    gate.endControl(connection, { available: true, consent: "off" });
-    now = 3_600_000;
-    gate.beginOperation(connection, "pdf-export")("completed");
-    await tick();
-    expect(status).toHaveBeenCalledTimes(2);
-    expect(record).toHaveBeenCalledTimes(2);
-  });
-
   it("drops a saturated start without inventing a later completion", async () => {
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
@@ -305,30 +237,26 @@ describe("UI operation outcomes", () => {
 
   it("never reconstructs operations begun before consent discovery or on an old server", async () => {
     const record = vi.fn(async () => undefined);
-    const status = vi.fn(async (): Promise<ScientAnalyticsStatus> => ({
-      available: true,
-      consent: "product",
-    }));
+    let current: ScientAnalyticsStatus = { available: true, consent: "product" };
+    const status = vi.fn(async () => current);
     const gate = createAnalyticsClientGate({ status, record });
     const connection = {};
     const unknown = gate.beginOperation(connection, "pdf-export");
     await tick();
     unknown("completed");
     gate.beginOperation(connection, "pdf-export")("failed");
-    gate.endControl(connection, { available: true, consent: "off" });
+    current = { available: true, consent: "off" };
+    await gate.readStatus(connection);
     const off = gate.beginOperation(connection, "pdf-export");
-    gate.endControl(connection, {
-      available: true,
-      consent: "product",
-      collectionContext: "enabled",
-    });
+    current = { available: true, consent: "product", collectionContext: "enabled" };
+    await gate.readStatus(connection);
     off("completed");
     await tick();
     expect(record).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledOnce();
+    expect(status).toHaveBeenCalledTimes(3);
   });
 
-  it("fences in-flight work after local controls and a newly observed remote context", async () => {
+  it("fences in-flight work after a newly observed remote context", async () => {
     let context = "context-1";
     const record = vi.fn(async () => undefined);
     const gate = createAnalyticsClientGate({
@@ -337,16 +265,6 @@ describe("UI operation outcomes", () => {
     });
     const connection = {};
     await gate.readStatus(connection);
-    const local = gate.beginOperation(connection, "pdf-export");
-    gate.beginControl(connection);
-    gate.endControl(connection, {
-      available: true,
-      consent: "product",
-      collectionContext: "context-2",
-    });
-    local("completed");
-    await tick();
-    expect(record).not.toHaveBeenCalled();
     const remote = gate.beginOperation(connection, "pdf-export");
     await tick();
     context = "context-3";

@@ -20,7 +20,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     checkedAt: number;
     retryStatusAt: number | null;
     loading: boolean;
-    controlling: boolean;
     generation: number;
     inFlight: number;
     surfaces: Set<string>;
@@ -36,7 +35,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
         checkedAt: 0,
         retryStatusAt: null,
         loading: false,
-        controlling: false,
         generation: 0,
         inFlight: 0,
         surfaces: new Set(),
@@ -65,10 +63,10 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     const generation = state.generation;
     try {
       const status = await transport.status(connection);
-      if (generation === state.generation && !state.controlling) acceptStatus(state, status);
+      if (generation === state.generation) acceptStatus(state, status);
       return status;
     } catch (error) {
-      if (generation === state.generation && !state.controlling) {
+      if (generation === state.generation) {
         acceptStatus(state, UNAVAILABLE);
         // A transient discovery failure is not a durable Off preference. Retry
         // only on later activity, at most once a minute; never replay that work.
@@ -79,7 +77,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
   };
   const prime = (connection: Connection) => {
     const state = stateFor(connection);
-    if (state.loading || state.controlling) return;
+    if (state.loading) return;
     state.loading = true;
     void readStatus(connection)
       .catch(() => undefined)
@@ -89,7 +87,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
   };
   const readyState = (connection: Connection) => {
     const state = stateFor(connection);
-    if (state.controlling) return null;
     // Discovery never buffers the triggering action or blocks product work.
     if (
       state.status === null ||
@@ -105,7 +102,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
   };
   const enqueue = (connection: Connection, state: State, event: ScientAnalyticsUiEvent) => {
     if (
-      state.controlling ||
       !state.status?.available ||
       state.status.consent === "off" ||
       state.inFlight >= MAX_IN_FLIGHT
@@ -129,8 +125,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     // Defer even a synchronously throwing transport off the product call stack.
     void Promise.resolve()
       .then(() => {
-        if (generation === state.generation && !state.controlling)
-          return transport.record(connection, event);
+        if (generation === state.generation) return transport.record(connection, event);
         return undefined;
       })
       .catch(() => undefined)
@@ -177,22 +172,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     readStatus,
     prime(connection: Connection) {
       if (stateFor(connection).status === null) prime(connection);
-    },
-    beginControl(connection: Connection) {
-      const state = stateFor(connection);
-      state.generation += 1;
-      state.controlling = true;
-      state.status = null;
-      state.surfaces.clear();
-    },
-    endControl(connection: Connection, status?: ScientAnalyticsStatus) {
-      const state = stateFor(connection);
-      state.generation += 1;
-      state.controlling = false;
-      acceptStatus(state, status ?? UNAVAILABLE);
-      // An uncertain control result is not a verified Off choice. Discover its
-      // actual state on later activity without replaying the interrupted work.
-      if (status === undefined) state.retryStatusAt = now() + STATUS_MAX_AGE_MS;
     },
     record(connection: Connection, event: ScientAnalyticsUiEvent) {
       const state = readyState(connection);
