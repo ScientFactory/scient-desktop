@@ -113,7 +113,7 @@ it("drops the catalog's access words from a connector once its sign-in works", (
     remotes: [],
     installable: true,
     categories: [],
-  } as DiscoverEntry;
+  } satisfies Parameters<typeof connectorFacts>[0];
   const borrowed = { type: "source-control", host: "github.com", account: "octo" } as const;
   expect(connectorFacts(entry, { status: "connected", auth: borrowed })).toEqual([
     "Official",
