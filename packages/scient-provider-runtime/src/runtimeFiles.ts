@@ -202,13 +202,6 @@ export async function verifyManagedRuntimeChecksum(
   }
 }
 
-export async function verifySha256(filePath: string, expectedDigest: string): Promise<void> {
-  return verifyManagedRuntimeChecksum(filePath, {
-    algorithm: "sha256",
-    digest: expectedDigest,
-  });
-}
-
 function validatedExtractionLimits(
   limits: ManagedRuntimeExtractionLimits | undefined,
 ): ManagedRuntimeExtractionLimits {
