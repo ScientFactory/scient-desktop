@@ -484,7 +484,6 @@
   "src/reviewCommentContext.test.ts": 0.014,
   "src/rightPanelStore.test.ts": 0.146,
   "src/scient/analysis/analysisArtifactPresentation.test.ts": 0.011,
-  "src/scient/analysis/analysisRunPromotionSeam.test.ts": 0.013,
   "src/scient/analysis/analysisRunUiState.test.ts": 0.009,
   "src/scient/analysis/previewMiniPlayerSeam.test.ts": 0.027,
   "src/scient/analysis/sourceLanguage.test.ts": 0.004,

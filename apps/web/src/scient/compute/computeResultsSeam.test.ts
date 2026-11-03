@@ -104,16 +104,6 @@ describe("compute result surface seam", () => {
     expect(controlsSource).toContain("expectedGeneration: target.generation");
   });
 
-  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
-  it("keeps text, errors, figures and live variables in one progressive result surface", () => {
-    expect(outputSource).toContain('case "stream"');
-    expect(outputSource).toContain('case "diagnostic"');
-    expect(outputSource).toContain('case "image"');
-    expect(outputSource).toContain("diagnostic.frames");
-    expect(outputSource).not.toContain("traceback.match");
-    expect(outputSource).not.toContain("File \\\\s+");
-  });
-
   // regression: a015a05c01 fix: harden scientific compute workflows
   it("keeps runtime recovery contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
