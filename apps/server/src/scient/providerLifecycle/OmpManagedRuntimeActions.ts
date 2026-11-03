@@ -6,7 +6,6 @@ import * as NodePath from "node:path";
 import {
   MANAGED_RUNTIME_POLICY,
   type ManagedOmpRuntime,
-  detectManagedRuntimeTarget,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveReviewedOmpArtifact,
@@ -20,6 +19,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
 import {
+  detectTargetSafely,
   readConfiguredRuntimeVersion,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
@@ -210,14 +210,6 @@ const probeConfiguredOmpRuntime =
       // Busy behind an activation: not provably healthy right now.
       Effect.orElseSucceed(() => Option.none<string>()),
     );
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 export const makeOmpManagedRuntimeResolution = Effect.fn("OmpManagedRuntime.makeResolution")(
   function* (input: {

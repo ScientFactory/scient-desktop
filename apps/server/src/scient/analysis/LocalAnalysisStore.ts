@@ -51,7 +51,7 @@ const MAXIMUM_REPRESENTATIONS_PER_ARTIFACT = 8;
 const MAXIMUM_ARTIFACT_FILE_BYTES = 128 * 1024 * 1024;
 const MAXIMUM_ARTIFACT_RUN_BYTES = 512 * 1024 * 1024;
 
-async function sha256File(filePath: string): Promise<string> {
+export async function sha256File(filePath: string): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const hash = NodeCrypto.createHash("sha256");
     const stream = NodeFS.createReadStream(filePath);

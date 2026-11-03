@@ -1,7 +1,6 @@
 import {
   MANAGED_RUNTIME_POLICY,
   ManagedCursorRuntime,
-  detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
   resolveReviewedCursorArtifact,
 } from "@scientfactory/provider-runtime";
@@ -18,6 +17,7 @@ import {
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderMaintenanceCapabilitiesResolver } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ManagedProviderRuntimeResolution,
@@ -31,14 +31,6 @@ function assistedCursorConnectionMethods(
 ): ReadonlyArray<ProviderConnectionMethod> {
   // CLI endpoints and tokens do not own the SDK's account.
   return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
-}
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
 }
 
 export interface CursorManagedRuntimeResolution extends ManagedProviderRuntimeResolution {}

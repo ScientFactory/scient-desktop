@@ -7,7 +7,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
-  detectManagedRuntimeTarget,
   downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
@@ -33,6 +32,7 @@ import { OMP_ISOLATED_ARGS, makeOmpRpcProcess } from "../../provider/omp/OmpRpcP
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { scientAgentTarget } from "../../provider/scient/ScientAgentTarget.ts";
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ConfiguredRuntimeProbe,
@@ -257,14 +257,6 @@ const probeConfiguredScientAgentRuntime =
       Effect.provide(NodeServices.layer),
       Effect.orElseSucceed(() => Option.none<string>()),
     );
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 export const makeScientAgentManagedRuntimeResolution = Effect.fn(
   "ScientAgentManagedRuntime.makeResolution",

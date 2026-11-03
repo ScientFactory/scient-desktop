@@ -2,6 +2,7 @@ import {
   ManagedProviderRuntimeError,
   compareManagedRuntimeReleases,
   compareManagedRuntimeVersions,
+  detectManagedRuntimeTarget,
   parseManagedMuseVersion,
   type ManagedRuntimeArtifactReceipt,
   hydrateManagedRuntimeArtifact,
@@ -47,6 +48,17 @@ const runtimeError = (message: string, cause?: unknown) =>
     message,
     ...(cause === undefined ? {} : { cause }),
   });
+
+export function detectTargetSafely(input: {
+  readonly platform: NodeJS.Platform;
+  readonly arch: string;
+}) {
+  try {
+    return detectManagedRuntimeTarget(input);
+  } catch {
+    return undefined;
+  }
+}
 
 export function managedRuntimeInstallationFailureMessage(
   providerName: string,
