@@ -5,7 +5,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import { Atom, type AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 import { connectionAtomRuntime } from "~/connection/runtime";
 
@@ -28,10 +28,18 @@ const lane = {
     key: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
       `accounts:${environmentId}`,
   },
+  // A change is done once Accounts shows it, so a form closes onto the new counts.
   onSuccess: (
     { environmentId }: { readonly environmentId: EnvironmentId },
     registry: AtomRegistry.AtomRegistry,
-  ) => Effect.sync(() => registry.refresh(snapshot({ environmentId, input: {} }))),
+  ) => {
+    const current = snapshot({ environmentId, input: {} });
+    registry.refresh(current);
+    return AtomRegistry.getResult(registry, current, { suspendOnWaiting: true }).pipe(
+      Effect.timeoutOption("10 seconds"),
+      Effect.ignore,
+    );
+  },
 } as const;
 
 export const accountsState = {
