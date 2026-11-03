@@ -21,7 +21,9 @@ export const scientAcpProviderBridge = {
   composePrompt: (input) =>
     buildScientAcpPromptWithInstructions(
       input,
-      input.capabilities === undefined ? undefined : buildScientPromptAwareness(input.capabilities),
+      input.state.capabilities === undefined
+        ? undefined
+        : buildScientPromptAwareness(input.state.capabilities),
     ),
   runtimeInstructions: buildScientRuntimeInstructions,
 } satisfies Pick<
@@ -35,9 +37,9 @@ export const scientAntigravityBridge = {
   composePrompt: (input) =>
     buildScientAcpPromptWithInstructions(
       input,
-      input.capabilities === undefined
+      input.state.capabilities === undefined
         ? undefined
-        : `${buildScientPromptAwareness(input.capabilities)}\n\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS.trim()}`,
+        : `${buildScientPromptAwareness(input.state.capabilities)}\n\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS.trim()}`,
     ),
 } satisfies typeof scientAcpProviderBridge;
 

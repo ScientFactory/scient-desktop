@@ -14,8 +14,7 @@ describe("Scient ACP application bridge", () => {
     const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true } as const;
     const granted = scientAcpProviderBridge.composePrompt({
       prompt: "Continue.",
-      state,
-      capabilities: new Set(["preview", "device", "compute"]),
+      state: { ...state, capabilities: new Set(["preview", "device", "compute"]) },
     });
     const runtime = scientAcpProviderBridge.runtimeInstructions?.({ harness: "ACP" });
 
@@ -28,8 +27,7 @@ describe("Scient ACP application bridge", () => {
     assert.equal(granted.split("## Scient devices").length, 2);
     const noBrowser = scientAcpProviderBridge.composePrompt({
       prompt: "Continue.",
-      state,
-      capabilities: new Set(["device"]),
+      state: { ...state, capabilities: new Set(["device"]) },
     });
     assert.notInclude(noBrowser, "## Scient browser");
     assert.include(runtime, "running in Scient through the ACP harness");
@@ -39,8 +37,12 @@ describe("Scient ACP application bridge", () => {
   it("tells Antigravity to write project files with workspace tools", () => {
     const prompt = scientAntigravityBridge.composePrompt({
       prompt: "Continue.",
-      state: { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false },
-      capabilities: new Set(),
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        capabilities: new Set(),
+      },
     });
     assert.include(prompt, "## Scient\nYou are in Scient");
     assert.include(prompt, "Do not use Antigravity's `write_to_file` tool for project files");
