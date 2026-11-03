@@ -964,6 +964,16 @@ interface CursorLiveAgent {
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
 }
 
+// SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+const sameGrants = (
+  left: ReadonlySet<string> | undefined,
+  right: ReadonlySet<string> | undefined,
+) =>
+  left === undefined || right === undefined
+    ? left === right
+    : left.size === right.size && [...left].every((capability) => right.has(capability));
+// SCIENT-FORK:END
+
 export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly environment: NodeJS.ProcessEnv;
@@ -1044,6 +1054,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly agent: string;
           readonly orchestration: boolean;
           readonly device: boolean;
+          // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+          readonly capabilities?: ReadonlySet<string> | undefined;
+          // SCIENT-FORK:END
         } | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
@@ -2476,18 +2489,30 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
+            // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+            // Only host copy reads the grants; upstream's default composer does not.
+            const grants =
+              adapterOptions.orchestrationPromptForFirstRun === undefined ||
+              mcpServers === undefined
+                ? undefined
+                : mcpSession?.capabilities;
+            // SCIENT-FORK:END
             // A conversation this process has not sent to was told on its first run.
+            // SCIENT-FORK:START — a grant change re-sends the host copy that depends on them.
             const delivered =
-              known?.agent === agent.nativeThreadId
-                ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
+              known?.agent !== agent.nativeThreadId
+                ? { orchestration: turnInput.runOrdinal > 1, device: false }
+                : sameGrants(known.capabilities, grants)
+                  ? known
+                  : { ...known, orchestration: false };
+            // SCIENT-FORK:END
             const message = yield* resolveUserMessage(
               turnInput,
               mcpServers,
               hasDeviceTools,
               delivered,
               // SCIENT-FORK:START — host copy reads the session's grants.
-              mcpServers === undefined ? undefined : mcpSession?.capabilities,
+              grants,
               // SCIENT-FORK:END
             );
             const compacted = message === "/compress";
@@ -2546,6 +2571,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
               device: !compacted && hasDeviceTools,
+              // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+              capabilities: grants,
+              // SCIENT-FORK:END
             });
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();

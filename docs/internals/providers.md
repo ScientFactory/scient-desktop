@@ -523,8 +523,9 @@ guarded against `BUILT_IN_DRIVERS`:
 - Muse has no private seam and sends runtime text with every turn. Its awareness rides the first
   turn of a session, wrapped in `<scient_instructions>`, and is sent again only when the session's
   awareness changes, so ordinary turns carry none.
-- ACP prompts and Muse turns compare the session's grant manifest, so a session that gains a
-  verified project or browser access receives the new blocks on its next turn.
+- ACP prompts, Cursor's first-run text and Muse turns compare the session's grant manifest, so a
+  session that gains a verified project or browser access receives the new blocks on its next
+  turn. After a compaction each sends the awareness again.
 
 Adding a provider requires adding a tested delivery decision. Awareness never comes from
 unmarked user-message prefixes, project instruction files, credentials copied into a synthetic
