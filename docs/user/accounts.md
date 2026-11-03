@@ -36,11 +36,21 @@ can enforce it; readable values are supplied to agents through private session f
 When an agent needs a key you don't have in Accounts, it asks in a private card and saves your
 answer here, so later conversations reuse it. One-time secrets still use the plain card.
 
-A tab you or an agent opens without naming a profile goes, in order, to the profile you switched
-that site to in this conversation, the profile signed in to the site (your latest switch settles a
-tie), the profile you last switched that site to in any conversation, this conversation's profile,
-the project's profile (**Use … in this project** in the tab's profile menu), then the default.
-Switching a tab's profile is remembered for the conversation and the site.
+A tab you or an agent opens without naming a profile goes to the profile you switched that site to
+in this conversation. Otherwise it keeps this conversation's profile, else the project's (**Use … in
+this project** in the tab's profile menu, or **Project settings → Browser → Browser profile**),
+unless another profile is signed in to the site and that one is not; then Main if it is signed in,
+else the profile that signed in first. The tab's profile menu says why, such as "Work · signed in to
+overleaf.com". Switching a tab's profile is remembered for the conversation and the site.
+
+Main receives every sign-in. An import or Refresh into another profile, a sign-in Scient sees in
+another profile, and a one-time copy of each profile when Scient first starts with this version all
+fill Main where it has nothing for that site; Main then opens new tabs, and **Use for new tabs**
+changes that. A copy shows "Copied from Work" until Scient sees it working in Main. Only profiles
+with no limits give Main their sessions. **Sign out** in Main's signed-in sites is remembered: imports
+and the one-time copy never bring that site back, though signing in to it in another profile does.
+Signing out on a site's own page isn't seen, so a later import or sign-in elsewhere can fill Main
+again. A university sign-in is made in Main, so every conversation can use it.
 
 When an agent opens a new HTTPS page without choosing a profile, Scient checks for sign-in
 or access-denied pages. It tries up to eight other Allowed profiles and opens the page in the

@@ -144,8 +144,27 @@ name chosen in Scient stays. A picture that can't be read keeps the one shown. T
 the browser is closed, and imports saved passwords; it reports a running browser instead of
 skipping silently. It leaves sites that are working in that profile alone (`sitesToKeep`), and
 Google once the profile has a Google row, because a copy stops working and would replace the
-session and remembered device. An import writes the profile's record and the new-tab default before its
-passwords, so an interrupted import still leaves a complete profile.
+session and remembered device. An import writes the profile's record before its passwords, so an
+interrupted import still leaves a complete profile. A profile made in Scient carries
+`madeInScient`; one imported or made elsewhere can't be told apart, so none is ever folded away.
+
+Main is filled from the other profiles by one desktop writer, `fillMain`
+(`apps/desktop/src/scient/accounts/mainFill.ts`), under a lock per environment. Each unit (a
+registrable site, or every site of one multi-site sign-in) is one transaction in the shared
+`applyUnit` (`@t3tools/shared/scientSessionCookies`): snapshot Main's unit, decide, write through
+CDP on a blank script-free page (`sessionCookies.ts`), read the whole unit back, and on a failed
+check restore the snapshot, leaving whatever a page wrote meanwhile; a failed restore refuses the
+unit until restart. Fill copies only into an empty unit. Replace needs Main's row signed out and
+the insert tracker (`mainInserts.ts`, from `keepSessionCookies`) to vouch that nothing else wrote
+the unit since; never on Google. Otherwise the result is a conflict, and the other identity stays
+reachable. Copies follow a newer action only: an import or Refresh (`fillMainFromProfile`; an
+import whose target is Main goes through an in-memory staging partition), a row in another
+unrestricted profile turning signed in (`watchMainFill`, from the Accounts snapshot stream), and
+the one-time back-fill per environment and profile (`backfilled` on Main's record), whose first run
+in the primary environment makes Main the new-tab default. `accounts.mainFilled` gives Main its row
+as `unknown`, "Copied from …"; `accounts.mainSignedOut` keeps Accounts' Sign out on Main in
+`signedOutSites`, which imports and the back-fill skip, cleared when a Main row is seen signed in.
+`scripts/qualify-session-copy.mjs` qualifies the CDP executor on each platform in a dev app.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
 session may use, and `preview_open` refuses an Off profile (or asks for an Ask one), including the
@@ -604,11 +623,13 @@ provider environment. The existing proxy redacts reflected values in responses.
   several profiles (`accountListRows`).
 - **Which profile a tab opens in**: `pickBrowserProfile` (`@t3tools/shared/scientBrowserProfileChoice`)
   serves both the app (three marked hooks where upstream read the default profile) and
-  `authorizePreviewProfile` for agents (allowed profiles only). Order: the user's switch for the
-  page's host in this conversation; the only profile with evidence of a session on the page
-  (`profileSignIns`; ties: latest switch for the host anywhere, the conversation's, the project's,
-  the default, list order); the latest switch for the host anywhere; the conversation's; the
-  project's; the default. Choices live in Accounts state
+  `authorizePreviewProfile` for agents (allowed profiles only). Order: this conversation's choice
+  for the page's host, or a host the same sign-in covers ("site"); else the conversation's profile,
+  else the project's, unless some profile has evidence of a session on the page
+  (`profileSignIns`, refused and limited rows excluded) and it has none; then the default if it has
+  evidence, else the oldest identity (`siteIdentities`, by `createdAt`). A switch in another
+  conversation never decides. The pick carries its reason for the profile switcher. A site-only
+  choice (`siteOnly`, from the agent's fallback) leaves the conversation's profile alone. Choices live in Accounts state
   (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
