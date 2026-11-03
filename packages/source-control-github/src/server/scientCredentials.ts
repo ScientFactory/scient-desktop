@@ -163,9 +163,23 @@ export const make = Effect.gen(function* () {
       case "app":
         // Ignored unless this is still the session's token, so a late 401 spares a refreshed one.
         return yield* appSignIn.invalidate(host, Redacted.value(credential.token));
-      case "cli":
-        yield* credentials.invalidate(host);
-        return yield* Cache.invalidate(cliToken, `${host}\u0000${credential.login}`);
+      case "cli": {
+        // A late 401 for a token gh has since replaced must not evict the replacement.
+        const rejected = yield* credentials.fingerprint(host, Redacted.value(credential.token));
+        const current = yield* credentials.get(host).pipe(Effect.option);
+        if (Option.exists(current, (held) => held.fingerprint === rejected)) {
+          yield* credentials.invalidate(host);
+        }
+        const key = `${host}\u0000${credential.login}`;
+        const cached = yield* Cache.getOption(cliToken, key).pipe(
+          Effect.map(Option.flatten),
+          Effect.orElseSucceed(() => Option.none<Held>()),
+        );
+        if (Option.exists(cached, (held) => held.fingerprint === rejected)) {
+          yield* Cache.invalidate(cliToken, key);
+        }
+        return;
+      }
       case "token":
         // A saved or environment token stays until the user replaces it.
         return;
