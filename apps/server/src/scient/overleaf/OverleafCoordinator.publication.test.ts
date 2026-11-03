@@ -12,11 +12,18 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import { OverleafGitError } from "./OverleafGitExecutor.ts";
-import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 
 const marked = "<<<<<<< mine\nours\n=======\ntheirs\n>>>>>>> theirs\n";
 
-describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, publication", () => {
   it.live("sends a two-way sync once: the reviewed tree on the fetched head", () =>
     run(
       Effect.gen(function* () {

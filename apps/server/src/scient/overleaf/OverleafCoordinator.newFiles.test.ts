@@ -9,7 +9,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import type { OverleafSelections } from "./OverleafCoordinator.ts";
-import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 
 type World = Effect.Success<ReturnType<typeof world>>;
 
@@ -39,7 +46,7 @@ const skipped = (review: Effect.Success<ReturnType<typeof prepared>>) =>
     .filter((addition) => !addition.selected)
     .map((addition) => [addition.path, addition.uncheckedReason]);
 
-describe.skipIf(!canApply)("OverleafCoordinator, new files", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, new files", () => {
   it.live("sends new files by default and skips the rule's files without remembering them", () =>
     run(
       Effect.gen(function* () {

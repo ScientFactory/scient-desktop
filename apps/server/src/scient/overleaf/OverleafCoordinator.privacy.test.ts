@@ -12,9 +12,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { canApply, read, run, world } from "./OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity, read, run, world } from "./OverleafCoordinator.testkit.ts";
 
-describe.skipIf(!canApply || HostProcess.Platform.defaultValue() !== "darwin")(
+describe.skipIf(!hasPrivateFoldersAndIdentity || HostProcess.Platform.defaultValue() !== "darwin")(
   "Overleaf apply privacy",
   () => {
     it.live("refuses an apply folder 0700 that an access list opens to everyone", () =>

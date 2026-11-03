@@ -1,14 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /** Sync timing by stage (1/10/50/300 incoming, 1/10/50 outgoing) vs a real bare
- * repo/applier; 300 files in one folder exceed one lease's 256 folders. From
- * `apps/server`: pnpm exec vp test bench --run --fileParallelism=false --maxWorkers=1
- * src/scient/overleaf/OverleafSync.bench.ts; only before/after comparisons count. */
+ * repo/applier. CI runs it in `test:performance` (Linux) and the Overleaf Windows job;
+ * by hand, from `apps/server`: pnpm exec vp test bench --run --fileParallelism=false
+ * --maxWorkers=1 src/scient/overleaf/OverleafSync.bench.ts. Compare before/after only. */
 import { afterAll, describe, expect, it, type TestContext } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
 
 import { measureEffectBenchmark } from "../../testUtils/benchmark.testkit.ts";
-import { canApply, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity, run, world, write } from "./OverleafCoordinator.testkit.ts";
 
 /** Spans worth a column: the sync's stages and the work inside them. */
 const STAGES = [
@@ -18,7 +18,7 @@ const STAGES = [
   ["head", "OverleafRepository.remoteHead"],
   ["build", "OverleafCoordinator.buildReview"],
   ["apply", "OverleafCoordinator.runLinked"],
-  ["writes", "WorkspaceFileSystem.replaceFileRetained"],
+  ["writes", "WorkspaceFileSystem.replaceFilePlainly"],
   ["adopt", "OverleafCoordinator.adoption"],
   ["send", "OverleafCoordinator.publish"],
 ] as const;
@@ -76,6 +76,9 @@ const measure = (direction: "incoming" | "outgoing", count: number, bench: TestC
         adopted: { outcome: "complete" },
         publication: { _tag: direction === "incoming" ? "none" : "accepted" },
       });
+      // Each incoming file is one plain save; a renamed span would leave the column empty.
+      if (direction === "incoming")
+        expect(totals.get("WorkspaceFileSystem.replaceFilePlainly")?.count).toBe(count);
       const git = totals.get("OverleafGitExecutor.execute");
       rows.push(
         [
@@ -93,7 +96,7 @@ const measure = (direction: "incoming" | "outgoing", count: number, bench: TestC
     }),
   );
 
-describe.skipIf(!canApply)("Overleaf sync timing", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf sync timing", () => {
   for (const direction of ["incoming", "outgoing"] as const)
     for (const count of direction === "incoming" ? [1, 10, 50, 300] : [1, 10, 50])
       it(`${direction} ${count}`, ({ bench }) =>

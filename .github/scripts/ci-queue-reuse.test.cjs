@@ -17,7 +17,7 @@ const TREE = "f".repeat(40);
 const OTHER = "9".repeat(40);
 const REPO = "ScientFactory/scient-desktop";
 const WORKFLOW = ".github/workflows/ci.yml";
-const { JOBS } = require("./ci-check.cjs");
+const { ADVISORY, JOBS } = require("./ci-check.cjs");
 const metricNames = [
   "totalWireBytes",
   "threadSnapshotWireBytes",
@@ -577,12 +577,17 @@ test("workflow preserves complete evidence before reuse and a single always-runn
         .matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|(?![\s\S]))/gm),
     ].map((match) => [match[1], match[2]]),
   );
-  assert.deepEqual([...sections.keys()].sort(), [...JOBS, "check", "qualification"].sort());
+  assert.deepEqual(
+    [...sections.keys()].sort(),
+    [...JOBS, ...ADVISORY, "check", "qualification"].sort(),
+  );
   const check = sections.get("check");
   assert.match(check, /name: Check/);
   assert.match(check, /if: \$\{\{ always\(\) \}\}/);
   for (const job of [...JOBS, "qualification"])
     assert.match(check, new RegExp(`needs:.*(?:\\[|, )${job}(?:,|\\])`));
+  for (const job of ADVISORY)
+    assert.doesNotMatch(check, new RegExp(`needs:.*(?:\\[|, )${job}(?:,|\\])`));
   const probe = sections.get("queue_ci");
   assert.ok(!probe.includes("github.event_name == 'push'"), "main always runs fresh suites");
   assert.match(probe, /github.event_name == 'merge_group'/);
