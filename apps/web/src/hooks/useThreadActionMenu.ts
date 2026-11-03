@@ -35,6 +35,9 @@ import {
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
+// SCIENT-FORK:START — thread links go through Scient's own origin, never T3's hosted app.
+import { scientHostedThreadOrigin } from "@t3tools/shared/scientThreadLinks";
+// SCIENT-FORK:END
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -329,7 +332,9 @@ export function useThreadActionMenu(input: {
           }
           return;
         case "copy-thread":
-          void copyThreadReference(threadChipCopyTarget(threadRef, thread.title));
+          void copyThreadReference(
+            threadChipCopyTarget(threadRef, thread.title, scientHostedThreadOrigin()),
+          );
           return;
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });

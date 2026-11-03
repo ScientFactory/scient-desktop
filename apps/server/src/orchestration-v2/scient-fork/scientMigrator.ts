@@ -37,6 +37,7 @@ import Migration024 from "./migrations/024_LegacySourceReconciliation.ts";
 import Migration025 from "./migrations/025_ContextHistorySources.ts";
 import Migration026 from "./migrations/026_CompactArchivedProjectionHandoffs.ts";
 import Migration027 from "./migrations/027_BrowserHistory.ts";
+import Migration028 from "./migrations/028_CopyLegacyHandoffSources.ts";
 
 export class ScientMigrationError extends Data.TaggedError("ScientMigrationError")<{
   readonly kind: "BadState" | "Duplicates" | "Failed" | "ImportError" | "Locked";
@@ -93,6 +94,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 25, name: "context-history-sources", effect: Migration025 },
   { id: 26, name: "compact-archived-projection-handoffs", effect: Migration026 },
   { id: 27, name: "browser-history", effect: Migration027 },
+  { id: 28, name: "copy-legacy-handoff-sources", effect: Migration028 },
 ] as const;
 
 const loader = Migrator.fromRecord(

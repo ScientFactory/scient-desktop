@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import { runMigrations } from "../Migrations.ts";
 import { runScientMigrations } from "../../orchestration-v2/scient-fork/schema.ts";
@@ -54,7 +54,7 @@ const thread = (id: string) => ({
 });
 
 const layer = it.layer(
-  ProjectionMaintenance.layer.pipe(
+  ProjectionReplay.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
         Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
@@ -157,7 +157,7 @@ layer("068_CanonicalizeThreadPullRequestLinks", (it) => {
       `;
       assert.equal(v1?.payload_json, v1Payload);
 
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       yield* runMigrations();
       yield* runScientMigrations(sql);
       assert.isTrue((yield* maintenance.rebuild).valid);

@@ -21,7 +21,7 @@ import { makeNativeSessionAdapterV2 } from "../Adapters/NativeSessionAdapterV2.t
 import { EventSinkV2 } from "../EventSink.ts";
 import { IdAllocatorV2, layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -278,8 +278,8 @@ it.live.each(
         assert.deepEqual(before[0]?.inheritedFrom, copiedHandoffs[0]?.inheritedFrom);
         assert.notProperty(before[1], "forkInitialization");
         const rebuilt = yield* Effect.gen(function* () {
-          return yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
-        }).pipe(Effect.provide(ProjectionMaintenance.layer));
+          return yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
+        }).pipe(Effect.provide(ProjectionReplay.layer));
         assert.equal(rebuilt.valid, true);
         const reloaded = yield* orchestrator.getThreadProjection(greatId);
         assert.deepEqual(

@@ -98,6 +98,9 @@ import { resolveDraftHeroState } from "./ChatView.logic";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
+// SCIENT-FORK:START — thread links go through Scient's own origin, never T3's hosted app.
+import { scientHostedThreadOrigin } from "@t3tools/shared/scientThreadLinks";
+// SCIENT-FORK:END
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
   deriveThreadPendingBackgroundTasks,
@@ -3028,6 +3031,7 @@ function ChatViewContent(props: ChatViewProps) {
           openPanelPullRequestUrl,
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
+          hostedAppUrl: scientHostedThreadOrigin(),
         });
   const copyActiveThreadReference = () => {
     if (activeThreadReferenceCopyTarget === null) return;
@@ -4208,6 +4212,7 @@ function ChatViewContent(props: ChatViewProps) {
             <ThreadFind onClose={focusComposerStable} />
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
+              environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}
               providerStatusBannerKey={providerStatusBannerKey}
               setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}

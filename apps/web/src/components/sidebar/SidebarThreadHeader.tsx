@@ -13,7 +13,6 @@ import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
-  searchFieldRef?: RefObject<HTMLDivElement | null>;
   hasProjects: boolean;
   projectScope: ReactNode;
   // SCIENT-FORK:START — the Status/Sections grouping toggle, and Scient's own
@@ -38,7 +37,6 @@ export interface SidebarThreadHeaderProps {
 }
 
 export function SidebarThreadHeader({
-  searchFieldRef,
   hasProjects,
   projectScope,
   // SCIENT-FORK:START
@@ -73,10 +71,7 @@ export function SidebarThreadHeader({
           sidebar icon color and strengthen only on hover (T3's icon never
           changes and its placeholder rests at the stronger muted color). Set
           here because SidebarInput owns its own colors. */}
-      <div
-        ref={searchFieldRef}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground [&_input[data-slot=input]]:placeholder:text-(--sidebar-icon-color) hover:[&_input[data-slot=input]]:placeholder:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring/70"
-      >
+      <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground [&_input[data-slot=input]]:placeholder:text-(--sidebar-icon-color) hover:[&_input[data-slot=input]]:placeholder:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring/70">
         {/* SCIENT-FORK:END */}
         <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <SidebarInput

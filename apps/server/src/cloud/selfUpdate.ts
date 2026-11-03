@@ -24,10 +24,12 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { managedUpdateRefusal } from "../policy/managedUpdates.ts";
+import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  isPackageInstallFailure,
+  mirrorInstallFailureReason,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
   PinnedRuntimePreflightBlockedError,
@@ -130,6 +132,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const execPath = yield* HostProcess.ExecutablePath;
+  // The policy's mirror serves the server package; Scient has no user setting for the source.
+  const mirror = managedUpdateMirror(policy.document);
   const inFlight = yield* Ref.make(false);
 
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
@@ -200,6 +204,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         fs,
         path,
         runner,
+        releaseBaseUrl: mirror?.feedUrl,
         validate: (runtime) =>
           runner
             .run({
@@ -273,7 +278,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         Effect.mapError((error) =>
           error._tag === "PinnedRuntimePreflightBlockedError"
             ? failWith(error.reason, error)
-            : failWith(`Could not prepare Scient server ${targetVersion}.`, error),
+            : mirror !== undefined && isPackageInstallFailure(error)
+              ? failWith(mirrorInstallFailureReason(mirror.organization, targetVersion), error)
+              : failWith(`Could not prepare Scient server ${targetVersion}.`, error),
         ),
       );
 
