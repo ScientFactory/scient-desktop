@@ -24,14 +24,11 @@ const client: PiRpcClient = {
   getCommands: () =>
     Effect.succeed({ commands: [{ name: "scient-models-refresh", source: "extension" }] }),
   getThinkingLevels: () => Effect.succeed({ levels: [] }),
-  getSessionStats: () => Effect.die("Not used"),
-  clearQueue: () => Effect.void,
   synchronizeEvents: () => Effect.void,
   setModel: () => Effect.die("Not used"),
   setThinkingLevel: () => Effect.void,
   prompt: () => Effect.void,
   abort: () => Effect.void,
-  respondToExtensionUi: () => Effect.void,
   close: () => Effect.void,
 };
 
