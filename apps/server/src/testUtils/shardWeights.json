@@ -651,7 +651,6 @@
   "src/provider/pi/PiCustomModels.extension.test.ts": 0.621,
   "src/provider/pi/PiCustomModels.live.test.ts": 0.001,
   "src/provider/pi/PiCustomModels.test.ts": 0.701,
-  "src/provider/pi/PiModel.test.ts": 0.781,
   "src/provider/pi/PiNativeProvider.live.test.ts": 0.001,
   "src/provider/pi/PiReasoning.live.test.ts": 0.001,
   "src/provider/pi/PiRuntime.live.test.ts": 0.001,

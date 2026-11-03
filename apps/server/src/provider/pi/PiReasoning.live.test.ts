@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import { applyPiModelSelection } from "@t3tools/provider-pi/server/modelSelection";
-import { piDiscoveredModelToServerProviderModel } from "./PiModel.ts";
+import { piDiscoveredModelToServerProviderModel } from "@t3tools/provider-pi/server/model";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const decodeBody = Schema.decodeUnknownSync(
