@@ -1,5 +1,6 @@
 import "../../index.css";
 
+import { RegistryContext } from "@effect/atom-react";
 import {
   AccountId,
   EnvironmentId,
@@ -10,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Atom, AsyncResult, type AtomRegistry } from "effect/reactivity";
+import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -18,25 +19,27 @@ import { render } from "../../../test/render";
 
 const server = vi.hoisted(() => ({
   accounts: [] as Array<unknown>,
-  /** Holds the next snapshot, as a slow source-control discovery does. */
-  held: null as null | { readonly release: () => void },
-  hold() {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    server.held = { release };
-    return gate;
+  /** Snapshots wait here, as behind a slow source-control discovery, until released. */
+  gate: Promise.resolve() as Promise<void>,
+  release: () => {},
+  failNext: false,
+  holdSnapshots() {
+    server.gate = new Promise<void>((resolve) => (server.release = resolve));
   },
-  pending: null as null | Promise<void>,
 }));
 
-// Stubs only the transport: the accounts atoms' own lanes decide when a command is done.
+// Stubs only the transport: the accounts atoms' own lanes and hooks do the rest.
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
   const runtime = await original();
   const accounts = (label: string) => label.startsWith("accounts:");
   const snapshotFamily = Atom.family((_key: string) =>
     Atom.make(
-      Effect.promise(async () => {
-        await server.pending;
+      Effect.tryPromise(async () => {
+        await server.gate;
+        if (server.failNext) {
+          server.failNext = false;
+          throw new Error("Synthetic snapshot failure");
+        }
         return { ...base, accounts: [...server.accounts] } as AccountsSnapshot;
       }),
     ),
@@ -56,9 +59,9 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
     if (label !== "accounts:save") return {};
     const save = input as AccountSaveInput;
     const accountId = AccountId.make(`acc_synthetic${server.accounts.length}`);
-    server.accounts.push(summary(accountId, save.name, save.details));
-    server.pending = server.hold();
-    return { accountId };
+    const account = summary(accountId, save.name, save.details);
+    server.accounts.push(account);
+    return { accountId, account };
   };
   return {
     ...runtime,
@@ -101,6 +104,7 @@ vi.mock("~/state/environments", async (original) => ({
 }));
 
 import { AccountsPage } from "./AccountsPage";
+import { accountsState } from "./accountsState";
 
 const environmentId = EnvironmentId.make("synthetic");
 const base: AccountsSnapshot = {
@@ -133,7 +137,7 @@ function summary(
   };
 }
 
-it("closes a saved password's form onto the new Saved passwords count", async () => {
+async function setup() {
   server.accounts = [
     summary(AccountId.make("acc_synthetic_first"), "example.com", {
       kind: "website",
@@ -141,16 +145,27 @@ it("closes a saved password's form onto the new Saved passwords count", async ()
       username: "first",
     }),
   ];
-  server.pending = null;
-  await using _screen = await render(<AccountsPage />);
+  server.gate = Promise.resolve();
+  server.failNext = false;
+  const registry = AtomRegistry.make();
+  const screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <AccountsPage />
+    </RegistryContext.Provider>,
+  );
   await expect.element(page.getByText("1 site", { exact: true })).toBeVisible();
+  return { screen, registry };
+}
+
+/** Saves a password through Add an account, resolving with the Saved passwords count the moment its form closes. */
+async function savePassword(site: string) {
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByRole("menuitem", { name: "Add an account…" }).click();
-  await page.getByRole("searchbox", { name: "Find an account" }).fill("example.org");
+  await page.getByRole("searchbox", { name: "Find an account" }).fill(site);
   await page.getByText("Website sign-in").first().click();
-  await page.getByRole("textbox", { name: "Username" }).fill("second");
+  await page.getByRole("textbox", { name: "Username" }).fill("synthetic");
   await page.getByLabelText("Password", { exact: true }).fill("synthetic-password");
-  const countWhenClosed = new Promise<string | null | undefined>((resolve) => {
+  const countWhenClosed = new Promise<string | undefined>((resolve) => {
     const observer = new MutationObserver(() => {
       if (document.querySelector("[data-accounts-dialog]")) return;
       observer.disconnect();
@@ -159,7 +174,38 @@ it("closes a saved password's form onto the new Saved passwords count", async ()
     observer.observe(document.body, { childList: true, subtree: true });
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await vi.waitFor(() => expect(server.held).not.toBeNull());
-  server.held?.release();
-  expect(await countWhenClosed).toBe("2 sites");
+  return countWhenClosed;
+}
+
+it("closes a saved password's form onto the new count while the refresh is still slow", async () => {
+  const { screen } = await setup();
+  await using _screen = screen;
+  server.holdSnapshots();
+  expect(await savePassword("example.org")).toBe("2 sites");
+  server.release();
+  await expect.element(page.getByText("2 sites", { exact: true })).toBeVisible();
+});
+
+it("keeps two quick saves in the count before either refresh arrives", async () => {
+  const { screen } = await setup();
+  await using _screen = screen;
+  server.holdSnapshots();
+  expect(await savePassword("example.org")).toBe("2 sites");
+  expect(await savePassword("example.net")).toBe("3 sites");
+  server.release();
+  await expect.element(page.getByText("3 sites", { exact: true })).toBeVisible();
+});
+
+it("lets the next snapshot decide the count after a refresh fails", async () => {
+  const { screen, registry } = await setup();
+  await using _screen = screen;
+  server.holdSnapshots();
+  server.failNext = true;
+  expect(await savePassword("example.org")).toBe("2 sites");
+  server.release();
+  await expect.element(page.getByText("1 site", { exact: true })).not.toBeInTheDocument();
+  // Removed on another computer meanwhile: the next snapshot, not the saved copy, is shown.
+  server.accounts.pop();
+  registry.refresh(accountsState.snapshot({ environmentId, input: {} }));
+  await expect.element(page.getByText("1 site", { exact: true })).toBeVisible();
 });

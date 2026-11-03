@@ -730,6 +730,8 @@ export type AccountSaveInput = typeof AccountSaveInput.Type;
 
 export const AccountSaveResult = Schema.Struct({
   accountId: AccountId,
+  /** The saved account as Accounts lists it, for a client to show before its next snapshot. */
+  account: Schema.optional(AccountSummary),
   warnings: Schema.optional(Schema.Array(Schema.String)),
 });
 export type AccountSaveResult = typeof AccountSaveResult.Type;

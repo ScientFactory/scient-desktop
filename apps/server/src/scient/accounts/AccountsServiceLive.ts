@@ -693,7 +693,12 @@ export const layer = Layer.effect(
         ),
       );
       yield* denyRevoked;
-      return { accountId, ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}) };
+      const account = findAccount(accountId)?.summary;
+      return {
+        accountId,
+        ...(account ? { account } : {}),
+        ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}),
+      };
     });
 
     const service = AccountsService.of({

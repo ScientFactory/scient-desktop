@@ -511,6 +511,31 @@ export function isSavedPassword(account: AccountSummary) {
 const hasNothingToType = ({ details, secrets }: AccountSummary) =>
   details.kind === "website" && secrets.password === undefined;
 
+/** An account saved here, with the snapshot that was shown when it was saved. */
+export interface SavedAccount {
+  readonly before: AccountsSnapshot | null;
+  readonly account: AccountSummary;
+}
+
+/**
+ * A snapshot with the accounts saved since it was read; a newer snapshot replaces them, so a failed
+ * refresh shows them only until the next one arrives.
+ */
+export function withSavedAccounts(
+  snapshot: AccountsSnapshot,
+  saved: ReadonlyArray<SavedAccount>,
+): AccountsSnapshot {
+  const since = saved.filter((entry) => entry.before === snapshot);
+  if (since.length === 0) return snapshot;
+  const accounts = [...snapshot.accounts];
+  for (const { account } of since) {
+    const index = accounts.findIndex((item) => item.accountId === account.accountId);
+    if (index === -1) accounts.push(account);
+    else accounts[index] = account;
+  }
+  return { ...snapshot, accounts };
+}
+
 /** A site signed in from a profile. A university has its own row. */
 export function isBrowserSignIn(account: AccountSummary) {
   return hasNothingToType(account) && !universityDetails(account.details);

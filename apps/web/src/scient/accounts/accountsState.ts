@@ -5,9 +5,10 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 import { connectionAtomRuntime } from "~/connection/runtime";
+import type { SavedAccount } from "./accountsView";
 
 const changes = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
   label: "accounts:changes",
@@ -28,19 +29,16 @@ const lane = {
     key: ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
       `accounts:${environmentId}`,
   },
-  // A change is done once Accounts shows it, so a form closes onto the new counts.
   onSuccess: (
     { environmentId }: { readonly environmentId: EnvironmentId },
     registry: AtomRegistry.AtomRegistry,
-  ) => {
-    const current = snapshot({ environmentId, input: {} });
-    registry.refresh(current);
-    return AtomRegistry.getResult(registry, current, { suspendOnWaiting: true }).pipe(
-      Effect.timeoutOption("10 seconds"),
-      Effect.ignore,
-    );
-  },
+  ) => Effect.sync(() => registry.refresh(snapshot({ environmentId, input: {} }))),
 } as const;
+
+/** Accounts saved here since the snapshot shown was read, each with the snapshot it was saved over. */
+const savedAccounts = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make<ReadonlyArray<SavedAccount>>([]).pipe(Atom.keepAlive),
+);
 
 export const accountsState = {
   snapshot,
@@ -60,10 +58,25 @@ export const accountsState = {
     staleTimeMs: 0,
     idleTtlMs: 0,
   }),
+  savedAccounts,
   save: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:save",
     tag: WS_METHODS.accountsSave,
     ...lane,
+    // Shown at once, so a form closes onto the new counts; the refresh then replaces it.
+    onSuccess: ({ environmentId }, registry, { account }) =>
+      Effect.sync(() => {
+        const current = snapshot({ environmentId, input: {} });
+        if (account) {
+          const shown = AsyncResult.getOrElse(registry.get(current), () => null);
+          const saved = savedAccounts(environmentId);
+          registry.set(saved, [
+            ...registry.get(saved).filter((entry) => entry.before === shown),
+            { before: shown, account },
+          ]);
+        }
+        registry.refresh(current);
+      }),
   }),
   remove: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:remove",
