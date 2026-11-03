@@ -62,11 +62,7 @@ import {
   pdfCitationHash,
   pdfCitationNavigation,
 } from "./pdfCitationNavigation";
-import {
-  pdfRevealDocumentKey,
-  pendingPdfReveal,
-  resetPdfRevealRequests,
-} from "./pdfRevealRequests";
+import { pdfRevealDocumentKey, pendingPdfReveal, clearPdfReveals } from "./pdfRevealRequests";
 import { pdfDocumentIdentity } from "./pdfTextTarget";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -115,7 +111,7 @@ const workspaceSource = workspacePdfSource({
 describe("PDF quote identity and navigation", () => {
   beforeEach(() => {
     panel.reset();
-    resetPdfRevealRequests();
+    clearPdfReveals();
     openFile.mockClear();
     openScient.mockClear();
     openAttachment.mockClear();

@@ -21,11 +21,7 @@ import { randomUUID } from "~/lib/utils";
 
 import { workspacePdfSource } from "../pdfSource";
 import { ScientPdfReader } from "../ScientPdfReader";
-import {
-  pdfRevealDocumentKey,
-  requestPdfReveal,
-  resetPdfRevealRequests,
-} from "./pdfRevealRequests";
+import { pdfRevealDocumentKey, requestPdfReveal, clearPdfReveals } from "./pdfRevealRequests";
 
 /** A minimal text PDF: one Helvetica line per entry, one page per array. */
 function pdfBytes(pages: ReadonlyArray<ReadonlyArray<string>>): Uint8Array {
@@ -201,9 +197,9 @@ function setup() {
     if (savedStorage === null) localStorage.removeItem(PDF_READER_SESSION_STORAGE_KEY);
     else localStorage.setItem(PDF_READER_SESSION_STORAGE_KEY, savedStorage);
     document.getSelection()?.removeAllRanges();
-    resetPdfRevealRequests();
+    clearPdfReveals();
   });
-  resetPdfRevealRequests();
+  clearPdfReveals();
   const urls = new Set<string>();
   stack.defer(() => {
     for (const url of urls) URL.revokeObjectURL(url);
