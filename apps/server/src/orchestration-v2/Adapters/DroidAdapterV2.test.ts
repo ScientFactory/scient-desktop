@@ -528,6 +528,7 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
               ],
               close: async () => undefined,
               listSkills: async () => ({ skills: [] }),
+              listMcpServers: async () => ({ servers: [] }),
               setSkillDisabled: async () => undefined,
               rewindBefore: async (messageId) => {
                 rewoundBefore.push(messageId);

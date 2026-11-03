@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderMcpServer, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -36,6 +36,51 @@ const DroidSkillInventory = Schema.Struct({
   projectAvailable: Schema.optional(Schema.Boolean),
 });
 const decodeDroidSkillInventory = Schema.decodeUnknownEffect(DroidSkillInventory);
+const DroidMcpInventory = Schema.Struct({
+  servers: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      status: Schema.String,
+      source: Schema.optional(Schema.String),
+      error: Schema.optional(Schema.String),
+      toolCount: Schema.optional(Schema.Number),
+      requiresAuth: Schema.optional(Schema.Boolean),
+      hasAuthTokens: Schema.optional(Schema.Boolean),
+    }),
+  ),
+});
+const decodeDroidMcpInventory = Schema.decodeUnknownOption(DroidMcpInventory);
+
+const DROID_MCP_STATUSES: Readonly<Record<string, ServerProviderMcpServer["status"]>> = {
+  connected: "connected",
+  connecting: "pending",
+  failed: "failed",
+  disabled: "disabled",
+};
+
+/** The MCP servers Droid configures itself, as Scient Extensions lists native servers. */
+function droidMcpServersToServerProvider(raw: unknown): ReadonlyArray<ServerProviderMcpServer> {
+  const servers = decodeDroidMcpInventory(raw);
+  if (servers._tag === "None") return [];
+  return servers.value.servers.flatMap((server) => {
+    const name = trimOptional(server.name);
+    if (!name) return [];
+    const error = trimOptional(server.error);
+    const scope = trimOptional(server.source);
+    return [
+      {
+        name,
+        status:
+          server.requiresAuth && !server.hasAuthTokens && server.status !== "connected"
+            ? "needs-auth"
+            : (DROID_MCP_STATUSES[server.status] ?? "unknown"),
+        ...(scope ? { scope } : {}),
+        ...(server.toolCount === undefined ? {} : { toolCount: server.toolCount }),
+        ...(error ? { error } : {}),
+      },
+    ];
+  });
+}
 
 function trimOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -79,7 +124,8 @@ export function droidSkillsToServerProviderSkills(
   );
 }
 
-export const discoverDroidSkills = Effect.fn("discoverDroidSkills")(function* (
+/** Skills, and the MCP servers Droid configures itself when it lists them. */
+export const discoverDroidInventory = Effect.fn("discoverDroidInventory")(function* (
   input: {
     readonly binaryPath: string;
     readonly cwd: string;
@@ -108,6 +154,16 @@ export const discoverDroidSkills = Effect.fn("discoverDroidSkills")(function* (
           ),
         ),
         Effect.map((inventory) => droidSkillsToServerProviderSkills(inventory.skills)),
+        Effect.flatMap((skills) =>
+          Effect.tryPromise(client.listMcpServers).pipe(
+            Effect.map(droidMcpServersToServerProvider),
+            Effect.option,
+            Effect.map((mcpServers) => ({
+              skills,
+              mcpServers: mcpServers._tag === "Some" ? mcpServers.value : undefined,
+            })),
+          ),
+        ),
       ),
     makeClient,
   );

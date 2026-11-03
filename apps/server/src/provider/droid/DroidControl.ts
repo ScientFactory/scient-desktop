@@ -20,6 +20,7 @@ export interface DroidControlClient {
   /** The opened session's messages, oldest first; empty for a new session. */
   readonly messages: ReadonlyArray<unknown>;
   readonly listSkills: () => Promise<unknown>;
+  readonly listMcpServers: () => Promise<unknown>;
   /** Records the choice in Droid's user-level settings. */
   readonly setSkillDisabled: (skillName: string, disabled: boolean) => Promise<void>;
   /** Forks the session just before `messageId`; files are left to Scient's checkpoints. */
@@ -95,6 +96,7 @@ const liveDroidControlClient: DroidControlClientFactory = async (input) => {
     messages,
     close,
     listSkills: async () => unwrap(await connected.listSkills()),
+    listMcpServers: async () => unwrap(await connected.listMcpServers()),
     setSkillDisabled: async (skillName, disabled) => {
       unwrap(await connected.setSkillDisabled(skillName, disabled, SettingsLevel.User));
     },

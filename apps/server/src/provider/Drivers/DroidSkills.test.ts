@@ -12,7 +12,7 @@ import * as Fiber from "effect/Fiber";
 import { vi } from "vite-plus/test";
 
 import {
-  discoverDroidSkills,
+  discoverDroidInventory,
   droidSkillsToServerProviderSkills,
   setDroidSkillEnabled,
 } from "./DroidSkills.ts";
@@ -22,6 +22,7 @@ const fakeClient = (overrides: Partial<DroidControlClient>): DroidControlClient 
   messages: [],
   close: async () => undefined,
   listSkills: async () => ({ skills: [] }),
+  listMcpServers: async () => ({ servers: [] }),
   setSkillDisabled: async () => undefined,
   rewindBefore: async () => ({ newSessionId: "unused" }),
   ...overrides,
@@ -232,9 +233,15 @@ it.effect("decodes native inventory and always closes the client", () =>
             },
           ],
         }),
+        listMcpServers: async () => ({
+          servers: [
+            { name: "docs", status: "connected", source: "project", toolCount: 3 },
+            { name: "github", status: "failed", source: "user", requiresAuth: true },
+          ],
+        }),
       });
 
-    const skills = yield* discoverDroidSkills(
+    const { skills, mcpServers } = yield* discoverDroidInventory(
       { binaryPath: "droid", cwd: "/work", environment: {} },
       makeClient,
     );
@@ -242,6 +249,10 @@ it.effect("decodes native inventory and always closes the client", () =>
       skills.map(({ name, scope }) => ({ name, scope })),
       [{ name: "review", scope: "personal" }],
     );
+    NodeAssert.deepEqual(mcpServers, [
+      { name: "docs", status: "connected", scope: "project", toolCount: 3 },
+      { name: "github", status: "needs-auth", scope: "user" },
+    ]);
     NodeAssert.equal(closed, 1);
   }),
 );
@@ -253,7 +264,7 @@ it.effect("reads skills from the status probe's session instead of starting one"
       sessions.push(input.sessionId);
       return fakeClient({});
     };
-    yield* discoverDroidSkills(
+    yield* discoverDroidInventory(
       { binaryPath: "droid", cwd: "/work", environment: {}, sessionId: "probe-session" },
       makeClient,
     );
@@ -275,7 +286,7 @@ it.effect("rejects invalid native inventory and still closes the client", () =>
       });
 
     const exit = yield* Effect.exit(
-      discoverDroidSkills({ binaryPath: "droid", cwd: "/work", environment: {} }, makeClient),
+      discoverDroidInventory({ binaryPath: "droid", cwd: "/work", environment: {} }, makeClient),
     );
     NodeAssert.equal(Exit.isFailure(exit), true);
     NodeAssert.equal(closed, 1);
@@ -332,7 +343,7 @@ process.on("SIGTERM", () => server.close(() => process.exit(3)));
     );
 
     const exit = yield* Effect.exit(
-      discoverDroidSkills({ binaryPath, cwd: directory, environment: process.env }),
+      discoverDroidInventory({ binaryPath, cwd: directory, environment: process.env }),
     );
     // Close follows native exit and stdio teardown, including any failed-write error.
     yield* Effect.promise(() => closed.promise);
@@ -360,7 +371,7 @@ it.effect("closes an acquired client when discovery is interrupted", () =>
         },
       });
 
-    const fiber = yield* discoverDroidSkills(
+    const fiber = yield* discoverDroidInventory(
       { binaryPath: "droid", cwd: "/work", environment: {} },
       makeClient,
     ).pipe(Effect.forkChild);

@@ -37,6 +37,7 @@ const droidWith = (texts: ReadonlyArray<string>, rewound: Array<string>) =>
     })),
     close: async () => undefined,
     listSkills: async () => ({ skills: [] }),
+    listMcpServers: async () => ({ servers: [] }),
     setSkillDisabled: async () => undefined,
     rewindBefore: async (messageId: string) => {
       rewound.push(messageId);
