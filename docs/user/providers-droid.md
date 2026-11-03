@@ -236,8 +236,10 @@ in Full access.
   ended. Droid reports a sub-agent's steps only when it finishes, so while it works the row shows
   that it is running and for how long, not what it is doing. When Droid runs a sub-agent in the
   background, the main agent's checks on it read "Checked sub-agent · …" and "Waiting for
-  sub-agent · … (up to 10 min)". A background sub-agent Droid has not reported on when the turn
-  ends shows as idle (stopped, in the mobile app), with that reason.
+  sub-agent · … (up to 10 min)". When the main agent stops a sub-agent and Droid confirms it, the
+  row reads "Stopped sub-agent · …" and the sub-agent shows as cancelled. A background sub-agent
+  Droid has not reported on when the turn ends shows as idle (stopped, in the mobile app), with
+  that reason.
 - **If Droid exits** unexpectedly, the running turn fails with Droid's error and the next message
   starts a fresh Droid process that resumes the conversation.
 - **If Droid does not report a settings change** (model, reasoning effort or autonomy) within a
@@ -279,9 +281,11 @@ in Full access.
   not replace the environment's key.
 - **Quota**: Droid usage draws on your Factory plan. If the CLI reports an out-of-quota or
   payment-required error, the turn fails with that message and you can retry after topping up or
-  waiting for the quota window. Droid reports Factory credits only inside its own session files, so
+  waiting for the quota window. Droid does not report Factory credits while a conversation runs, so
   Scient does not show them; the account name on Droid's ready status opens Factory's billing
   page, where usage and credits are listed.
+- **MCP servers configured in Droid itself** appear in **Extensions** with their status after each
+  full status check. Scient's own MCP servers reach Droid separately and are not listed there.
 - **Runtime updates:** Scient can update recognized system package installations and standard
   macOS/Linux standalone installations when you choose **Update**. Other installations remain
   manual-only. Native update restrictions are respected. Repair and remove affect only Scient's
