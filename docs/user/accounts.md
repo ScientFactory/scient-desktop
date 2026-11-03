@@ -7,15 +7,17 @@ Use **Add account** to enter details and choose Scient’s encrypted store, a sy
 item or a 1Password reference. Connect 1Password under Password stores first. You can also
 import a password export or add browser profiles with their existing sign-ins and saved
 passwords. Saved passwords, sign-ins recorded while browsing and sign-ins managed elsewhere (Claude,
-Codex, Source Control, Extensions) are each one row that opens their list. Main, Scient's own
-profile, shows the Scient symbol. Profiles imported from a browser show its current picture and
-name, or that browser's mark when it has no picture; the refresh button next to **Browser
-profiles** also brings in new sign-ins and passwords (quit that browser first for sign-ins). The
-import shows how many cookies each profile holds where the browser allows it, then what each
-brought, counted per site. A site the import brought a session for, where you keep a password or
-Scient knows the service, appears under **Browser sign-ins** as **Imported** (Google and university
-sign-in services aside) until a sign-in or a check sees it working, which then names who is
-signed in where the site says. Connected services remain managed in [Extensions](extensions.md).
+Codex, Source Control, Extensions) are each one row that opens their list. There, each GitHub
+login is one row, with a chip for Source Control and one for the GitHub connector when it uses
+that login; each chip shows its own state. Main, Scient's own profile, shows the Scient symbol.
+Profiles imported from a browser show its current picture and name, or that browser's mark when it
+has no picture; the refresh button next to **Browser profiles** also brings in new sign-ins and
+passwords (quit that browser first for sign-ins). The import shows how many cookies each profile
+holds where the browser allows it, then what each brought, counted per site. A site the import
+brought a session for, where you keep a password or Scient knows the service, appears under
+**Browser sign-ins** as **Imported** (Google and university sign-in services aside) until a sign-in
+or a check sees it working, which then names who is signed in where the site says. Connected
+services remain managed in [Extensions](extensions.md).
 
 Everything you add starts **Allowed**. Change access to **Ask me** for approval on each use
 or **Off** to deny agents. Scope can limit access to selected projects. The global switch
