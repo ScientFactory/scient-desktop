@@ -1,8 +1,6 @@
 import type { ServerProviderAuth, ServerProviderState } from "@t3tools/contracts";
 import type { CommandResult } from "@t3tools/provider-core/server/snapshotProbe";
 
-const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
-
 export function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -39,33 +37,6 @@ interface CursorAboutJsonPayload {
   readonly cliVersion?: unknown;
   readonly subscriptionTier?: unknown;
   readonly userEmail?: unknown;
-}
-
-export function parseCursorVersionDate(version: string | null | undefined): number | undefined {
-  const match = version?.trim().match(/^(\d{4})\.(\d{2})\.(\d{2})(?:\b|-|$)/);
-  if (!match) {
-    return undefined;
-  }
-  const [, year, month, day] = match;
-  return Number(`${year}${month}${day}`);
-}
-
-export function parseCursorCliConfigChannel(raw: string): string | undefined {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "channel" in parsed &&
-      typeof parsed.channel === "string"
-    ) {
-      const channel = parsed.channel.trim().toLowerCase();
-      return channel.length > 0 ? channel : undefined;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 function cursorSubscriptionLabel(subscriptionType: string | undefined): string | undefined {
@@ -119,39 +90,6 @@ function parseCursorAboutJsonPayload(raw: string): CursorAboutJsonPayload | unde
 
 function hasOwn(record: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
-}
-
-export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
-  readonly version: string | null | undefined;
-  readonly channel: string | null | undefined;
-}): string | undefined {
-  const reasons: Array<string> = [];
-  const versionDate = parseCursorVersionDate(input.version);
-  if (
-    versionDate !== undefined &&
-    versionDate < CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE
-  ) {
-    reasons.push(
-      `Cursor Agent CLI version ${input.version} is too old for Cursor ACP parameterized model picker`,
-    );
-  }
-
-  const normalizedChannel = input.channel?.trim().toLowerCase();
-  if (
-    normalizedChannel !== undefined &&
-    normalizedChannel.length > 0 &&
-    normalizedChannel !== "lab"
-  ) {
-    reasons.push(
-      `Cursor Agent CLI channel is ${JSON.stringify(input.channel)}, but parameterized model picker is only available on the lab channel`,
-    );
-  }
-
-  if (reasons.length === 0) {
-    return undefined;
-  }
-
-  return `${reasons.join(". ")}. Run \`agent set-channel lab && agent update\` and use Cursor Agent CLI 2026.04.08 or newer.`;
 }
 
 /**

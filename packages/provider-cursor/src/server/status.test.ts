@@ -20,12 +20,7 @@ import {
   checkCursorProviderStatus,
 } from "./status.ts";
 import { makeCursorCommandCatalog } from "./commandCatalog.ts";
-import {
-  getCursorParameterizedModelPickerUnsupportedMessage,
-  parseCursorAboutOutput,
-  parseCursorCliConfigChannel,
-  parseCursorVersionDate,
-} from "./about.ts";
+import { parseCursorAboutOutput } from "./about.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 import { hasCursorSkillMention, probeCursorSkills, rewriteCursorSkillMentions } from "./skills.ts";
 import { loadCursorSdk } from "./sdk.ts";
@@ -796,47 +791,5 @@ describe("parseCursorAboutOutput", () => {
       },
       message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
     });
-  });
-});
-
-describe("Cursor parameterized model picker preview gating", () => {
-  it("parses Cursor CLI version dates from build versions", () => {
-    expect(parseCursorVersionDate("2026.04.08-c4e73a3")).toBe(20260408);
-    expect(parseCursorVersionDate("2026.04.09")).toBe(20260409);
-    expect(parseCursorVersionDate("not-a-version")).toBeUndefined();
-  });
-
-  it("parses the Cursor CLI channel from cli-config.json", () => {
-    expect(parseCursorCliConfigChannel('{ "channel": "lab" }')).toBe("lab");
-    expect(parseCursorCliConfigChannel('{ "channel": "stable" }')).toBe("stable");
-    expect(parseCursorCliConfigChannel('{ "version": 1 }')).toBeUndefined();
-    expect(parseCursorCliConfigChannel("not-json")).toBeUndefined();
-  });
-
-  it("returns no warning when the preview requirements are met", () => {
-    expect(
-      getCursorParameterizedModelPickerUnsupportedMessage({
-        version: "2026.04.08-c4e73a3",
-        channel: "lab",
-      }),
-    ).toBeUndefined();
-  });
-
-  it("explains when the Cursor Agent version is too old", () => {
-    expect(
-      getCursorParameterizedModelPickerUnsupportedMessage({
-        version: "2026.04.07-c4e73a3",
-        channel: "lab",
-      }),
-    ).toContain("too old");
-  });
-
-  it("explains when the Cursor Agent channel is not lab", () => {
-    expect(
-      getCursorParameterizedModelPickerUnsupportedMessage({
-        version: "2026.04.08-c4e73a3",
-        channel: "stable",
-      }),
-    ).toContain("lab channel");
   });
 });
