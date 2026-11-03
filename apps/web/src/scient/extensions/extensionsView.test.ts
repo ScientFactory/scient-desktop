@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   audienceReaches,
   connectorActions,
+  connectorFacts,
   providerServerDisplayName,
   audienceSupport,
   collectProviderExtensionGroups,
@@ -101,6 +102,30 @@ it("offers sign-in only when the grant is needed and keeps account connector ide
   expect(providerServerDisplayName(server)).toBe("Gmail");
   expect(server.name).toBe("claude.ai Gmail");
   expect(providerServerDisplayName({ ...server, scope: "user" })).toBe(server.name);
+});
+
+it("drops the catalog's access words from a connector once its sign-in works", () => {
+  const entry = {
+    name: "io.github.github/github-mcp-server",
+    version: "2.0.2",
+    hosting: "Official",
+    accountRequired: true,
+    remotes: [],
+    installable: true,
+    categories: [],
+  } as DiscoverEntry;
+  const borrowed = { type: "source-control", host: "github.com", account: "octo" } as const;
+  expect(connectorFacts(entry, { status: "connected", auth: borrowed })).toEqual([
+    "Official",
+    "Signed in as octo",
+  ]);
+  expect(
+    connectorFacts(entry, { status: "connected", auth: { type: "oauth", usesOwnClient: false } }),
+  ).toEqual(["Official"]);
+  expect(connectorFacts(entry, { status: "needs-credential", auth: borrowed })).toEqual([
+    "Official",
+    "Account needed",
+  ]);
 });
 
 // Tenant endpoints must never accept an alternate host, credentials or query parameters.
