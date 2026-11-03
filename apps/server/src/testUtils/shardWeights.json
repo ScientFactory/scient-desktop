@@ -850,7 +850,7 @@
   "src/scient/latex/managedLatexInstall.test.ts": 0.719,
   "src/scient/latex/syncTexOutput.test.ts": 0.166,
   "src/scient/latex/tinytexManifest.test.ts": 0.293,
-  "src/scient/markdown/WorkspaceMarkdownFiles.test.ts": 0.656,
+  "src/scient/assets/WorkspaceImageFiles.test.ts": 0.656,
   "src/scient/observability/ScientOtlpEndpointCheck.test.ts": 3.173,
   "src/scient/operations/AgentCapabilityBudget.test.ts": 3.5,
   "src/scient/operations/AgentOperationDispatcher.test.ts": 1.967,

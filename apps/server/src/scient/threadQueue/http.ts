@@ -15,7 +15,7 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { makeLegacyQueueCompatibility } from "../../orchestration-v2/legacy/LegacyQueueCompatibility.ts";
-import { QueueError } from "./Ledger.ts";
+import { QueueError } from "../../orchestration-v2/legacy/LegacyQueueLedger.ts";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,

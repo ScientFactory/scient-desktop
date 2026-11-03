@@ -6,7 +6,12 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { describe, expect, it } from "@effect/vitest";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { readQueue, writeQueue, suspendQueue, type QueueDocument } from "./Ledger.ts";
+import {
+  readQueue,
+  writeQueue,
+  suspendQueue,
+  type QueueDocument,
+} from "../../orchestration-v2/legacy/LegacyQueueLedger.ts";
 import { enqueueQueue } from "./admission.ts";
 
 const threadId = ThreadId.make("queue-owner");
