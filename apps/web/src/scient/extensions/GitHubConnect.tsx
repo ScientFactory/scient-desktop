@@ -11,7 +11,7 @@ import {
   type SourceControlSignInPrompt,
 } from "@t3tools/contracts";
 import { CopyIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Button, InlineButton } from "../../components/ui/button";
 import { Label } from "../../components/ui/label";
@@ -74,25 +74,43 @@ export function GitHubConnect({
   });
   const [chosen, setChosen] = useState("");
   const [signIn, setSignIn] = useState<SignIn>({ status: "idle" });
-  const pending = useRef<SourceControlSignInPrompt | null>(null);
+  const attempts = useRef(0);
+  /** The attempt still allowed to finish; any other result is dropped. */
+  const current = useRef<number | null>(null);
   const selected = logins.find((entry) => entry.login === chosen) ?? logins[0];
 
+  const abandon = () => {
+    if (current.current === null) return;
+    current.current = null;
+    void cancel({ environmentId, input: SIGN_IN_INPUT });
+  };
+  const abandonOnClose = useEffectEvent(abandon);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a closed dialog ends its device sign-in on the server, so a late approval connects nothing
+  useEffect(() => () => abandonOnClose(), []);
+
   const startSignIn = async () => {
+    const attempt = ++attempts.current;
+    current.current = attempt;
     setSignIn({ status: "starting" });
     const started = await start({ environmentId, input: SIGN_IN_INPUT });
+    if (current.current !== attempt) {
+      // Abandoned while GitHub was issuing the code: end the sign-in it just started.
+      if (started._tag === "Success") void cancel({ environmentId, input: SIGN_IN_INPUT });
+      return;
+    }
     if (started._tag !== "Success") {
+      current.current = null;
       setSignIn({ status: "failed", message: signInFailure(started) });
       return;
     }
     const prompt = started.value;
-    pending.current = prompt;
     setSignIn({ status: "waiting", prompt });
     // GitHub never redirects back, so its page can open in Scient's own browser.
     void openInBrowser(prompt.verificationUri, DEFAULT_BROWSER_PROFILE_ID);
     const finished = await wait({ environmentId, input: SIGN_IN_INPUT });
-    // A cancel or a newer attempt owns the dialog by now.
-    if (pending.current !== prompt) return;
-    pending.current = null;
+    // A cancel, a closed dialog or a newer attempt owns the outcome by now.
+    if (current.current !== attempt) return;
+    current.current = null;
     if (finished._tag !== "Success") {
       setSignIn({ status: "failed", message: signInFailure(finished) });
       return;
@@ -127,9 +145,8 @@ export function GitHubConnect({
           </InlineButton>
           <InlineButton
             onClick={() => {
-              pending.current = null;
+              abandon();
               setSignIn({ status: "idle" });
-              void cancel({ environmentId, input: SIGN_IN_INPUT });
             }}
           >
             Cancel sign-in
