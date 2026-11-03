@@ -19,3 +19,5 @@ export const READ_BROWSER_PASSWORDS = "scient:accounts:read-browser-passwords";
 export const SITE_ICON = "scient:accounts:site-icon";
 
 export const QUALIFY_SESSION_COPY = "scient:accounts:qualify-session-copy";
+export const FILL_MAIN = "scient:accounts:fill-main";
+export const SIGN_OUT_MAIN_SITE = "scient:accounts:sign-out-main-site";

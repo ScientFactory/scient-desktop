@@ -1,4 +1,5 @@
 import type { BrowserImportSourceId } from "../browserImport.ts";
+import type { GrantScope } from "./secrets.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
 export interface DesktopSourceProfileDetails {
@@ -63,6 +64,40 @@ export interface DesktopGoogleSession {
   readonly valid: boolean;
 }
 
+/** What a copy into Main did to each unit; never any cookie value. */
+export interface DesktopFillMainResult {
+  readonly units: ReadonlyArray<{
+    readonly sites: ReadonlyArray<string>;
+    readonly outcome: "copied" | "same" | "conflict" | "blocked" | "failed" | "restore-failed";
+  }>;
+  /** Cookies Scient can't carry exactly, such as opaque partitions; left out. */
+  readonly unsupported: number;
+}
+
+export interface DesktopFillMainInput {
+  /** Omit for the primary local environment. */
+  readonly environmentId?: string;
+  /** A Scient profile, or another browser's profile to import into Main. */
+  readonly from:
+    | string
+    | { readonly importSourceId: BrowserImportSourceId; readonly sourceProfileDirectory: string };
+  /** A profile source's controls; only an unrestricted profile is copied. */
+  readonly sourceControls?: {
+    readonly access: "off" | "ask" | "allowed";
+    readonly scope: GrantScope;
+    readonly allowedProjects?: ReadonlyArray<string>;
+  };
+  /** Absent: the whole jar, one unit per registrable site. */
+  readonly units?: ReadonlyArray<ReadonlyArray<string>>;
+  /** For a whole jar: multi-site sign-ins whose sites are copied as one unit. */
+  readonly join?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly mode: "fill" | "fill-or-replace";
+  /** Site → when Main's row for it was seen signed out. */
+  readonly replaceAllowedSince?: Readonly<Record<string, string>>;
+  /** Sites the user signed out of in Main; never copied. */
+  readonly skipSites: ReadonlyArray<string>;
+}
+
 /** One case of the dev-only session-copy qualification. */
 export interface DesktopQualifyCase {
   readonly case: number;
@@ -119,6 +154,10 @@ export interface DesktopAccountsBridge {
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
   readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
+  /** The one writer of Scient's copies into Main; null when refused. Optional for older desktops. */
+  readonly fillMain?: (input: DesktopFillMainInput) => Promise<DesktopFillMainResult | null>;
+  /** Accounts' Sign out on Main, under the same lock as every copy into it. */
+  readonly signOutMainSite?: (site: string, environmentId?: string) => Promise<boolean>;
   /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
   readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

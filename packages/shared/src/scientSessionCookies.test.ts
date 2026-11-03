@@ -2,7 +2,10 @@ import type { SessionCookie } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  applyUnit,
+  cookieSlot,
   decideUnit,
+  type CookieStore,
   jarUnits,
   sameUnit,
   sessionCookieFromCdp,
@@ -192,5 +195,113 @@ describe("decideUnit", () => {
     );
     expect(jarUnits(source, siteOf, [unit])).toEqual([["uni.test", "proxy.test"]]);
     expect(jarUnits(source, siteOf)).toEqual([["uni.test"], ["proxy.test"]]);
+  });
+});
+
+describe("applyUnit", () => {
+  const key = (c: Pick<SessionCookie, "name" | "domain" | "path">) => cookieSlot(c);
+  /** An in-memory jar whose writes can be broken on purpose. */
+  const jar = (initial: ReadonlyArray<SessionCookie>) => {
+    const cookies = new Map(initial.map((c) => [key(c), c]));
+    // `corrupt` breaks only the next write, so the restore that follows can succeed.
+    const faults = { corrupt: false, failSetAfter: Infinity, failRestore: false };
+    let sets = 0;
+    const store: CookieStore = {
+      readUnit: async () => {
+        return [...cookies.values()];
+      },
+      set: async (written) => {
+        sets += 1;
+        if (sets > 1 && faults.failRestore) throw new Error("synthetic restore failure");
+        const corrupt = faults.corrupt;
+        faults.corrupt = false;
+        for (const [index, c] of written.entries()) {
+          if (index >= faults.failSetAfter) throw new Error("synthetic partial write");
+          cookies.set(key(c), corrupt ? { ...c, httpOnly: !c.httpOnly } : c);
+        }
+      },
+      remove: async (removed) => {
+        for (const c of removed) cookies.delete(key(c));
+      },
+    };
+    return { store, cookies, faults };
+  };
+  const plan = {
+    unit: ["example.test"],
+    source: [cookie(), cookie({ name: "csrf", httpOnly: false })],
+    mode: "fill-or-replace" as const,
+    replaceAllowed: true,
+    nowSeconds: NOW,
+    siteOf,
+  };
+  const occupied = [cookie({ value: "synthetic-b" }), cookie({ name: "old", value: "b" })];
+
+  it("copies a unit and reads the whole unit back", async () => {
+    const target = jar([]);
+    expect(await applyUnit(target.store, plan)).toBe("copied");
+    expect(sameUnit([...target.cookies.values()], plan.source)).toBe(true);
+    expect(await applyUnit(jar(occupied).store, { ...plan, replaceAllowed: false })).toBe(
+      "conflict",
+    );
+  });
+
+  it("restores an occupied destination exactly when the check fails", async () => {
+    const target = jar(occupied);
+    target.faults.corrupt = true;
+    expect(await applyUnit(target.store, plan)).toBe("failed");
+    expect(sameUnit([...target.cookies.values()], occupied)).toBe(true);
+  });
+
+  it("undoes a partial batch write and a write whose read-back failed", async () => {
+    const partial = jar([]);
+    partial.faults.failSetAfter = 1;
+    expect(await applyUnit(partial.store, plan)).toBe("failed");
+    expect(partial.cookies.size).toBe(0);
+    const unread = jar(occupied);
+    let reads = 0;
+    const store: CookieStore = {
+      ...unread.store,
+      readUnit: async (unit) => {
+        reads += 1;
+        if (reads === 2) throw new Error("synthetic read-back failure");
+        return unread.store.readUnit(unit);
+      },
+    };
+    expect(await applyUnit(store, plan)).toBe("failed");
+    expect(sameUnit([...unread.cookies.values()], occupied)).toBe(true);
+  });
+
+  it("reports a restore that fails", async () => {
+    const target = jar(occupied);
+    target.faults.corrupt = true;
+    target.faults.failRestore = true;
+    expect(await applyUnit(target.store, plan)).toBe("restore-failed");
+  });
+
+  it("accepts a page's insert during the copy, and the restore leaves it", async () => {
+    const target = jar(occupied);
+    const page = cookie({ name: "page", value: "from-the-site" });
+    const changed = new Set<string>();
+    const store: CookieStore = {
+      ...target.store,
+      set: async (written) => {
+        await target.store.set(written);
+        target.cookies.set(key(page), page);
+        changed.add(cookieSlot(page));
+      },
+    };
+    expect(await applyUnit(store, { ...plan, foreign: () => changed })).toBe("copied");
+    target.faults.corrupt = true;
+    target.cookies.clear();
+    for (const c of occupied) target.cookies.set(key(c), c);
+    changed.clear();
+    expect(await applyUnit(store, { ...plan, foreign: () => changed })).toBe("failed");
+    expect(target.cookies.get(key(page))).toEqual(page);
+    expect(
+      sameUnit(
+        [...target.cookies.values()].filter((c) => c.name !== "page"),
+        occupied,
+      ),
+    ).toBe(true);
   });
 });

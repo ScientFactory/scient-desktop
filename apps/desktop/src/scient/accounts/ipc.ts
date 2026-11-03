@@ -19,7 +19,8 @@ import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { discoverSourceProfiles } from "./sourceProfiles.ts";
 import { makeSiteIcons } from "./siteIcons.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
+import { groupSignedInSites } from "./signedInSites.ts";
+import { FillMainInput, fillMain, removeSiteCookies, signOutMainSite } from "./mainFill.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
@@ -240,17 +241,39 @@ const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
   return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
     Effect.flatMap((session) =>
       Effect.tryPromise({
-        try: async () => {
-          const removals = siteCookieRemovals(await session.cookies.get({}), input.value.site);
-          await Promise.all(removals.map(({ url, name }) => session.cookies.remove(url, name)));
-          await session.cookies.flushStore();
-          return true;
-        },
+        try: () => removeSiteCookies(session, input.value.site).then(() => true),
         catch: unavailable,
       }),
     ),
     Effect.orElseSucceed(() => false),
   );
+});
+
+const decodeFillMain = Schema.decodeUnknownOption(FillMainInput);
+export const fillMainHandler = Effect.fn("DesktopAccounts.fillMainHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const input = decodeFillMain(raw);
+  if (Option.isNone(input)) return null;
+  return yield* fillMain(input.value);
+});
+
+const decodeSignOutMain = Schema.decodeUnknownOption(
+  Schema.Struct({ site: SignOut.fields.site, environmentId: Schema.optional(EnvironmentId) }),
+);
+const signOutMainHandler = Effect.fn("DesktopAccounts.signOutMainHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return false;
+  const input = decodeSignOutMain(raw);
+  if (Option.isNone(input)) return false;
+  return yield* signOutMainSite(
+    input.value.site,
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+  ).pipe(Effect.orElseSucceed(() => false));
 });
 
 const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
@@ -309,6 +332,8 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.GOOGLE_SESSIONS, handler: googleSessions });
   yield* ipc.handle({ channel: Channels.QUIET_VISIT, handler: visitQuietly });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
+  yield* ipc.handle({ channel: Channels.FILL_MAIN, handler: fillMainHandler });
+  yield* ipc.handle({ channel: Channels.SIGN_OUT_MAIN_SITE, handler: signOutMainHandler });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
   if (!Electron.app.isPackaged)

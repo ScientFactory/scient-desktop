@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off cryptoRandomUUID:off -- Plain async Electron work; expiries follow the wall clock CDP uses.
 import type { DesktopQualifyCase, SessionCookie } from "@t3tools/contracts";
-import { sameUnit } from "@t3tools/shared/scientSessionCookies";
+import { applyUnit, sameUnit, type CookieStore } from "@t3tools/shared/scientSessionCookies";
 import * as Electron from "electron";
 
 import {
@@ -10,6 +10,9 @@ import {
   withCookieDebugger,
   type CdpSend,
 } from "./sessionCookies.ts";
+import { copyIntoMain, jarStore } from "./mainFill.ts";
+import { watchForeignInserts } from "./mainInserts.ts";
+import { siteOf } from "./signedInSites.ts";
 
 /**
  * Dev-only check that CDP copies cookies between Electron sessions exactly, on this platform's
@@ -48,6 +51,7 @@ const PARTITION = "https://partition.test";
 interface QualifyJars {
   readonly a: CdpSend;
   readonly b: CdpSend;
+  readonly sessionA: Electron.Session;
   readonly sessionB: Electron.Session;
 }
 
@@ -174,7 +178,108 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
         : "deleting the unpartitioned cookie touched a partitioned one";
     },
   ],
+  [
+    "restore",
+    async ({ b, sessionB }) => {
+      const before = [domainCookie("r", { domain: ".restore.test", value: "before" })];
+      await setCookies(b, before);
+      const store = jarStore(sessionB, b);
+      const outcome = await applyUnit(tamperedReadBack(store), {
+        ...replacePlan,
+        unit: ["restore.test"],
+        source: [domainCookie("r", { domain: ".restore.test", value: "after" })],
+      });
+      if (outcome !== "failed") return `the copy ended ${outcome}`;
+      return sameUnit(await store.readUnit(["restore.test"]), before)
+        ? undefined
+        : "B was not restored exactly";
+    },
+  ],
+  [
+    "foreign insert",
+    async ({ b, sessionB }) => {
+      const before = [domainCookie("f", { domain: ".foreign.test", value: "before" })];
+      await setCookies(b, before);
+      const store = jarStore(sessionB, b);
+      let pageWrote = false;
+      const foreign = watchForeignInserts(sessionB);
+      const outcome = await applyUnit(
+        tamperedReadBack({
+          ...store,
+          set: async (cookies) => {
+            await store.set(cookies);
+            if (pageWrote) return;
+            pageWrote = true;
+            await pageWrites(sessionB, { url: "https://foreign.test/", name: "page", value: "x" });
+          },
+        }),
+        {
+          ...replacePlan,
+          unit: ["foreign.test"],
+          source: [domainCookie("f", { domain: ".foreign.test", value: "after" })],
+          foreign: () => foreign.slots,
+        },
+      ).finally(foreign.stop);
+      if (outcome !== "failed") return `the copy ended ${outcome}`;
+      const after = await store.readUnit(["foreign.test"]);
+      if (!named(after, "page").length) return "the restore removed the site's own cookie";
+      return sameUnit(
+        after.filter((cookie) => cookie.name !== "page"),
+        before,
+      )
+        ? undefined
+        : "B was not restored exactly around the site's cookie";
+    },
+  ],
+  [
+    "skip",
+    async ({ a, sessionA, sessionB }) => {
+      await setCookies(a, [domainCookie("s", { domain: ".skip.test" })]);
+      const result = await copyIntoMain(sessionA, sessionB, {
+        from: "qualify",
+        units: [["skip.test"]],
+        mode: "fill",
+        skipSites: ["skip.test"],
+      });
+      if (result.units[0]?.outcome !== "blocked") return "a signed-out site was not blocked";
+      return (await sessionB.cookies.get({ domain: "skip.test" })).length
+        ? "a blocked unit was written"
+        : undefined;
+    },
+  ],
 ];
+
+const replacePlan = {
+  mode: "fill-or-replace",
+  replaceAllowed: true,
+  nowSeconds: Math.floor(Date.now() / 1000),
+  siteOf: (host: string) => siteOf(host) ?? host,
+} as const;
+
+/** The read-back after the write sees a different value, so the check fails on purpose. */
+const tamperedReadBack = (store: CookieStore): CookieStore => {
+  let reads = 0;
+  return {
+    ...store,
+    readUnit: async (unit) => {
+      reads += 1;
+      const read = await store.readUnit(unit);
+      return reads === 2 ? read.map((cookie) => ({ ...cookie, value: "tampered" })) : read;
+    },
+  };
+};
+
+/** A cookie the site sets itself, resolved once the session reports it. */
+const pageWrites = (session: Electron.Session, details: Electron.CookiesSetDetails) =>
+  new Promise<void>((resolve, reject) => {
+    const seen = (_event: unknown, cookie: Electron.Cookie, _cause: unknown, removed: boolean) => {
+      if (removed || cookie.name !== details.name) return;
+      session.cookies.off("changed", seen);
+      resolve();
+    };
+    session.cookies.on("changed", seen);
+    session.cookies.set(details).catch(reject);
+  });
 
 export async function qualifySessionCopy() {
   const id = crypto.randomUUID();
@@ -185,7 +290,7 @@ export async function qualifySessionCopy() {
     await withCookieDebugger(sessionA, (a) =>
       withCookieDebugger(sessionB, async (b) => {
         for (const [index, [name, check]] of CASES.entries()) {
-          const detail = await check({ a, b, sessionB }).catch((cause: unknown) =>
+          const detail = await check({ a, b, sessionA, sessionB }).catch((cause: unknown) =>
             cause instanceof Error ? cause.message : "failed",
           );
           results.push({

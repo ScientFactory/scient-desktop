@@ -121,11 +121,11 @@ const siteHost = (site: string) => {
 };
 
 /** The registrable sites of a unit, whose entries may be bare sites or `https://` origins. */
-const unitSites = (unit: ReadonlyArray<string>, siteOf: SiteOf) =>
+export const unitSites = (unit: ReadonlyArray<string>, siteOf: SiteOf) =>
   new Set(unit.map((site) => siteOf(siteHost(site))));
 
 /** The cookies of a jar that belong to a unit, expired ones included. */
-const unitCookies = (
+export const unitCookies = (
   unit: ReadonlyArray<string>,
   jar: ReadonlyArray<SessionCookie>,
   siteOf: SiteOf,
@@ -212,4 +212,90 @@ export function decideUnit(input: {
     !unitSites(input.unit, input.siteOf).has(GOOGLE)
     ? "copy"
     : "conflict";
+}
+
+/** Where cookies are a cookie's slot: name, domain and path, whatever its partition. */
+export const cookieSlot = (cookie: {
+  readonly name: string;
+  readonly domain?: string | undefined;
+  readonly path?: string | undefined;
+}) => JSON.stringify([cookie.name, cookie.domain ?? "", cookie.path ?? "/"]);
+
+/** One jar as a copy sees it. Item 3 writes Electron jars; a remote computer writes its own. */
+export interface CookieStore {
+  /** The unit's cookies, expired ones included. */
+  readonly readUnit: (unit: ReadonlyArray<string>) => Promise<ReadonlyArray<SessionCookie>>;
+  readonly set: (cookies: ReadonlyArray<SessionCookie>) => Promise<void>;
+  readonly remove: (
+    cookies: ReadonlyArray<Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">>,
+  ) => Promise<void>;
+}
+
+export type UnitOutcome = "copied" | "same" | "conflict" | "blocked" | "failed" | "restore-failed";
+
+/**
+ * Copies one unit into a jar as one transaction: snapshot, decide, write, read the whole unit
+ * back, and on a failed check restore the snapshot. `foreign` names the slots something else
+ * changed meanwhile (a page, a response); the check accepts them and the restore leaves them.
+ */
+export async function applyUnit(
+  store: CookieStore,
+  plan: {
+    readonly unit: ReadonlyArray<string>;
+    readonly source: ReadonlyArray<SessionCookie>;
+    readonly mode: "fill" | "fill-or-replace";
+    readonly replaceAllowed: boolean;
+    readonly nowSeconds: number;
+    readonly siteOf: SiteOf;
+    readonly foreign?: () => ReadonlySet<string>;
+  },
+): Promise<UnitOutcome> {
+  const live = (cookies: ReadonlyArray<SessionCookie>) =>
+    cookies.filter((cookie) => isLive(cookie, plan.nowSeconds));
+  const foreign = () => plan.foreign?.() ?? new Set<string>();
+  const before = live(await store.readUnit(plan.unit));
+  const decision = decideUnit({ ...plan, target: before });
+  if (decision !== "copy") return decision;
+  const written = live(unitCookies(plan.unit, plan.source, plan.siteOf));
+  try {
+    if (before.length) await store.remove(before);
+    await store.set(written);
+  } catch {
+    // A partial write is found by the check below and undone.
+  }
+  const after = await store.readUnit(plan.unit).then(live, () => undefined);
+  const changed = foreign();
+  if (
+    after &&
+    written.every(
+      (cookie) => changed.has(cookieSlot(cookie)) || after.some((read) => sameCookie(cookie, read)),
+    ) &&
+    after.every(
+      (read) =>
+        changed.has(cookieSlot(read)) ||
+        written.some((cookie) => cookieKey(cookie) === cookieKey(read)),
+    )
+  )
+    return "copied";
+  try {
+    const current = await store.readUnit(plan.unit);
+    const untouched = (cookie: SessionCookie) => !foreign().has(cookieSlot(cookie));
+    const ours = current.filter(
+      (read) =>
+        untouched(read) &&
+        written.some(
+          (cookie) => cookieKey(cookie) === cookieKey(read) && cookie.value === read.value,
+        ),
+    );
+    if (ours.length) await store.remove(ours);
+    const kept = current.filter((read) => !ours.includes(read));
+    const missing = before.filter(
+      (cookie) => untouched(cookie) && !kept.some((read) => cookieKey(read) === cookieKey(cookie)),
+    );
+    if (missing.length) await store.set(missing);
+    const restored = live(await store.readUnit(plan.unit)).filter(untouched);
+    return sameUnit(restored, before.filter(untouched)) ? "failed" : "restore-failed";
+  } catch {
+    return "restore-failed";
+  }
 }

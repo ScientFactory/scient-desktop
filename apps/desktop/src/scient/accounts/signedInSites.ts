@@ -1,7 +1,7 @@
 import type { DesktopProfileSignedInSite } from "@t3tools/contracts";
 import { getDomain } from "tldts";
 
-function siteOf(cookieDomain: string): string | undefined {
+export function siteOf(cookieDomain: string): string | undefined {
   const host = cookieDomain.replace(/^\./, "").toLowerCase();
   if (!host || /[\s/:]/.test(host) || host.includes("\u0000")) return undefined;
   return getDomain(host, { allowPrivateDomains: true }) ?? host;
