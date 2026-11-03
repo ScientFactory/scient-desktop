@@ -12,11 +12,15 @@ import {
 
 const TURN = TurnId.make("turn-1");
 
-/** A tool call as the ACP runtime hands it over: its merged state. */
+/**
+ * A tool call as the ACP runtime hands it over: its merged state. The runtime
+ * keeps Droid's verbatim title in data; `shown` is its display summary.
+ */
 const call = (
   toolCallId: string,
   input: {
     readonly title?: string;
+    readonly shown?: string;
     readonly status?: AcpToolCallState["status"];
     readonly rawInput?: unknown;
     readonly text?: string;
@@ -24,11 +28,12 @@ const call = (
 ): AcpToolCallState => ({
   toolCallId,
   kind: "other",
-  ...(input.title ? { title: input.title } : {}),
+  ...((input.shown ?? input.title) ? { title: input.shown ?? input.title } : {}),
   status: input.status ?? "pending",
   data: {
     toolCallId,
     kind: "other",
+    ...(input.title ? { title: input.title } : {}),
     ...(input.rawInput !== undefined ? { rawInput: input.rawInput } : {}),
     ...(input.text !== undefined ? { rawOutput: { text: input.text } } : {}),
   },
@@ -51,6 +56,54 @@ const brief = (events: ReadonlyArray<DroidSubagentEvent>) =>
   );
 
 describe("Droid sub-agents", () => {
+  it("follows Droid 1.2.0's background sub-agent through a stop it confirms", () => {
+    const tracker = makeDroidSubagentTracker();
+    const meta = { subagent_session_info: { session_id: "droid-1", message_start_index: 0 } };
+    const launched = task("t", "Sleep", { status: "inProgress", text: "Running in background" });
+    const observe = (toolCall: AcpToolCallState) =>
+      brief(observeDroidSubagentToolCall(tracker, toolCall, TURN).events);
+    const stop = (status: AcpToolCallState["status"], text?: string) =>
+      call("s", {
+        title: "TaskStop",
+        shown: "Tool",
+        status,
+        rawInput: { task_id: "droid-1" },
+        ...(text ? { text } : {}),
+      });
+
+    observe(task("t", "Sleep"));
+    expect(observe({ ...launched, data: { ...launched.data, meta } })).toEqual([
+      expect.stringMatching(/^task\.progress running: Running in the background/u),
+    ]);
+    // Asked, not confirmed: the sub-agent may still be running.
+    expect(observe(stop("pending"))).toEqual([]);
+    expect(droidSubagentActivity(tracker)).toMatchObject({ open: 1, background: 1 });
+    expect(observe(stop("completed", 'Task "droid-1" has been stopped successfully.'))).toEqual([
+      "task.updated cancelled: Droid stopped this sub-agent.",
+    ]);
+    expect(observe(task("t", "Sleep", { status: "failed", text: "No output available" }))).toEqual(
+      [],
+    );
+    expect(droidSubagentActivity(tracker).open).toBe(0);
+  });
+
+  it("ends Droid 1.2.0's background sub-agent when its call completes", () => {
+    const tracker = makeDroidSubagentTracker();
+    observeDroidSubagentToolCall(tracker, task("t", "Sleep"), TURN);
+    observeDroidSubagentToolCall(
+      tracker,
+      task("t", "Sleep", { status: "inProgress", text: "Running in background" }),
+      TURN,
+    );
+    const done = observeDroidSubagentToolCall(
+      tracker,
+      task("t", "Sleep", { status: "completed", text: "Slept." }),
+      TURN,
+    );
+    expect(brief(done.events)).toEqual(["task.completed completed: Slept."]);
+    expect(droidSubagentActivity(tracker).open).toBe(0);
+  });
+
   it("leaves calls that are not about a sub-agent alone", () => {
     const tracker = makeDroidSubagentTracker();
     const read = call("read-1", { title: "Read file", rawInput: { file_path: "/a" } });

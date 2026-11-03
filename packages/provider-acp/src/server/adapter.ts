@@ -592,6 +592,22 @@ export interface AcpAdapterV2Flavor {
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
     sessionId: string,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  // SCIENT-FORK:START — a flavor can keep Scient's portable fork when its agent advertises session/fork.
+  readonly nativeSessionFork?: false;
+  /**
+   * Rewinds natively: returns a session holding the conversation through the
+   * kept turns, leaving the source session intact. Runs with no ACP process
+   * holding the source session; failing changes nothing.
+   */
+  readonly rewindSession?: (input: {
+    readonly sessionId: string;
+    readonly cwd: string;
+    /** This provider thread's turns, oldest first: through the rollback target, then after it. */
+    readonly keptTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
+    readonly removedTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
+    readonly keptMessageText: string | undefined;
+  }) => Effect.Effect<string, ProviderAdapter.ProviderAdapterProtocolError>;
+  // SCIENT-FORK:END
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -7358,12 +7374,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
-        const capabilities = negotiatedCapabilities(
+        // SCIENT-FORK:START — see AcpAdapterV2Flavor.nativeSessionFork.
+        const negotiated = negotiatedCapabilities(
           flavor.capabilities,
           started,
           flavor.modelOptionArrivesLate === true,
           flavor.forkFromTurn?.supported(started.initializeResult) === true,
         );
+        const capabilities =
+          flavor.nativeSessionFork === false
+            ? {
+                ...negotiated,
+                threads: { ...negotiated.threads, canForkThread: false, canForkFromTurn: false },
+              }
+            : negotiated;
+        // SCIENT-FORK:END
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
@@ -9604,6 +9629,94 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     });
                   }
                   yield* awaitRuntimeTeardown();
+                  // SCIENT-FORK:START — native rewind (see AcpAdapterV2Flavor.rewindSession).
+                  const target = rollbackInput.target;
+                  if (flavor.rewindSession !== undefined && target.type === "provider_turn") {
+                    const terminateProcessGroup = runtime.terminateProcessGroup;
+                    if (terminateProcessGroup === undefined) {
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail: "This agent process cannot be stopped safely, so it cannot rewind.",
+                      });
+                    }
+                    if (
+                      (yield* Ref.get(runningBackgroundTaskIds)).size > 0 ||
+                      (yield* Ref.get(carryoverSubagents)) !== null
+                    ) {
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail:
+                          "Background work is still running in this conversation. Stop it, then rewind.",
+                      });
+                    }
+                    const sourceSessionId = yield* nativeThreadId(
+                      driver,
+                      rollbackInput.providerThread,
+                    );
+                    // The agent writes to a session it loads: release ours first. The next
+                    // turn starts a new process on whichever session the thread then names.
+                    yield* runtimeCallbackPermit.withPermit(
+                      Effect.gen(function* () {
+                        yield* awaitAdmittedNativeResponses;
+                        yield* quarantineNativeTransportAtGeneration(
+                          yield* Ref.get(runtimeCallbackGeneration),
+                        );
+                        yield* advanceRuntimeCallbackGeneration;
+                      }),
+                    );
+                    yield* Ref.set(runtimeRestartRequired, true);
+                    // A process that may still hold the session must never meet a second owner.
+                    if (Exit.isFailure(yield* Effect.exit(terminateProcessGroup))) {
+                      const error = new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail:
+                          "ACP runtime process-group teardown failed before rewind; the session is poisoned",
+                      });
+                      yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
+                      return yield* error;
+                    }
+                    if (runtimeScope !== undefined) {
+                      const released = runtimeScope;
+                      runtimeScope = undefined;
+                      yield* Scope.close(released, Exit.void).pipe(Effect.ignore);
+                    }
+                    const turns = rollbackInput.providerThreadTurns.toSorted(
+                      (left, right) => left.ordinal - right.ordinal,
+                    );
+                    const rewoundSessionId = yield* flavor.rewindSession({
+                      sessionId: sourceSessionId,
+                      cwd: latestRuntimePolicy.cwd ?? process.cwd(),
+                      keptTurns: turns.filter(
+                        (turn) => turn.ordinal <= target.providerTurn.ordinal,
+                      ),
+                      removedTurns: turns.filter(
+                        (turn) => turn.ordinal > target.providerTurn.ordinal,
+                      ),
+                      keptMessageText: target.message?.text,
+                    });
+                    itemIdentityVersion = 2;
+                    return {
+                      providerThread: {
+                        ...rollbackInput.providerThread,
+                        nativeThreadRef: {
+                          driver,
+                          nativeId: rewoundSessionId,
+                          strength: "strong" as const,
+                        },
+                        nativeConversationHeadRef: null,
+                        nativeMetadata: {
+                          ...rollbackInput.providerThread.nativeMetadata,
+                          itemIdentityVersion: 2 as const,
+                        },
+                        status: "idle" as const,
+                        updatedAt: yield* DateTime.now,
+                      },
+                      providerTurns: [],
+                      messages: [],
+                      runtimeRequests: [],
+                    };
+                  }
+                  // SCIENT-FORK:END
                   itemIdentityVersion = 2;
                   prepareTerminalEnvironment(
                     yield* readMcpContext(rollbackInput.providerThread.appThreadId),

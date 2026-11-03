@@ -382,6 +382,16 @@
       "path": "apps/web/src/scient/accounts/accountsView.ts",
       "anchor": "curatedIcons.json",
       "purpose": "Account logos reuse logos from the Extensions curated icon registry; the file only names that source."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/DroidDriver.ts",
+      "anchor": "ProviderNativeInventory",
+      "purpose": "Publish the MCP servers Droid configures itself, listed during each full Droid probe."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/DroidSkills.ts",
+      "anchor": "ServerProviderMcpServer",
+      "purpose": "Map Droid's own MCP server listing to Scient Extensions' native MCP server rows."
     }
   ]
 }

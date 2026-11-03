@@ -59,7 +59,7 @@ interface DroidSubagentWait {
 export interface DroidSubagentTracker {
   /** By the `Task` tool call id, which is also the task id. Ended ones stay, to recognize a re-announced call. */
   readonly subagents: Map<string, DroidSubagent>;
-  /** By Droid's own id for a background sub-agent. */
+  /** By Droid's own task id, which `TaskOutput` and `TaskStop` name. */
   readonly background: Map<string, DroidSubagent>;
   /** `TaskOutput` calls that have not returned, by tool call id. */
   readonly waits: Map<string, DroidSubagentWait>;
@@ -97,6 +97,10 @@ function isDroidNestedTaskToolCall(input: {
   if (typeof subagentType === "string") return subagentType.trim().length > 0;
   return (input.title ?? "").trim().toLowerCase() === "task";
 }
+
+/** Droid's id for a sub-agent's own session, which 1.2.0 reports as the call starts. */
+const childSessionId = (toolCall: AcpToolCallState) =>
+  text(record(record(toolCall.data.meta)?.subagent_session_info)?.session_id);
 
 function isDroidTaskOutputToolCall(title: string | undefined, rawInput: unknown): boolean {
   if ((title ?? "").trim().toLowerCase() === "taskoutput") return true;
@@ -216,8 +220,10 @@ export function observeDroidSubagentToolCall(
 ): DroidSubagentToolCall {
   const id = toolCall.toolCallId;
   const rawInput = record(toolCall.data.rawInput);
+  // The state's title is a display summary ("Tool" for a TaskStop); Droid's own is in data.
+  const nativeTitle = text(toolCall.data.title) ?? toolCall.title;
   const known = tracker.subagents.get(id);
-  if (known || isDroidNestedTaskToolCall({ title: toolCall.title, rawInput })) {
+  if (known || isDroidNestedTaskToolCall({ title: nativeTitle, rawInput })) {
     // Droid announces a cancelled call again and fails it again: one sub-agent, already ended.
     if (known?.state === "ended") return { events: [], item: "none" };
     const events: Array<DroidSubagentEvent> = [];
@@ -243,17 +249,27 @@ export function observeDroidSubagentToolCall(
         progress(subagent, DROID_SUBAGENT_STEPS_NOTE),
       );
     }
+    const droidId = childSessionId(toolCall);
+    if (droidId) tracker.background.set(droidId, subagent);
     const result = toolCallText(toolCall);
-    if (toolCall.status === "completed") {
-      const backgroundId =
-        result && /^Task launched in background\b/iu.test(result)
-          ? text(/^task_id:[ \t]*(\S+)/imu.exec(result)?.[1])
-          : undefined;
+    // Droid 1.2.0 keeps a background call open, with this text, until the sub-agent ends.
+    if (
+      toolCall.status === "inProgress" &&
+      subagent.state === "running" &&
+      result !== undefined &&
+      /^Running in background\b/iu.test(result)
+    ) {
+      subagent.state = "background";
+      events.push(progress(subagent, BACKGROUND_NOTE));
+    } else if (toolCall.status === "completed") {
+      // Before 1.2.0 a background launch completes the call with this acknowledgement.
+      const launched = result !== undefined && /^Task launched in background\b/iu.test(result);
+      const backgroundId = launched ? text(/^task_id:[ \t]*(\S+)/imu.exec(result)?.[1]) : undefined;
       if (backgroundId && subagent.state === "running") {
         subagent.state = "background";
         tracker.background.set(backgroundId, subagent);
         events.push(progress(subagent, BACKGROUND_NOTE));
-      } else if (subagent.state === "running") {
+      } else if (!launched) {
         events.push(ended(subagent, { status: "completed", summary: result }));
       }
     } else if (toolCall.status === "failed") {
@@ -267,8 +283,11 @@ export function observeDroidSubagentToolCall(
     return { events, item: "none" };
   }
 
+  if ((nativeTitle ?? "").trim().toLowerCase() === "taskstop")
+    return observeDroidTaskStop(tracker, toolCall, rawInput);
+
   const pending = tracker.waits.get(id);
-  if (!pending && !isDroidTaskOutputToolCall(toolCall.title, rawInput)) {
+  if (!pending && !isDroidTaskOutputToolCall(nativeTitle, rawInput)) {
     return { events: [], item: "unchanged" };
   }
   const wait: DroidSubagentWait = pending ?? {
@@ -322,6 +341,38 @@ export function observeDroidSubagentToolCall(
       title,
       // The row's label is its detail when it has one: only a failure keeps Droid's text.
       ...(toolCall.status === "failed" && result ? { detail: withoutErrorPrefix(result) } : {}),
+    },
+  };
+}
+
+/**
+ * The main agent stopping a sub-agent. A stop Droid has not confirmed leaves
+ * it open; its own call then fails ("No output available"), already ended.
+ */
+function observeDroidTaskStop(
+  tracker: DroidSubagentTracker,
+  toolCall: AcpToolCallState,
+  rawInput: Record<string, unknown> | undefined,
+): DroidSubagentToolCall {
+  const subagent = tracker.background.get(text(rawInput?.task_id) ?? "");
+  const result = toolCallText(toolCall);
+  const stopped =
+    toolCall.status === "completed" &&
+    result !== undefined &&
+    /\bstopped successfully\b/iu.test(result);
+  const events =
+    subagent !== undefined && subagent.state !== "ended" && stopped
+      ? [ended(subagent, { status: "cancelled", error: "Droid stopped this sub-agent." })]
+      : [];
+  const about = subagent ? `sub-agent · ${subagent.title}` : "a sub-agent";
+  const { detail: _detail, ...rest } = toolCall;
+  return {
+    events,
+    item: {
+      ...rest,
+      title: stopped ? `Stopped ${about}` : `Stopping ${about}`,
+      // Anything but a confirmed stop keeps Droid's own words.
+      ...(!stopped && result ? { detail: withoutErrorPrefix(result) } : {}),
     },
   };
 }
