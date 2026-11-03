@@ -113,6 +113,18 @@ describe("the tool scan", () => {
     expect(tools.get("perl")?.[0]?.executable).toBe("C:\\Tools\\PERL.EXE");
   });
 
+  it("passes over the Unix script a Windows tool ships beside its batch file", () => {
+    const tools = scan(
+      computer(["C:\\tools\\kotlinc\\bin\\kotlinc", "C:\\tools\\kotlinc\\bin\\kotlinc.bat"], {
+        platform: "win32",
+        environment: { Path: "C:\\tools\\kotlinc\\bin" },
+      }),
+    );
+    expect(tools.get("kotlin")?.map((tool) => tool.executable)).toEqual([
+      "C:\\tools\\kotlinc\\bin\\kotlinc.bat",
+    ]);
+  });
+
   it("reads each conda location as its own step, so one dead drive sets aside only itself", () => {
     const context = computer(["/home/a/miniconda3/envs/lab/bin/gfortran"], {
       environment: { PATH: "/none" },
@@ -137,12 +149,40 @@ describe("the tool scan", () => {
 
   it("names a tool in a known place by the command it answers to", () => {
     const tools = scan(
-      computer(["C:\\Program Files\\JAGS\\JAGS-4.3.1\\x64\\bin\\jags-terminal.exe"], {
-        platform: "win32",
-        environment: { Path: "C:\\none", ProgramFiles: "C:\\Program Files" },
-      }),
+      computer(
+        [
+          "C:\\Program Files\\JAGS\\JAGS-4.3.1\\x64\\bin\\jags-terminal.exe",
+          "C:\\Program Files\\scilab-2026.1.0\\bin\\WScilex-cli.exe",
+        ],
+        {
+          platform: "win32",
+          environment: { Path: "C:\\none", ProgramFiles: "C:\\Program Files" },
+        },
+      ),
     );
     expect(tools.get("jags")?.[0]?.name).toBe("jags");
+    expect(tools.get("scilab")?.[0]?.name).toBe("WScilex-cli");
+  });
+
+  it("reads Windows variables in any case, as Git Bash passes them on", () => {
+    const tools = scan(
+      computer(["C:\\Program Files\\Racket\\Racket.exe", "C:\\tools\\elixir\\bin\\elixir.bat"], {
+        platform: "win32",
+        environment: { PATH: "C:\\tools\\elixir\\bin", PROGRAMFILES: "C:\\Program Files" },
+      }),
+    );
+    expect(tools.get("racket")?.[0]?.executable).toBe("C:\\Program Files\\Racket\\Racket.exe");
+    expect(tools.get("elixir")?.[0]?.executable).toBe("C:\\tools\\elixir\\bin\\elixir.bat");
+  });
+
+  it("keeps the preferred name when two in one folder are the same file", () => {
+    const tools = scan(
+      computer(["/opt/bin/scilab", "/opt/bin/scilab-cli"], {
+        environment: { PATH: "/opt/bin" },
+        links: { "/opt/bin/scilab-cli": "/opt/bin/scilab" },
+      }),
+    );
+    expect(tools.get("scilab")?.map((tool) => tool.name)).toEqual(["scilab-cli"]);
   });
 
   it("leads with the catalog's order within one folder", () => {

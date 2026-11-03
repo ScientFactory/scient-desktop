@@ -1,8 +1,15 @@
-/** One way to run a file. `{file}` is the source and `{output}` a built program. */
+/**
+ * One way to run a file. `{file}` is the source, `{quotedFile}` the same for inside double quotes
+ * read with backslash escapes, `{fileFolder}` and `{fileStem}` its folder and its name without the
+ * extension, `{netlogoExperiment}` the first experiment a NetLogo model saves, and `{output}` a
+ * built program.
+ */
 export interface ComputeRunCommand {
   /** The tool's name, as the scan reports it. */
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** Added after `args` everywhere except Windows, whose linkers refuse them. */
+  readonly unixArgs?: ReadonlyArray<string>;
   /** After `args` builds `{output}`: what runs it. Absent runs `{output}` itself. */
   readonly build?: { readonly runner?: string; readonly args?: ReadonlyArray<string> };
 }
@@ -12,6 +19,8 @@ export interface ComputeRunRoute {
   readonly extensions: ReadonlyArray<string>;
   /** Best first. The first one found on the computer runs the file. */
   readonly commands: ReadonlyArray<ComputeRunCommand>;
+  /** Name shown for a route no catalog language covers. */
+  readonly label?: string;
 }
 
 const file = (command: string, ...flags: ReadonlyArray<string>): ComputeRunCommand => ({
@@ -19,11 +28,20 @@ const file = (command: string, ...flags: ReadonlyArray<string>): ComputeRunComma
   args: [...flags, "{file}"],
 });
 
-const compiled = (command: string): ComputeRunCommand => ({
+const compiled = (command: string, ...flags: ReadonlyArray<string>): ComputeRunCommand => ({
   command,
-  args: ["{file}", "-o", "{output}"],
+  args: [...flags, "{file}", "-o", "{output}"],
   build: {},
 });
+
+/** gcc on Linux needs the math library named, and `sqrt` is in most scientific programs. */
+const withMath = (command: ComputeRunCommand): ComputeRunCommand => ({
+  ...command,
+  unixArgs: ["-lm"],
+});
+
+/** C++ compilers still default to old standards, so modern code would not build. */
+const CPP_STANDARD = "-std=gnu++2b";
 
 /** Compiler flags for `cl`, which takes neither `-o` nor a separate output argument. */
 const msvc: ComputeRunCommand = {
@@ -31,10 +49,15 @@ const msvc: ComputeRunCommand = {
   args: ["/nologo", "/Fe:{output}", "{file}"],
   build: {},
 };
+const msvcCpp: ComputeRunCommand = {
+  command: "cl",
+  args: ["/nologo", "/EHsc", "/std:c++latest", "/Fe:{output}", "{file}"],
+  build: {},
+};
 
 /**
  * Every language that runs from its file. Python, R, Julia, SQL and MATLAB have sessions of their
- * own. A file type two languages share goes to the first one listed here.
+ * own. A file type two languages share goes to the first one installed, in the order listed here.
  */
 export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   { languageId: "bash", extensions: [".sh", ".bash"], commands: [file("bash")] },
@@ -56,19 +79,25 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "c",
     extensions: [".c"],
-    commands: [compiled("clang"), compiled("gcc"), compiled("cc"), msvc],
+    commands: [...["clang", "gcc", "cc"].map((name) => withMath(compiled(name))), msvc],
   },
   {
     languageId: "cpp",
     extensions: [".cpp", ".cc", ".cxx"],
-    commands: [compiled("clang++"), compiled("g++"), compiled("c++"), msvc],
+    commands: [
+      ...["clang++", "g++", "c++"].map((name) => withMath(compiled(name, CPP_STANDARD))),
+      msvcCpp,
+    ],
   },
   {
     languageId: "fortran",
     extensions: [".f90", ".f95", ".f03", ".f08", ".f"],
-    commands: ["gfortran", "ifx", "ifort", "flang", "nvfortran", "lfortran"].map(compiled),
+    commands: ["gfortran", "ifx", "ifort", "flang", "nvfortran", "lfortran"].map((name) =>
+      compiled(name),
+    ),
   },
-  { languageId: "rust", extensions: [".rs"], commands: [compiled("rustc")] },
+  // Without an edition rustc reads a file as 2015. 2021 also works on older compilers, unlike 2024.
+  { languageId: "rust", extensions: [".rs"], commands: [compiled("rustc", "--edition", "2021")] },
   { languageId: "go", extensions: [".go"], commands: [file("go", "run")] },
   { languageId: "java", extensions: [".java"], commands: [file("java")] },
   {
@@ -103,13 +132,22 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "isabelle",
     extensions: [".thy"],
-    commands: [{ command: "isabelle", args: ["process", "-T", "{file}"] }],
+    // Isabelle 2026 replaced `process -T`. The file's folder is the session, so the theories it
+    // imports from beside it are found.
+    commands: [
+      { command: "isabelle", args: ["process_theories", "-O", "-D", "{fileFolder}", "{fileStem}"] },
+    ],
   },
   { languageId: "sage", extensions: [".sage"], commands: [file("sage")] },
   { languageId: "gap", extensions: [".g", ".gap"], commands: [file("gap", "-q")] },
   { languageId: "macaulay2", extensions: [".m2"], commands: [file("M2", "--script")] },
   { languageId: "singular", extensions: [".sing"], commands: [file("Singular", "-q")] },
-  { languageId: "maxima", extensions: [".mac"], commands: [file("maxima", "-b")] },
+  // Maxima reads the path inside batch("..."), so backslashes on Windows must be escaped.
+  {
+    languageId: "maxima",
+    extensions: [".mac"],
+    commands: [{ command: "maxima", args: ["-b", "{quotedFile}"] }],
+  },
   { languageId: "maple", extensions: [".mpl"], commands: [file("maple", "-q")] },
   { languageId: "nextflow", extensions: [".nf"], commands: [file("nextflow", "run")] },
   {
@@ -117,7 +155,7 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
     extensions: [".smk"],
     commands: [{ command: "snakemake", args: ["--cores", "1", "-s", "{file}"] }],
   },
-  { languageId: "gnuplot", extensions: [".plt", ".gnu"], commands: [file("gnuplot")] },
+  { languageId: "gnuplot", extensions: [".plt", ".gnu", ".gp"], commands: [file("gnuplot")] },
   {
     languageId: "imagej-macro",
     extensions: [".ijm"],
@@ -167,15 +205,15 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   { languageId: "fsharp", extensions: [".fsx"], commands: [file("dotnet", "fsi")] },
   { languageId: "zig", extensions: [".zig"], commands: [file("zig", "run")] },
   { languageId: "nim", extensions: [".nim"], commands: [file("nim", "r")] },
-  { languageId: "prolog", extensions: [".plg"], commands: [file("swipl")] },
+  { languageId: "prolog", extensions: [".plg", ".pro"], commands: [file("swipl")] },
   {
     languageId: "apl",
     extensions: [".apl"],
-    commands: [file("dyalogscript"), file("apl", "--script")],
+    commands: [file("dyalogscript"), file("apl", "--script", "-f")],
   },
   {
     languageId: "verilog",
-    extensions: [".sv", ".vh"],
+    extensions: [".sv", ".vh", ".v"],
     commands: [
       {
         command: "iverilog",
@@ -189,39 +227,109 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "scilab",
     extensions: [".sce"],
-    commands: ["scilab-cli", "scilab"].map((name) => file(name, "-nb", "-f")),
+    // Without -quit Scilab waits at its prompt after the file. WScilex-cli is the console Scilab on
+    // Windows, where scilab.bat opens its window instead.
+    commands: ["WScilex-cli", "scilab-cli", "scilab"].map((name) =>
+      file(name, "-nb", "-quit", "-f"),
+    ),
   },
   { languageId: "minizinc", extensions: [".mzn"], commands: [file("minizinc")] },
   { languageId: "ampl", extensions: [".mod"], commands: [file("ampl")] },
   { languageId: "gams", extensions: [".gms"], commands: [file("gams")] },
   { languageId: "jags", extensions: [".jags"], commands: [file("jags")] },
+  // Without its window NetLogo runs only an experiment saved in the model, so Run runs the first
+  // and prints its table. NetLogo 7 saves .nlogox.
   {
     languageId: "netlogo",
-    extensions: [".nlogo"],
-    commands: [{ command: "netlogo-headless", args: ["--model", "{file}"] }],
+    extensions: [".nlogo", ".nlogox"],
+    commands: [
+      {
+        command: "netlogo-headless",
+        args: ["--model", "{file}", "--experiment", "{netlogoExperiment}", "--table", "-"],
+      },
+    ],
   },
   { languageId: "agda", extensions: [".agda"], commands: [file("agda")] },
+  // SQL runs on DuckDB in a session. This is for a script written for sqlite3's own commands.
+  {
+    languageId: "sqlite",
+    label: "SQLite",
+    extensions: [".sql"],
+    commands: [{ command: "sqlite3", args: ["-bail", ":memory:", '.read "{quotedFile}"'] }],
+  },
 ];
 
-/** The route for a file. An extension with capitals, like ROOT's `.C`, matches only exactly. */
-export function computeRunRouteForPath(path: string): ComputeRunRoute | undefined {
-  const lower = path.toLowerCase();
-  const matching = (accepts: (extension: string) => boolean) =>
-    COMPUTE_RUN_TABLE.find((route) => route.extensions.some(accepts));
-  return (
-    matching((extension) => extension !== extension.toLowerCase() && path.endsWith(extension)) ??
-    matching((extension) => lower.endsWith(extension))
-  );
+/** A script that uses sqlite3's own dot commands, which no other SQL engine reads. */
+export function isSqliteScript(contents: string): boolean {
+  return /^\s*\.[a-z]+\b/mu.test(contents);
 }
 
 /**
- * What Run can start for a language, best first. The first one runs a file unless someone chooses
- * another. An app bundle proves the language is here, but it is not a program Run can start.
+ * Every route for a file, best first. An extension with capitals, like ROOT's `.C`, matches only
+ * exactly, and comes before the same letters in lower case.
+ */
+export function computeRunRoutesForPath(path: string): ReadonlyArray<ComputeRunRoute> {
+  const lower = path.toLowerCase();
+  const exact = COMPUTE_RUN_TABLE.filter((route) =>
+    route.extensions.some(
+      (extension) => extension !== extension.toLowerCase() && path.endsWith(extension),
+    ),
+  );
+  const rest = COMPUTE_RUN_TABLE.filter(
+    (route) =>
+      !exact.includes(route) &&
+      route.extensions.some(
+        (extension) => extension === extension.toLowerCase() && lower.endsWith(extension),
+      ),
+  );
+  return [...exact, ...rest];
+}
+
+export function computeRunRouteForPath(path: string): ComputeRunRoute | undefined {
+  return computeRunRoutesForPath(path)[0];
+}
+
+/** Newest first. A version the scan could not read goes last, keeping the order it was found. */
+function newestFirst(left: string | null | undefined, right: string | null | undefined): number {
+  if (left === right) return 0;
+  if (left === null || left === undefined) return 1;
+  if (right === null || right === undefined) return -1;
+  const parts = (version: string) => (version.match(/\d+/gu) ?? []).map(Number);
+  const [a, b] = [parts(left), parts(right)];
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (b[index] ?? 0) - (a[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+const SYSTEM_TOOL = /^\/(?:System\/Cryptexes\/App\/)?(?:usr\/)?s?bin\/|^[a-z]:\\windows\\/iu;
+
+/** The copy a computer came with, which nobody chose. */
+export function isSystemTool(executable: string): boolean {
+  return SYSTEM_TOOL.test(executable);
+}
+
+/**
+ * What Run can start for a language, best first: the commands in the table's order and, for each,
+ * the copy PATH finds first, because that is what the person's terminal runs. Only the system's
+ * own copy gives way to a newer install. The first one runs a file unless someone chooses another.
+ * An app bundle proves the language is here, but it is not a program Run can start.
  */
 export function computeRunnableTools<
-  Tool extends { readonly name: string; readonly executable: string },
+  Tool extends {
+    readonly name: string;
+    readonly executable: string;
+    readonly version?: string | null;
+  },
 >(route: ComputeRunRoute, tools: ReadonlyArray<Tool>): ReadonlyArray<Tool> {
-  return route.commands.flatMap((command) =>
-    tools.filter((tool) => tool.name === command.command && !/\.app$/iu.test(tool.executable)),
-  );
+  return route.commands.flatMap((command) => {
+    const [first, ...rest] = tools.filter(
+      (tool) => tool.name === command.command && !/\.app$/iu.test(tool.executable),
+    );
+    if (first === undefined) return [];
+    const newest = (found: ReadonlyArray<Tool>) =>
+      [...found].sort((left, right) => newestFirst(left.version, right.version));
+    return isSystemTool(first.executable) ? newest([first, ...rest]) : [first, ...newest(rest)];
+  });
 }

@@ -2,12 +2,13 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ComputeOutputProjection } from "@t3tools/client-runtime/state/compute";
 import type { ComputeSessionRecord, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { ComputeOutputView } from "./ComputeOutputView";
+import { useAskAboutCompute } from "./ComputeQuoteActions";
 import { mergeComputeOutputs } from "./computeResultPresentation";
 
 /** Output that belongs to the session rather than a run, such as kernel start-up warnings. */
@@ -20,6 +21,8 @@ export function ComputeSessionNotices(props: {
   readonly threadRef: ScopedThreadRef;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const section = useRef<HTMLElement>(null);
+  const ask = useAskAboutCompute({ threadRef: props.threadRef, cwd: props.cwd });
   const persisted = useEnvironmentQuery(
     expanded
       ? computeEnvironment.outputs({
@@ -36,7 +39,7 @@ export function ComputeSessionNotices(props: {
   }, [expanded, props.rehydrationToken, refresh]);
 
   return (
-    <section className="px-3 py-2">
+    <section ref={section} className="px-3 py-2">
       <button
         type="button"
         className="flex cursor-pointer items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
@@ -63,6 +66,18 @@ export function ComputeSessionNotices(props: {
               clipped={persisted.data === null && props.live.clipped}
               threadRef={props.threadRef}
               source={null}
+              onAskAgent={
+                ask === null
+                  ? undefined
+                  : (text) => {
+                      if (section.current === null) return;
+                      ask({
+                        source: section.current,
+                        place: { _tag: "session", sessionId: props.session.sessionId },
+                        text,
+                      });
+                    }
+              }
             />
           )}
         </div>

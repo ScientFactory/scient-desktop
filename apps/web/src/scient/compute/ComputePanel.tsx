@@ -156,6 +156,7 @@ export function ComputePanel(props: {
     environmentId: props.environmentId,
     cwd: props.cwd,
     contextId: props.contextId,
+    sourcePath: props.sourcePath,
   });
   const variables = useComputeVariables({
     environmentId: props.environmentId,
@@ -285,6 +286,11 @@ export function ComputePanel(props: {
       className="@container flex min-h-0 flex-1 flex-col bg-background"
       aria-label="Scientific results"
     >
+      {selectedSession?.closedAt != null && selectedSession.lostReason !== null ? (
+        <p className="shrink-0 border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
+          {selectedSession.lostReason}
+        </p>
+      ) : null}
       {consoleContext !== undefined && !hasWork ? null : (
         <header className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2">
           {props.resultPicker}

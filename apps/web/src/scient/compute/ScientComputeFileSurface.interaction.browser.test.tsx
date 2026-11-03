@@ -41,6 +41,8 @@ import { ComputeContextId } from "./computeContextStore";
 import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 import { MATLAB_COMPUTE_SOURCE, PYTHON_COMPUTE_SOURCE } from "./computeSourceLanguage";
 
+const first = ComputeContextId.make("first");
+
 describe("Compute file navigation", () => {
   async function _setupFixture0(_fixture: _Fixture) {
     vi.clearAllMocks();
@@ -108,7 +110,8 @@ describe("Compute file navigation", () => {
       await render(_fixture, language);
       expect(_fixture.container.querySelector('[data-testid="code"]')).not.toBeNull();
       expect(_fixture.container.querySelector('[data-testid="results"]')).toBeNull();
-      await click(_fixture, "Results");
+      expect(_fixture.container.textContent).not.toContain("Results");
+      await act(() => useComputeFilePresentationStore.getState().setFileView(first, "results"));
       await click(_fixture, "Variables");
       await act(async () => await _fixture.root0.rerender(null));
       await render(_fixture, language, "other");
@@ -128,7 +131,7 @@ describe("Compute file navigation", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    await click(_fixture, "Split");
+    await act(() => useComputeFilePresentationStore.getState().setFileView(first, "split"));
     await click(_fixture, "Run file");
     expect(mocks.runFile).toHaveBeenCalledOnce();
     expect(mocks.runPrimary).not.toHaveBeenCalled();

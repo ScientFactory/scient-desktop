@@ -88,7 +88,7 @@ it.effect("lets an agent without the compute grant read what is installed", () =
           language: "cpp",
           name: "C++",
           status: "clang++ · Xcode tools",
-          use: "shell",
+          use: "scient_compute_run_file",
           default: null,
           runtimes: [{ executable: "/usr/bin/clang++", version: null, origin: "Xcode tools" }],
         },

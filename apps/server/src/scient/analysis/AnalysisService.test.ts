@@ -377,6 +377,61 @@ describe("analysis artifact analytics", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("runs once on another install, and only one the runtime offered", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeServiceTestLayer({
+        ...testAdapter,
+        inspect: async ({ inspectedAt }) => ({
+          ...runtimeProfile(inspectedAt),
+          alternatives: [
+            { executablePath: "/older/matlab", label: "MATLAB test runtime 1", version: "1" },
+            { executablePath: "/other/matlab", label: "MATLAB test runtime 2", version: "2" },
+          ],
+        }),
+      });
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const request = {
+            cwd: harness.projectRoot,
+            relativePath: "launch-error.m",
+            sourceRevision,
+            runtimeId,
+          };
+          const refused = yield* Effect.flip(
+            service.startRun({ ...request, executablePath: "/not/offered" }),
+          );
+          expect(refused.reason).toBe("runtime-invalid");
+          const runId = ExecutionRunId.make("alternative-run");
+          const run = yield* service.startRun({
+            ...request,
+            runId,
+            executablePath: "/older/matlab",
+          });
+          expect(run.runtime.executablePath).toBe("/older/matlab");
+          expect(run.runtime.version).toBe("1");
+          const retried = yield* service.startRun({
+            ...request,
+            runId,
+            executablePath: "/older/matlab",
+          });
+          expect(retried.receipt.runId).toBe(runId);
+          const conflicting = yield* Effect.flip(
+            service.startRun({ ...request, runId, executablePath: "/other/matlab" }),
+          );
+          expect(conflicting.reason).toBe("run-already-active");
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("reports a failed requested capture when preparation prevents process launch", () =>
     Effect.gen(function* () {
       const harness = yield* makeServiceTestLayer({
