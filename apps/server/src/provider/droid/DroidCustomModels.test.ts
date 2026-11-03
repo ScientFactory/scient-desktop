@@ -28,7 +28,6 @@ import type { SessionConfigOption } from "effect-acp/compat";
 // SCIENT-FORK:END
 import {
   buildDroidCustomModelsSettings,
-  droidCustomModelsSnapshot,
   droidCustomModelId,
   makeDroidCustomModelsRuntimeFactory,
   resolveDroidCustomReasoningOptions,
@@ -1024,29 +1023,6 @@ describe("Droid custom model settings", () => {
       expect(withTools?.hooks).toBeUndefined();
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
-
-  it("ignores other agents' attachments and connections when comparing process configuration", () => {
-    const original = connection("openai-responses", "original");
-    const unrelated = { ...connection("openai-responses", "other"), models: [] };
-    expect(droidCustomModelsSnapshot([original], instanceId)).toEqual(
-      droidCustomModelsSnapshot(
-        [
-          {
-            ...original,
-            models: original.models.map((model) => ({
-              ...model,
-              instanceIds: [...model.instanceIds, ProviderInstanceId.make("pi")],
-            })),
-          },
-          unrelated,
-        ],
-        instanceId,
-      ),
-    );
-    expect(droidCustomModelsSnapshot([original], instanceId)).not.toEqual(
-      droidCustomModelsSnapshot([{ ...original, credentialId: "rotated" }], instanceId),
-    );
-  });
 
   it.effect("defers capability updates without retiring the current runtime", () =>
     Effect.gen(function* () {

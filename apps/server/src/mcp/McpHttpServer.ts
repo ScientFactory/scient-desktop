@@ -1457,7 +1457,7 @@ export const layerInProcessMcpServer = McpServer.middleware<{
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
 // SCIENT-FORK:START — Scient's server name and request-scoped tool discovery.
-const makeLayerMcpTransport =
+export const makeLayerMcpTransport =
   (toolList: ReturnType<typeof makeScientToolListLayer>) =>
   <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
     McpServer.layerHttp({
@@ -1470,9 +1470,6 @@ const makeLayerMcpTransport =
     }).pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(toolList));
 
 export const layerMcpTransport = makeLayerMcpTransport(layerScientToolList);
-
-/** Tests declare their own host tools for discovery. */
-export const makeLayerMcpTransportForTest = makeLayerMcpTransport;
 // SCIENT-FORK:END
 
 /** Every tool the Scient MCP server advertises. AgentContextBudget.test.ts measures this set. */

@@ -29,21 +29,6 @@ export interface ContextHistoryCandidate {
 export type ContextHandoffItem = OrchestrationV2TurnItem | ContextHistoryCandidate;
 export const isContextHistoryItem = (item: ContextHandoffItem) =>
   "sourceOnly" in item || hasHistoricalContext(item);
-export const contextHistoryCandidate = (
-  item: OrchestrationV2TurnItem,
-): ContextHistoryCandidate => ({
-  sourceOnly: true,
-  id: item.id,
-  threadId: item.threadId,
-  runId: item.runId,
-  nodeId: item.nodeId,
-  type: item.type,
-  ...(item.type === "user_message" || item.type === "assistant_message"
-    ? { messageId: item.messageId }
-    : {}),
-  ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),
-  partialSnapshot: item.status === "interrupted" || item.inheritedFrom?.status === "running",
-});
 
 export const makeContextHistorySource = (
   id: ContextHandoffId,

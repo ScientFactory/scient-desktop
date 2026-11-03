@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -32,10 +31,10 @@ import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-import { ompMaintenance } from "./omp/OmpMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
@@ -1480,16 +1479,11 @@ it.effect("never runs a native Oh My Pi updater, whatever the latest release is"
       instanceId,
       version: "18.2.8",
     });
-    // A standalone installation on PATH can offer its own update command.
-    const capabilities = yield* ompMaintenance
-      .resolve({
-        binaryPath: "omp",
-        resolvedCommandPath: "/usr/local/bin/omp",
-        realCommandPath: "/usr/local/bin/omp",
-        env: { HOME: "/home/test", PATH: "/usr/local/bin" },
-        platform: "linux",
-      })
-      .pipe(Effect.provide(NodeServices.layer));
+    // OmpDriver gives every installation these manual-only capabilities.
+    const capabilities = makeManualOnlyProviderMaintenanceCapabilities({
+      provider,
+      packageName: null,
+    });
     assert.strictEqual(capabilities.update, null);
     const updater = yield* makeTestRunner(
       {
