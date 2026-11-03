@@ -8,7 +8,6 @@ import {
   BrowserProfileRecord,
   AccountActivityEntry,
   OnePasswordStatus,
-  GOOGLE_SITE,
 } from "@t3tools/contracts";
 import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
@@ -146,25 +145,6 @@ const foldSignInFields = (summary: Record<string, unknown>) => {
   return signIn ? { ...rest, ...verified, signIn } : { ...rest, ...verified };
 };
 
-/**
- * Google rows recorded from a profile's session predate `origin`; they are the only passwordless
- * rows Scient made with a username.
- */
-const foldGoogleSessionOrigin = (summary: Record<string, unknown>) => {
-  const details = summary["details"] as Record<string, unknown> | undefined;
-  const secrets = summary["secrets"] as Record<string, unknown> | undefined;
-  const sites = details?.["sites"];
-  return details?.["kind"] === "website" &&
-    details["origin"] === undefined &&
-    details["username"] !== undefined &&
-    secrets?.["password"] === undefined &&
-    Array.isArray(sites) &&
-    sites.length === 1 &&
-    sites[0] === GOOGLE_SITE
-    ? { ...summary, details: { ...details, origin: "browser-session" } }
-    : summary;
-};
-
 /** Older stored shapes, read as today's before decoding. */
 export const foldStoredAccounts = (state: unknown): unknown => {
   if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
@@ -174,10 +154,7 @@ export const foldStoredAccounts = (state: unknown): unknown => {
     accounts: state.accounts.map((account) => {
       const summary = account?.summary;
       if (typeof summary !== "object" || summary === null) return account;
-      return {
-        ...account,
-        summary: foldGoogleSessionOrigin(foldSignInFields(foldLibraryDetails(summary))),
-      };
+      return { ...account, summary: foldSignInFields(foldLibraryDetails(summary)) };
     }),
   };
 };

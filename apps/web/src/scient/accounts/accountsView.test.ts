@@ -78,14 +78,15 @@ describe("Accounts decisions", () => {
         origin: "browser-session" as const,
       },
     };
-    const usernameOnly = {
-      ...website("work"),
+    const byHand = (profileId?: string) => ({
+      ...website(profileId),
       details: {
         kind: "website" as const,
-        sites: ["accounts.google.com"],
+        sites: ["google.com"],
         username: "b@example.com",
+        ...(profileId ? { profileId } : {}),
       },
-    };
+    });
     const saved = {
       ...website(),
       details: {
@@ -96,8 +97,12 @@ describe("Accounts decisions", () => {
       secrets: { password: { source: { type: "scient" as const } } },
     };
     expect(
-      fillableAccounts([google, saved, usernameOnly], "https://accounts.google.com/", "work"),
-    ).toEqual([saved, usernameOnly]);
+      fillableAccounts(
+        [google, saved, byHand(), byHand("work")],
+        "https://accounts.google.com/",
+        "work",
+      ),
+    ).toEqual([byHand("work"), saved, byHand()]);
   });
 
   it("groups rows recorded from sessions with browser sign-ins, and says when a profile lost Google", () => {

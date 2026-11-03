@@ -930,13 +930,25 @@ export const layer = Layer.effect(
                 );
                 const seen = valid ? ("signed-in" as const) : ("signed-out" as const);
                 const last = account.summary.signIn;
-                if (last?.state === seen && nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS)
+                // Google lists this address in the profile, so the row is that session.
+                const { details } = account.summary;
+                const recorded =
+                  details.kind === "website" &&
+                  details.origin === undefined &&
+                  input.sessions.some((session) => session.email === address(account))
+                    ? { ...details, origin: "browser-session" as const }
+                    : details;
+                if (
+                  recorded === details &&
+                  last?.state === seen &&
+                  nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS
+                )
                   continue;
                 // Google's own answer for a password-free row: nothing to refuse or limit here.
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: { ...account.summary, signIn: { state: seen, at } },
+                    summary: { ...account.summary, details: recorded, signIn: { state: seen, at } },
                   }),
                   true,
                 );

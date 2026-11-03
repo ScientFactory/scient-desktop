@@ -255,18 +255,4 @@ describe("stored accounts from before one sign-in state", () => {
       signIn: { state: "signed-in", at },
     });
   });
-
-  it("marks Google's session rows as recorded from a session, never a username saved by hand", () => {
-    const details = { kind: "website", username: "a@example.com", profileId: "work" };
-    expect(fold({ details: { ...details, sites: ["google.com"] }, secrets: {} })).toEqual({
-      updatedAt,
-      details: { ...details, sites: ["google.com"], origin: "browser-session" },
-      secrets: {},
-    });
-    expect(fold({ details: { ...details, sites: ["example.com"] }, secrets: {} })).toEqual({
-      updatedAt,
-      details: { ...details, sites: ["example.com"] },
-      secrets: {},
-    });
-  });
 });

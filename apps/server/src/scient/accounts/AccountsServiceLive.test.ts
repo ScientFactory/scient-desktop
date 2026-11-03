@@ -50,11 +50,12 @@ describe("AccountsService persistence", () => {
       expect(
         (yield* rows).map(({ details, signIn }) => [
           details.kind === "website" ? details.username : undefined,
+          details.kind === "website" ? details.origin : undefined,
           signIn?.state,
         ]),
       ).toEqual([
-        ["a@example.com", "signed-in"],
-        ["b@example.com", "signed-out"],
+        ["a@example.com", "browser-session", "signed-in"],
+        ["b@example.com", "browser-session", "signed-out"],
       ]);
       // Seen again, with the first signed out and the second gone from Google's list.
       yield* service.googleSessionsSeen({
@@ -74,6 +75,33 @@ describe("AccountsService persistence", () => {
         (yield* service.snapshot).accounts.find(({ accountId }) => accountId === saved.accountId)
           ?.signIn,
       ).toBeUndefined();
+    }),
+  );
+
+  it.effect("keeps a Google username saved by hand unmarked across a restart", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { service } = yield* makeHarness({ storage });
+      for (const profileId of [undefined, BrowserProfileId.make("profile-work")])
+        yield* service.save({
+          name: "Google",
+          details: {
+            kind: "website",
+            sites: ["google.com"],
+            username: "a@example.com",
+            ...(profileId ? { profileId } : {}),
+          },
+          secrets: {},
+        });
+      const restarted = yield* makeHarness({ storage });
+      expect(
+        (yield* restarted.service.snapshot).accounts.map(({ details }) =>
+          details.kind === "website" ? [details.profileId, details.origin] : [],
+        ),
+      ).toEqual([
+        [undefined, undefined],
+        ["profile-work", undefined],
+      ]);
     }),
   );
 
