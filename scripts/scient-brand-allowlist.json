@@ -648,13 +648,6 @@
     "reason": "Scient's SidebarUpdatePill replaces this upstream dialog and never mounts it; the file is kept unchanged for alignment."
   },
   {
-    "path": "packages/source-control-github/src/shared/definition.ts",
-    "line": "appName: \"T3 Code for GitHub\",",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "external-name",
-    "reason": "The registered name of T3's GitHub App. App sign-in stays off unless the operator sets T3CODE_GITHUB_APP_CLIENT_ID, which Scient builds do not ship."
-  },
-  {
     "path": "apps/server/src/cloud/selfUpdate.ts",
     "rules": ["t3-command"],
     "kind": "dormant-service",
