@@ -1,18 +1,10 @@
-import { hasNativeFileAuthority } from "../workspace/NativeFilePublication.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { bytesRevision, fileIdentity } from "../workspace/RetainedFileMutation.ts";
+import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import { type WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
-import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
-import { nativeFilePublicationCapabilities } from "../workspace/NativeFilePublication.ts";
-const helper = await filePublicationTestHelper();
-const capabilities = helper === undefined ? null : await nativeFilePublicationCapabilities(helper);
-const qualifiedReplacement =
-  capabilities != null && hasNativeFileAuthority(capabilities) && capabilities.atomicExchange;
 const bytes = (text: string) => Buffer.from(text);
 const tree = (files: Record<string, string>) =>
   new Map(Object.entries(files).map(([name, text]) => [name, bytesRevision(bytes(text))]));
@@ -36,6 +28,22 @@ async function put(cwd: string, files: Record<string, string>) {
   }
 }
 describe("Overleaf publication admission", () => {
+  it.live("keeps a late write from a program still holding a removed file", () =>
+    fixture(async (h) => {
+      await put(h.cwd, { "main.tex": "A" });
+      const handle = await NodeFSP.open(NodePath.join(h.cwd, "main.tex"), "r+");
+      try {
+        const result = await h.apply("remove", plan({ "main.tex": "A" }, {}));
+        expect(result.outcome).toBe("complete");
+        await handle.truncate(0);
+        await handle.writeFile("late B");
+        await handle.sync();
+        expect(await NodeFSP.readFile(result.retained[0]!.retainedPath!, "utf8")).toBe("late B");
+      } finally {
+        await handle.close();
+      }
+    }),
+  );
   it.live("refuses an oversized apply path before recording an intent", () =>
     fixture(async (h) => {
       const name = `${"a/".repeat(2100)}main.tex`;
@@ -47,180 +55,97 @@ describe("Overleaf publication admission", () => {
     }),
   );
   it.live(
-    "admits replacement only with qualified capture, preserving the original inode and permissions",
+    "publishes a rename destination before retaining its original source and advances the identity",
     () =>
       fixture(async (h) => {
-        await put(h.cwd, { "main.tex": "A" });
-        const target = NodePath.join(h.cwd, "main.tex");
-        await NodeFSP.chmod(target, 0o600);
-        const identity = await fileIdentity(target);
-        const replacement = h.apply("replace", plan({ "main.tex": "A" }, { "main.tex": "C" }));
-        if (qualifiedReplacement) {
-          expect(await replacement).toMatchObject({ outcome: "complete", matchesTarget: true });
-          expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
-          expect(await fileIdentity(target)).not.toEqual(identity);
-          const history = await h.run(
-            h.files.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
-          );
-          const retained = history.versions.find(
-            (version) => version.revision === bytesRevision(bytes("A")),
-          );
-          expect(retained).toBeDefined();
-          expect(await NodeFSP.readFile(retained!.retainedPath, "utf8")).toBe("A");
-          expect(await fileIdentity(retained!.retainedPath)).toEqual(identity);
-        } else {
-          await expect(replacement).rejects.toMatchObject({ _tag: "WorkspaceApplyError" });
-          expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
-          expect(await fileIdentity(target)).toEqual(identity);
-        }
-        expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o600);
+        await put(h.cwd, { "old.tex": "local" });
+        const result = await h.apply(
+          "rename",
+          plan({ "old.tex": "local" }, { "new.tex": "merged" }, [
+            { from: "old.tex", to: "new.tex" },
+          ]),
+        );
+        expect(result).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "new.tex"), "utf8")).toBe("merged");
+        await expect(NodeFSP.lstat(NodePath.join(h.cwd, "old.tex"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        const history = await h.run(
+          h.files.listFileVersions({ cwd: h.cwd, relativePath: "old.tex" }),
+        );
+        expect(
+          await Promise.all(
+            history.versions.map((version) => NodeFSP.readFile(version.retainedPath, "utf8")),
+          ),
+        ).toEqual(expect.arrayContaining(["local"]));
       }),
   );
-  if (HostProcess.Platform.defaultValue() === "darwin") {
-    it.live(
-      "publishes a rename destination before retaining its original source and advances the identity",
-      () =>
-        fixture(async (h) => {
-          await put(h.cwd, { "old.tex": "local" });
-          const result = await h.apply(
-            "rename",
-            plan({ "old.tex": "local" }, { "new.tex": "merged" }, [
-              { from: "old.tex", to: "new.tex" },
-            ]),
-          );
-          expect(result).toMatchObject({
-            outcome: "complete",
-            matchesTarget: true,
-            interrupted: [],
-          });
-          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "new.tex"), "utf8")).toBe("merged");
-          await expect(NodeFSP.lstat(NodePath.join(h.cwd, "old.tex"))).rejects.toMatchObject({
-            code: "ENOENT",
-          });
-          const history = await h.run(
-            h.files.listFileVersions({ cwd: h.cwd, relativePath: "old.tex" }),
-          );
-          expect(
-            await Promise.all(
-              history.versions.map((version) => NodeFSP.readFile(version.retainedPath, "utf8")),
-            ),
-          ).toEqual(expect.arrayContaining(["local"]));
-        }),
-    );
-    it.live("replans stale captures before changing any other file", () =>
+  it.live("replans stale captures before changing any other file", () =>
+    fixture(async (h) => {
+      await put(h.cwd, { "a.tex": "later", "b.tex": "base" });
+      expect(
+        await h.apply(
+          "stale",
+          plan({ "a.tex": "base", "b.tex": "base" }, { "a.tex": "remote", "b.tex": "remote" }),
+        ),
+      ).toMatchObject({ outcome: "replan" });
+      expect(await NodeFSP.readFile(NodePath.join(h.cwd, "b.tex"), "utf8")).toBe("base");
+    }),
+  );
+  it.live.each(["file-folder", "folder-file"] as const)(
+    "handles %s using only exclusive creates and retained removals",
+    (direction) =>
       fixture(async (h) => {
-        await put(h.cwd, { "a.tex": "later", "b.tex": "base" });
-        expect(
-          await h.apply(
-            "stale",
-            plan({ "a.tex": "base", "b.tex": "base" }, { "a.tex": "remote", "b.tex": "remote" }),
-          ),
-        ).toMatchObject({ outcome: "replan" });
-        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "b.tex"), "utf8")).toBe("base");
+        const before: Record<string, string> =
+            direction === "file-folder"
+              ? { notes: "old" }
+              : { "notes/sub/a.tex": "A", "notes/sub/b.tex": "B" },
+          after: Record<string, string> =
+            direction === "file-folder"
+              ? { "notes/sub/a.tex": "A", "notes/sub/b.tex": "B" }
+              : { notes: "new" };
+        await put(h.cwd, before);
+        const result = await h.apply("structural", plan(before, after));
+        expect(result).toMatchObject({
+          outcome: "complete",
+          matchesTarget: true,
+          interrupted: [],
+        });
+        for (const [name, text] of Object.entries(after))
+          expect(await NodeFSP.readFile(NodePath.join(h.cwd, name), "utf8")).toBe(text);
       }),
-    );
-    it.live.each(["file-folder", "folder-file"] as const)(
-      "handles %s using only exclusive creates and retained removals",
-      (direction) =>
-        fixture(async (h) => {
-          const before: Record<string, string> =
-              direction === "file-folder"
-                ? { notes: "old" }
-                : { "notes/sub/a.tex": "A", "notes/sub/b.tex": "B" },
-            after: Record<string, string> =
-              direction === "file-folder"
-                ? { "notes/sub/a.tex": "A", "notes/sub/b.tex": "B" }
-                : { notes: "new" };
-          await put(h.cwd, before);
-          const result = await h.apply("structural", plan(before, after));
-          expect(result).toMatchObject({
-            outcome: "complete",
-            matchesTarget: true,
-            interrupted: [],
-          });
-          for (const [name, text] of Object.entries(after))
-            expect(await NodeFSP.readFile(NodePath.join(h.cwd, name), "utf8")).toBe(text);
-        }),
-    );
-    it.live.each(["recorded", "after-step", "step-recorded", "base-recorded"] as const)(
-      "resumes an addition after %s without replacing outside D",
-      (point) => {
-        let crash = true;
-        return fixture(
-          async (h) => {
-            await expect(h.apply("add", plan({}, { "main.tex": "C" }))).rejects.toBeTruthy();
-            if (point !== "recorded")
-              await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "D");
-            await h.restart();
-            const result = await h.apply("add");
-            if (point === "recorded") {
-              expect(result.outcome).toBe("complete");
-              expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("C");
-            } else {
-              expect(result.matchesTarget).toBe(false);
-              expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("D");
+  );
+  it.live.each(["recorded", "after-step", "step-recorded", "base-recorded"] as const)(
+    "resumes an addition after %s without replacing outside D",
+    (point) => {
+      let crash = true;
+      return fixture(
+        async (h) => {
+          await expect(h.apply("add", plan({}, { "main.tex": "C" }))).rejects.toBeTruthy();
+          if (point !== "recorded") await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "D");
+          await h.restart();
+          const result = await h.apply("add");
+          if (point === "recorded") {
+            expect(result.outcome).toBe("complete");
+            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("C");
+          } else {
+            expect(result.matchesTarget).toBe(false);
+            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("D");
+          }
+        },
+        {
+          at: async (at) => {
+            if (at === point && crash) {
+              crash = false;
+              throw new Error("owned process died");
             }
           },
-          {
-            at: async (at) => {
-              if (at === point && crash) {
-                crash = false;
-                throw new Error("owned process died");
-              }
-            },
-          },
-        );
-      },
-    );
-    it.live("preserves late writes to the actual retained removal object", () =>
-      fixture(async (h) => {
-        await put(h.cwd, { "main.tex": "A" });
-        const handle = await NodeFSP.open(NodePath.join(h.cwd, "main.tex"), "r+");
-        try {
-          expect((await h.apply("remove", plan({ "main.tex": "A" }, {}))).outcome).toBe("complete");
-          await handle.truncate(0);
-          await handle.writeFile("late B");
-          await handle.sync();
-          const history = await h.run(
-            h.files.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
-          );
-          expect(await NodeFSP.readFile(history.versions[0]!.retainedPath, "utf8")).toBe("late B");
-        } finally {
-          await handle.close();
-        }
-      }),
-    );
-    it.live(
-      "retires admitted primitive failure to attention instead of automatically blessing the outer plan",
-      () => {
-        let crash = true;
-        return fixture(
-          async (h) => {
-            await put(h.cwd, { "main.tex": "A" });
-            await expect(h.apply("remove", plan({ "main.tex": "A" }, {}))).rejects.toMatchObject({
-              _tag: "WorkspaceApplyError",
-            });
-            await h.restart();
-            await expect(h.run(h.files.getMutationEpoch({ cwd: h.cwd }))).rejects.toMatchObject({
-              _tag: "WorkspaceFileRecoveryRequiredError",
-            });
-            const history = await h.run(
-              h.files.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
-            );
-            expect(history.attention).not.toBeNull();
-            expect(await NodeFSP.readFile(history.versions[0]!.retainedPath, "utf8")).toBe("A");
-          },
-          {},
-          {
-            at: async (point) => {
-              if (point === "displaced" && crash) {
-                crash = false;
-                throw new Error("native retirement failed");
-              }
-            },
-          },
-        );
-      },
-    );
-  }
+        },
+      );
+    },
+  );
 });

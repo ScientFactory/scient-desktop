@@ -101,6 +101,11 @@ function curatedCauseMessages(cause: unknown): {
               "The complete current request, including attached files and captured data, exceeds the provider input limit. Shorten the request or remove an attachment and retry.",
             category: categoryMessage(),
           };
+        // A refused native turn left the session intact, and its adapter wrote and redacted the reason.
+        case "NativeSessionOperationError":
+          if ((cause as Record<string, unknown>).breaksSession === false)
+            return { known: stringField(cause, "message"), category: categoryMessage() };
+          break;
         // SCIENT-FORK:END
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
@@ -118,6 +123,14 @@ function curatedCauseMessages(cause: unknown): {
         case "CursorModelUnavailableError":
         case "ProviderSetupError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
+        case "AcpProcessExitedError": {
+          const exit = `provider process exited${processExitStatus(cause)}`;
+          const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
+          return {
+            known: `${stage}. Check the server logs for the provider's output, then retry the turn.`,
+            category: categoryMessage(),
+          };
+        }
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:
@@ -146,6 +159,15 @@ function curatedCauseMessages(cause: unknown): {
     }
   }
   return { known: undefined, category: categoryMessage() };
+}
+
+// Only the structured status; stderr and the spawner cause can carry provider output.
+function processExitStatus(exited: object): string {
+  const { signal, code } = exited as Record<string, unknown>;
+  if (typeof signal === "string" && /^SIG[A-Z0-9]{1,16}$/u.test(signal)) {
+    return ` after signal ${signal}`;
+  }
+  return typeof code === "number" && Number.isSafeInteger(code) ? ` with code ${code}` : "";
 }
 
 /**

@@ -1,3 +1,5 @@
+import { anySiteMatches } from "./scientSiteMatch.ts";
+
 /** What the picker reads; structurally the Accounts contract types. */
 export interface ProfileChoiceState {
   readonly projects: Readonly<Record<string, string>>;
@@ -23,8 +25,8 @@ export interface ProfileSignIn {
 
 /**
  * Sign-ins with evidence of a session in their profile: a recorded browser sign-in (no password,
- * no username), a successful Scient sign-in there or a check that found it signed in, unless seen
- * signed out since. A saved password alone says nothing about the profile.
+ * no username), or one last signed in there, by Scient or as a check found, unless seen signed out
+ * since. A saved password alone says nothing about the profile.
  */
 export function profileSignIns(
   accounts: ReadonlyArray<{
@@ -35,19 +37,15 @@ export function profileSignIns(
       readonly username?: string | undefined;
     };
     readonly secrets: Readonly<Record<string, unknown>>;
-    readonly lastSignInOutcome?: string | undefined;
-    readonly lastCheck?: { readonly state: string } | undefined;
-    readonly signedOut?: boolean | undefined;
+    readonly signIn?: { readonly state: string } | undefined;
   }>,
 ): ReadonlyArray<ProfileSignIn> {
-  return accounts.flatMap(({ details, secrets, lastSignInOutcome, lastCheck, signedOut }) =>
+  return accounts.flatMap(({ details, secrets, signIn }) =>
     details.kind === "website" &&
     details.profileId &&
     details.sites &&
-    !signedOut &&
-    lastCheck?.state !== "signed-out" &&
-    (lastCheck?.state === "signed-in" ||
-      lastSignInOutcome === "signed-in" ||
+    signIn?.state !== "signed-out" &&
+    (signIn?.state === "signed-in" ||
       (secrets["password"] === undefined && details.username === undefined))
       ? [{ profileId: details.profileId, sites: details.sites }]
       : [],
@@ -58,18 +56,6 @@ export interface ProfilePick {
   readonly profileId: string;
   /** Set when the page's site decided the profile. */
   readonly signedInSite?: string;
-}
-
-/** A bare domain covers its subdomains; an `https://` site is one exact origin. */
-function covers(site: string, page: URL) {
-  if (site.startsWith("https://")) {
-    try {
-      return new URL(site).origin === page.origin;
-    } catch {
-      return false;
-    }
-  }
-  return page.hostname === site || page.hostname.endsWith(`.${site}`);
 }
 
 export function pageSite(url: string | undefined) {
@@ -93,9 +79,7 @@ export function profilesSignedIn(
   return profiles.filter((id) =>
     signIns.some(
       (signIn) =>
-        signIn.profileId === id &&
-        !signIn.signedOut &&
-        signIn.sites.some((site) => covers(site, page)),
+        signIn.profileId === id && !signIn.signedOut && anySiteMatches(signIn.sites, page),
     ),
   );
 }
@@ -125,15 +109,13 @@ export function pickBrowserProfile(input: {
     const switched = thread?.sites[page.hostname]?.profileId;
     if (eligible(switched)) return { profileId: switched };
     const signIns = input.signIns.filter(
-      (signIn) => !signIn.signedOut && signIn.sites.some((site) => covers(site, page)),
+      (signIn) => !signIn.signedOut && anySiteMatches(signIn.sites, page),
     );
     const signedIn = profilesSignedIn(input.url, input.profiles, signIns);
     // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
     const sameService = (host: string) =>
       host === page.hostname ||
-      signIns.some((signIn) =>
-        signIn.sites.some((site) => covers(site, new URL(`https://${host}`))),
-      );
+      signIns.some((signIn) => anySiteMatches(signIn.sites, `https://${host}`));
     const lastSwitch = Object.values(input.choices?.threads ?? {})
       .flatMap((entry) =>
         Object.entries(entry.sites).flatMap(([host, choice]) =>

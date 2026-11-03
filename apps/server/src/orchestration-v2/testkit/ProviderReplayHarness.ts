@@ -4,6 +4,7 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  ManagedPolicyDocument,
   ProviderDriverKind,
   ProviderReplayTranscript,
   ResponseStreamingMode,
@@ -23,6 +24,7 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
@@ -241,6 +243,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
+    readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -297,6 +300,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
+    readonly managedPolicy?: ManagedPolicyDocument;
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
@@ -391,6 +395,7 @@ export function layerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
+    readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -431,7 +436,7 @@ export function layerWithRegistry<Error>(
       Layer.provide(Layer.merge(layerStores, layerServerConfig)),
     ),
   );
-  const layerRuntime =
+  const layerRuntimeBase =
     options.runtimePolicyLayer ??
     (scenario.runtimePolicyOverride === undefined
       ? layerReplayPolicy
@@ -447,12 +452,19 @@ export function layerWithRegistry<Error>(
   const layerProvidedRegistry = registryLayer.pipe(Layer.provide(layerContinuationRequests));
   const layerServerSettings =
     options.layerServerSettings ??
-    ServerSettings.layerTest({
-      responseStreamingMode: options.responseStreamingMode ?? "turn",
-      ...(options.continueThreadsAfterServerUpdate === undefined
-        ? {}
-        : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
-    }).pipe(Layer.orDie);
+    Layer.unwrap(
+      Effect.map(ManagedPolicy.fromDocument("/test/policy.json", options.managedPolicy), (policy) =>
+        ServerSettings.layerTest(
+          {
+            responseStreamingMode: options.responseStreamingMode ?? "turn",
+            ...(options.continueThreadsAfterServerUpdate === undefined
+              ? {}
+              : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
+          },
+          policy.summary,
+        ),
+      ),
+    ).pipe(Layer.orDie);
   const handoffSettingsLayer = Layer.merge(
     layerServerSettings,
     options.contextHandoffPolicy === "byte"
@@ -476,6 +488,9 @@ export function layerWithRegistry<Error>(
   ).pipe(Layer.provide(layerDatabase));
   const actualEventSink = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+  );
+  const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
+    Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
   );
   const layerEventSinkProvided =
     options.decorateEventSink === undefined

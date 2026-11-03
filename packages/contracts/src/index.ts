@@ -36,6 +36,7 @@ export * from "./settings.ts";
 export * from "./scientForkSettings.ts";
 // SCIENT-FORK: one-time resets of saved client preferences.
 export * from "./scientClientSettingsResets.ts";
+export * from "./managedPolicy.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
@@ -74,6 +75,7 @@ export * from "./peerLink.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./threadSearch.ts";
+export * from "./threadTags.ts";
 export * from "./threadTitle.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
@@ -102,6 +104,7 @@ export * from "./scient/nativeSubagentControl.ts";
 // SCIENT-FORK:START — Scient Accounts contracts (new files, no upstream edits).
 export * from "./scient/accounts.ts";
 export * from "./scient/accountRpcs.ts";
+export * from "./scient/browserHistoryRpcs.ts";
 export * from "./scient/desktopAccountsBridge.ts";
 // SCIENT-FORK:END
 export * from "./scientLatex.ts";
@@ -159,4 +162,7 @@ export * from "./scientDocumentHost.ts";
 export * from "./scientPdfEdits.ts";
 // SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
 export * from "./scient/editorFlush.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
+export * from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:END

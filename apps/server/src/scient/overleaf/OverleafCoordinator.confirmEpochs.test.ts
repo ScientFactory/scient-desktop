@@ -11,9 +11,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { vi } from "vite-plus/test";
 
-import { CONNECTION, canApply, read, run, world } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+} from "./OverleafCoordinator.testkit.ts";
 
-describe.skipIf(!canApply)("OverleafCoordinator, confirm epochs", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, confirm epochs", () => {
   it.live("a credential renewed while confirm reads the folder makes the review stale", () =>
     run(
       Effect.gen(function* () {

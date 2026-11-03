@@ -13,6 +13,9 @@ import {
   AccountsError,
   BrowserProfileId,
   EnvironmentVariableName,
+  PaperAsked,
+  PaperItem,
+  PaperItemState,
   PreviewTabId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -71,7 +74,7 @@ const list = metadata(
           readable: Schema.Boolean,
           usage: Schema.Array(Schema.String),
           status: Schema.String,
-          lastCheck: Schema.optional(Schema.String),
+          signIn: Schema.optional(Schema.String),
         }),
       ),
       profiles: Schema.Array(
@@ -254,17 +257,18 @@ const add = metadata(
   "add",
   "Add an account key",
 );
+const paperDependencies = [
+  ...common.dependencies,
+  FileSystem.FileSystem,
+  Path.Path,
+  WorkspaceBindingResolver,
+];
 const paperGet = metadata(
   Tool.make("scient_paper_get", {
     failure: AccountsError,
-    dependencies: [
-      ...common.dependencies,
-      FileSystem.FileSystem,
-      Path.Path,
-      WorkspaceBindingResolver,
-    ],
+    dependencies: paperDependencies,
     description:
-      "Get a paper's PDF by DOI or link and save it in the project: a free legal copy first, else through the user's library access in the browser, one paper at a time. Returns its path.",
+      "Get one paper's PDF by DOI or link and save it in the project: a free legal copy, or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
@@ -273,7 +277,13 @@ const paperGet = metadata(
       Schema.Struct({
         status: Schema.Literal("saved"),
         path: Schema.String,
-        route: Schema.Literals(["open-access", "library"]),
+        route: Schema.Literals([
+          "saved-before",
+          "open-access",
+          "publisher",
+          "university",
+          "library",
+        ]),
         published: Schema.Boolean.annotate({
           description: "False for an accepted manuscript or preprint.",
         }),
@@ -281,14 +291,64 @@ const paperGet = metadata(
         doi: Schema.optional(Schema.String),
       }),
       Schema.Struct({
-        status: Schema.Literals(["not-found", "no-access", "needs-sign-in", "limit"]),
+        status: Schema.Literals(["not-found", "no-access", "needs-you", "waiting"]),
         message: Schema.String,
-        landingUrl: Schema.optional(Schema.String),
       }),
     ]),
   }),
   "paper-get",
   "Get a paper's PDF",
+);
+const paperQueue = metadata(
+  Tool.make("scient_papers_queue", {
+    failure: AccountsError,
+    dependencies: paperDependencies,
+    description:
+      "Queue any number of papers by DOI or link and keep working. Scient fetches them in the background into the project's papers folder, one at a time per publisher, and they continue after this turn. If a sign-in is needed Scient asks the user once and every paper waiting continues. Read results with scient_papers_status.",
+    parameters: Schema.Struct({
+      papers: Schema.Array(
+        Schema.Struct({ doi: PaperAsked.fields.doi, url: PaperAsked.fields.url }),
+      ).check(Schema.isMinLength(1), Schema.isMaxLength(5000)),
+    }),
+    success: Schema.Struct({ queued: Schema.Number }),
+  }),
+  "paper-queue",
+  "Queue papers to fetch",
+);
+const paperStatus = metadata(
+  Tool.make("scient_papers_status", {
+    failure: AccountsError,
+    dependencies: paperDependencies,
+    description:
+      "Where this project's queued papers stand: counts, then each paper with its state, path and reason. needs-you means it waits for the user, who has been asked; no-access means it can't be reached, so say so rather than treating the paper as read. Filter with state; continue with nextOffset.",
+    parameters: Schema.Struct({
+      state: Schema.optional(PaperItemState),
+      offset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    }),
+    success: Schema.Struct({
+      waiting: Schema.Number,
+      saved: Schema.Number,
+      needsYou: Schema.Number,
+      notFound: Schema.Number,
+      noAccess: Schema.Number,
+      items: Schema.Array(
+        Schema.Struct({
+          state: PaperItemState,
+          doi: PaperItem.fields.doi,
+          url: PaperItem.fields.url,
+          title: PaperItem.fields.title,
+          route: PaperItem.fields.route,
+          published: PaperItem.fields.published,
+          path: PaperItem.fields.path,
+          message: PaperItem.fields.message,
+        }),
+      ),
+      nextOffset: Schema.optional(Schema.Number),
+    }),
+  }),
+  "paper-status",
+  "Read queued papers",
+  true,
 );
 export const ScientAccountsToolkit = Toolkit.make(
   list,
@@ -300,4 +360,6 @@ export const ScientAccountsToolkit = Toolkit.make(
   findProfile,
   add,
   paperGet,
+  paperQueue,
+  paperStatus,
 );

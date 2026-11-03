@@ -30,6 +30,7 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import { cli } from "../binCli.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 // Windows chmod cannot force these directory or file permission failures.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
@@ -51,7 +52,11 @@ const layerCliAuthority = Layer.mergeAll(
       ),
     ),
     Layer.provide(GitVcsDriver.layer),
-    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    Layer.provide(
+      ServerSettings.layer.pipe(
+        Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+      ),
+    ),
     Layer.provide(VcsProcess.layer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(SqlitePersistence.layerMemory),

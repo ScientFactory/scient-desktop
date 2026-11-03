@@ -162,3 +162,4 @@ and [fx](./providers-fx.md).
 - [Remote access](./remote-access.md): connect from another device.
 - [Running a server without the desktop app](./background-service.md): host an environment on another machine.
 - [Updating Scient](./updating.md): update the app and connected servers.
+- [Managed policy](./managed-policy.md): configure Scient for everyone on a machine.

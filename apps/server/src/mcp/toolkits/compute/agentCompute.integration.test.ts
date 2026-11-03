@@ -91,6 +91,11 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               editNotebook: () => Effect.die("not used"),
               recordNotebookRun: () => Effect.die("not used"),
               flushNotebook: () => Effect.die("not used"),
+              getFileRun: () => Effect.die("not used"),
+              inspectFileRuntimes: () => Effect.die("not used"),
+              startFileRun: () => Effect.die("not used"),
+              subscribeFileRuns: () => Effect.die("not used"),
+              readFile: () => Effect.die("not used"),
               readOutput: (ref, kind) =>
                 Effect.gen(function* () {
                   const resolved =

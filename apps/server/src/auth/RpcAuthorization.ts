@@ -43,6 +43,7 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_WS_METHODS.getForkOptions]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
@@ -125,6 +126,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsSetCodeSources]: AuthSettingsWriteScope,
   [WS_METHODS.accountsLinkKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPaperForSource]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPapersRequest]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPapersContinue]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPapersList]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsUniversitySignIn]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsUniversityBrowse]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsUniversitySearch]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPlainKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepPlainKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUnlinkKey]: AuthSettingsWriteScope,
@@ -320,6 +327,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
+  [WS_METHODS.projectsChangeEntries]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsOpenWithApps]: AuthFilesystemReadScope,
+  // Opening runs another app on the server's computer, as shell.openInEditor does.
+  [WS_METHODS.projectsOpenWith]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthFilesystemReadScope,
@@ -345,6 +358,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportProfiles]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportStatus]: AuthPreviewOperateScope,
+  // SCIENT-FORK:START — Scient Browser: history.
+  [WS_METHODS.browserHistoryList]: AuthPreviewOperateScope,
+  [WS_METHODS.browserHistoryRemove]: AuthPreviewOperateScope,
+  [WS_METHODS.browserHistoryClear]: AuthPreviewOperateScope,
+  [WS_METHODS.browserHistorySuggest]: AuthPreviewOperateScope,
+  [WS_METHODS.browserSearchSuggest]: AuthPreviewOperateScope,
+  // SCIENT-FORK:END
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,

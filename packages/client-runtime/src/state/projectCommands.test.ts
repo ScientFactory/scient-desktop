@@ -514,7 +514,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
   const session: RpcSession = {
     client,
     initialConfig: Effect.never,
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,

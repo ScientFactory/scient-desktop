@@ -1,21 +1,21 @@
 import {
   AccountId,
   defaultAccountControls,
-  type AccountCheckState,
+  type AccountSignInState,
   type AccountSummary,
 } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { afterVisit, nextQuietVisit, sessionEnded, type QuietVisits } from "./keepSignedIn";
 
 const HOUR = 60 * 60 * 1000;
-const account = (id: string, site: string, state: AccountCheckState): AccountSummary => ({
+const account = (id: string, site: string, state: AccountSignInState): AccountSummary => ({
   accountId: AccountId.make(`acc_fixture${id}`),
   name: site,
   details: { kind: "website", sites: [site], profileId: "work" },
   secrets: {},
   controls: defaultAccountControls("website"),
   status: "ready",
-  lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+  signIn: { state, at: "2026-10-31T00:00:00.000Z" },
   createdAt: "2026-10-31T00:00:00.000Z",
   updatedAt: "2026-10-31T00:00:00.000Z",
 });
@@ -69,4 +69,26 @@ it("visits sooner after a session ended, never closer than six hours", () => {
   expect(halved.gapMs).toBe(12 * HOUR);
   expect(afterVisit(afterVisit(halved, true, 0), true, 0).gapMs).toBe(6 * HOUR);
   expect(afterVisit(halved, false, 0).gapMs).toBe(12 * HOUR);
+});
+
+it("keeps a connected university's session used, without judging it from a quiet answer", () => {
+  const university: AccountSummary = {
+    ...account("uni", "huji.ac.il", "signed-in"),
+    details: {
+      kind: "website",
+      sites: ["huji.ac.il"],
+      profileId: "work",
+      institution: {
+        name: "Hebrew University",
+        entityId: "https://idp.huji.ac.il/openathens",
+        domain: "huji.ac.il",
+      },
+    },
+  };
+  // OpenAthens keeps the session; the request starts no sign-in and visits no journal.
+  expect(nextQuietVisit([university], {}, 100 * HOUR)).toMatchObject({
+    accountId: university.accountId,
+    url: "https://my.openathens.net/check",
+    tellsSessionState: false,
+  });
 });

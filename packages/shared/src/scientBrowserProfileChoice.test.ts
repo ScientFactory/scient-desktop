@@ -138,15 +138,11 @@ describe("profileSignIns", () => {
       details: { kind: "website", profileId: "work", sites: ["google.com"], username: "a@b.co" },
       secrets: {},
     };
-    expect(profileSignIns([{ ...row, lastCheck: { state: "signed-in" } }])).toEqual([
+    expect(profileSignIns([{ ...row, signIn: { state: "signed-in" } }])).toEqual([
       { profileId: "work", sites: ["google.com"] },
     ]);
-    expect(profileSignIns([{ ...row, lastCheck: { state: "signed-out" } }])).toEqual([]);
-    expect(
-      profileSignIns([
-        { ...row, lastSignInOutcome: "signed-in", lastCheck: { state: "signed-out" } },
-      ]),
-    ).toEqual([]);
+    // Also a sign-in by Scient seen signed out since: the one state is the newer look.
+    expect(profileSignIns([{ ...row, signIn: { state: "signed-out" } }])).toEqual([]);
   });
 
   it("counts recorded sessions and successful sign-ins, never a saved password alone", () => {
@@ -160,8 +156,8 @@ describe("profileSignIns", () => {
       profileSignIns([
         site({}),
         site({ secrets: password }),
-        site({ secrets: password, lastSignInOutcome: "signed-in" }),
-        site({ signedOut: true }),
+        site({ secrets: password, signIn: { state: "signed-in" } }),
+        site({ signIn: { state: "signed-out" } }),
       ]),
     ).toHaveLength(2);
   });

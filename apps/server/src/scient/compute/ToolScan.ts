@@ -54,6 +54,8 @@ const VERSION_IN_PATH: ReadonlyArray<RegExp> = [
   /\/candidates\/[^/]+\/(\d[^/-]*)/u,
   /\/cmdstan-(\d[^/]*)\//u,
   /\/(?:R|Octave|JAGS|Maxima|scilab|Julia)-(\d[\d.]*)[/.]/u,
+  /\/JavaVirtualMachines\/[^/]*?(\d+(?:\.\d+)*)[^/]*\.jdk\//u,
+  /\/(?:jvm|Java|Eclipse Adoptium|Amazon Corretto|Microsoft)\/[A-Za-z-]*?(\d+(?:\.\d+)*)[^/]*\/bin\//u,
 ];
 
 function versionFromPath(real: string): string | null {
@@ -91,6 +93,14 @@ function isStub(context: DiscoveryContext, directory: string, name: string): boo
   return /\\system32$/iu.test(directory) && /^(bash|wsl)$/iu.test(name);
 }
 
+/** Windows reads variable names in any case, and Git Bash passes them on in capitals. */
+function variable(context: DiscoveryContext, name: string): string | undefined {
+  const exact = context.environment[name];
+  if (exact !== undefined || context.platform !== "win32") return exact;
+  const wanted = name.toLowerCase();
+  return Object.entries(context.environment).find(([key]) => key.toLowerCase() === wanted)?.[1];
+}
+
 function expandVariables(context: DiscoveryContext, pattern: string): string | null {
   const path = pathModule(context.platform);
   const expanded = pattern.startsWith("~")
@@ -98,7 +108,7 @@ function expandVariables(context: DiscoveryContext, pattern: string): string | n
     : pattern;
   let unknown = false;
   const result = expanded.replace(/%([^%]+)%/gu, (_match, name: string) => {
-    const value = context.environment[name];
+    const value = variable(context, name);
     if (value === undefined) unknown = true;
     return value ?? "";
   });
@@ -179,6 +189,8 @@ function scanFolder(
 ): ReadonlyArray<FoundLanguageTool> {
   const path = pathModule(context.platform);
   return context.host.readDirectory(directory, FOLDER_LIMIT).flatMap((entry) => {
+    // Windows starts only these. Tools such as Kotlin ship a Unix script of the same name beside them.
+    if (context.platform === "win32" && !WINDOWS_EXTENSIONS.test(entry)) return [];
     const bare =
       context.platform === "win32" ? entry.toLowerCase().replace(WINDOWS_EXTENSIONS, "") : entry;
     const tools = wanted.get(bare);
@@ -213,10 +225,8 @@ function commandName(context: DiscoveryContext, tools: LanguageTools, executable
 }
 
 function environmentPathEntries(context: DiscoveryContext): ReadonlyArray<string> {
-  const value =
-    context.platform === "win32"
-      ? (context.environment.Path ?? context.environment.PATH)
-      : context.environment.PATH;
+  // Windows itself spells it Path.
+  const value = variable(context, context.platform === "win32" ? "Path" : "PATH");
   return (value ?? "")
     .split(context.platform === "win32" ? ";" : ":")
     .map((entry) => entry.trim().replace(/^"(.*)"$/u, "$1"))
@@ -225,9 +235,10 @@ function environmentPathEntries(context: DiscoveryContext): ReadonlyArray<string
 
 /** Folders that hold tools outside PATH, for a person whose shell setup Scient cannot see. */
 function managerFolders(context: DiscoveryContext): ReadonlyArray<string> {
-  const env = context.environment;
-  const tree = (name: string, fallback: string) => env[name] ?? fallback;
+  const tree = (name: string, fallback: string) => variable(context, name) ?? fallback;
+  const javaHome = variable(context, "JAVA_HOME");
   const toolchains = [
+    ...(javaHome === undefined ? [] : [`${javaHome}/bin`]),
     `${tree("PYENV_ROOT", "~/.pyenv")}/versions/*/bin`,
     `${tree("ASDF_DATA_DIR", "~/.asdf")}/installs/*/*/bin`,
     `${tree("RUSTUP_HOME", "~/.rustup")}/toolchains/*/bin`,
@@ -297,7 +308,7 @@ function movedFolders(context: DiscoveryContext): ReadonlyArray<string> {
   const path = pathModule(context.platform);
   const separator = context.platform === "win32" ? ";" : ":";
   return DISCOVERY_VARIABLES.flatMap((name) =>
-    (context.environment[name] ?? "").split(separator),
+    (variable(context, name) ?? "").split(separator),
   ).filter((folder) => path.isAbsolute(folder));
 }
 
@@ -360,19 +371,28 @@ export function toolScanSteps(context: DiscoveryContext): ReadonlyArray<ToolScan
 export function groupTools(
   tools: ReadonlyArray<FoundLanguageTool>,
 ): ReadonlyMap<string, ReadonlyArray<FoundLanguageTool>> {
-  const grouped = new Map<string, FoundLanguageTool[]>();
-  const seen = new Set<string>();
-  for (const tool of tools) {
-    const key = `${tool.languageId}\n${tool.identity}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    grouped.set(tool.languageId, [...(grouped.get(tool.languageId) ?? []), tool]);
-  }
   const rank = (tool: FoundLanguageTool) => {
     const index = LANGUAGE_TOOLS[tool.languageId]?.commands.indexOf(tool.name) ?? -1;
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;
   };
   const folder = (tool: FoundLanguageTool) => tool.executable.replace(/[\\/][^\\/]*$/u, "");
+  const grouped = new Map<string, FoundLanguageTool[]>();
+  const kept = new Map<string, FoundLanguageTool>();
+  for (const tool of tools) {
+    const key = `${tool.languageId}\n${tool.identity}`;
+    const earlier = kept.get(key);
+    // Two names for one file in one folder, as scilab-cli is for scilab: keep the name the
+    // language prefers, since such a tool decides what to be from the name it was started by.
+    if (earlier !== undefined) {
+      if (folder(earlier) !== folder(tool) || rank(tool) >= rank(earlier)) continue;
+      const found = grouped.get(tool.languageId)!;
+      found[found.indexOf(earlier)] = tool;
+      kept.set(key, tool);
+      continue;
+    }
+    kept.set(key, tool);
+    grouped.set(tool.languageId, [...(grouped.get(tool.languageId) ?? []), tool]);
+  }
   for (const [languageId, found] of grouped) {
     const places = [...new Set(found.map(folder))];
     grouped.set(

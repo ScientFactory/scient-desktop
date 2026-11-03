@@ -7,6 +7,26 @@
       "types": "./src/scientAccountSecretRequest.ts",
       "import": "./src/scientAccountSecretRequest.ts"
     },
+    "./scientAccountAuthorization": {
+      "types": "./src/scientAccountAuthorization.ts",
+      "import": "./src/scientAccountAuthorization.ts"
+    },
+    "./scientAccountSignIn": {
+      "types": "./src/scientAccountSignIn.ts",
+      "import": "./src/scientAccountSignIn.ts"
+    },
+    "./scientLoginFields": {
+      "types": "./src/scientLoginFields.ts",
+      "import": "./src/scientLoginFields.ts"
+    },
+    "./scientSiteMatch": {
+      "types": "./src/scientSiteMatch.ts",
+      "import": "./src/scientSiteMatch.ts"
+    },
+    "./scientPaperLinks": {
+      "types": "./src/scientPaperLinks.ts",
+      "import": "./src/scientPaperLinks.ts"
+    },
     "./scientSignInPage": {
       "types": "./src/scientSignInPage.ts",
       "import": "./src/scientSignInPage.ts"
@@ -379,6 +399,10 @@
       "types": "./src/AgentScope.ts",
       "import": "./src/AgentScope.ts"
     },
+    "./managedPolicyFile": {
+      "types": "./src/managedPolicyFile.ts",
+      "import": "./src/managedPolicyFile.ts"
+    },
     "./HostProcess": {
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"
@@ -605,6 +629,7 @@
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
+    "ffi-rs": "1.3.2",
     "jose": "catalog:",
     "mdast-util-directive": "catalog:",
     "mdast-util-to-hast": "^13.2.1",

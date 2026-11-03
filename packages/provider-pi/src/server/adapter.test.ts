@@ -717,6 +717,57 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("adds up each model request Pi reports into the provider turn's usage", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const assistant = (stopReason: string, usage: Record<string, unknown>) =>
+        fake.emit({
+          type: "message_end",
+          message: { role: "assistant", model: "gpt-6.1-sol", content: [], stopReason, usage },
+        });
+      yield* assistant("toolUse", {
+        input: 100,
+        output: 30,
+        cacheRead: 400,
+        cacheWrite: 20,
+        reasoning: 10,
+        cost: { total: 0.001 },
+      });
+      yield* fake.emit({ type: "message_end", message: { role: "toolResult", content: [] } });
+      yield* assistant("stop", { input: 50, output: 70, cacheRead: 500, cost: { total: 0.004 } });
+      yield* fake.emit({ type: "agent_settled" });
+      const turn = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepStrictEqual(
+        turn.type === "provider_turn.updated" ? turn.providerTurn.turnTokenUsage : undefined,
+        {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: false,
+          inputTokens: 520 + 550,
+          outputTokens: 100,
+          cachedInputTokens: 900,
+          cacheCreationTokens: 20,
+          models: ["gpt-6.1-sol"],
+          requests: 2,
+          failedRequests: 0,
+          estimatedCostUsd: 0.005,
+        },
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "completes a resumed user turn before native wake events arrive, Pi streaming=%s",
     (streaming) =>

@@ -98,6 +98,10 @@ export const ComputeCitation = Schema.Struct({
       cellId: ComputeId,
       number: Offset.check(Schema.isGreaterThan(0)),
     }),
+    /** A file run with no session, such as C or Java. */
+    Schema.TaggedStruct("file-run", { runId: ComputeId, path: Path }),
+    /** A session's own messages, such as a kernel's start-up error, which belong to no run. */
+    Schema.TaggedStruct("session", { sessionId: ComputeId }),
   ]),
   text: AssistantCitation.fields.text,
   comment: AssistantCitation.fields.comment,

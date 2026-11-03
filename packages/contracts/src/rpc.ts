@@ -237,6 +237,7 @@ import {
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationV2GetNativeChildWorkError,
   OrchestrationV2StopWorkflowError,
   OrchestrationV2ForceStopThreadError,
   OrchestrationV2DispatchCommandError,
@@ -516,6 +517,12 @@ import {
   WsAccountsSetCodeSourcesRpc,
   WsAccountsLinkKeyRpc,
   WsAccountsPaperForSourceRpc,
+  WsAccountsPapersContinueRpc,
+  WsAccountsPapersListRpc,
+  WsAccountsPapersRequestRpc,
+  WsAccountsUniversitySignInRpc,
+  WsAccountsUniversityBrowseRpc,
+  WsAccountsUniversitySearchRpc,
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
@@ -541,6 +548,16 @@ import {
   WsServerRemoveCustomModelRpc,
   WsServerTestCustomModelRpc,
 } from "./scient/customModelRpcs.ts";
+// SCIENT-FORK:START — Scient Browser: history.
+import {
+  SCIENT_BROWSER_HISTORY_WS_METHODS,
+  WsBrowserHistoryClearRpc,
+  WsBrowserHistoryListRpc,
+  WsBrowserHistoryRemoveRpc,
+  WsBrowserHistorySuggestRpc,
+  WsBrowserSearchSuggestRpc,
+} from "./scient/browserHistoryRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient file opening RPCs.
 import {
@@ -572,6 +589,14 @@ import {
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
 } from "./scient/editorFlushRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Files panel entry changes.
+import {
+  SCIENT_WORKSPACE_ENTRY_WS_METHODS,
+  WsProjectsChangeEntriesRpc,
+  WsProjectsOpenWithAppsRpc,
+  WsProjectsOpenWithRpc,
+} from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:END
 
 export const WS_METHODS = {
@@ -608,6 +633,10 @@ export const WS_METHODS = {
   ...SCIENT_ACCOUNT_WS_METHODS,
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — Scient Browser: history.
+  ...SCIENT_BROWSER_HISTORY_WS_METHODS,
+  // SCIENT-FORK:END
+
   shellOpenInEditor: "shell.openInEditor",
 
   filesystemBrowse: "filesystem.browse",
@@ -623,6 +652,9 @@ export const WS_METHODS = {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush methods.
   ...SCIENT_EDITOR_FLUSH_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Files panel entry changes.
+  ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
   // SCIENT-FORK:END
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -2091,6 +2123,15 @@ const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetNativeChildWorkRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
+  {
+    payload: OrchestrationV2RpcSchemas.getNativeChildWork.input,
+    success: OrchestrationV2RpcSchemas.getNativeChildWork.output,
+    error: Schema.Union([OrchestrationV2GetNativeChildWorkError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
   payload: OrchestrationV2RpcSchemas.getTurnItem.input,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
@@ -2254,6 +2295,7 @@ const WsSubscribeDocumentBindingChangesRpc = Rpc.make(WS_METHODS.subscribeDocume
 export const WsConversationRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
+  WsOrchestrationV2GetNativeChildWorkRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
@@ -2465,6 +2507,11 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Files panel entry changes and Open With.
+  WsProjectsChangeEntriesRpc,
+  WsProjectsOpenWithAppsRpc,
+  WsProjectsOpenWithRpc,
+  // SCIENT-FORK:END
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
   WsFilesystemGetMetadataRpc,
@@ -2511,6 +2558,13 @@ export const WsInteractiveRpcGroup = RpcGroup.make(
   WsPreviewClearProfileRpc,
   WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
+  // SCIENT-FORK:START — Scient Browser: history.
+  WsBrowserHistoryListRpc,
+  WsBrowserHistoryRemoveRpc,
+  WsBrowserHistoryClearRpc,
+  WsBrowserHistorySuggestRpc,
+  WsBrowserSearchSuggestRpc,
+  // SCIENT-FORK:END
   WsSubscribePreviewEventsRpc,
 );
 
@@ -2594,6 +2648,12 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsSetCodeSourcesRpc,
   WsAccountsLinkKeyRpc,
   WsAccountsPaperForSourceRpc,
+  WsAccountsPapersContinueRpc,
+  WsAccountsPapersListRpc,
+  WsAccountsPapersRequestRpc,
+  WsAccountsUniversitySignInRpc,
+  WsAccountsUniversityBrowseRpc,
+  WsAccountsUniversitySearchRpc,
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,

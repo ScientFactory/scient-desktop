@@ -4,13 +4,14 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
-  AccountCheck,
+  AccountSignIn,
   AccountCodeSources,
   AccountGoogleSessions,
   AccountKeyLink,
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
   AccountHandoff,
+  PaperQueueSummary,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
   AccountMatchSignInInput,
@@ -23,7 +24,6 @@ import type {
   AccountSaveInput,
   AccountSaveResult,
   AccountSetControlsInput,
-  AccountsError,
   AccountsSnapshot,
   AccountStoresStatus,
   AccountSummary,
@@ -41,6 +41,8 @@ import type {
   VaultSecretRef,
   ConnectorId,
 } from "@t3tools/contracts";
+import { AccountsError } from "@t3tools/contracts";
+import type { AccountAuthorization } from "@t3tools/shared/scientAccountAuthorization";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
@@ -78,12 +80,11 @@ export interface SessionAccounts {
   readonly profileChoices?: BrowserProfileChoices | undefined;
 }
 
-export type AccountAuthorization =
-  | { readonly decision: "allowed" }
-  | {
-      readonly decision: "denied";
-      readonly reason: "off" | "declined" | "out-of-scope" | "timed-out";
-    };
+export type { AccountAuthorization };
+
+/** An Accounts error with its reason and a message written for the agent or the user. */
+export const fail = (reason: AccountsError["reason"], message: string) =>
+  new AccountsError({ reason, message });
 
 export interface AccountsServiceShape {
   readonly setHandoff: (
@@ -91,6 +92,8 @@ export interface AccountsServiceShape {
     reveal?: Effect.Effect<void, AccountsError>,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeHandoff: (handoffId: string) => Effect.Effect<void>;
+  /** The state of a project's papers, shown as a band and a card. */
+  readonly setPaperQueue: (queue: PaperQueueSummary) => Effect.Effect<void>;
   readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;
   readonly showHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
   readonly cancelHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
@@ -195,14 +198,19 @@ export interface AccountsServiceShape {
     accountId: AccountId,
     fields: ReadonlyArray<string>,
   ) => Effect.Effect<Readonly<Record<string, Redacted.Redacted<string>>>, AccountsError>;
-  /** Keeps what Scient last saw of a sign-in, for the account's status. */
+  /** Keeps what Scient last saw of a sign-in, through `withSignIn`, dated by the server clock. */
   readonly recordCheck: (
     accountId: AccountId,
-    check: Omit<AccountCheck, "at">,
+    check: Omit<AccountSignIn, "at">,
   ) => Effect.Effect<void, AccountsError>;
-  /** Non-blocking; records the outcome of a use that `authorize` allowed. */
+  /**
+   * Non-blocking; records the outcome of a use that `authorize` allowed. `savedPasswordUsed` (not
+   * kept in the log) says Scient typed the saved password, so a `signed-in` outcome verifies it.
+   */
   readonly recordUse: (
-    entry: Omit<AccountActivityEntry, "at" | "decision">,
+    entry: Omit<AccountActivityEntry, "at" | "decision"> & {
+      readonly savedPasswordUsed?: boolean;
+    },
     message?: string,
   ) => Effect.Effect<void>;
 }

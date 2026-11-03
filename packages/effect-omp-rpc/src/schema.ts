@@ -77,6 +77,8 @@ export const OmpRpcModel = Schema.Struct({
   thinking: Schema.optional(OmpRpcModelThinking),
   /** Legacy field. OMP 18.x sends `thinking.efforts` instead. */
   thinkingLevels: Schema.optional(Schema.Array(Schema.String)),
+  /** Service tiers the model is known to offer, such as `priority`. */
+  serviceTiers: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OmpRpcModel = typeof OmpRpcModel.Type;
 
@@ -127,6 +129,8 @@ export const OmpRpcState = Schema.Struct({
   // SCIENT-FORK: optional observations preserve compatibility with older OMP.
   contextUsage: Schema.optional(Schema.Unknown),
   todoPhases: Schema.optional(Schema.Unknown),
+  fastModeEnabled: Schema.optional(Schema.Boolean),
+  usageLimit: Schema.optional(Schema.Unknown),
 });
 export type OmpRpcState = typeof OmpRpcState.Type;
 
@@ -148,6 +152,8 @@ export const OmpPromptError = Schema.Struct({
   model: maybeString,
   httpStatus: maybeNumber,
   retryable: Schema.Boolean,
+  /** `cost_cap`: the session reached its spending cap and no request was sent. */
+  code: maybeString,
 });
 export type OmpPromptError = typeof OmpPromptError.Type;
 
@@ -190,6 +196,7 @@ export const OmpRpcEvent = Schema.Struct({
   method: maybeString,
   options: maybeUnknown,
   optionDetails: maybeUnknown,
+  questions: maybeUnknown,
   placeholder: maybeString,
   prefill: maybeString,
   commands: maybeUnknown,
@@ -251,6 +258,9 @@ export const OmpAgentMessage = Schema.Struct({
   /** HTTP status of a failed provider request. */
   errorStatus: maybeNumber,
   isError: maybeBoolean,
+  // SCIENT-FORK: request timing for usage analytics, as the agent's /stats reads it.
+  duration: maybeNumber,
+  ttft: maybeNumber,
 });
 export type OmpAgentMessage = typeof OmpAgentMessage.Type;
 
@@ -437,6 +447,7 @@ export const OmpExtensionUiRequest = Schema.Struct({
   prefill: maybeString,
   options: maybeUnknown,
   optionDetails: maybeUnknown,
+  questions: maybeUnknown,
   targetId: maybeString,
   url: maybeString,
   launchUrl: maybeString,
@@ -529,6 +540,8 @@ const OmpLifecycleEvent = Schema.Struct({
     "cache_warming_end",
     "auto_compaction_start",
     "auto_compaction_end",
+    "manual_compaction_start",
+    "manual_compaction_end",
     "compaction_end",
     "auto_retry_start",
     "auto_retry_end",

@@ -25,7 +25,8 @@ import {
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
-  profileDomains,
+  profileAddressDomain,
+  profileSignInSites,
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
@@ -36,11 +37,11 @@ import {
   mergeProfiles,
   mergeSourceProfiles,
   secretFields,
-  siteMatchesUrl,
   matchExistingProfile,
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
   return {
@@ -98,7 +99,7 @@ describe("Accounts decisions", () => {
         username: "a@example.com",
         profileId,
       },
-      lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+      signIn: { state, at: "2026-10-31T00:00:00.000Z" },
     });
     expect(isBrowserSignIn(google("signed-in"))).toBe(true);
     expect(
@@ -117,7 +118,7 @@ describe("Accounts decisions", () => {
     const row = (site: string, profileId: string, state?: "signed-in" | "signed-out") => ({
       ...website(profileId),
       details: { kind: "website" as const, sites: [site], profileId },
-      ...(state ? { lastCheck: { state, at: "2026-10-31T00:00:00.000Z" } } : {}),
+      ...(state ? { signIn: { state, at: "2026-10-31T00:00:00.000Z" } } : {}),
     });
     expect(
       sitesToKeep(
@@ -210,7 +211,6 @@ describe("Accounts decisions", () => {
       engine: "postgres",
       port: 5432,
     });
-    expect(forms.find((form) => form.kind === "library")).toMatchObject({ proxyUrl: "" });
     const anthropic = forms.find(
       (form) => form.kind === "api-key" && form.envName === "ANTHROPIC_API_KEY",
     );
@@ -554,27 +554,23 @@ describe("account status", () => {
   const at = "2026-10-30T10:00:00.000Z";
   const relative = () => "2h ago";
   it("puts what needs the user first, then the last check", () => {
-    expect(
-      accountStatusLabel(
-        { lastSignInOutcome: "password-rejected", lastCheck: { state: "signed-in", at } },
-        relative,
-      ),
-    ).toBe("Password rejected");
-    expect(
-      accountStatusLabel({ signedOut: true, lastCheck: { state: "signed-in", at } }, relative),
-    ).toBe("Signed out");
-    expect(accountStatusLabel({ lastCheck: { state: "signed-in", at } }, relative)).toBe(
+    // A refusal outlasts a session seen working (the server keeps it), so the row says so.
+    expect(accountStatusLabel({ signIn: { state: "password-rejected", at } }, relative)).toBe(
+      "Password rejected",
+    );
+    expect(accountStatusLabel({ signIn: { state: "signed-out", at } }, relative)).toBe(
+      "Signed out",
+    );
+    expect(accountStatusLabel({ signIn: { state: "signed-in", at } }, relative)).toBe(
       "Signed in · 2h ago",
     );
-    expect(accountStatusLabel({ lastCheck: { state: "needs-you", at } }, relative)).toBe(
-      "Needs you",
-    );
+    expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(
       accountStatusLabel(
         {
           details: { kind: "api-key", sites: [], auth: { type: "bearer" } },
-          lastCheck: { state: "rejected", at },
+          signIn: { state: "failed", at, detail: "The service refused this key." },
         },
         relative,
       ),
@@ -627,13 +623,13 @@ describe("keys used by Scient", () => {
   });
 });
 
-describe("profileDomains", () => {
+describe("profileAddressDomain and profileSignInSites", () => {
   const signIn = (profileId: string, sites: string[], username?: string) =>
     ({ details: { kind: "website", profileId, sites, username } }) as never;
   const profile = (profileId: string, email?: string) =>
     ({ profileId, ...(email ? { source: { email } } : {}) }) as never;
 
-  it("reads the imported address and the profile's own sign-ins", () => {
+  it("reads the imported address's domain and the profile's own sign-ins", () => {
     const snapshot = {
       profiles: [profile("work", "a@mail.huji.ac.il")],
       accounts: [
@@ -641,12 +637,8 @@ describe("profileDomains", () => {
         signIn("work", ["moodle.huji.ac.il"]),
       ],
     };
-    expect(profileDomains(snapshot, "work")).toEqual([
-      "mail.huji.ac.il",
-      "cs.huji.ac.il",
-      "google.com",
-      "moodle.huji.ac.il",
-    ]);
+    expect(profileAddressDomain(snapshot, "work")).toBe("mail.huji.ac.il");
+    expect(profileSignInSites(snapshot, "work")).toEqual(["google.com", "moodle.huji.ac.il"]);
   });
 
   it("leaves out other profiles and passwords saved without a profile", () => {
@@ -657,10 +649,34 @@ describe("profileDomains", () => {
         { details: { kind: "website", sites: ["moodle.huji.ac.il"], username: "b" } } as never,
       ],
     };
-    expect(profileDomains(snapshot, "home")).toEqual([]);
+    expect(profileAddressDomain(snapshot, "home")).toBeUndefined();
+    expect(profileSignInSites(snapshot, "home")).toEqual([]);
   });
 
   it("has nothing to read before accounts load", () => {
-    expect(profileDomains(null, "work")).toEqual([]);
+    expect(profileAddressDomain(null, "work")).toBeUndefined();
+    expect(profileSignInSites(null, "work")).toEqual([]);
+  });
+});
+
+describe("a university's status", () => {
+  const university = {
+    details: {
+      kind: "website",
+      sites: ["huji.ac.il"],
+      institution: { name: "HUJI", entityId: "https://idp.huji.ac.il/x", domain: "huji.ac.il" },
+    },
+  } as const;
+  const when = () => "2h ago";
+
+  it("speaks about the account, from never signed in to last seen", () => {
+    expect(accountStatusLabel(university, when)).toBe("Not signed in yet");
+    const check = (state: "signed-in" | "signed-out") => ({
+      ...university,
+      signIn: { state, at: "2026-01-01T00:00:00.000Z" },
+    });
+    // Also a session gone from the browser's cookies, which the server records as signed out.
+    expect(accountStatusLabel(check("signed-out"), when)).toBe("Sign in needed");
+    expect(accountStatusLabel(check("signed-in"), when)).toBe("Signed in · 2h ago");
   });
 });

@@ -176,6 +176,7 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     <Suspense fallback={null}>
       <ScientSourcesPanel
         environmentId={activeThread.environmentId}
+        threadId={activeThreadRef.threadId}
         root={activeWorkspaceRoot}
         projectTitle={activeProject.title}
         onOpenPdf={openScientSourcePdf}

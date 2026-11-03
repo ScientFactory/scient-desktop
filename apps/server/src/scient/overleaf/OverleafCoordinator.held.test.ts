@@ -14,7 +14,14 @@ import * as Exit from "effect/Exit";
 
 import type { OverleafCoordinator } from "./OverleafCoordinator.ts";
 import { overleafConflictKey } from "./OverleafReview.ts";
-import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  hasPrivateFoldersAndIdentity,
+  read,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 import { type ConflictChoice, hasConflictMarkers } from "./syncRules.ts";
 
 /** A long file with one line that differs, so renames are recognized by content. */
@@ -164,7 +171,8 @@ const heldWorld = (at?: Parameters<typeof world>[0]["at"], overleaf: "git" | "sc
     return w;
   });
 
-describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with conflict marks", () => {
+const helperDescribe = describe.skipIf(!hasPrivateFoldersAndIdentity);
+helperDescribe("OverleafCoordinator, holding back a file with conflict marks", () => {
   it.live.each([
     {
       name: "beside another marked file",

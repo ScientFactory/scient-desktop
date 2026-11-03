@@ -29,6 +29,20 @@ export const decodeOmpModelSlug = (
   return canonical === slug || raw === slug ? decoded : undefined;
 };
 
+/**
+ * Whether `set_fast_mode` can change this model's serving tier. A reported tier
+ * list decides; without one the agent still offers it to OpenAI's own providers.
+ */
+const ompModelSupportsFastMode = (model: OmpRpcModel): boolean => {
+  if (model.serviceTiers && model.serviceTiers.length > 0)
+    return model.serviceTiers.includes("priority");
+  return (
+    model.provider === "openai" ||
+    model.provider === "openai-codex" ||
+    (model.provider === "anthropic" && model.id.includes("opus"))
+  );
+};
+
 export const ompModelSupportsImages = (model: OmpRpcModel): boolean =>
   model.input?.includes("image") === true;
 
@@ -80,6 +94,15 @@ export const ompModelToServerModel = (
   const name = model.name?.trim() || model.id;
   if (!slug || !validSegment(name)) return undefined;
   const thinkingLevels = ompModelThinkingLevels(model);
+  const optionDescriptors = [
+    ...(thinkingLevels.length === 0
+      ? []
+      : (thinkingLevelCapabilities(thinkingLevels, ompModelDefaultThinkingLevel(model))
+          .optionDescriptors ?? [])),
+    ...(ompModelSupportsFastMode(model)
+      ? [{ id: "fastMode", label: "Fast Mode", type: "boolean" as const }]
+      : []),
+  ];
   return {
     slug,
     name,
@@ -88,10 +111,7 @@ export const ompModelToServerModel = (
     ...(selected?.provider === model.provider && selected.modelId === model.id
       ? { isDefault: true }
       : {}),
-    capabilities:
-      thinkingLevels.length === 0
-        ? null
-        : thinkingLevelCapabilities(thinkingLevels, ompModelDefaultThinkingLevel(model)),
+    capabilities: optionDescriptors.length === 0 ? null : { optionDescriptors },
   };
 };
 

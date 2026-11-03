@@ -23,6 +23,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
@@ -30,6 +31,7 @@ const modelSelection = { instanceId, model: "test-model" };
 const database = SqlitePersistenceMemory;
 const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
 const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
   Layer.provide(
     Layer.mergeAll(
       projectsLayer,

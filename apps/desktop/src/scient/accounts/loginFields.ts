@@ -1,66 +1,9 @@
+import {
+  loginFieldsKit,
+  loginFieldsKitSource,
+  type LoginFieldsKit,
+} from "@t3tools/shared/scientLoginFields";
 import { FORGET_SIGN_IN_LABEL, REMEMBER_SIGN_IN_LABEL } from "@t3tools/shared/scientSignInPage";
-
-export interface LoginField {
-  readonly type: string;
-  readonly autocomplete: string;
-  readonly usable: boolean;
-}
-
-export function detectLoginFields(fields: ReadonlyArray<LoginField>) {
-  const password = fields.findIndex(
-    (field) =>
-      field.usable &&
-      field.type === "password" &&
-      !field.autocomplete.split(/\s+/).includes("new-password"),
-  );
-  const otp = fields.findIndex(
-    (field) => field.usable && field.autocomplete.split(/\s+/).includes("one-time-code"),
-  );
-  const username = fields.findIndex(
-    (field, index) =>
-      field.usable &&
-      index !== otp &&
-      ["text", "email", "tel"].includes(field.type) &&
-      (field.autocomplete.split(/\s+/).some((token) => token === "username" || token === "email") ||
-        field.type === "email"),
-  );
-  let fallback = -1;
-  for (let index = 0; index < password; index++) {
-    if (fields[index]?.usable && fields[index]?.type === "text" && index !== otp) fallback = index;
-  }
-  return { username: username === -1 ? fallback : username, password, otp };
-}
-
-export function collectLoginFields(root: ParentNode) {
-  const inputs = Array.from(root.querySelectorAll<HTMLInputElement>("input"));
-  const fields = inputs.map((input) => ({
-    type: input.type,
-    autocomplete: input.autocomplete.toLowerCase(),
-    usable:
-      !input.disabled &&
-      !input.readOnly &&
-      input.type !== "hidden" &&
-      !input.closest("[hidden], [inert]") &&
-      input.getClientRects().length > 0 &&
-      getComputedStyle(input).visibility !== "hidden",
-  }));
-  return { inputs, ...detectLoginFields(fields) };
-}
-
-/** Ticks "remember me" or "trust this device" beside a filled sign-in; the user can untick it. */
-function tickRememberSignIn(root: ParentNode, remember: RegExp, forget: RegExp) {
-  for (const box of Array.from(root.querySelectorAll<HTMLInputElement>("input[type=checkbox]"))) {
-    const label = [
-      box.name,
-      box.id,
-      box.getAttribute("aria-label"),
-      ...Array.from(box.labels ?? []).map((item) => item.textContent),
-    ].join(" ");
-    if (box.checked || box.disabled || !remember.test(label) || forget.test(label)) continue;
-    box.click();
-    return;
-  }
-}
 
 function fillLoginForm(
   values: {
@@ -75,6 +18,7 @@ function fillLoginForm(
     submit?: boolean | undefined;
   } = {},
   labels = { remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL },
+  login: LoginFieldsKit = loginFieldsKit,
 ) {
   if (location.origin !== expectedOrigin || (options.automatic && !options.documentId))
     return false;
@@ -82,8 +26,8 @@ function fillLoginForm(
   if (options.documentId !== undefined && state?.documentId !== options.documentId) return false;
   if (options.automatic && (!state || state.autoFilled || state.userEdited)) return false;
   const roots = [...Array.from(document.forms), document];
-  const candidates = roots.map(collectLoginFields);
-  const priority = (candidate: ReturnType<typeof collectLoginFields>) =>
+  const candidates = roots.map((root) => login.collect(Array.from(root.querySelectorAll("input"))));
+  const priority = (candidate: (typeof candidates)[number]) =>
     values.password !== undefined && candidate.password !== -1
       ? 3
       : values.otp !== undefined && candidate.otp !== -1
@@ -115,11 +59,14 @@ function fillLoginForm(
     }
     if (filled) {
       if (values.password !== undefined || values.otp !== undefined)
-        tickRememberSignIn(
-          document,
-          new RegExp(labels.remember, "i"),
-          new RegExp(labels.forget, "i"),
-        );
+        login
+          .rememberBox(
+            Array.from(document.querySelectorAll<HTMLInputElement>("input[type=checkbox]")),
+            new RegExp(labels.remember, "i"),
+            new RegExp(labels.forget, "i"),
+            false,
+          )
+          ?.click();
       if (options.automatic && state) state.autoFilled = true;
       // Only a complete sign-in: a username step still needs the user's page to move on.
       const form = detected.inputs[detected.password]?.form;
@@ -152,7 +99,7 @@ export const loginFillScript = (
     submit?: boolean | undefined;
   } = {},
 ) =>
-  `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; const tickRememberSignIn = ${tickRememberSignIn.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}, ${JSON.stringify(options)}, ${JSON.stringify({ remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL })}); })()`;
+  `(() => { const loginDocumentState = ${loginDocumentState.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}, ${JSON.stringify(options)}, ${JSON.stringify({ remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL })}, ${loginFieldsKitSource}); })()`;
 
 export interface LoginDocumentState {
   readonly documentId: string;
@@ -166,10 +113,10 @@ export function loginDocumentState() {
     .__scientAccountsLogin;
 }
 
-export function loginFormReport() {
+export function loginFormReport(login: LoginFieldsKit = loginFieldsKit) {
   const state = loginDocumentState();
   if (!state || document.readyState === "loading") return null;
-  const fields = collectLoginFields(document);
+  const fields = login.collect(Array.from(document.querySelectorAll("input")));
   if (fields.username === -1 && fields.password === -1) return null;
   return {
     url: location.origin,
@@ -182,4 +129,4 @@ export function loginFormReport() {
   };
 }
 
-export const loginFormReportScript = `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; return (${loginFormReport.toString()})(); })()`;
+export const loginFormReportScript = `(() => { const loginDocumentState = ${loginDocumentState.toString()}; return (${loginFormReport.toString()})(${loginFieldsKitSource}); })()`;

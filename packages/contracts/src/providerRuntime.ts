@@ -60,6 +60,24 @@ const TurnTokenUsageCommonFields = {
   cacheCreationTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
   hasSubagents: Schema.Boolean,
+  // Native model ids the provider reported for the main agent's work. Absent means unknown.
+  models: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
+  // The provider ran a local command; its counters describe that result, not model work.
+  localCommand: Schema.optional(Schema.Boolean),
+  // Provider-ledger counts beyond the main agent, such as native subagents and compaction.
+  otherUsage: Schema.optional(
+    Schema.Struct({ inputTokens: NonNegativeInt, outputTokens: NonNegativeInt }),
+  ),
+  // SCIENT-FORK:START — per-request facts an agent reports, as Scient Agent's /stats shows them.
+  // Model requests in the turn, and how many ended in an error.
+  requests: Schema.optional(NonNegativeInt),
+  failedRequests: Schema.optional(NonNegativeInt),
+  // The provider's own price estimate for the turn, in US dollars.
+  estimatedCostUsd: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  // Time spent in model requests, and until the turn's first token.
+  modelDurationMs: Schema.optional(NonNegativeInt),
+  firstTokenMs: Schema.optional(NonNegativeInt),
+  // SCIENT-FORK:END
 };
 export const TurnTokenUsage = Schema.Union([
   Schema.Struct({

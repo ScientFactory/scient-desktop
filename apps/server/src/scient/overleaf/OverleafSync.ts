@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as NodeCrypto from "node:crypto";
 
 import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -790,9 +791,15 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly connectionId: string;
   }) {
     const { linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
-    const found: OverleafConnectionStatus = yield* connections.status({
+    const { restored, ...found }: OverleafConnectionStatus = yield* connections.status({
       connectionId: input.connectionId,
     });
+    // A restore is recorded when seen, so an edit before the next sync can't unlink it. The
+    // hold is not waited for: a running operation records it itself.
+    if (restored)
+      yield* OverleafCoordinator.reserveOverleafConnection(reservations, input.connectionId, () =>
+        connections.followRestored(input.connectionId),
+      ).pipe(Effect.ignore);
     return { ...found, linkedElsewhere };
   });
 
@@ -1290,20 +1297,28 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       input.connectionId,
     );
     // An interrupted sync finishes first when it can; unlinking never waits on it.
-    if (document.activeApply !== null)
-      yield* engine(
-        guard,
-        savingEditorsFirst(
-          input.connectionId,
-          coordinator.recover({ connectionId: input.connectionId }),
-        ),
-      ).pipe(Effect.exit);
-    return yield* connections.disconnect({
+    const recovered =
+      document.activeApply === null
+        ? null
+        : yield* engine(
+            guard,
+            savingEditorsFirst(
+              input.connectionId,
+              coordinator.recover({ connectionId: input.connectionId }),
+            ),
+          ).pipe(Effect.exit);
+    const result = yield* connections.disconnect({
       connectionId: input.connectionId,
       requestId: input.requestId,
       callerBindingId,
       stillAuthorized: stillOwner,
     });
+    if (result._tag !== "done") return result;
+    return {
+      ...result,
+      finishedInterruptedSync:
+        recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered",
+    };
   });
 
   /**

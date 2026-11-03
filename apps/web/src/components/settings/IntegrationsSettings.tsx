@@ -38,7 +38,9 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  managedCapabilityDenial,
 } from "@t3tools/contracts";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
@@ -48,6 +50,9 @@ import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
+// SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+import { useForgetBrowserProfile } from "~/scient/browser/useForgetBrowserProfile";
+// SCIENT-FORK:END
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -191,6 +196,18 @@ export const importFailureReason = (cause: unknown): BrowserImportFailureReason 
   );
 };
 
+/**
+ * The desktop's refusal when the machine's managed policy forbids cookie import. IPC wraps the
+ * message in its own prefixes, so the sentence is matched on the contract's wording.
+ */
+export const importPolicyRefusal = (cause: unknown): string | undefined => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    /The managed policy at .* importing browser cookies is not allowed\./u.exec(message)?.[0] ??
+    /(?:^|: )([^:]*'s policy does not allow importing browser cookies\.)/u.exec(message)?.[1]
+  );
+};
+
 // SCIENT-FORK:START — Scient Accounts: reuse the browser import and registration transaction.
 export async function importBrowserCookiesIntoTarget(
   bridge: Pick<
@@ -278,7 +295,10 @@ export async function importBrowserCookiesIntoTarget(
       targetName,
     };
   } catch (cause) {
-    return { kind: "blocked", reason: importFailureReason(cause) };
+    const policyRefusal = importPolicyRefusal(cause);
+    return policyRefusal !== undefined
+      ? { kind: "blocked", reason: "readFailed", message: policyRefusal }
+      : { kind: "blocked", reason: importFailureReason(cause) };
   }
 }
 
@@ -702,6 +722,7 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
 function BrowserSearchEngineSetting() {
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
   const customUrl = useClientSettings((settings) => settings.browserCustomSearchUrl);
+  const suggestions = useClientSettings((settings) => settings.browserSearchSuggestions);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
@@ -743,6 +764,19 @@ function BrowserSearchEngineSetting() {
               ))}
             </SelectPopup>
           </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("browser-search-suggestions")}
+        description="Show searches from your search engine as you type. What you type is sent to it, except addresses and anything typed in an incognito tab."
+        control={
+          <Switch
+            checked={suggestions}
+            aria-label="Search suggestions"
+            onCheckedChange={(checked) =>
+              updateSettings({ browserSearchSuggestions: Boolean(checked) })
+            }
+          />
         }
       />
       {engine === "custom" ? (
@@ -1109,7 +1143,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
+  // SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+  const forgetBrowsing = useForgetBrowserProfile();
+  // SCIENT-FORK:END
   const primaryEnvironment = usePrimaryEnvironment();
+  // Cookie import runs on this desktop, whose policy the primary environment reports.
+  const cookieImportDenial = managedCapabilityDenial(
+    usePrimaryManagedPolicy(),
+    "browserCookieImport",
+  );
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<{
     readonly source: BrowserImportSource;
@@ -1228,6 +1270,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
         : {}),
     });
+    // SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+    forgetBrowsing(id);
+    // SCIENT-FORK:END
     setProfileRemovalInFlight(false);
     setProfilePendingRemoval(null);
   };
@@ -1317,7 +1362,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             <MenuSeparator />
             <MenuGroup>
               <MenuGroupLabel>Import from</MenuGroupLabel>
-              {sources === null ? (
+              {cookieImportDenial !== undefined ? (
+                <MenuItem disabled>{cookieImportDenial}</MenuItem>
+              ) : sources === null ? (
                 <MenuItem disabled>Looking for browsers…</MenuItem>
               ) : importableSources.length === 0 ? (
                 <MenuItem disabled>No supported browsers found</MenuItem>

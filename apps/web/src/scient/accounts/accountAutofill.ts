@@ -1,4 +1,5 @@
 import { ThreadId, type DesktopLoginForm, type EnvironmentId } from "@t3tools/contracts";
+import { automaticSignInOnHold } from "@t3tools/shared/scientAccountSignIn";
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { readThreadPreviewState } from "~/previewStateStore";
@@ -89,8 +90,8 @@ export function watchAccountAutofill(
       (match) =>
         !agentTab ||
         (agentMayUse(match.controls, accounts.agentAccess, projectId) &&
-          match.lastSignInOutcome !== "password-rejected" &&
-          match.lastCheck?.state !== "limited"),
+          match.signIn?.state !== "password-rejected" &&
+          match.signIn?.state !== "limited"),
     );
     if (!account) return;
     const lastSubmitted = signedBackIn.get(form.url) ?? 0;
@@ -101,9 +102,8 @@ export function watchAccountAutofill(
       matches.length === 1 &&
       account.details.kind === "website" &&
       (account.details.profileId ?? form.profileId) === form.profileId &&
-      account.lastSignInOutcome === "signed-in" &&
-      account.lastCheck?.state !== "limited" &&
-      account.secrets.password !== undefined &&
+      account.secrets.password?.verifiedAt !== undefined &&
+      !automaticSignInOnHold(account, Date.now()) &&
       isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
     if (submit) signedBackIn.set(form.url, Date.now());

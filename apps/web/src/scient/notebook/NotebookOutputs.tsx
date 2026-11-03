@@ -36,6 +36,8 @@ export interface NotebookPlace {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
+  /** Adds text from a cell's output to the chat as a quote of that cell, when a chat is open. */
+  readonly askAboutCell?: ((cellId: string, text: string) => void) | undefined;
 }
 
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
@@ -284,6 +286,11 @@ function LiveOutputs(props: {
         executionId={props.run.executionId as never}
         outputs={live.outputs}
         threadRef={threadRef}
+        onAskAgent={
+          props.place.askAboutCell === undefined
+            ? undefined
+            : (text) => props.place.askAboutCell?.(props.cell.id, text)
+        }
       />
     </div>
   );

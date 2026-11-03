@@ -78,6 +78,35 @@ function previewUrlProtocol(rawUrl: string): string | undefined {
 
 const ADDRESS_HOST_PATTERN = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
 const BARE_HOST_PORT_PATTERN = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
+// SCIENT-FORK:START — paper IDs open the paper, and a bare name needs a real domain ending.
+const DOI_INPUT = /^(?:doi:\s*)?(10\.\d{4,9}\/\S+)$/iu;
+const ARXIV_INPUT = /^(?:arxiv:\s*)?(\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}(?:v\d+)?)$/iu;
+const OLD_ARXIV_INPUT = /^arxiv:\s*([a-z-]+(?:\.[a-z]{2})?\/\d{7}(?:v\d+)?)$/iu;
+const PMID_INPUT = /^pmid:\s*(\d{1,9})$/iu;
+const PMCID_INPUT = /^(pmc\d{4,9})$/iu;
+/**
+ * A name whose last part is letters, as every real top-level domain is: `10.1056` or `3.14` is a
+ * number, never a website, though a browser reads a dotted number as a network address.
+ */
+const DOMAIN_NAME_PATTERN =
+  /^(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+(?:\p{L}{2,63}|xn--[a-z\d-]{1,59})\.?$/iu;
+
+const pathPart = (id: string) => encodeURI(id).replaceAll("?", "%3F").replaceAll("#", "%23");
+
+/** A paper's DOI, arXiv, PubMed or PubMed Central ID, opened where that kind of ID lives. */
+function paperIdAddress(input: string): string | undefined {
+  const text = input.trim();
+  const doi = DOI_INPUT.exec(text)?.[1];
+  if (doi) return `https://doi.org/${pathPart(doi)}`;
+  const arxiv = ARXIV_INPUT.exec(text)?.[1] ?? OLD_ARXIV_INPUT.exec(text)?.[1];
+  if (arxiv) return `https://arxiv.org/abs/${arxiv}`;
+  const pmid = PMID_INPUT.exec(text)?.[1];
+  if (pmid) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+  const pmcid = PMCID_INPUT.exec(text)?.[1];
+  if (pmcid) return `https://pmc.ncbi.nlm.nih.gov/articles/${pmcid.toUpperCase()}/`;
+  return undefined;
+}
+// SCIENT-FORK:END
 const URL_SCHEME_WITH_AUTHORITY_PATTERN = /^[a-z][a-z\d+.-]*:\/\//i;
 const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
   "about:",
@@ -154,6 +183,10 @@ export function resolveAddressBarInput(
   const trimmed = rawInput.trim();
   if (URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
+  // SCIENT-FORK:START — a pasted paper ID opens the paper.
+  const paper = paperIdAddress(trimmed);
+  if (paper) return paper;
+  // SCIENT-FORK:END
   if (!/\s/.test(trimmed)) {
     // Reject explicit schemes before URL normalization can misread mailto as bare-host credentials.
     const protocol = previewUrlProtocol(trimmed);
@@ -173,7 +206,10 @@ export function resolveAddressBarInput(
     const authority = trimmed.split(/[/?#]/, 1)[0] ?? "";
     const host = authority.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
     const hasPort = host.length < authority.replace(/^[^@]*@/, "").length;
-    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || /^[^.]+(?:\.[^.]+)+\.?$/.test(host)) {
+    // SCIENT-FORK:START — a dotted number is no website; a domain ends in letters.
+    const named = DOMAIN_NAME_PATTERN.test(host);
+    // SCIENT-FORK:END
+    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || named) {
       try {
         return normalizePreviewUrl(trimmed);
       } catch {}

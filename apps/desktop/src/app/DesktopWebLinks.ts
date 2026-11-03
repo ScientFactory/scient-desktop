@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
@@ -38,6 +39,7 @@ export class DesktopWebLinks extends Context.Service<
 
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const pending: Array<string> = [];
   // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
   const webLinkRenderers = makeWebLinkRenderers(electronWindow);
@@ -48,7 +50,7 @@ const make = Effect.gen(function* () {
     if (Option.isNone(window)) return;
     const listening = window.value.webContents;
     for (const url of pending.splice(0)) listening.send(WEB_LINK_OPEN_CHANNEL, url);
-    yield* electronWindow.reveal(window.value);
+    yield* desktopWindow.activate.pipe(Effect.ignore);
   });
   // SCIENT-FORK:END
 

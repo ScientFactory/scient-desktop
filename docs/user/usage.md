@@ -32,19 +32,23 @@ an unrecognized model remain in token totals but add no estimated cost. Scient r
 table at most daily and can use its cached copy offline; without either copy, affected records are
 shown as unpriced rather than guessed.
 
+Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
+the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including Scient-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on
 the server to read a different data directory; comma-separated paths read multiple directories.
 
-Cursor reads account usage from Cursor's dashboard API using the CLI login saved on the server.
-This includes headless Scient sessions and desktop usage across machines; the same account counts
-once across connected environments. Without an accessible CLI login, Scient shows a
-notice instead of incomplete local totals. Scient does not estimate missing tokens from
-conversation text. On macOS, choose **Enable Cursor usage** on Usage to allow Scient to read your
-existing CLI login from Keychain. Nothing is read from Keychain until you enable it there, and you
-can turn it off again in **Settings → Providers → Usage providers**. macOS then asks you to allow
-access on the server Mac; choose **Always Allow** so it does not ask again. It stays allowed when
-Scient updates, and macOS asks once more only after you sign in to Cursor again.
+Cursor reads account usage from Cursor's API for the account you signed in with in Scient or set
+as `CURSOR_API_KEY`, or otherwise the CLI login saved on the server. This includes headless Scient
+sessions and desktop usage across machines; the same account counts once across connected
+environments. Without any of these, Scient shows a notice instead of incomplete local totals.
+Scient does not estimate missing tokens from conversation text. On macOS without a Scient sign-in,
+choose **Enable Cursor usage** on Usage to allow Scient to read your existing CLI login from
+Keychain. Nothing is read from Keychain until you enable it there, and you can turn it off again in
+**Settings → Providers → Usage providers**. macOS then asks you to allow access on the server Mac;
+choose **Always Allow** so it does not ask again. It stays allowed when Scient updates, and macOS
+asks once more only after you sign in to Cursor again.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
@@ -120,6 +124,30 @@ marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish
 without writing again to environments that already saved. Changes are not queued after you close
 the dialog.
 
+## Show only some models
+
+To count only some models, or to leave some out, add `usageModelFilter` to the server's
+`settings.json` in its `userdata` directory, such as `~/.scient-next/userdata/settings.json`:
+
+```json
+{
+  "usageModelFilter": {
+    "include": [{ "provider": "claude", "model": "orbit-1" }, { "model": "orbit-2" }],
+    "exclude": [{ "model": "drift-9" }]
+  }
+}
+```
+
+`include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+to match a model ID from any provider. Use the model ID that Usage shows without **Map to**, such
+as a provider-prefixed ID for Pi. Filters apply before **Map to**, so a model you leave out is not
+counted under its mapped name. Usage applies each environment's own filter. Remove the setting to
+show every model again.
+
+If the setting is invalid, Usage ignores it and shows every model, and the next save of any other
+setting removes it from `settings.json`.
+
 ## Check subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
@@ -168,10 +196,11 @@ belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode 
 in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
-its monthly allowance, including separate Auto and API usage, using the CLI login or
-`CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
-usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
-a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
+its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
+otherwise for the account you signed in with in Scient or set as `CURSOR_API_KEY`, otherwise for the CLI
+login. On macOS, this includes the default Keychain login after you enable Cursor usage. Sign-in, API key,
+and Keychain login report limits only with Cursor's default API endpoint. If you configure a custom
+Cursor endpoint, use an explicit token or file-based CLI login for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication

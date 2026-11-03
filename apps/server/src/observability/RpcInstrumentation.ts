@@ -19,6 +19,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_WS_METHODS.getForkOptions]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
+  [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: "orchestration",
@@ -208,6 +209,13 @@ const RPC_AGGREGATES = {
   [WS_METHODS.previewClearProfile]: "preview",
   [WS_METHODS.previewReportProfiles]: "preview",
   [WS_METHODS.previewReportStatus]: "preview",
+  // SCIENT-FORK:START — Scient Browser: history.
+  [WS_METHODS.browserHistoryList]: "preview",
+  [WS_METHODS.browserHistoryRemove]: "preview",
+  [WS_METHODS.browserHistoryClear]: "preview",
+  [WS_METHODS.browserHistorySuggest]: "preview",
+  [WS_METHODS.browserSearchSuggest]: "preview",
+  // SCIENT-FORK:END
   [WS_METHODS.subscribePreviewEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",
   [WS_METHODS.previewStopLocalServer]: "preview",
@@ -291,6 +299,12 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsSetCodeSources]: "accounts",
   [WS_METHODS.accountsLinkKey]: "accounts",
   [WS_METHODS.accountsPaperForSource]: "accounts",
+  [WS_METHODS.accountsPapersRequest]: "accounts",
+  [WS_METHODS.accountsPapersContinue]: "accounts",
+  [WS_METHODS.accountsPapersList]: "accounts",
+  [WS_METHODS.accountsUniversitySignIn]: "accounts",
+  [WS_METHODS.accountsUniversityBrowse]: "accounts",
+  [WS_METHODS.accountsUniversitySearch]: "accounts",
   [WS_METHODS.accountsPlainKeys]: "accounts",
   [WS_METHODS.accountsKeepPlainKey]: "accounts",
   [WS_METHODS.accountsUnlinkKey]: "accounts",
@@ -355,6 +369,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.editorsFlushResolve]: "editors",
   [WS_METHODS.editorsFlushRespond]: "editors",
   [WS_METHODS.editorsFlushLeave]: "editors",
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Files panel entry changes.
+  [WS_METHODS.projectsChangeEntries]: "projects",
+  [WS_METHODS.projectsOpenWithApps]: "projects",
+  [WS_METHODS.projectsOpenWith]: "projects",
   // SCIENT-FORK:END
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",

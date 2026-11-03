@@ -206,6 +206,20 @@ export class WorkspaceFileSystem extends Context.Service<
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
     >;
+    // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash.
+    /**
+     * A project entry as named, for changing it as a whole: inside the root
+     * through real folders only, never in Git's files or Sources' store. A
+     * symlink names itself, not its target. The root itself is refused.
+     */
+    readonly resolveEntryPath: (input: {
+      readonly cwd: string;
+      readonly relativePath: string;
+    }) => Effect.Effect<
+      { readonly relativePath: string; readonly absolutePath: string },
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    // SCIENT-FORK:END
   } &
     // SCIENT-FORK:START — save, create, rename, delete and watch methods.
     WorkspaceFileMutationMethods &
@@ -607,19 +621,24 @@ export const make = Effect.gen(function* () {
 
           const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: realTargetPath,
-                operation: "read",
-                cause,
-              }),
-          });
-          const fileBytes = buffer.subarray(0, bytesRead);
+          let offset = 0;
+          while (offset < bytesToRead) {
+            const { bytesRead } = yield* Effect.tryPromise({
+              try: () => handle.read(buffer, offset, bytesToRead - offset, offset),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "read",
+                  cause,
+                }),
+            });
+            if (bytesRead <= 0) break;
+            offset += bytesRead;
+          }
+          const fileBytes = buffer.subarray(0, offset);
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
@@ -819,6 +838,54 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath, realTargetPath };
   });
 
+  // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash.
+  const resolveEntryPath: WorkspaceFileSystem["Service"]["resolveEntryPath"] = Effect.fn(
+    "WorkspaceFileSystem.resolveEntryPath",
+  )(function* (input) {
+    const cwd = path.resolve(input.cwd);
+    yield* knownWorkspaces.assertContains(cwd);
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: cwd,
+      relativePath: input.relativePath,
+    });
+    const segments = path.relative(cwd, target.absolutePath).split(path.sep);
+    const resolved = yield* Effect.tryPromise({
+      try: async () => {
+        const realRoot = await NodeFSP.realpath(cwd);
+        // The parent must resolve to itself: no symlinked folder on the way.
+        const parent = path.join(realRoot, ...segments.slice(0, -1));
+        const realParent = await NodeFSP.realpath(parent);
+        const absolutePath = path.join(realParent, segments.at(-1) ?? "");
+        const allowed =
+          segments[0] !== "" &&
+          realParent === parent &&
+          isInsideRealRoot(realRoot, absolutePath) &&
+          !isInSourceFileStore(absolutePath) &&
+          !(await isInGitFolder(absolutePath));
+        return { realRoot, absolutePath, allowed };
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: target.absolutePath,
+          operation: "realpath-target",
+          cause,
+        }),
+    });
+    if (!resolved.allowed) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: resolved.realRoot,
+        resolvedPath: resolved.absolutePath,
+      });
+    }
+    return { relativePath: target.relativePath, absolutePath: resolved.absolutePath };
+  });
+  // SCIENT-FORK:END
+
   // SCIENT-FORK:START — revision-checked saves, exclusive creates, renames and deletes.
   const mutations = yield* makeWorkspaceFileMutations({
     fileSystem,
@@ -830,6 +897,7 @@ export const make = Effect.gen(function* () {
     resolveRetentionStorageDirectory,
     retentionDirectoryFor,
     retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
+    fileHistoryDirectory: path.join(config.baseDir, "file-history"),
     // Sources' content-addressed files are shared by every attachment with their bytes.
     isProtectedPath: async (absolutePath) =>
       isInSourceFileStore(absolutePath) || (await isInGitFolder(absolutePath)),
@@ -922,6 +990,9 @@ export const make = Effect.gen(function* () {
     inspectWriteTarget,
     readFile,
     renameFile,
+    // SCIENT-FORK:START — the Files panel's entry changes.
+    resolveEntryPath,
+    // SCIENT-FORK:END
     viewFile,
     watchFile,
     writeFile,

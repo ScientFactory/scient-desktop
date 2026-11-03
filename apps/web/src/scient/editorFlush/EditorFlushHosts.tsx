@@ -51,7 +51,8 @@ const respondToEditorFlush = createEnvironmentRpcCommand(connectionAtomRuntime, 
   tag: WS_METHODS.editorsFlushRespond,
 });
 
-const windowEditors: WindowEditors = {
+/** Every editor of this window; the Files panel saves them before moving their files. */
+export const windowEditors: WindowEditors = {
   documents: markdownPersistenceRegistry,
   fileSessions: workspaceFileSessionFlush,
   latexInputs: latexDocumentInputs,

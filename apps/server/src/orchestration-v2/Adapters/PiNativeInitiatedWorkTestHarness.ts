@@ -35,6 +35,7 @@ import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderInstances from "../../provider/ProviderInstanceRegistry.ts";
 import { OrchestratorProviderWorkDeferredError, OrchestratorV2 } from "../Orchestrator.ts";
 import type {
@@ -237,6 +238,7 @@ export default function(pi) {
       const database = probe?.databaseLayer?.(h) ?? SqlitePersistenceMemory;
       const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
       const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+        Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
         Layer.provide(
           Layer.mergeAll(
             projectsLayer,

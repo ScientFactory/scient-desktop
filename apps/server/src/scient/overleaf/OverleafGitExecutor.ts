@@ -1,7 +1,7 @@
 /**
  * Run absolute Git with a fresh environment, neutral identity, bounded output/time, and owned-group
  * cleanup; inherit no hooks/config/credentials/proxies. Hand tokens only through per-command
- * askpass files removed with scratch, never args/URLs/env/logs/errors.
+ * askpass files removed with their own scratch, never args/URLs/env/logs/errors.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- Native child streams need an error listener before stdin writes.
 import * as NodeChildProcess from "node:child_process";
@@ -18,7 +18,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
-import { makeGitScratch } from "./OverleafGitScratch.ts";
+import { GIT_SCRATCH_LAYOUT, makeGitScratch } from "./OverleafGitScratch.ts";
 
 const DEFAULT_TIMEOUT: Duration.Input = "2 minutes";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -480,25 +480,22 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         : gitDirectory;
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        const scratch = yield* Effect.acquireRelease(
-          Effect.tryPromise(() => scratchRoot.create()),
-          (directory) =>
-            Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
-        );
-        const home = path.join(scratch, "home");
-        const temp = path.join(scratch, "tmp");
-        const hooks = path.join(scratch, "hooks-disabled");
-        const globalConfig = path.join(scratch, "gitconfig");
-        const globalExcludes = path.join(scratch, "empty");
+        // A token lives only in its own command's scratch, removed with it.
+        const scratch =
+          input.token === undefined
+            ? yield* Effect.tryPromise(() => scratchRoot.shared())
+            : yield* Effect.acquireRelease(
+                Effect.tryPromise(() => scratchRoot.create()),
+                (directory) =>
+                  Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
+              );
+        const home = path.join(scratch, GIT_SCRATCH_LAYOUT.home);
+        const temp = path.join(scratch, GIT_SCRATCH_LAYOUT.temp);
+        const hooks = path.join(scratch, GIT_SCRATCH_LAYOUT.hooks);
+        const globalConfig = path.join(scratch, GIT_SCRATCH_LAYOUT.globalConfig);
+        const globalExcludes = path.join(scratch, GIT_SCRATCH_LAYOUT.globalExcludes);
         const tokenPath = path.join(scratch, "token");
         const askpass = path.join(scratch, windows ? "askpass.cmd" : "askpass.sh");
-        yield* Effect.forEach(
-          [home, temp, hooks],
-          (directory) => fs.makeDirectory(directory, { recursive: true }),
-          { discard: true },
-        );
-        yield* fs.writeFileString(globalConfig, "");
-        yield* fs.writeFileString(globalExcludes, "");
         if (input.token !== undefined) {
           yield* fs.writeFile(tokenPath, input.token, { flag: "wx", mode: 0o600 });
           if (windows) {

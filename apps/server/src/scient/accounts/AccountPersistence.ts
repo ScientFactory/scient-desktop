@@ -94,6 +94,83 @@ export const layer = Layer.effect(
   }),
 );
 
+/** Library accounts became website accounts carrying a library link. */
+const foldLibraryDetails = (summary: Record<string, unknown>) => {
+  const details = summary["details"] as { kind?: unknown } | undefined;
+  return details?.kind === "library"
+    ? { ...summary, details: { ...details, kind: "website" } }
+    : summary;
+};
+
+const REFUSED_OUTCOMES: ReadonlySet<unknown> = new Set(["password-rejected", "code-rejected"]);
+
+/**
+ * Sign-ins were kept in `lastSignInOutcome` (Scient's last attempt) and `lastCheck` (what it last
+ * saw), now one `signIn`. A refusal wins, as it outlasted every check; otherwise the check, which
+ * was the newer of the two; otherwise the attempt, dated by the account's last save.
+ */
+const foldSignInFields = (summary: Record<string, unknown>) => {
+  if (!("lastSignInOutcome" in summary || "lastCheck" in summary || "signedOut" in summary))
+    return summary;
+  const { lastSignInOutcome: outcome, lastCheck, signedOut: _signedOut, ...rest } = summary;
+  const check = lastCheck as { state?: unknown; at?: unknown; message?: unknown } | undefined;
+  const signIn = REFUSED_OUTCOMES.has(outcome)
+    ? {
+        state: outcome,
+        at: check?.at ?? rest["updatedAt"],
+        ...(check?.state === "rejected" && check.message ? { detail: check.message } : {}),
+      }
+    : check
+      ? {
+          // Only a refused key was "rejected" without a refused attempt.
+          state: check.state === "rejected" ? "failed" : check.state,
+          at: check.at,
+          ...(check.message ? { detail: check.message } : {}),
+        }
+      : outcome
+        ? { state: outcome === "needs-user" ? "needs-you" : outcome, at: rest["updatedAt"] }
+        : undefined;
+  // A sign-in that worked was a fact about the saved password; it now lives on the password.
+  const secrets = rest["secrets"] as Record<string, object> | undefined;
+  const password = secrets?.["password"];
+  const verified =
+    outcome === "signed-in" && password
+      ? {
+          secrets: {
+            ...secrets,
+            password: { ...password, verifiedAt: check?.at ?? rest["updatedAt"] },
+          },
+        }
+      : {};
+  return signIn ? { ...rest, ...verified, signIn } : { ...rest, ...verified };
+};
+
+/** Older stored shapes, read as today's before decoding. */
+export const foldStoredAccounts = (state: unknown): unknown => {
+  if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
+  if (!Array.isArray(state.accounts)) return state;
+  return {
+    ...state,
+    accounts: state.accounts.map((account) => {
+      const summary = account?.summary;
+      if (typeof summary !== "object" || summary === null) return account;
+      return { ...account, summary: foldSignInFields(foldLibraryDetails(summary)) };
+    }),
+  };
+};
+
+export const withStoredAccountsFolded = (bytes: Redacted.Redacted<Uint8Array>) => {
+  const text = new TextDecoder().decode(Redacted.value(bytes));
+  try {
+    return Redacted.make(
+      new TextEncoder().encode(JSON.stringify(foldStoredAccounts(JSON.parse(text)))),
+    );
+  } catch {
+    // Unreadable data keeps its own error from the decoder that follows.
+    return bytes;
+  }
+};
+
 export const decodePrivateJson = <A, E>(
   schema: Schema.Codec<A, E>,
   bytes: Redacted.Redacted<Uint8Array>,

@@ -9,7 +9,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { canApply } from "./OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity } from "./OverleafCoordinator.testkit.ts";
 import {
   linkedPaper as linked,
   OTHER_PROJECT,
@@ -20,7 +20,7 @@ import {
   write,
 } from "./OverleafSync.testkit.ts";
 
-describe.skipIf(!canApply)("a link never traps anyone", () => {
+describe.skipIf(!hasPrivateFoldersAndIdentity)("a link never traps anyone", () => {
   it.live("keeps working when the project is removed and added again on the same folder", () =>
     run(
       Effect.gen(function* () {
@@ -74,6 +74,28 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
         expect(
           yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" }),
         ).toMatchObject({ _tag: "done", connection: { state: "archived" } });
+      }),
+    ),
+  );
+
+  it.live("says when unlinking finished an interrupted sync first", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const id = yield* linked(w);
+        yield* w.collaborate(PROJECT, { "main.tex": "newer" });
+        crash = true;
+        yield* Effect.exit(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        crash = false;
+        expect(
+          yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" }),
+        ).toMatchObject({ _tag: "done", finishedInterruptedSync: true });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("newer");
       }),
     ),
   );

@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { fakeAccounts } from "../agent/AccountsService.testkit.ts";
+import { fakeAccounts } from "../Accounts.testkit.ts";
 import { signIn } from "./engine.ts";
 
 it.effect("handles sequential login steps and bounds retries without returning filled values", () =>
@@ -119,7 +119,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
           issuedAt: 0,
         }),
       );
-    expect((yield* run()).outcome).toBe("signed-in");
+    // Scient typed the saved password, so the sign-in vouches for it.
+    expect(yield* run()).toMatchObject({ outcome: "signed-in", savedPasswordUsed: true });
     expect(fills).toBe(3);
     stuck = true;
     steps = 0;
@@ -382,7 +383,10 @@ it.effect(
           issuedAt: 0,
         }),
       );
-      expect((yield* run).outcome).toBe("signed-in");
+      const passedThrough = yield* run;
+      expect(passedThrough.outcome).toBe("signed-in");
+      // Already signed in: no password was typed, so nothing is vouched for.
+      expect(passedThrough).not.toHaveProperty("savedPasswordUsed");
       expect(opened).toEqual([
         account.details.kind === "website" ? account.details.loginUrl : "",
         "https://example.com",
@@ -412,13 +416,13 @@ const librarySignIn = (landing: { readonly origin: string; readonly otp?: string
       accountId: AccountId.make("acc_fixture5"),
       name: "Library",
       details: {
-        kind: "library",
+        kind: "website",
         sites: ["library.example.edu"],
         username: "fixture-user",
         proxyUrl: "https://library.example.edu/go?url={url}",
       },
       secrets: { password: { source: { type: "scient" } } },
-      controls: defaultAccountControls("library"),
+      controls: defaultAccountControls("website"),
       status: "ready",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -479,3 +483,102 @@ const librarySignIn = (landing: { readonly origin: string; readonly otp?: string
     );
     return result;
   });
+
+const universitySignIn = (page: { readonly origin: string; readonly password?: string }) =>
+  Effect.gen(function* () {
+    const university: AccountSummary = {
+      accountId: AccountId.make("acc_fixture6"),
+      name: "Example University",
+      details: {
+        kind: "website",
+        sites: ["example.edu"],
+        username: "fixture-user",
+        institution: {
+          name: "Example University",
+          entityId: "https://idp.example.edu/shibboleth",
+          domain: "example.edu",
+        },
+      },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: defaultAccountControls("website"),
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const profileId = BrowserProfileId.make("default");
+    const status: PreviewAutomationStatus = {
+      available: true,
+      visible: false,
+      tabId: "tab-fixture",
+      url: null,
+      title: null,
+      loading: false,
+      defaultProfileId: profileId,
+      profiles: [{ id: profileId, name: "Default" }],
+      tabs: [{ tabId: "tab-fixture", url: null, profileId, ownedByCaller: true }],
+    };
+    const opened: Array<unknown> = [];
+    const typed: Array<unknown> = [];
+    const broker = PreviewAutomationBroker.of({
+      connect: () => Effect.succeed(Stream.empty),
+      focusHost: () => Effect.void,
+      respond: () => Effect.void,
+      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+        Effect.sync(() => {
+          if (request.operation === "open") opened.push(request.input);
+          if (request.operation === "accountType") typed.push(request.input);
+          if (request.operation !== "evaluate") return status as A;
+          return {
+            origin: page.origin,
+            username: null,
+            password: page.password ?? null,
+            otp: null,
+            submit: null,
+            challenge: null,
+            signedIn: false,
+          } as A;
+        }),
+    });
+    const scope = {
+      threadId: ThreadId.make("thread-fixture"),
+      projectId: ProjectId.make("project-fixture"),
+      unattended: true,
+    };
+    const result = yield* signIn(scope, university, {
+      password: Redacted.make("synthetic-password"),
+    }).pipe(
+      Effect.provideService(
+        AccountsService,
+        fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] }).service,
+      ),
+      Effect.provideService(PreviewAutomationBroker, broker),
+      Effect.provideService(AgentInvocationContext, {
+        ...scope,
+        environmentId: EnvironmentId.make("env-fixture"),
+        providerSessionId: "session-fixture",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview", "accounts"] as const),
+        issuedAt: 0,
+      }),
+    );
+    return { result, opened, typed };
+  });
+
+it.effect("starts a university's sign-in from its link, and a live session passes through", () =>
+  Effect.gen(function* () {
+    const { result, opened } = yield* universitySignIn({ origin: "https://www.nature.com" });
+    expect(result.outcome).toBe("signed-in");
+    expect(JSON.stringify(opened)).toContain("fsso.springer.com");
+  }),
+);
+
+it.effect("never types a saved password on a page the person hasn't signed in on", () =>
+  Effect.gen(function* () {
+    const { result, typed } = yield* universitySignIn({
+      origin: "https://login.unknown.example",
+      password: "#password",
+    });
+    expect(result.outcome).toBe("needs-user");
+    expect(typed).toEqual([]);
+  }),
+);

@@ -619,6 +619,42 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`30084f0018c5751a07291222e8d04e16d513700a` is recorded in
+[the 2026-11-03 30084f0018 receipt](docs/internals/t3-upstream-sync-20261103-30084f0018.md).
+Literal merge `6a48c5374b0002f54ff134789e14870a9ac00c58` has owned base
+`a49a768f7215d2ed54da156fa565a244c856fa0f` (#747) and the frozen official target as parents,
+retaining the 18 official commits after `c8a601c0df`. Claude skips its own thread naming, startup no
+longer waits for Tailscale, PR watches survive host outages, removing provider settings asks first,
+and agents start background work with `delegate_task`. No migrations. Release remains separate.
+
+The previous committed alignment through
+`c8a601c0dfa5c7626e51e06d727076f6b840a005` is recorded in
+[the 2026-11-02 c8a601c0df receipt](docs/internals/t3-upstream-sync-20261102-c8a601c0df.md).
+Literal merge `21583b219b2c15541f038efa0addb5d2de3c1b8a` has owned base
+`9adfeab5dce7dad6b3d70bca43fe37df6c45787b` (#737) and the frozen official target as parents,
+retaining the 12 official commits after `30654b3e91`. Claude threads drop the launching Claude
+session while still naming Scient, Cursor compacts with the SDK's summarize and receives Scient's
+tools on each send, and completion alerts play at once. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`30654b3e91a51937d1dba18fc83af19d8003f5ca` is recorded in
+[the 2026-11-02 30654b3e91 receipt](docs/internals/t3-upstream-sync-20261102-30654b3e91.md).
+Literal merge `139e5d022ca11bc89ea6467a6b8f3200b5618643` has owned base
+`2b4a4d046df9780c45eaac97bff76613c03a876e` (#736's head) and the frozen official target as parents,
+retaining the 26 official commits after `fa31b66bbb`. Codex's direct thread wait uses Scient's
+server and tool names, Claude identifies itself as Scient, and the managed Antigravity runtime
+moves to 1.4.5. T3's migration 77 lands as 81. Release remains separate.
+
+An earlier committed alignment through
+`fa31b66bbb2ae5234205a8628a78e038d917202f` is recorded in
+[the 2026-11-02 fa31b66bbb receipt](docs/internals/t3-upstream-sync-20261102-fa31b66bbb.md).
+Literal merge `7518e02f8c3e20d5460b8383179f7898bb59bd6d` has owned base
+`859c922ef4dff940c01ac1a7a2c4b5f4d69ca499` (#734) and the frozen official target as parents,
+retaining the 144 official commits after `3fd2b855c5`. Upstream's managed policy reads Scient's own
+locations and reaches Scient's analytics and new-thread Permissions menu. No migrations. Release
+remains separate.
+
+An earlier committed alignment through
 `3fd2b855c5c6b9169cdfe3733b34011c1c5ed4b7` is recorded in
 [the 2026-11-01 3fd2b855c5 receipt](docs/internals/t3-upstream-sync-20261101-3fd2b855c5.md).
 Literal merge `0d9cd9f9230386269d31f16a76e7e451f60e0ec8` has owned base
@@ -628,7 +664,7 @@ shell answers; Scient keeps that when cached paths exist and waits on a first la
 checks never run on a bare PATH. Child approvals join Scient's account approvals above the
 composer. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `955e2bfbb5c092c54ad795c8d379fec99702a6b5` is recorded in
 [the 2026-11-01 955e2bfbb5 receipt](docs/internals/t3-upstream-sync-20261101-955e2bfbb5.md).
 Literal merge `e4037122ba1a4eb3ed1b49205865e16324c505e7` has owned base

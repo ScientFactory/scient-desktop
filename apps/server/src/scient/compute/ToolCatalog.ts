@@ -54,6 +54,7 @@ const MSVC =
 
 export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   sql: { commands: ["duckdb", "sqlite3", "psql", "mysql"] },
+  sqlite: { commands: ["sqlite3"] },
   bash: {
     commands: ["bash"],
     places: {
@@ -104,9 +105,18 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   netlogo: {
     commands: ["netlogo-headless", "NetLogo"],
     places: {
-      darwin: ["/Applications/NetLogo*/NetLogo*.app"],
-      linux: ["/opt/NetLogo*/NetLogo", "~/NetLogo*/NetLogo"],
-      win32: ["%ProgramFiles%\\NetLogo*\\NetLogo.exe"],
+      // Run starts the headless script, which every NetLogo download has beside the app.
+      darwin: ["/Applications/NetLogo*/netlogo-headless.sh", "/Applications/NetLogo*/NetLogo*.app"],
+      linux: [
+        "/opt/NetLogo*/netlogo-headless.sh",
+        "~/NetLogo*/netlogo-headless.sh",
+        "/opt/NetLogo*/NetLogo",
+        "~/NetLogo*/NetLogo",
+      ],
+      win32: [
+        "%ProgramFiles%\\NetLogo*\\netlogo-headless.bat",
+        "%ProgramFiles%\\NetLogo*\\NetLogo.exe",
+      ],
     },
   },
   sas: {
@@ -126,14 +136,27 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   },
   "imagej-macro": {
     commands: ["fiji", "ImageJ"],
+    // Current Fiji starts from fiji-<system>-<arch>, in a folder named Fiji; older ones from ImageJ-*.
     places: {
       darwin: [
+        "/Applications/Fiji*.app/Contents/MacOS/fiji-macos*",
+        "~/Applications/Fiji*.app/Contents/MacOS/fiji-macos*",
         "/Applications/Fiji.app/Contents/MacOS/ImageJ-macosx",
         "~/Applications/Fiji.app/Contents/MacOS/ImageJ-macosx",
         "/Applications/ImageJ.app/Contents/MacOS/*",
       ],
-      linux: ["~/Fiji.app/ImageJ-linux64", "/opt/Fiji.app/ImageJ-linux64"],
-      win32: ["~/Fiji.app/ImageJ-win64.exe", "%ProgramFiles%\\Fiji.app\\ImageJ-win64.exe"],
+      linux: [
+        "~/Fiji*/fiji-linux-*",
+        "/opt/Fiji*/fiji-linux-*",
+        "~/Fiji.app/ImageJ-linux64",
+        "/opt/Fiji.app/ImageJ-linux64",
+      ],
+      win32: [
+        "~/Fiji*\\fiji-windows-*.exe",
+        "%ProgramFiles%\\Fiji*\\fiji-windows-*.exe",
+        "~/Fiji.app/ImageJ-win64.exe",
+        "%ProgramFiles%\\Fiji.app\\ImageJ-win64.exe",
+      ],
     },
   },
   nextflow: { commands: ["nextflow"] },
@@ -171,12 +194,19 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   },
   maxima: {
     commands: ["maxima"],
-    places: { win32: ["%ProgramFiles%\\Maxima-*\\bin\\maxima.bat"] },
+    // Maxima's installer defaults to a folder at the top of C:.
+    places: {
+      win32: ["C:\\maxima-*\\bin\\maxima.bat", "%ProgramFiles%\\Maxima-*\\bin\\maxima.bat"],
+    },
   },
   gp: { commands: ["gp"], places: { win32: ["%ProgramFiles%\\PARI*\\gp*.exe"] } },
   coq: {
     commands: ["rocq", "coqc"],
-    places: { darwin: ["/Applications/Coq-Platform*.app", "/Applications/Rocq-Platform*.app"] },
+    places: {
+      darwin: ["/Applications/Coq-Platform*.app", "/Applications/Rocq-Platform*.app"],
+      // The Rocq Platform installer's default, such as C:\Rocq-Platform~9.1~2026.01.
+      win32: ["C:\\Rocq-Platform*\\bin\\rocq.exe", "C:\\Coq-Platform*\\bin\\coqc.exe"],
+    },
   },
   sage: { commands: ["sage"], places: { darwin: ["/Applications/SageMath-*.app"] } },
   singular: { commands: ["Singular"] },
@@ -198,7 +228,12 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   idl: {
     commands: ["idl", "gdl"],
     places: {
-      darwin: ["/Applications/harris/idl*/bin/idl", "/Applications/NV5/idl*/bin/idl"],
+      darwin: [
+        "/Applications/harris/idl*/bin/idl",
+        "/Applications/NV5/idl*/bin/idl",
+        // The app's own launcher only opens Terminal, so Run starts the program inside it.
+        "/Applications/GNU Data Language.app/Contents/Resources/bin/gdl",
+      ],
       linux: ["/usr/local/harris/idl*/bin/idl", "/usr/local/nv5/idl*/bin/idl"],
       win32: [
         "%ProgramFiles%\\Harris\\IDL*\\bin\\bin.x86_64\\idl.exe",
@@ -241,7 +276,7 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
     },
   },
   scilab: {
-    commands: ["scilab-cli", "scilab"],
+    commands: ["WScilex-cli", "scilab-cli", "scilab"],
     places: {
       darwin: ["/Applications/scilab-*.app/Contents/bin/scilab-cli"],
       win32: ["%ProgramFiles%\\scilab-*\\bin\\WScilex-cli.exe"],
@@ -261,7 +296,16 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   fsharp: DOTNET,
   clojure: { commands: ["clojure", "clj", "bb"] },
   "common-lisp": { commands: ["sbcl", "ccl", "clisp", "ecl"] },
-  elixir: { commands: ["elixir"] },
+  elixir: {
+    commands: ["elixir"],
+    // Chocolatey's Elixir says it is on PATH but is not; the installer's own folder too.
+    places: {
+      win32: [
+        "%ProgramData%\\chocolatey\\lib\\Elixir\\tools\\bin\\elixir.bat",
+        "%ProgramFiles%\\Elixir\\bin\\elixir.bat",
+      ],
+    },
+  },
   erlang: { commands: ["erl", "escript"] },
   go: { commands: ["go"], places: { win32: ["%ProgramFiles%\\Go\\bin\\go.exe"] } },
   haskell: { commands: ["ghc", "runghc"], places: { win32: ["C:\\ghcup\\bin\\ghc.exe"] } },

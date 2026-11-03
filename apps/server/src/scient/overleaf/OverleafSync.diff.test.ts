@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { canApply } from "./OverleafCoordinator.testkit.ts";
+import { hasPrivateFoldersAndIdentity } from "./OverleafCoordinator.testkit.ts";
 import { OVERLEAF_LIMITS } from "./OverleafInventory.ts";
 import {
   overleafSyncWorld as world,
@@ -13,7 +13,7 @@ import {
   write,
 } from "./OverleafSync.testkit.ts";
 
-it.live.skipIf(!canApply)(
+it.live.skipIf(!hasPrivateFoldersAndIdentity)(
   "reads both review trees without syncing and refuses a replaced or consumed review",
   () =>
     run(

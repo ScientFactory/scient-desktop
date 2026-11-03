@@ -72,6 +72,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { hasScientContextHistory } from "./ScientHistoricalContext.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
@@ -189,6 +190,7 @@ export const layer: Layer.Layer<
     const modelWindowSql = yield* Effect.serviceOption(SqlClient.SqlClient);
     const forceBytePolicy = (yield* ContextHandoffPolicyOverride) === "byte";
     const eventSink = yield* EventSink.EventSinkV2;
+    const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -567,13 +569,22 @@ export const layer: Layer.Layer<
               } satisfies OrchestrationV2DomainEvent;
             }),
           );
-          yield* eventSink.writeIfRunCurrent({
+          const written = yield* eventSink.writeIfRunCurrent({
             threadId: projection.thread.id,
             runId,
             activeAttemptId: attempt.id,
             expectedStatus: "starting",
             events,
           });
+          // A steering restart that cannot start still ends a run whose earlier turns counted.
+          if (written.committed) {
+            yield* turnAnalytics.runSettled({
+              runId,
+              status,
+              completedAt: now,
+              childrenRunning: false,
+            });
+          }
         },
       );
       const settleStartFailure = Effect.fn("ProviderTurnStartService.settleStartFailure")(
@@ -779,22 +790,38 @@ export const layer: Layer.Layer<
         projection.thread.lineage.sideChat === true &&
         (sideChatHandoff !== undefined ||
           !projection.runs.some((previous) => previous.ordinal < run.ordinal));
-      const resolvedRuntimePolicy =
-        providerWork?.runtimePolicy ??
-        run.steeringRuntimePolicy ??
-        (yield* runtimePolicy.resolve({
-          thread: {
-            ...projection.thread,
-            runtimeMode: supervisedSideChatTurn
-              ? "approval-required"
-              : (run.runtimeMode ?? run.legacyQueue?.runtimeMode ?? projection.thread.runtimeMode),
-            interactionMode:
-              run.interactionMode ??
-              run.legacyQueue?.interactionMode ??
-              projection.thread.interactionMode,
-          },
-          modelSelection: run.modelSelection,
-        }));
+      const admittedRuntimePolicy = providerWork?.runtimePolicy ?? run.steeringRuntimePolicy;
+      const resolvedPolicy = yield* (
+        admittedRuntimePolicy
+          ? Effect.succeed(admittedRuntimePolicy)
+          : runtimePolicy.resolve({
+              thread: {
+                ...projection.thread,
+                runtimeMode: supervisedSideChatTurn
+                  ? "approval-required"
+                  : (run.runtimeMode ??
+                    run.legacyQueue?.runtimeMode ??
+                    projection.thread.runtimeMode),
+                interactionMode:
+                  run.interactionMode ??
+                  run.legacyQueue?.interactionMode ??
+                  projection.thread.interactionMode,
+              },
+              modelSelection: run.modelSelection,
+            })
+      ).pipe(Effect.result);
+      if (resolvedPolicy._tag === "Failure") {
+        const error = resolvedPolicy.failure;
+        if (error._tag !== "RuntimePolicyAboveCeilingError") return yield* error;
+        yield* settleStartFailure({
+          signal: "runtime-mode-above-ceiling",
+          title: "Thread mode is above the policy limit",
+          error,
+          message: error.message,
+        });
+        return;
+      }
+      const resolvedRuntimePolicy = resolvedPolicy.success;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );

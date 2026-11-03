@@ -28,18 +28,10 @@ import {
   type BrowserImportSource,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
+import { anySiteMatches, siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import ACCOUNT_ICONS from "./accountIcons.json";
-
-export function siteMatchesUrl(site: string, url: string): boolean {
-  try {
-    const page = new URL(url);
-    if (page.protocol !== "https:") return false;
-    if (site.startsWith("https://")) return new URL(site).origin === page.origin;
-    return page.hostname === site || page.hostname.endsWith(`.${site}`);
-  } catch {
-    return false;
-  }
-}
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
 export function profileAccounts(
@@ -60,10 +52,10 @@ export function profileAccounts(
  * copy stops working and would replace the session and remembered device this profile has.
  */
 export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
-  return accounts.flatMap(({ details, lastCheck }) =>
+  return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&
-    (lastCheck?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
+    (signIn?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
       ? details.sites
       : [],
   );
@@ -82,11 +74,7 @@ export function matchingAccounts(
       ? 1
       : 0;
   return accounts
-    .filter(
-      ({ details }) =>
-        (details.kind === "website" || details.kind === "library") &&
-        details.sites.some((site) => siteMatchesUrl(site, url)),
-    )
+    .filter(({ details }) => details.kind === "website" && anySiteMatches(details.sites, url))
     .sort(
       (a, b) =>
         sameProfile(b) - sameProfile(a) ||
@@ -103,13 +91,10 @@ export function agentMayUse(
   projectId: ProjectId | null | undefined,
 ): boolean {
   return (
-    agentAccess &&
-    (controls.scope.type === "all-projects" ||
-      (projectId != null && controls.scope.projectIds.includes(projectId))) &&
-    (controls.access === "allowed" ||
-      (controls.access === "ask" &&
-        projectId != null &&
-        controls.allowedProjects?.includes(projectId) === true))
+    authorizationDecision(agentAccess, controls, {
+      projectId: projectId ?? undefined,
+      unattended: false,
+    }).decision === "allowed"
   );
 }
 
@@ -251,14 +236,7 @@ export const accountCatalogue = [
   { name: "OpenAI", kind: "api-key", site: "api.openai.com", envName: "OPENAI_API_KEY" },
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
-  { name: "OpenAthens library", kind: "library", site: "openathens.net" },
-  {
-    name: "HUJI library",
-    kind: "library",
-    // OpenAthens hands HUJI sign-ins to the university's own page, idp.cc.huji.ac.il.
-    site: "huji.ac.il",
-    proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
-  },
+  { name: "University library", kind: "website", site: "", university: true },
   { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
@@ -337,7 +315,7 @@ export const accountCatalogueGroups = [
   },
   {
     name: "Universities & libraries",
-    entries: ["HUJI", "HUJI library", "OpenAthens library", "Moodle", "Google"],
+    entries: ["University library", "HUJI", "Moodle", "Google"],
   },
   {
     name: "Developer tools",
@@ -358,12 +336,6 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
   switch (entry.kind) {
     case "website":
       return { kind: "website", sites: entry.site ? [entry.site] : [] };
-    case "library":
-      return {
-        kind: "library",
-        sites: [entry.site],
-        proxyUrl: "proxyUrl" in entry ? entry.proxyUrl : "",
-      };
     case "api-key":
       return {
         kind: "api-key",
@@ -424,7 +396,7 @@ export function capturedSignInInput(
   const origin = new URL(capture.url).origin;
   const existing = matchingAccounts(accounts, capture.url, capture.profileId).find(
     (account) =>
-      (account.details.kind === "website" || account.details.kind === "library") &&
+      account.details.kind === "website" &&
       (account.details.username === capture.username ||
         ((account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === capture.profileId &&
           !account.details.username &&
@@ -472,10 +444,7 @@ export function automaticSignIn(form: DesktopLoginForm) {
 }
 
 export function signInLabel(account: AccountSummary) {
-  const username =
-    account.details.kind === "website" || account.details.kind === "library"
-      ? account.details.username
-      : undefined;
+  const username = account.details.kind === "website" ? account.details.username : undefined;
   return username ? `${account.name} · ${username}` : account.name;
 }
 
@@ -517,16 +486,22 @@ export function matchExistingProfile(
 
 /** A website password, as a browser or a password export saves them; listed under Saved passwords. */
 export function isSavedPassword(account: AccountSummary) {
-  return account.details.kind === "website" && account.secrets.password !== undefined;
-}
-
-/** A website account that is only a profile's session: no password, and no username but Google's. */
-export function isBrowserSignIn(account: AccountSummary) {
   return (
     account.details.kind === "website" &&
-    account.secrets.password === undefined &&
-    (account.details.username === undefined || account.details.sites.includes(GOOGLE_SITE))
+    account.secrets.password !== undefined &&
+    !universityDetails(account.details)
   );
+}
+
+/** Only a profile's session: no password, and no username but Google's. */
+const hasNothingToType = ({ details, secrets }: AccountSummary) =>
+  details.kind === "website" &&
+  secrets.password === undefined &&
+  (details.username === undefined || details.sites.includes(GOOGLE_SITE));
+
+/** A site signed in from a profile. A university has its own row. */
+export function isBrowserSignIn(account: AccountSummary) {
+  return hasNothingToType(account) && !universityDetails(account.details);
 }
 
 /** The saved sign-ins a page can be filled with. A browser sign-in has nothing to type. */
@@ -535,29 +510,29 @@ export function fillableAccounts(
   url: string,
   profileId: string,
 ) {
-  return matchingAccounts(accounts, url, profileId).filter((account) => !isBrowserSignIn(account));
+  return matchingAccounts(accounts, url, profileId).filter((account) => !hasNothingToType(account));
 }
 
 /** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
 export const GMAIL_URL = "https://mail.google.com/mail/";
 
-/**
- * The domains that tie a browser profile to its owner's organisations: the address it was imported
- * from, and the addresses and sites of its sign-ins.
- */
-export function profileDomains(
-  snapshot: Pick<AccountsSnapshot, "accounts" | "profiles"> | null | undefined,
+/** The domain of the address a browser profile was imported from, such as mail.huji.ac.il. */
+export function profileAddressDomain(
+  snapshot: Pick<AccountsSnapshot, "profiles"> | null | undefined,
   profileId: string,
 ) {
   const record = snapshot?.profiles.find((profile) => profile.profileId === profileId);
-  const signIns = (snapshot?.accounts ?? []).flatMap(({ details }) =>
-    details.kind === "website" && details.profileId === profileId ? [details] : [],
+  return record?.source?.email?.split("@")[1];
+}
+
+/** The sites a browser profile's saved sign-ins are for. */
+export function profileSignInSites(
+  snapshot: Pick<AccountsSnapshot, "accounts"> | null | undefined,
+  profileId: string,
+) {
+  return (snapshot?.accounts ?? []).flatMap(({ details }) =>
+    details.kind === "website" && details.profileId === profileId ? details.sites : [],
   );
-  const addresses = [record?.source?.email, ...signIns.map(({ username }) => username)];
-  return [
-    ...addresses.flatMap((address) => address?.split("@").slice(1) ?? []),
-    ...signIns.flatMap(({ sites }) => sites),
-  ];
 }
 
 /** Google knows this profile's accounts, and none of them works here any more. */
@@ -568,7 +543,7 @@ export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profi
       details.profileId === profileId &&
       details.sites.includes(GOOGLE_SITE),
   );
-  return rows.length > 0 && rows.every(({ lastCheck }) => lastCheck?.state === "signed-out");
+  return rows.length > 0 && rows.every(({ signIn }) => signIn?.state === "signed-out");
 }
 
 /**
@@ -625,10 +600,13 @@ export function changedSourceProfile(
     : undefined;
 }
 
+/** Whether a university's sign-in was last seen working. */
+export const signedIntoUniversity = (account: AccountSummary) =>
+  account.signIn?.state === "signed-in";
+
 /** What each kind of account is called on screen. */
 export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
   website: "Website sign-in",
-  library: "Library access",
   "api-key": "API key",
   database: "Database",
   "cli-login": "Command-line login",
@@ -727,24 +705,33 @@ export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
 
 /** The account's sign-in state in a few words, or nothing when there is nothing to say. */
 export function accountStatusLabel(
-  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck" | "signedOut"> & {
+  account: Pick<AccountSummary, "signIn"> & {
     readonly details?: AccountSummary["details"];
   },
   relativeTime: (iso: string) => string,
 ) {
-  if (account.details?.kind === "api-key")
-    return account.lastCheck?.state === "rejected" ? "Key refused" : null;
-  if (account.lastSignInOutcome === "password-rejected") return "Password rejected";
-  if (account.lastSignInOutcome === "code-rejected") return "Code rejected";
-  if (account.signedOut) return "Signed out";
-  const check = account.lastCheck;
-  if (!check) return null;
-  if (check.state === "signed-in") return `Signed in · ${relativeTime(check.at)}`;
-  if (check.state === "signed-out") return "Signed out";
-  if (check.state === "needs-you") return "Needs you";
-  if (check.state === "rejected") return "Sign-in rejected";
-  if (check.state === "limited") return "Site is limiting access";
-  return "Couldn't check";
+  const signIn = account.signIn;
+  // A refused key is the one thing a key's check says.
+  if (account.details?.kind === "api-key") return signIn?.state === "failed" ? "Key refused" : null;
+  const university = account.details && universityDetails(account.details);
+  if (!signIn) return university ? "Not signed in yet" : null;
+  switch (signIn.state) {
+    case "signed-in":
+      return `Signed in · ${relativeTime(signIn.at)}`;
+    case "signed-out":
+      return university ? "Sign in needed" : "Signed out";
+    case "needs-you":
+      return "Needs you";
+    case "password-rejected":
+      return "Password rejected";
+    case "code-rejected":
+      return "Code rejected";
+    case "limited":
+      return "Site is limiting access";
+    case "failed":
+    case "unknown":
+      return "Couldn't check";
+  }
 }
 
 const ACTIVITY_LABELS: Readonly<Record<AccountUseAction, string>> = {

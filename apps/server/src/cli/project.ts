@@ -29,7 +29,7 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
-import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import type * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -44,6 +44,7 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
@@ -221,25 +222,34 @@ const ProjectCliCloneTrackerLive = ProjectCloneTracker.layer.pipe(
     ),
   ),
   Layer.provide(GitVcsDriver.layer),
-  Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provide(
+    ServerSettings.layer.pipe(
+      Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
+    ),
+  ),
   Layer.provide(VcsProcess.layer),
   Layer.provide(FetchHttpClient.layer),
 );
 
-const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
-  Layer.provide(ProjectCliCloneTrackerLive),
-  Layer.provideMerge(ProjectEnrichmentService.layer),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(
-    ProjectFaviconResolver.layer.pipe(
-      Layer.provide(WorkspacePaths.layer),
-      Layer.provide(T3ProjectFileLoader.layer),
+const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.layerProjectService) =>
+  layerProjectService.pipe(
+    Layer.provide(ProjectCliCloneTrackerLive),
+    Layer.provideMerge(ProjectEnrichmentService.layer),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(
+      ProjectFaviconResolver.layer.pipe(
+        Layer.provide(WorkspacePaths.layer),
+        Layer.provide(T3ProjectFileLoader.layer),
+      ),
     ),
-  ),
-  Layer.provideMerge(WorkspacePaths.layer),
-  Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-  Layer.provideMerge(SqlitePersistence.layerConfig),
-);
+    Layer.provideMerge(WorkspacePaths.layer),
+    Layer.provideMerge(
+      ServerSettings.layer.pipe(
+        Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
+      ),
+    ),
+    Layer.provideMerge(SqlitePersistence.layerConfig),
+  );
 
 const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
 const PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
@@ -448,7 +458,11 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       );
     }
 
-    const layerOfflineRuntime = layerProjectCliRuntime.pipe(
+    // Before ownership and clearing, so a failed import leaves server state alone.
+    const { layerProjectService } = yield* Effect.promise(
+      () => import("../orchestration-v2/runtimeLayer.ts"),
+    );
+    const layerOfflineRuntime = makeProjectCliRuntimeLayer(layerProjectService).pipe(
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );

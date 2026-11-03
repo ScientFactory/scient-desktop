@@ -23,12 +23,14 @@ import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeMana
 import { AccountsService } from "./accounts/AccountsService.ts";
 import { accountsForRpc } from "./accounts/AccountsRpcHandlers.ts";
 // SCIENT-FORK:END
+import { BrowserHistory } from "./browserHistory/BrowserHistory.ts";
 
 export const captureScientWsServices = Effect.gen(function* () {
   // SCIENT-FORK:START — Scient Accounts: preserve one owner across WebSocket connections.
   const accounts = yield* accountsForRpc;
   // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
+  const browserHistory = yield* BrowserHistory;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const dataTables = yield* DataTables.DataTables;
   const notebooks = yield* NotebookStore.NotebookStore;
@@ -50,6 +52,7 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(ProviderConnectionManager.ProviderConnectionManager, providerConnectionManager),
     Layer.succeed(ProviderRuntimeManager.ProviderRuntimeManager, providerRuntimeManager),
     Layer.succeed(AnalysisService.AnalysisService, analysis),
+    Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(DataTables.DataTables, dataTables),
     Layer.succeed(NotebookStore.NotebookStore, notebooks),

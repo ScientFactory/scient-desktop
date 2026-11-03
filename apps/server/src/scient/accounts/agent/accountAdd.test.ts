@@ -15,7 +15,7 @@ import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { askForAccountKey } from "./accountAdd.ts";
-import { fakeAccounts } from "./AccountsService.testkit.ts";
+import { fakeAccounts } from "../Accounts.testkit.ts";
 
 const scope = {
   threadId: ThreadId.make("thread-add"),

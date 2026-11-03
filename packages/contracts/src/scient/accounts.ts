@@ -24,13 +24,7 @@ export const AccountId = TrimmedNonEmptyString.check(
 ).pipe(Schema.brand("AccountId"));
 export type AccountId = typeof AccountId.Type;
 
-export const AccountKind = Schema.Literals([
-  "website",
-  "library",
-  "api-key",
-  "database",
-  "cli-login",
-]);
+export const AccountKind = Schema.Literals(["website", "api-key", "database", "cli-login"]);
 export type AccountKind = typeof AccountKind.Type;
 
 /** `allowed` never prompts, including scheduled runs; `ask` waits for the user's card. */
@@ -61,7 +55,7 @@ const ALL_PROJECTS: GrantScope = { type: "all-projects" };
 export const defaultAccountControls = (kind: AccountKind): AccountControls => ({
   access: "allowed",
   permission: "full",
-  visibility: kind === "website" || kind === "library" ? "hidden" : "readable",
+  visibility: kind === "website" ? "hidden" : "readable",
   scope: ALL_PROJECTS,
 });
 
@@ -154,6 +148,8 @@ export const AccountSecretSummary = Schema.Struct({
   copies: Schema.optional(Schema.Array(AccountValueSource)),
   /** Last four characters of a token-like value held by Scient; never for passwords. */
   hint: Schema.optional(Schema.String.check(Schema.isMaxLength(4))),
+  /** Passwords only: when a sign-in with this value last worked. A new value starts without it. */
+  verifiedAt: Schema.optional(IsoDateTime),
 });
 export type AccountSecretSummary = typeof AccountSecretSummary.Type;
 
@@ -178,6 +174,14 @@ export const EnvironmentVariableName = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
 );
 
+/** A university in the public directory of institutions that sign in to publishers. */
+export const Institution = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  entityId: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  domain: TrimmedNonEmptyString.check(Schema.isMaxLength(253)),
+});
+export type Institution = typeof Institution.Type;
+
 const WebsiteFields = {
   sites: Schema.Array(AccountSite).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
   /** Where Scient starts a sign-in; defaults to the page the agent is on. */
@@ -185,6 +189,10 @@ const WebsiteFields = {
   username: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
   /** Profile whose browser session holds this sign-in; the default profile otherwise. */
   profileId: Schema.optional(BrowserProfileId),
+  /** The university this sign-in belongs to. */
+  institution: Schema.optional(Institution),
+  /** A library's link containing `{url}`, for a university outside the directory. */
+  proxyUrl: Schema.optional(HttpsUrl.check(Schema.isIncluding("{url}"))),
 } as const;
 
 export const ApiKeyAuth = Schema.Union([
@@ -206,15 +214,13 @@ export const CliLoginVariable = Schema.Struct({
 });
 export type CliLoginVariable = typeof CliLoginVariable.Type;
 
+/** Ways to a paper behind a subscription. */
+export const PaperRoute = Schema.Literals(["publisher", "university", "library"]);
+export type PaperRoute = typeof PaperRoute.Type;
+
 /** What the account is; secret values are held separately under `secrets`. */
 export const AccountDetails = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("website"), ...WebsiteFields }),
-  Schema.Struct({
-    kind: Schema.Literal("library"),
-    ...WebsiteFields,
-    /** Proxy or redirector address containing `{url}`, e.g. an OpenAthens redirector. */
-    proxyUrl: HttpsUrl.check(Schema.isIncluding("{url}")),
-  }),
   Schema.Struct({
     kind: Schema.Literal("api-key"),
     sites: Schema.Array(AccountSite).check(Schema.isMaxLength(16)),
@@ -246,7 +252,6 @@ export const ACCOUNT_SECRET_FIELDS: Readonly<
   Record<Exclude<AccountKind, "cli-login">, ReadonlyArray<string>>
 > = {
   website: ["password", "totp"],
-  library: ["password", "totp"],
   "api-key": ["token"],
   database: ["password", "clientCert", "clientKey", "caCert"],
 };
@@ -262,24 +267,33 @@ export const AccountSignInOutcome = Schema.Literals([
   "limited",
   "failed",
 ]);
+export type AccountSignInOutcome = typeof AccountSignInOutcome.Type;
 
-export const AccountCheckState = Schema.Literals([
+/**
+ * Where an account's sign-in stands. Besides `signed-in`, a sign-in attempt ends in `needs-you`,
+ * `password-rejected`, `code-rejected`, `limited` or `failed`; looking at the site finds
+ * `signed-in`, `signed-out` or `unknown`, and can also find `limited` or a session that keeps
+ * ending (`needs-you`). A refused API key is `failed`, with the service's answer in `detail`.
+ */
+export const AccountSignInState = Schema.Literals([
   "signed-in",
   "signed-out",
   "needs-you",
-  "rejected",
+  "password-rejected",
+  "code-rejected",
   "limited",
+  "failed",
   "unknown",
 ]);
-export type AccountCheckState = typeof AccountCheckState.Type;
+export type AccountSignInState = typeof AccountSignInState.Type;
 
-/** What Scient last saw when it opened or used this sign-in. */
-export const AccountCheck = Schema.Struct({
-  state: AccountCheckState,
+/** What Scient last tried or saw of this sign-in, and when. */
+export const AccountSignIn = Schema.Struct({
+  state: AccountSignInState,
   at: IsoDateTime,
-  message: Schema.optional(TrimmedNonEmptyString),
+  detail: Schema.optional(TrimmedNonEmptyString),
 });
-export type AccountCheck = typeof AccountCheck.Type;
+export type AccountSignIn = typeof AccountSignIn.Type;
 
 export const AccountSummary = Schema.Struct({
   accountId: AccountId,
@@ -290,9 +304,7 @@ export const AccountSummary = Schema.Struct({
   status: AccountStatus,
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
-  lastSignInOutcome: Schema.optional(AccountSignInOutcome),
-  lastCheck: Schema.optional(AccountCheck),
-  signedOut: Schema.optional(Schema.Boolean),
+  signIn: Schema.optional(AccountSignIn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastUsedAt: Schema.optional(IsoDateTime),
@@ -503,13 +515,105 @@ export const AccountPaperForSourceResult = Schema.Union([
     published: Schema.Boolean,
   }),
   Schema.Struct({
-    status: Schema.Literals(["not-found", "no-access", "needs-sign-in", "limit"]),
+    status: Schema.Literals(["not-found", "no-access", "needs-you", "waiting"]),
     message: Schema.String,
     landingUrl: Schema.optional(Schema.String),
-    /** The library's browser profile, where "Open" has to go for a sign-in to count. */
-    profileId: Schema.optional(Schema.String),
   }),
 ]);
+
+export const PaperItemState = Schema.Literals([
+  "waiting",
+  "saved",
+  "needs-you",
+  "not-found",
+  "no-access",
+]);
+export type PaperItemState = typeof PaperItemState.Type;
+
+/** A paper to fetch: by DOI or link, attached to its source when it came from one. */
+export const PaperAsked = Schema.Struct({
+  doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+  title: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+  source: Schema.optional(
+    Schema.Struct({ sourceId: TrimmedNonEmptyString, expectedRevision: Schema.Int }),
+  ),
+});
+export type PaperAsked = typeof PaperAsked.Type;
+
+const PaperNeed = {
+  kind: Schema.Literals(["university", "sign-in", "check"]),
+  site: Schema.optional(Schema.String),
+  /** The university to sign in to, for a "sign-in". */
+  accountId: Schema.optional(AccountId),
+  openUrl: Schema.optional(Schema.String),
+  profileId: Schema.optional(Schema.String),
+} as const;
+
+export const PaperItem = Schema.Struct({
+  ...PaperAsked.fields,
+  itemId: TrimmedNonEmptyString,
+  state: PaperItemState,
+  route: Schema.optional(Schema.Literals(["saved-before", "open-access", ...PaperRoute.literals])),
+  /** False for an accepted manuscript or preprint. */
+  published: Schema.optional(Schema.Boolean),
+  path: Schema.optional(Schema.String),
+  message: Schema.optional(Schema.String),
+  /** What this paper waits on, while it is "needs-you". */
+  needed: Schema.optional(Schema.Struct(PaperNeed)),
+});
+export type PaperItem = typeof PaperItem.Type;
+
+/** One thing only the user can do, which releases every paper waiting on it. */
+export const PaperRequest = Schema.Struct({
+  ...PaperNeed,
+  count: Schema.Int,
+});
+export type PaperRequest = typeof PaperRequest.Type;
+
+/** A project's papers being fetched, as a band or a card shows them. */
+export const PaperQueueSummary = Schema.Struct({
+  root: Schema.String,
+  /** The conversation that asked, whose card shows what it needs from the user. */
+  threadId: Schema.optional(ThreadId),
+  waiting: Schema.Int,
+  saved: Schema.Int,
+  failed: Schema.Int,
+  requests: Schema.Array(PaperRequest),
+  /** Publishers that asked Scient to slow down, with when each resumes. */
+  paused: Schema.Array(Schema.Struct({ site: Schema.String, until: IsoDateTime })),
+});
+export type PaperQueueSummary = typeof PaperQueueSummary.Type;
+
+export const PaperQueueRequestInput = Schema.Struct({
+  root: Schema.String.check(Schema.isMaxLength(4096)),
+  papers: Schema.Array(PaperAsked).check(Schema.isMinLength(1), Schema.isMaxLength(5000)),
+});
+export type PaperQueueRequestInput = typeof PaperQueueRequestInput.Type;
+
+export const PaperQueueInput = Schema.Struct({
+  root: Schema.String.check(Schema.isMaxLength(4096)),
+});
+export type PaperQueueInput = typeof PaperQueueInput.Type;
+
+export const UniversitySearchInput = Schema.Struct({
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
+});
+export const UniversitySignInInput = Schema.Struct({
+  accountId: AccountId,
+  /** The conversation it opens beside. */
+  threadId: ThreadId,
+});
+export type UniversitySignInInput = typeof UniversitySignInInput.Type;
+
+/** A page the person opened, to bring in through their university when it is a journal article. */
+export const UniversityBrowseInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  profileId: BrowserProfileId,
+  url: Schema.String.check(Schema.isMaxLength(8192)),
+});
+export type UniversityBrowseInput = typeof UniversityBrowseInput.Type;
 
 /** A secret sitting in a plain file: by name only, never its value. */
 export const AccountPlainKey = Schema.Struct({
@@ -577,6 +681,7 @@ export const AccountsSnapshot = Schema.Struct({
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),
+  paperQueues: Schema.optional(Schema.Array(PaperQueueSummary)),
   recentActivity: Schema.Array(AccountActivityEntry),
   customModelKeys: Schema.Array(AccountCustomModelKey),
   managedElsewhere: Schema.optional(

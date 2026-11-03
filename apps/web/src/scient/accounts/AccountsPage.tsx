@@ -58,6 +58,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
 import { environmentThreadShells } from "~/state/threads";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
 import { ApiKeyAccountPicker } from "./ApiKeyAccountPicker";
@@ -78,7 +79,9 @@ import {
   keysInUse,
   mergeProfiles,
   providerManagedAccounts,
+  signedIntoUniversity,
 } from "./accountsView";
+import { UniversityIcon, useUniversitySignIn } from "./University";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { BrowserImportDialog, BrowserProfiles } from "./BrowserProfiles";
 import { clickableAccountRow } from "./clickableAccountRow";
@@ -125,8 +128,9 @@ export function AccountRow({
   const site = details.kind === "website" ? details.sites[0] : undefined;
   const check = useAccountCommand(accountsState.check, environmentId);
   const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
-  const signInAgain =
-    account.signedOut || ["signed-out", "needs-you"].includes(account.lastCheck?.state ?? "");
+  const university = universityDetails(details);
+  const universitySignIn = useUniversitySignIn(environmentId);
+  const signInAgain = ["signed-out", "needs-you"].includes(account.signIn?.state ?? "");
   const openSite = async (url = site) => {
     if (!url) return;
     await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
@@ -141,6 +145,8 @@ export function AccountRow({
         <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
             <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
+          ) : university ? (
+            <UniversityIcon site={site ?? ""} className="size-10" />
           ) : site ? (
             <SiteFavicon site={site} />
           ) : (
@@ -151,9 +157,11 @@ export function AccountRow({
           <span className="grid min-w-0 gap-1">
             <span className="truncate text-left">{account.name}</span>
             <span className="truncate text-xs text-muted-foreground">
-              {details.kind === "website" && !account.secrets.password
+              {details.kind === "website" && (university || !account.secrets.password)
                 ? [
-                    details.username ?? "Browser sign-in",
+                    university
+                      ? (university.institution?.domain ?? details.username ?? details.sites[0])
+                      : (details.username ?? "Browser sign-in"),
                     profiles.find(
                       (profile) =>
                         profile.id ===
@@ -184,9 +192,7 @@ export function AccountRow({
               <TooltipTrigger render={<span className="shrink-0 text-xs text-muted-foreground" />}>
                 {statusLabel}
               </TooltipTrigger>
-              {account.lastCheck?.message ? (
-                <TooltipPopup>{account.lastCheck.message}</TooltipPopup>
-              ) : null}
+              {account.signIn?.detail ? <TooltipPopup>{account.signIn.detail}</TooltipPopup> : null}
             </Tooltip>
           ) : null}
           {account.status === "needs-attention" ? (
@@ -207,6 +213,19 @@ export function AccountRow({
       }
       control={
         <div className="flex items-center gap-2">
+          {university && !signedIntoUniversity(account) ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite}
+              onClick={(event) => {
+                event.stopPropagation();
+                void universitySignIn(account.accountId);
+              }}
+            >
+              Sign in
+            </Button>
+          ) : null}
           <AccessChip
             environmentId={environmentId}
             target={target}
@@ -214,12 +233,14 @@ export function AccountRow({
             disabled={!canWrite || busy}
           />
           <ControlsMenu disabled={!canWrite || busy}>
-            {signInAgain && details.kind === "website" ? (
+            {university ? (
+              <MenuItem onClick={() => void universitySignIn(account.accountId)}>Sign in</MenuItem>
+            ) : signInAgain && details.kind === "website" ? (
               <MenuItem onClick={() => void openSite(details.loginUrl ?? site)}>
                 Sign in again
               </MenuItem>
             ) : null}
-            {details.kind === "website" || details.kind === "library" ? (
+            {details.kind === "website" ? (
               <MenuItem
                 onClick={async () => {
                   setBusy(true);
@@ -231,7 +252,9 @@ export function AccountRow({
                 Check sign-in
               </MenuItem>
             ) : null}
-            {site ? <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem> : null}
+            {site && !university ? (
+              <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem>
+            ) : null}
             <AccountStoreMenuItems account={account} />
             <MenuItem onClick={onEdit}>Edit</MenuItem>
             <MenuItem
@@ -272,7 +295,7 @@ export function AccountRow({
             >
               Agents can read it
             </MenuCheckboxItem>
-            {details.kind !== "website" && details.kind !== "library" ? (
+            {details.kind !== "website" ? (
               <MenuItem
                 onClick={() =>
                   void controls({

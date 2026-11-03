@@ -114,6 +114,7 @@ export interface MarkdownPersistenceLease {
   readonly reviewUnchangedRefusal: (currentRevision: string | null) => Promise<boolean>;
   readonly resolveWithLocal: (revision: string) => Promise<boolean>;
   readonly resolveWithDisk: () => Promise<boolean>;
+  readonly resolveRestoredDraft: (choice: "keep" | "file") => Promise<boolean>;
   readonly restoreRecovery: () => boolean;
   readonly holdForRename: () => (() => void) | null;
   /** Removes only a clean ordinary recovery copy; never a pending namespace intent. */
@@ -255,6 +256,8 @@ export class MarkdownPersistenceRegistry {
       readonly checkpointStore?: MarkdownDraftCheckpointStore;
       /** Files whose ordinary drafts use this store; exact publication intents always do. */
       readonly keepsCheckpoint?: (target: MarkdownPersistenceTarget) => boolean;
+      /** Tests of what happens before a conflict is settled turn this off. */
+      readonly keepLocalOverConflicts?: boolean;
       /** The merge strategy for a file; Markdown's block merge where it names none. */
       readonly reconcile?: (
         target: MarkdownPersistenceTarget,
@@ -586,11 +589,6 @@ export class MarkdownPersistenceRegistry {
           projectFileOperationKey(target))
         ? checkpoint.renameIntent
         : null;
-    const namespaceAttention =
-      checkpoint?.renameIntent?.acknowledgement &&
-      !renamePending &&
-      !checkpoint.publicationIntent &&
-      checkpoint.attentionMutationId === checkpoint.renameIntent.mutationId;
     const coordinator = new DocumentPersistenceCoordinator<DocumentPatchReconciliation>({
       ...(initialConflict === undefined ? {} : { initialConflict }),
       ...(initialCurrentMissing ? { initialCurrentMissing: true } : {}),
@@ -599,27 +597,12 @@ export class MarkdownPersistenceRegistry {
             initialAttention: checkpoint?.attention ?? "outcome_unknown",
             initialAttentionMutationId: renamePending.mutationId,
           }
-        : checkpoint?.attention && !namespaceAttention
-          ? { initialAttention: checkpoint.attention }
-          : {}),
-      ...(checkpoint?.publicationOutcome && !namespaceAttention
-        ? { initialPublicationOutcome: checkpoint.publicationOutcome }
         : {}),
-      ...(!renamePending && !namespaceAttention && checkpoint?.attentionMutationId
-        ? { initialAttentionMutationId: checkpoint.attentionMutationId }
-        : {}),
-      ...(initial.publicationAttention
-        ? { initialPublicationAttention: initial.publicationAttention }
-        : checkpoint?.publicationAttention && !namespaceAttention
-          ? { initialPublicationAttention: checkpoint.publicationAttention }
-          : {}),
       ...(checkpoint?.publicationIntent
         ? { initialPublication: checkpoint.publicationIntent }
         : {}),
-      ...(checkpoint?.authorizedCurrentReview && !renamePending && !namespaceAttention
-        ? { initialAuthorizedCurrentReview: checkpoint.authorizedCurrentReview }
-        : {}),
       reconcile,
+      keepLocalOverConflicts: this.options.keepLocalOverConflicts ?? true,
       source: initial.contents,
       revision: initial.revision,
       ...(draftSource === undefined ? {} : { draftSource }),
@@ -877,6 +860,12 @@ export class MarkdownPersistenceRegistry {
         guarded(() =>
           ownedEntry.pendingInput === null
             ? ownedEntry.coordinator.resolveWithDisk()
+            : Promise.resolve(false),
+        ),
+      resolveRestoredDraft: (choice) =>
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.resolveRestoredDraft(choice)
             : Promise.resolve(false),
         ),
       restoreRecovery: () =>

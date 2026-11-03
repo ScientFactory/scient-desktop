@@ -25,7 +25,7 @@ import {
 } from "../workspace/CheckoutBarrier.ts";
 import {
   filePublicationTestHelper,
-  nativePublicationHost,
+  privateFoldersAndIdentityHost,
 } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision, type MutationPoint } from "../workspace/RetainedFileMutation.ts";
 import * as OverleafCoordinator from "./OverleafCoordinator.ts";
@@ -37,7 +37,7 @@ import * as OverleafStateStore from "./OverleafStateStore.ts";
 import { make as makeApplier, WorkspaceApplier } from "./WorkspaceApplier.ts";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
 
-export const canApply = await nativePublicationHost();
+export const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const volumeUuid = async (path: string) =>
   HostProcess.Platform.defaultValue() === "win32" ? platformFileIdentity.volume(path) : VOLUME;
@@ -49,7 +49,11 @@ type Push = Effect.Effect<
   OverleafRepository.OverleafRepositoryError | OverleafGitExecutor.OverleafGitError
 >;
 
-export const write = (folder: string, files: Record<string, string>) =>
+type Contents = Record<string, string | Uint8Array>;
+const encoded = (content: string | Uint8Array) =>
+  typeof content === "string" ? new TextEncoder().encode(content) : content;
+
+export const write = (folder: string, files: Contents) =>
   Effect.promise(async () => {
     for (const [path, content] of Object.entries(files)) {
       await NodeFSP.mkdir(NodePath.dirname(NodePath.join(folder, path)), { recursive: true });
@@ -75,8 +79,8 @@ export const firstKept = (stateRoot: string) =>
  * Overleaf that will next hold `remote`. Hooks run at the coordinator's points.
  */
 export const world = (input: {
-  readonly synced: Record<string, string>;
-  readonly remote: Record<string, string>;
+  readonly synced: Contents;
+  readonly remote: Contents;
   /** Files only in the folder, recorded as local-only. */
   readonly localOnly?: Record<string, string>;
   /** Paths recorded as holding Scient conflict material. */
@@ -162,20 +166,17 @@ export const world = (input: {
     const gitUrl = real ? overleaf : "https://git.overleaf.com/0123456789abcdef01234567";
     const repo = NodePath.join(stateRoot, "repositories", `${CONNECTION}.git`);
     yield* repos.initialize({ repo, gitUrl });
-    const tree = Effect.fnUntraced(function* (at: string, contents: Record<string, string>) {
+    const tree = Effect.fnUntraced(function* (at: string, contents: Contents) {
       const entries = [];
       for (const [path, content] of Object.entries(contents))
-        entries.push({
-          path,
-          oid: yield* repos.writeBlob({ repo: at, bytes: new TextEncoder().encode(content) }),
-        });
+        entries.push({ path, oid: yield* repos.writeBlob({ repo: at, bytes: encoded(content) }) });
       return yield* repos.writeTree({ repo: at, entries });
     });
 
     // A collaborator's own clone of the real Overleaf, for changes made there.
     const collaborator = NodePath.join(root, "collaborator.git");
     /** Commits `contents` on Overleaf's current head (or as its first commit) and pushes it. */
-    const collaborate = Effect.fnUntraced(function* (contents: Record<string, string>) {
+    const collaborate = Effect.fnUntraced(function* (contents: Contents) {
       const current = yield* repos
         .fetch({ repo: collaborator, branch: "main", token: TOKEN })
         .pipe(Effect.option);
@@ -203,7 +204,11 @@ export const world = (input: {
       synced = yield* repos.fetch({ repo, branch: "main", token: TOKEN });
       const same =
         Object.keys(input.remote).length === Object.keys(input.synced).length &&
-        Object.entries(input.remote).every(([path, content]) => input.synced[path] === content);
+        Object.entries(input.remote).every(
+          ([path, content]) =>
+            input.synced[path] !== undefined &&
+            Buffer.from(encoded(input.synced[path])).equals(encoded(content)),
+        );
       if (!same) yield* collaborate(input.remote);
     } else {
       const syncedTree = yield* tree(repo, input.synced);
@@ -356,11 +361,17 @@ export const world = (input: {
     const overleafNow = Effect.gen(function* () {
       const now = yield* repos.fetch({ repo: collaborator, branch: "main", token: TOKEN });
       const contents: Record<string, string> = {};
-      for (const entry of yield* repos.readTree({ repo: collaborator, tree: now.tree }))
-        contents[entry.path] = new TextDecoder().decode(
-          yield* repos.readBlob({ repo: collaborator, oid: entry.oid, maxBytes: 1024 * 1024 }),
-        );
-      return { ...now, contents };
+      const files: Record<string, Buffer> = {};
+      for (const entry of yield* repos.readTree({ repo: collaborator, tree: now.tree })) {
+        const bytes = yield* repos.readBlob({
+          repo: collaborator,
+          oid: entry.oid,
+          maxBytes: 1024 * 1024,
+        });
+        contents[entry.path] = new TextDecoder().decode(bytes);
+        files[entry.path] = Buffer.from(bytes);
+      }
+      return { ...now, contents, files };
     });
     return {
       store,
