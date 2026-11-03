@@ -587,6 +587,7 @@ describe("Scient provider settings", () => {
       "Select Cursor",
       "Select Grok",
       "Select fx",
+      "Select Kiro",
       "Select Devin",
       "Select Muse Code",
     ]);

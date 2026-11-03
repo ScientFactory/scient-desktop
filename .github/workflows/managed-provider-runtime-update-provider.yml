@@ -311,6 +311,7 @@ jobs:
             packages/provider-acp-registry \
             packages/provider-cursor \
             packages/provider-grok \
+            packages/provider-kiro \
             packages/provider-muse \
             packages/provider-opencode \
             packages/provider-pi \
@@ -393,6 +394,7 @@ jobs:
             packages/provider-acp-registry \
             packages/provider-cursor \
             packages/provider-grok \
+            packages/provider-kiro \
             packages/provider-muse \
             packages/provider-opencode \
             packages/provider-pi \
@@ -448,6 +450,7 @@ jobs:
             packages/provider-acp-registry \
             packages/provider-cursor \
             packages/provider-grok \
+            packages/provider-kiro \
             packages/provider-muse \
             packages/provider-opencode \
             packages/provider-pi \
@@ -555,6 +558,7 @@ jobs:
             packages/provider-core \
             packages/provider-cursor \
             packages/provider-grok \
+            packages/provider-kiro \
             packages/provider-muse \
             packages/provider-opencode \
             packages/provider-pi \

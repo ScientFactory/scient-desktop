@@ -54,7 +54,17 @@ export function makeInstallerFilesystem(fs: FileSystem.FileSystem, platform: str
       platform !== "win32"
         ? fs.makeTempDirectoryScoped(options)
         : Effect.acquireRelease(fs.makeTempDirectory(options), (path) =>
-            remove(path).pipe(Effect.orDie),
+            // A finalizer that dies turns the scope's own failure into a defect too, so a staging
+            // folder Windows keeps locked past every retry is logged and left in the temp folder
+            // rather than hiding the installer's real error.
+            remove(path).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not remove a temporary installer folder.", {
+                  path,
+                  error,
+                }),
+              ),
+            ),
           ),
   };
 }
