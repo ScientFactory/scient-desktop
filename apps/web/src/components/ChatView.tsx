@@ -257,6 +257,7 @@ import { renameInTabHistory, useRightPanelTabHistory } from "~/scient/rightPanel
 import { PanelFilesLayout } from "~/scient/rightPanel/PanelFilesColumn";
 import { usePanelTabShortcuts } from "~/scient/rightPanel/usePanelTabShortcuts";
 import { PanelTabNewWindowProvider } from "~/scient/multiWindow/PanelTabNewWindowItem";
+import { ThreadTasksBar } from "~/scient/threadTasks/ThreadTasksBar";
 // SCIENT-FORK:END
 import {
   ThreadPreviewMiniPlayer,
@@ -4497,6 +4498,14 @@ function ChatViewContent(props: ChatViewProps) {
                               }
                             />
                           ) : null}
+                          {/* SCIENT-FORK:START — unfinished tasks stay in view above the composer. */}
+                          {composerMounted ? (
+                            <ThreadTasksBar
+                              key={`tasks:${routeThreadKey}`}
+                              projection={serverProjection}
+                            />
+                          ) : null}
+                          {/* SCIENT-FORK:END */}
                           {!composerMounted ? null : (
                             <ChatComposer
                               key={composerTargetKey(composerDraftTarget)}
