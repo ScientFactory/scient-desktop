@@ -42,7 +42,8 @@ describe("ThemeImportDialog", () => {
   // StrictMode replays ref attach/detach on mount, which must not end the session.
   it("searches Open VSX under StrictMode", async () => {
     searchOpenVsxThemes.mockReset();
-    searchOpenVsxThemes.mockResolvedValue([extension]);
+    // Only the full query finds it, so the heading shows the search for "night" ran, not "n".
+    searchOpenVsxThemes.mockImplementation(async (query) => (query === "night" ? [extension] : []));
     await using _screen = await render(
       <StrictMode>
         <ThemeImportDialog

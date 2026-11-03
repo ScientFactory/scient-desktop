@@ -21,6 +21,7 @@ const MAX_IDENTITY_BYTES = 64 * 1024;
 const MAX_TRANSACTION_BYTES = 1024 * 1024;
 const MAX_GENERATED_FILE_BYTES = 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const initializationByRequest = new Map<string, Promise<ScientProjectInitializationResult>>();
 const initializationByRoot = new Map<string, Promise<ScientProjectInitializationResult>>();
 
 export type ScientProjectState = "ordinary" | "initialized" | "recoverable" | "conflicting";
@@ -172,16 +173,21 @@ function parseTransaction(content: string): ProjectInitializationTransaction | n
   }
 }
 
-async function validateRoot(root: string, createIfMissing: boolean): Promise<string> {
+/** The folder a path names, with `~` expanded, before anything on disk is read. */
+function requestedRoot(root: string): string {
   const trimmedRoot = root.trim();
-  if (trimmedRoot.length === 0) throw new Error("Enter a project folder path.");
   const expandedRoot =
     trimmedRoot === "~"
       ? NodeOS.homedir()
       : trimmedRoot.startsWith("~/") || trimmedRoot.startsWith("~\\")
         ? NodePath.join(NodeOS.homedir(), trimmedRoot.slice(2))
         : trimmedRoot;
-  const normalized = NodePath.resolve(expandedRoot);
+  return NodePath.resolve(expandedRoot);
+}
+
+async function validateRoot(root: string, createIfMissing: boolean): Promise<string> {
+  if (root.trim().length === 0) throw new Error("Enter a project folder path.");
+  const normalized = requestedRoot(root);
   if (createIfMissing) await NodeFSP.mkdir(normalized, { recursive: true });
   let rootStat;
   try {
@@ -460,16 +466,31 @@ async function initializeResolvedRoot(
   };
 }
 
-export async function initializeScientProject(input: {
+/**
+ * Calls for one folder share one setup. The path is claimed before the folder is checked, since a
+ * second call that waited for the check could start after the first had finished.
+ */
+export function initializeScientProject(input: {
   readonly root: string;
   readonly title?: string;
 }): Promise<ScientProjectInitializationResult> {
-  const root = await validateRoot(input.root, true);
-  const running = initializationByRoot.get(root);
+  const requested = requestedRoot(input.root);
+  const running = initializationByRequest.get(requested);
   if (running) return running;
-  const operation = initializeResolvedRoot(root, input.title).finally(() => {
-    initializationByRoot.delete(root);
-  });
-  initializationByRoot.set(root, operation);
+  const operation = validateRoot(input.root, true)
+    .then((root) => {
+      // Two paths for one folder, such as through a link, share it too.
+      const sameFolder = initializationByRoot.get(root);
+      if (sameFolder) return sameFolder;
+      const setup = initializeResolvedRoot(root, input.title).finally(() => {
+        initializationByRoot.delete(root);
+      });
+      initializationByRoot.set(root, setup);
+      return setup;
+    })
+    .finally(() => {
+      initializationByRequest.delete(requested);
+    });
+  initializationByRequest.set(requested, operation);
   return operation;
 }
