@@ -193,6 +193,8 @@ const WebsiteFields = {
   institution: Schema.optional(Institution),
   /** A library's link containing `{url}`, for a university outside the directory. */
   proxyUrl: Schema.optional(HttpsUrl.check(Schema.isIncluding("{url}"))),
+  /** Recorded from a browser profile's session rather than typed in, so there is nothing to fill. */
+  origin: Schema.optional(Schema.Literal("browser-session")),
 } as const;
 
 export const ApiKeyAuth = Schema.Union([

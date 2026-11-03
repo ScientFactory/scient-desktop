@@ -61,7 +61,12 @@ export function useSignInRecording(input: {
       const profileName = profiles.find((profile) => profile.id === input.profileId)?.name;
       void save({
         name: site,
-        details: { kind: "website", sites: [site], profileId: input.profileId },
+        details: {
+          kind: "website",
+          sites: [site],
+          profileId: input.profileId,
+          origin: "browser-session",
+        },
         secrets: {},
       }).then((result) => {
         if (!result.ok) return;

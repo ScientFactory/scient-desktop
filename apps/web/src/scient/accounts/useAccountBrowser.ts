@@ -68,7 +68,12 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
           ) {
             const result = await save({
               name: signIn.name,
-              details: { kind: "website", sites: [new URL(site).origin], profileId },
+              details: {
+                kind: "website",
+                sites: [new URL(site).origin],
+                profileId,
+                origin: "browser-session",
+              },
               secrets: {},
             });
             if (!result.ok) return;

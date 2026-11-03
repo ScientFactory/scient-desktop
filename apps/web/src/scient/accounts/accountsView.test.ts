@@ -67,7 +67,7 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
   });
 
-  it("fills from saved sign-ins only, never a browser sign-in with nothing to type", () => {
+  it("fills from saved sign-ins, a username saved by hand included, never a browser sign-in", () => {
     const google = {
       ...website("work"),
       details: {
@@ -75,6 +75,15 @@ describe("Accounts decisions", () => {
         sites: ["google.com"],
         username: "a@example.com",
         profileId: "work",
+        origin: "browser-session" as const,
+      },
+    };
+    const usernameOnly = {
+      ...website("work"),
+      details: {
+        kind: "website" as const,
+        sites: ["accounts.google.com"],
+        username: "b@example.com",
       },
     };
     const saved = {
@@ -86,12 +95,12 @@ describe("Accounts decisions", () => {
       },
       secrets: { password: { source: { type: "scient" as const } } },
     };
-    expect(fillableAccounts([google, saved], "https://accounts.google.com/", "work")).toEqual([
-      saved,
-    ]);
+    expect(
+      fillableAccounts([google, saved, usernameOnly], "https://accounts.google.com/", "work"),
+    ).toEqual([saved, usernameOnly]);
   });
 
-  it("groups passwordless rows, Google's or any site's, with browser sign-ins, and says when a profile lost Google", () => {
+  it("groups rows recorded from sessions with browser sign-ins, and says when a profile lost Google", () => {
     const google = (state: "signed-in" | "signed-out", profileId = "work") => ({
       ...website(profileId),
       details: {
@@ -99,6 +108,7 @@ describe("Accounts decisions", () => {
         sites: ["google.com"],
         username: "a@example.com",
         profileId,
+        origin: "browser-session" as const,
       },
       signIn: { state, at: "2026-10-31T00:00:00.000Z" },
     });
@@ -108,7 +118,7 @@ describe("Accounts decisions", () => {
         ...website("work"),
         details: { ...website("work").details, username: "a" },
       } as AccountSummary),
-    ).toBe(true);
+    ).toBe(false);
     expect(signedOutOfGoogle([google("signed-out")], "work")).toBe(true);
     expect(signedOutOfGoogle([google("signed-out"), google("signed-in")], "work")).toBe(false);
     expect(signedOutOfGoogle([google("signed-out", "home")], "work")).toBe(false);

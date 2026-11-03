@@ -507,9 +507,11 @@ export function isSavedPassword(account: AccountSummary) {
   );
 }
 
-/** Only a profile's session: no password, whoever it is signed in as. */
+/** Only a profile's session: no password, and no username unless it was recorded from a session. */
 const hasNothingToType = ({ details, secrets }: AccountSummary) =>
-  details.kind === "website" && secrets.password === undefined;
+  details.kind === "website" &&
+  secrets.password === undefined &&
+  (details.username === undefined || details.origin === "browser-session");
 
 /** An account saved here, with the snapshot that was shown when it was saved. */
 export interface SavedAccount {

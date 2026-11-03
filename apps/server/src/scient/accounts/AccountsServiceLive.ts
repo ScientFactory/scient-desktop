@@ -918,6 +918,7 @@ export const layer = Layer.effect(
                       loginUrl: "https://accounts.google.com/",
                       username: email,
                       profileId: input.profileId,
+                      origin: "browser-session",
                     },
                     secrets: {},
                   });
