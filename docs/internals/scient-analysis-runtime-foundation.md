@@ -31,8 +31,8 @@ changes adapter sequencing, not the shared architecture or the later Python/R pa
 
 | Boundary                   | Owner                                           | Responsibility                                                                                                                                      |
 | -------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Execution vocabulary       | `packages/scient-execution`                     | Run IDs, statuses, transition rules, bounded output records, receipt base, process port, and deterministic simulator                                |
-| Analysis specialization    | `packages/scient-analysis`                      | Runtime profiles, adapter contract/registry fields, source revisions, run actions, analysis receipts, stream events, and simulator                  |
+| Execution vocabulary       | `packages/scient-execution`                     | Run IDs, statuses, transition rules, bounded output records, receipt base, and process port                                                         |
+| Analysis specialization    | `packages/scient-analysis`                      | Runtime profiles, adapter contract/registry fields, source revisions, run actions, analysis receipts, and stream events                             |
 | Host execution             | `apps/server/src/scient/execution`              | No-shell process spawn, stdout/stderr transport, exit observation, and owned process-tree cancellation                                              |
 | Analysis coordination      | `apps/server/src/scient/analysis`               | Adapter inspection, source/revision checks, lifecycle, cancellation race handling, output bounds, local journal, recovery, history, and RPC service |
 | Result promotion           | analysis package + server analysis              | Runtime-neutral portable capsule, receipt redaction, artifact verification, and atomic project publication                                          |
@@ -208,9 +208,7 @@ yet include Run selection or section, variables, opt-in rich representations, te
 discovery, or automatic retention policy. Explicit metadata-preserving cleanup is included.
 
 The shared execution package is intentionally an execution kernel rather than a speculative
-all-domain service. An execution-only typesetting contract test proves that a fake
-`DocumentBuild` adapter can consume its state machine, process port, cancellation, and simulator
-without importing analysis contracts. When the second real consumer exposes genuinely shared
+all-domain service. When the second real consumer exposes genuinely shared
 server orchestration, lift that behavior into an `ExecutionCoordinator`; do not make
 `DocumentBuild` depend on `AnalysisService`, and do not force either specialized receipt into a
 generic task record.
