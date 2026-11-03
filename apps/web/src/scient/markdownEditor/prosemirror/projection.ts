@@ -738,13 +738,6 @@ export function prepareScientMarkdownSource(
   return { status: "accepted", projected };
 }
 
-export function serializeScientMarkdownProjection(
-  projection: ScientMarkdownProjection,
-  document: ProseMirrorNode,
-): string {
-  return projectScientMarkdownSource(projection, document).source;
-}
-
 export function withProjectedDocument(
   projection: ScientMarkdownProjection,
   document: ProseMirrorNode,
