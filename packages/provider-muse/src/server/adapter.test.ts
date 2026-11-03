@@ -553,6 +553,80 @@ describe("MuseAdapterV2", () => {
   );
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — a completed compaction may drop the awareness, so it is sent again.
+  it.effect("sends host awareness again after a completed manual or automatic compaction", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(THREAD_ID));
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        capabilities: new Set(["accounts"]),
+        connectors: [],
+      });
+      const fake = yield* makeFakeMuse();
+      fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          scientAwareness: () => "aware",
+        },
+      );
+      const compaction = (turnId: string, status: string, revision: number) =>
+        fake.emit("item/completed", {
+          turnId,
+          item: {
+            itemId: `compaction-${turnId}`,
+            turnId,
+            kind: "compaction",
+            revision,
+            status,
+            ...(status === "completed" ? { outcome: "compacted" } : {}),
+          },
+        });
+      const carriesAwareness = Effect.fnUntraced(function* (
+        ordinal: number,
+        during: (turnId: string) => Effect.Effect<void> = () => Effect.void,
+      ) {
+        yield* harness.runtime.startTurn(
+          yield* turnInput(harness.providerThread, ordinal, harness.policy),
+        );
+        const call = yield* fake.takeCall("turn/start");
+        yield* during(call.commandId!);
+        yield* fake.emit("turn/completed", { turnId: call.commandId, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+        const input = call.params.input as ReadonlyArray<{ readonly text?: string }>;
+        return input.some((part) => part.text?.includes("<scient_instructions>") === true);
+      });
+
+      assert.isTrue(yield* carriesAwareness(1));
+      // Manual compaction.
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      const compact = yield* fake.takeCall("session/compact");
+      yield* compaction(compact.commandId!, "completed", 1);
+      yield* harness.takeEvent("turn.terminal");
+      assert.isTrue(yield* carriesAwareness(3));
+      assert.isFalse(yield* carriesAwareness(4));
+      // An automatic compaction still in progress keeps the delivered awareness.
+      assert.isFalse(yield* carriesAwareness(5, (turnId) => compaction(turnId, "inProgress", 1)));
+      assert.isFalse(yield* carriesAwareness(6));
+      // A completed automatic compaction sends it again on the next turn.
+      assert.isFalse(yield* carriesAwareness(7, (turnId) => compaction(turnId, "completed", 1)));
+      assert.isTrue(yield* carriesAwareness(8));
+      assert.isFalse(yield* carriesAwareness(9));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+  // SCIENT-FORK:END
+
   it.effect("uses optional host-owned runtime copy without changing the package default", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

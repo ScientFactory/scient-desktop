@@ -1418,6 +1418,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             turn.items.set(item.itemId, item);
             turn.dirty.delete(item.itemId);
             yield* publishItem(turn, item);
+            // SCIENT-FORK:START — a completed compaction, manual or automatic, may drop the
+            // awareness from the context, so the next turn carries it again.
+            if (
+              item.kind === "compaction" &&
+              item.status === "completed" &&
+              (!item.outcome || item.outcome === "compacted")
+            )
+              sentAwareness = undefined;
+            // SCIENT-FORK:END
             if (turn.compact && item.kind === "compaction" && item.status !== "inProgress") {
               yield* finish(
                 turn,
