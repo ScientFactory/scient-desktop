@@ -1,14 +1,15 @@
-import type {
-  BrowserProfileId,
-  PreviewAutomationOpenInput,
-  PreviewAutomationStatus,
+import {
+  GOOGLE_SITE,
+  type BrowserProfileId,
+  type PreviewAutomationOpenInput,
+  type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { requireThreadMcpCapability } from "../../../mcp/McpInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { scientInvocationForMcp } from "../../../mcp/ScientMcpInvocation.ts";
-import type { AccountSessionScope } from "../AccountsService.ts";
+import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { withAccountUse } from "./accountUse.ts";
 import { previewInvoker } from "./broker.ts";
 import { findProfiles } from "./findProfiles.ts";
@@ -19,6 +20,31 @@ import { signInOnPage } from "./signInOnPage.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(ProfileDetection);
+
+/** The profile's other Google accounts that Google still accepts, oldest first, at most three. */
+const otherGoogleAccounts = Effect.fn("AccountsAgent.otherGoogleAccounts")(function* (
+  scope: AccountSessionScope,
+  url: string,
+  profileId: BrowserProfileId,
+) {
+  const host = new URL(url).hostname;
+  if (host !== GOOGLE_SITE && !host.endsWith(`.${GOOGLE_SITE}`)) return [];
+  const session = yield* (yield* AccountsService).forSession(scope, [profileId]);
+  return session.accounts
+    .filter(
+      ({ details, signIn }) =>
+        details.kind === "website" &&
+        details.profileId === profileId &&
+        details.sites.includes(GOOGLE_SITE) &&
+        details.username !== undefined &&
+        signIn?.state === "signed-in",
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .flatMap(({ details }) =>
+      details.kind === "website" && details.username ? [details.username] : [],
+    )
+    .slice(0, 3);
+});
 
 export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFallback")(function* (
   scope: AccountSessionScope,
@@ -74,6 +100,27 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       );
     // Without the original identity, discovery cannot safely exclude its profile.
     if (profileId === undefined) return status;
+    const accounts = yield* AccountsService;
+    const remember = (winner: BrowserProfileId, opened: string) =>
+      accounts
+        .chooseProfile({ threadId: scope.threadId, profileId: winner, url: opened, siteOnly: true })
+        .pipe(Effect.ignore);
+    // Google keeps several accounts in one profile: first try its others in this tab.
+    for (const email of yield* otherGoogleAccounts(scope, url, profileId)) {
+      const asked = new URL(url);
+      asked.searchParams.set("authuser", email);
+      yield* invoke("navigate", { url: asked.href }, tabId);
+      yield* invoke("accountWaitForLoad", {}, tabId);
+      const seen = yield* decodeDetection(
+        yield* invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId),
+      );
+      if (classifyProfilePage(asked.href, seen) !== "opens") continue;
+      yield* remember(profileId, asked.href);
+      const current = yield* invoke<PreviewAutomationStatus>("status", {}, tabId).pipe(
+        Effect.orElseSucceed(() => status),
+      );
+      return { ...current, accountsNote: `Opened as ${email} in ${profileName}.` };
+    }
     const found = yield* findProfiles(scope, invocation, url, {
       exclude: profileId,
       stopAtFirstOpen: true,
@@ -99,6 +146,7 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       }),
     );
     if (!opened.tabId) return status;
+    yield* remember(best.profileId, url);
     yield* invoke("close", {}, tabId).pipe(Effect.orElseSucceed(() => undefined));
     const current = yield* invoke<PreviewAutomationStatus>("status", {}, opened.tabId).pipe(
       Effect.orElseSucceed(() => opened),

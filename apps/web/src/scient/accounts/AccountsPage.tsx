@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  GOOGLE_SITE,
   AccountId,
   PROVIDER_DISPLAY_NAMES,
   ThreadId,
@@ -17,6 +18,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
+  EllipsisIcon,
   FileKeyIcon,
   GlobeIcon,
   KeyRoundIcon,
@@ -59,6 +61,7 @@ import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/serve
 import { environmentThreadShells } from "~/state/threads";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
+import { siteIdentities } from "@t3tools/shared/scientBrowserProfileChoice";
 import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
 import { ApiKeyAccountPicker } from "./ApiKeyAccountPicker";
@@ -460,16 +463,26 @@ function SavedPasswordsDialog({
   );
 }
 
-/** One site signed in from several browser profiles: the profiles' pictures, opening to each. */
-function SignInGroupRow({
+/** Google adds another of its accounts to a profile through its own page. */
+const addGoogleSession = (email: string) =>
+  `https://accounts.google.com/AddSession?Email=${encodeURIComponent(email)}&continue=${encodeURIComponent("https://myaccount.google.com/")}`;
+
+/**
+ * One site signed in from several browser profiles: the profiles' pictures, opening to each.
+ * When Main has the site but it doesn't work there, the row says which profile is used instead.
+ */
+export function SignInGroupRow({
+  environmentId,
   accounts,
   profiles,
   onOpen,
 }: {
+  environmentId: EnvironmentId;
   accounts: ReadonlyArray<AccountSummary>;
   profiles: ReturnType<typeof mergeProfiles>;
   onOpen: () => void;
 }) {
+  const openBrowser = useAccountBrowser(environmentId);
   const first = accounts[0]!;
   const site = "sites" in first.details ? first.details.sites[0] : undefined;
   const iconUrl = accountIconUrl(site ? [site] : [], first.name);
@@ -477,6 +490,18 @@ function SignInGroupRow({
     accounts.map(({ details }) => (details.kind === "website" ? details.profileId : undefined)),
   );
   const signedIn = profiles.filter((profile) => profileIds.has(profile.id));
+  const pageUrl = site ? (site.startsWith("https://") ? site : `https://${site}`) : undefined;
+  const identities = siteIdentities(accounts, pageUrl).map((identity) => identity.profileId);
+  const using =
+    profileIds.has(DEFAULT_BROWSER_PROFILE_ID) && !identities.includes(DEFAULT_BROWSER_PROFILE_ID)
+      ? profiles.find((profile) => profile.id === identities[0])
+      : undefined;
+  const usingEmail = accounts.find(
+    ({ details }) =>
+      details.kind === "website" && details.profileId === using?.id && details.username,
+  )?.details;
+  const googleEmail =
+    site === GOOGLE_SITE && usingEmail?.kind === "website" ? usingEmail.username : undefined;
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
@@ -492,15 +517,47 @@ function SignInGroupRow({
             <span className="truncate text-left">{first.name}</span>
             <span className="truncate text-xs text-muted-foreground">
               Browser sign-in ·{" "}
-              {signedIn.length > 2
-                ? `${signedIn.length} profiles`
-                : signedIn.map((profile) => profile.name).join(", ")}
+              {using
+                ? `Using ${using.name}`
+                : signedIn.length > 2
+                  ? `${signedIn.length} profiles`
+                  : signedIn.map((profile) => profile.name).join(", ")}
             </span>
           </span>
         </span>
       }
       control={
         <span className="flex items-center gap-2">
+          {using && pageUrl ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`More for ${first.name} sign-ins`}
+                  />
+                }
+              >
+                <EllipsisIcon />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                {googleEmail ? (
+                  <MenuItem
+                    onClick={() =>
+                      void openBrowser(addGoogleSession(googleEmail), DEFAULT_BROWSER_PROFILE_ID)
+                    }
+                  >
+                    Add to Main
+                  </MenuItem>
+                ) : (
+                  <MenuItem onClick={() => void openBrowser(pageUrl, using.id)}>
+                    Open in {using.name}
+                  </MenuItem>
+                )}
+              </MenuPopup>
+            </Menu>
+          ) : null}
           <span className="flex -space-x-1.5">
             {signedIn.map((profile) => (
               <ProfilePicture
@@ -1041,6 +1098,7 @@ function AccountsContent({
             ) : (
               <SignInGroupRow
                 key={row[0]!.accountId}
+                environmentId={environmentId}
                 accounts={row}
                 profiles={profiles}
                 onOpen={() => setSignIns(row)}

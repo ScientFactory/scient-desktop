@@ -14,8 +14,8 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { render } from "../../../test/render";
-import { AccountRow } from "./AccountsPage";
-import { browserIconUrl } from "./accountsView";
+import { AccountRow, SignInGroupRow } from "./AccountsPage";
+import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, ProfileDetail } from "./BrowserProfiles";
 
 const state = vi.hoisted(() => ({
@@ -269,4 +269,50 @@ it("records a sign-out on Main before its cookies go", async () => {
     ["record", { site: "github.com" }],
     ["remove", "github.com"],
   ]);
+});
+
+it("says which profile a site uses when Main's copy doesn't work, and offers Main the account", async () => {
+  using _fixture = fixture();
+  const signIn = (profileId: string, sites: string[], patch: Partial<AccountSummary> = {}) => ({
+    ...account,
+    accountId: AccountId.make(`acc_group${profileId}${sites[0]!.length}`),
+    name: sites[0]!,
+    details: { kind: "website" as const, sites, profileId, username: "person@example.com" },
+    secrets: {},
+    ...patch,
+  });
+  const profiles = mergeProfiles([{ id: "work", name: "Work", kind: "persistent" }], []);
+  const group = (sites: string[]) => (
+    <SignInGroupRow
+      environmentId={EnvironmentId.make("synthetic")}
+      accounts={[
+        signIn("default", sites, {
+          signIn: { state: "unknown", at: "2026-11-04T00:00:00.000Z", detail: "Copied from Work" },
+        }),
+        signIn("work", sites, { signIn: { state: "signed-in", at: "2026-11-03T00:00:00.000Z" } }),
+      ]}
+      profiles={profiles}
+      onOpen={() => undefined}
+    />
+  );
+  await using screen = await render(group(["github.com"]));
+  await expect.element(page.getByText("Browser sign-in · Using Work")).toBeVisible();
+  await page.getByRole("button", { name: "More for github.com sign-ins" }).click();
+  await page.getByRole("menuitem", { name: "Open in Work" }).click();
+  await vi.waitFor(() =>
+    expect(state.open).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://github.com", profileId: "work" }),
+    ),
+  );
+  await screen.rerender(group(["google.com"]));
+  await page.getByRole("button", { name: "More for google.com sign-ins" }).click();
+  await page.getByRole("menuitem", { name: "Add to Main" }).click();
+  await vi.waitFor(() =>
+    expect(state.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: `https://accounts.google.com/AddSession?Email=person%40example.com&continue=${encodeURIComponent("https://myaccount.google.com/")}`,
+        profileId: "default",
+      }),
+    ),
+  );
 });
