@@ -85,23 +85,6 @@ export const SERVER_TO_BRIDGE_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "shutdown",
 ]);
 
-export const BRIDGE_TO_SERVER_TYPES: ReadonlySet<BridgeMessageType> = new Set([
-  "hello-ack",
-  "kernel-ready",
-  "accepted",
-  "stream",
-  "display",
-  "error",
-  "warning",
-  "execution-complete",
-  "interrupt-result",
-  "variables",
-  "table",
-  "restarted",
-  "shutdown-complete",
-  "fatal",
-]);
-
 export type BridgeDirection = "server-to-bridge" | "bridge-to-server";
 
 function bridgeMessageDirection(type: BridgeMessageType): BridgeDirection {
