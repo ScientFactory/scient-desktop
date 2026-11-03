@@ -104,10 +104,12 @@ interface HostAssignment {
 
 interface PreviewAutomationRequestErrorContext {
   readonly operation: PreviewAutomationOperation;
+  // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
   readonly environmentId: AgentInvocationContext.AgentInvocationScope["environmentId"];
   readonly threadId: AgentInvocationContext.AgentInvocationScope["threadId"];
-  readonly providerSessionId: string | undefined;
+  readonly providerSessionId: string;
   readonly providerInstanceId: AgentInvocationContext.AgentInvocationScope["providerInstanceId"];
+  // SCIENT-FORK:END
   readonly clientId: string;
   readonly connectionId: ClientConnection["connectionId"];
   readonly requestId: string;
@@ -162,10 +164,10 @@ const selectorDiagnosticsFromInput = (
   return {};
 };
 
-// SCIENT-FORK:START - transport-neutral native sessions retain per-thread browser ownership.
 /** Codex/OpenCode share sessions across threads; include thread id to isolate tabs and ownership. */
+// SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
 const hostAssignmentKey = (scope: AgentInvocationContext.AgentInvocationScope): string =>
-  `${scope.environmentId}\u0000${scope.nativeSessionId !== undefined ? `native:${scope.nativeSessionId}` : `provider:${scope.providerSessionId}`}\u0000${scope.threadId}`;
+  `${scope.environmentId}\u0000${scope.providerSessionId}\u0000${scope.threadId}`;
 // SCIENT-FORK:END
 
 const isPreviewTabId = Schema.is(PreviewTabId);

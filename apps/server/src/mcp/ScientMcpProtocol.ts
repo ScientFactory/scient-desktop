@@ -11,7 +11,7 @@ import { AgentInvocationContext } from "../scient/operations/AgentInvocationCont
 import { listAvailableScientOperations } from "../scient/operations/AgentOperationDispatcher.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { scientOperationCatalog } from "./ScientOperationCatalog.ts";
-import { McpInvocationContext } from "./McpInvocationContext.ts";
+import { McpInvocationContext, type McpCapability } from "./McpInvocationContext.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 
 class ScientToolList extends RpcMiddleware.Service<ScientToolList>()("scient/mcp/ToolList") {}
@@ -24,10 +24,12 @@ const isToolListResult = Schema.is(
 );
 
 /** Host tools keep their own handlers and admission. Declare their actual Tool
- * objects at composition, never infer ownership from an unrecognized name. */
+ * objects at composition, never infer ownership from an unrecognized name.
+ * `gated` lists host tools whose every call needs one grant; the list hides them
+ * without it. Call-time checks still decide. */
 export function makeScientToolListLayer(
   hostTools: ReadonlyArray<Tool.Any> = [],
-  deviceTools: ReadonlyArray<Tool.Any> = [],
+  gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>> = {},
 ) {
   const hostNames = new Set<string>();
   for (const tool of hostTools) {
@@ -35,11 +37,15 @@ export function makeScientToolListLayer(
       throw new Error(`Ambiguous MCP tool ownership: ${tool.name}`);
     hostNames.add(tool.name);
   }
-  const deviceNames = new Set<string>();
-  for (const tool of deviceTools) {
-    if (!hostNames.has(tool.name))
-      throw new Error(`MCP device tool is not declared as a host tool: ${tool.name}`);
-    deviceNames.add(tool.name);
+  const requiredGrant = new Map<string, McpCapability>();
+  for (const [capability, tools] of Object.entries(gated) as Array<
+    [McpCapability, ReadonlyArray<Tool.Any>]
+  >) {
+    for (const tool of tools) {
+      if (!hostNames.has(tool.name))
+        throw new Error(`MCP gated tool is not declared as a host tool: ${tool.name}`);
+      requiredGrant.set(tool.name, capability);
+    }
   }
   return Layer.effect(
     ScientToolList,
@@ -58,7 +64,6 @@ export function makeScientToolListLayer(
             mcpInvocation.thread === undefined
               ? undefined
               : scientInvocationForMcp({ ...mcpInvocation, thread: mcpInvocation.thread });
-          const hasDeviceAccess = mcpInvocation.capabilities.has("device");
           const available =
             invocation === undefined
               ? []
@@ -77,9 +82,9 @@ export function makeScientToolListLayer(
             tools: listed.tools
               .filter((tool) => {
                 const operation = scientOperationCatalog.forTool(tool.name);
-                return operation === undefined
-                  ? hostNames.has(tool.name) && (!deviceNames.has(tool.name) || hasDeviceAccess)
-                  : ids.has(operation.id);
+                if (operation !== undefined) return ids.has(operation.id);
+                const grant = requiredGrant.get(tool.name);
+                return grant === undefined || mcpInvocation.capabilities.has(grant);
               })
               .map(scientAgentToolCopy),
           };

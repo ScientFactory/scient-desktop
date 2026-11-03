@@ -184,10 +184,10 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
-export type {
-  AgentSkillDescriptor as McpScientSkillDescriptor,
-  AgentSkillScope as McpScientSkillScope,
-} from "../scient/operations/AgentInvocationContext.ts";
+// SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
+export type { AgentSkillScope as McpScientSkillScope } from "../scient/operations/AgentInvocationContext.ts";
+// SCIENT-FORK:END
+
 /**
  * `McpSchema.EnabledWhen` for tools a delegated child must not see or call.
  * EnabledWhen only receives the MCP client profile, so read the T3 caller from the request fiber.

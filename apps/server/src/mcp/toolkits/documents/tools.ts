@@ -17,7 +17,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -148,18 +148,10 @@ const htmlDocumentDependencies = [
 
 const latexDependencies = [...sharedDocumentDependencies, LatexBuildService.LatexBuildService];
 
-const documentOperation = (id: string): OperationMetadata => ({
+const documentOperation = (id: string): OperationDefinition => ({
   id,
-  family: "documents",
   scope: "workspace",
   requiredCapabilities: ["documents:build"],
-  approval: "explicit-user-request-guidance",
-  documentation:
-    id === "documents.latex.build"
-      ? "docs/internals/scient-latex.md"
-      : id === "documents.export"
-        ? "docs/internals/scient-document-pdf-export.md"
-        : "docs/internals/scient-browser-pdf-export.md",
 });
 
 export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {

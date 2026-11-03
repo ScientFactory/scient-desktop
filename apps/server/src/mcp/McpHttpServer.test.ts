@@ -535,12 +535,10 @@ it.effect("rejects non-boolean snapshot image options before selecting a browser
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(result.isError).toBe(true);
-      // SCIENT-FORK:START JSON-codec validation reports the schema failure directly.
-      expect(result.content).toEqual([
-        { type: "text", text: "Preview snapshot failed: SchemaError." },
-      ]);
+      // SCIENT-FORK:START upstream's advertised-schema decoding refuses the call.
+      expect(result.content).toEqual([{ type: "text", text: "Preview snapshot failed: AiError." }]);
       expect(result.structuredContent).toEqual({
-        error: { _tag: "SchemaError", operation: "snapshot", failureCount: 1 },
+        error: { _tag: "AiError", operation: "snapshot", failureCount: 1 },
       });
       // SCIENT-FORK:END
     }

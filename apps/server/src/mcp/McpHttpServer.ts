@@ -30,10 +30,7 @@ import {
 } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
-import {
-  dispatchScientOperation,
-  makeScientToolExecutor,
-} from "../scient/operations/AgentOperationDispatcher.ts";
+import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 import { scientOperationCatalog, scientTools } from "./ScientOperationCatalog.ts";
@@ -87,6 +84,7 @@ import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
+  PreviewToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
@@ -549,15 +547,14 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   const server = yield* McpServer.McpServer;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const resolver = yield* WorkspaceBindingResolver;
+  // SCIENT-FORK:START — acting tools read the live owner's invocation policy.
   const sessions = yield* ProviderSessionManagerV2;
+  // SCIENT-FORK:END
   const saveServices = yield* Effect.context<
     ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom
   >();
-  const built = yield* PreviewSnapshotToolkit;
-  const execute = yield* makeScientToolExecutor(built).pipe(Effect.orDie);
+  const built = yield* decodeAsAdvertised(PreviewSnapshotToolkit);
   const tool = PreviewSnapshotTool;
-  const decodeParameters = Schema.decodeUnknownEffect(Schema.toCodecJson(tool.parametersSchema));
   yield* server.addTool({
     tool: new McpSchema.Tool({
       name: tool.name,
@@ -576,105 +573,95 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
     }),
     annotations: tool.annotations,
     handle: (payload) =>
-      Effect.withFiber((fiber) =>
-        Effect.gen(function* () {
-          const invocation = yield* McpInvocationContext.requireThreadScope(
-            Context.getUnsafe(fiber.context, McpInvocationContext.McpInvocationContext),
-            "preview_snapshot",
-          );
-          return yield* decodeParameters(payload).pipe(
-            Effect.flatMap((input) => execute("preview_snapshot", input)),
-            Effect.provideService(WorkspaceBindingResolver, resolver),
-            Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
-            Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
-            Effect.provideService(ProviderSessionManagerV2, sessions),
-            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-            Effect.provideService(AgentInvocationContext, scientInvocationForMcp(invocation)),
-            Effect.flatMap(({ encodedResult }) =>
-              Effect.gen(function* () {
-                const snapshot = encodedResult as SnapshotMetadata & {
-                  readonly url: string;
-                  readonly screenshot: {
-                    readonly mimeType: "image/png";
-                    readonly data: string;
-                    readonly width: number;
-                    readonly height: number;
-                  };
+      Effect.withFiber((fiber) => {
+        const invocation = Context.getUnsafe(
+          fiber.context,
+          McpInvocationContext.McpInvocationContext,
+        );
+        return built.handle("preview_snapshot", payload).pipe(
+          Stream.unwrap,
+          Stream.run(Sink.last()),
+          Effect.flatMap(Effect.fromOption),
+          Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+          // SCIENT-FORK:START — acting tools read the live owner's invocation policy.
+          Effect.provideService(ProviderSessionManagerV2, sessions),
+          // SCIENT-FORK:END
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.flatMap(({ encodedResult }) =>
+            Effect.gen(function* () {
+              const snapshot = encodedResult as SnapshotMetadata & {
+                readonly url: string;
+                readonly screenshot: {
+                  readonly mimeType: "image/png";
+                  readonly data: string;
+                  readonly width: number;
+                  readonly height: number;
                 };
-                const { screenshot, ...page } = snapshot;
-                const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
-                const screenshotPath =
-                  payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
-                // Providers replay images on later requests, and some reject them; include images only when requested.
-                const includeImage = payload?.includeImage === true;
-                if (screenshotPath !== undefined && !includeImage) {
-                  const saved = {
-                    url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-                    screenshotPath,
-                  };
-                  return new McpSchema.CallToolResult({
-                    isError: false,
-                    structuredContent: saved,
-                    content: [{ type: "text", text: encodeJsonText(saved) }],
-                  });
-                }
-                const metadata = {
-                  ...page,
-                  screenshot: {
-                    mimeType: screenshot.mimeType,
-                    width: screenshot.width,
-                    height: screenshot.height,
-                  },
-                  ...(screenshotPath === undefined ? {} : { screenshotPath }),
+              };
+              const { screenshot, ...page } = snapshot;
+              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
+              const screenshotPath =
+                payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
+              // Providers replay images on later requests, and some reject them; include images only when requested.
+              const includeImage = payload?.includeImage === true;
+              if (screenshotPath !== undefined && !includeImage) {
+                const saved = {
+                  url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                  screenshotPath,
                 };
-                const bounded = boundSnapshotMetadata(metadata);
                 return new McpSchema.CallToolResult({
                   isError: false,
-                  structuredContent:
-                    bounded.omitted.length === 0
-                      ? bounded.value
-                      : { ...bounded.value, omitted: bounded.omitted },
-                  content: [
-                    {
-                      type: "text",
-                      text: encodeJsonText({
-                        url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-                      }),
-                    },
-                    { type: "text", text: bounded.text },
-                    ...(bounded.omitted.length === 0
-                      ? []
-                      : [
-                          {
-                            type: "text" as const,
-                            text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
-                          },
-                        ]),
-                    ...(includeImage
-                      ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
-                      : []),
-                  ],
+                  structuredContent: saved,
+                  content: [{ type: "text", text: encodeJsonText(saved) }],
                 });
-              }),
-            ),
-            Effect.provide(saveServices),
-            Effect.matchCauseEffect({
-              onFailure: previewSnapshotFailure,
-              onSuccess: Effect.succeed,
+              }
+              const metadata = {
+                ...page,
+                screenshot: {
+                  mimeType: screenshot.mimeType,
+                  width: screenshot.width,
+                  height: screenshot.height,
+                },
+                ...(screenshotPath === undefined ? {} : { screenshotPath }),
+              };
+              const bounded = boundSnapshotMetadata(metadata);
+              return new McpSchema.CallToolResult({
+                isError: false,
+                structuredContent:
+                  bounded.omitted.length === 0
+                    ? bounded.value
+                    : { ...bounded.value, omitted: bounded.omitted },
+                content: [
+                  {
+                    type: "text",
+                    text: encodeJsonText({
+                      url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                    }),
+                  },
+                  { type: "text", text: bounded.text },
+                  ...(bounded.omitted.length === 0
+                    ? []
+                    : [
+                        {
+                          type: "text" as const,
+                          text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
+                        },
+                      ]),
+                  ...(includeImage
+                    ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
+                    : []),
+                ],
+              });
             }),
-          );
-        }),
-      ).pipe(
-        Effect.catchTags({
-          OrchestratorMcpFailure: (error) =>
-            Effect.succeed(
-              new McpSchema.CallToolResult({
-                isError: true,
-                content: [{ type: "text", text: error.message }],
-              }),
-            ),
-        }),
-      ),
+          ),
+          Effect.provide(saveServices),
+          Effect.matchCauseEffect({
+            onFailure: previewSnapshotFailure,
+            onSuccess: Effect.succeed,
+          }),
+        );
+      }),
   });
 });
 
@@ -1331,8 +1318,9 @@ export const layerHtmlToolkit = Layer.mergeAll(
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
 ).pipe(Layer.provide(HtmlRender.layer));
 
-const layerPreviewStandardToolkitRegistration = registerScientToolkit(PreviewStandardToolkit).pipe(
-  Layer.provide(McpToolAccess.HandlersLayer.layer(PreviewHandlers.layerStandard)),
+const layerPreviewStandardToolkitRegistration = toolkitRegistration(
+  PreviewStandardToolkit,
+  PreviewHandlers.layerStandard,
 );
 
 const layerPreviewSnapshotRegistration = imageToolRegistration(
@@ -1421,6 +1409,12 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+// SCIENT-FORK:START — every listed tool has a declared owner; a session sees what its grants allow.
+const previewTools = [
+  ...Object.values(PreviewToolkit.tools),
+  ...Object.values(PreviewControlsToolkit.tools),
+];
+const worktreeTools = Object.values(WorktreeToolkit.tools);
 const deviceTools = Object.values(DeviceToolkit.tools);
 export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...Object.values(OrchestratorToolkit.tools),
@@ -1428,14 +1422,20 @@ export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...Object.values(AttachmentToolkit.tools),
   ...Object.values(ProjectToolkit.tools),
   ...Object.values(EnvironmentToolkit.tools),
-  ...Object.values(PreviewControlsToolkit.tools),
-  ...Object.values(WorktreeToolkit.tools),
+  ...previewTools,
+  ...worktreeTools,
   ...Object.values(PullRequestsToolkit.tools),
   ...Object.values(HtmlRenderToolkit.tools),
   ...Object.values(HtmlPreviewToolkit.tools),
   ...deviceTools,
 ];
-const layerScientToolList = makeScientToolListLayer(hostMcpTools, deviceTools);
+export const hostMcpToolGrants = {
+  preview: previewTools,
+  worktree: worktreeTools,
+  device: deviceTools,
+};
+const layerScientToolList = makeScientToolListLayer(hostMcpTools, hostMcpToolGrants);
+// SCIENT-FORK:END
 
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`

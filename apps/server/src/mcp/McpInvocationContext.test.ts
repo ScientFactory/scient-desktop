@@ -42,7 +42,6 @@ it("projects explicit Scient grants without conflating transport and native cont
   });
   expect(projected.capabilities).not.toBe(source.capabilities);
   expect(projected.capabilities.has("documents:build")).toBe(false);
-  expect(projected.nativeSessionId).toBeUndefined();
 });
 
 it("projects the explicit read-only Compute inventory grant", () => {

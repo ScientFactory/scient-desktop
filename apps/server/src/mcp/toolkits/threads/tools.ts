@@ -21,7 +21,7 @@ export const ScientHandoffSummaryReadInput = Schema.Struct({
 });
 export type ScientHandoffSummaryReadInput = typeof ScientHandoffSummaryReadInput.Type;
 
-export const ScientHandoffSummaryReadResult = Schema.Struct({
+const ScientHandoffSummaryReadResult = Schema.Struct({
   text: Schema.String,
   nextTextOffset: Schema.NullOr(NonNegativeInt),
 });
@@ -54,11 +54,8 @@ export const ScientHandoffSummaryReadTool = Tool.make("scient_handoff_summary_re
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, {
     id: "threads.handoff-summary.read",
-    family: "threads",
     scope: "thread",
     requiredCapabilities: ["threads:read"],
-    approval: "session-grant",
-    documentation: "docs/internals/context-handoffs.md",
   });
 
 export const ScientThreadsToolkit = Toolkit.make(ScientHandoffSummaryReadTool);

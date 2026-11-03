@@ -755,8 +755,7 @@ export const layerWithOptions = (
             if (browserToolsAvailable) capabilities.add("preview");
             if (deviceToolsAvailable) capabilities.add("device");
             // SCIENT-FORK:START Scient Extensions connector delivery
-            // Capability grants owned by other Scient features (Secrets: secrets:list,
-            // secrets:use) are appended here, before connector delivery is planned.
+            // Other Scient grants are appended here, before connector delivery is planned.
             // SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.
             capabilities.add("accounts");
             // SCIENT-FORK:END

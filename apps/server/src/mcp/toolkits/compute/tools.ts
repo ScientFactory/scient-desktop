@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
@@ -75,13 +75,10 @@ const RunResult = Schema.Struct({
   images: Schema.optional(Schema.Array(ComputeToolImage)),
 });
 
-const operation = (id: string): OperationMetadata => ({
+const operation = (id: string): OperationDefinition => ({
   id,
-  family: "compute",
   scope: "workspace",
   requiredCapabilities: ["compute"],
-  approval: "session-grant",
-  documentation: "docs/user/scientific-computing.md",
 });
 
 const ScientComputeRunTool = Tool.make("scient_compute_run", {

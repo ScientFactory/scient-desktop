@@ -13,7 +13,7 @@ import {
 import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
@@ -46,13 +46,10 @@ export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesTool
   },
 ) {}
 
-const sourceOperation = (id: string, write: boolean): OperationMetadata => ({
+const sourceOperation = (id: string, write: boolean): OperationDefinition => ({
   id,
-  family: "sources",
   scope: "workspace",
   requiredCapabilities: write ? ["sources:read", "sources:write"] : ["sources:read"],
-  approval: write ? "explicit-user-request-guidance" : "session-grant",
-  documentation: "docs/user/sources.md",
 });
 
 export const ScientSourceAgentSummary = Schema.Struct({

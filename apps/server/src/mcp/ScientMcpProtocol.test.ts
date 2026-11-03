@@ -22,6 +22,7 @@ import { WorkspaceBindingResolutionError } from "../scient/projectScope/Workspac
 import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import {
   ScientSkillsToolkitRegistrationLive,
+  hostMcpToolGrants,
   layerPreviewToolkit,
   registerScientToolkit,
   toolkitRegistration,
@@ -31,6 +32,7 @@ import * as ServerConfig from "../config.ts";
 import { ScientMcpProtocol, makeScientToolListLayer } from "./ScientMcpProtocol.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 
 const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
 class HostDenied extends Schema.TaggedError<HostDenied>()("HostDenied", {
@@ -57,6 +59,7 @@ const DeviceScreenshot = makeDeviceTool("device_screenshot");
 const DeviceClose = makeDeviceTool("device_close");
 const DeviceToolkit = Toolkit.make(DeviceList, DeviceOpen, DeviceScreenshot, DeviceClose);
 const deviceTools = Object.values(DeviceToolkit.tools);
+const previewTools = Object.values(PreviewToolkit.tools);
 
 const scope = (actor: string): McpInvocationScope => ({
   environmentId: EnvironmentId.make("protocol-test"),
@@ -116,7 +119,12 @@ const transport = McpServer.layerHttp({
   protocols: [ScientMcpProtocol],
 }).pipe(
   Layer.provide(Auth),
-  Layer.provide(makeScientToolListLayer([HostStatus, ...deviceTools], deviceTools)),
+  Layer.provide(
+    makeScientToolListLayer([HostStatus, ...previewTools, ...deviceTools], {
+      preview: previewTools,
+      device: deviceTools,
+    }),
+  ),
 );
 const workspaceToolkit = Toolkit.make(ScientSourcesListTool);
 const routes = Layer.mergeAll(
@@ -360,7 +368,15 @@ it("rejects ambiguous tool ownership at composition", () => {
   expect(() => makeScientToolListLayer([ScientSourcesListTool])).toThrow(
     "Ambiguous MCP tool ownership",
   );
-  expect(() => makeScientToolListLayer([HostStatus], [DeviceList])).toThrow(
-    "MCP device tool is not declared as a host tool",
+  expect(() => makeScientToolListLayer([HostStatus], { device: [DeviceList] })).toThrow(
+    "MCP gated tool is not declared as a host tool",
+  );
+});
+
+it("lists the browser controls only for sessions holding the browser grant", () => {
+  const preview = hostMcpToolGrants.preview.map((tool) => tool.name);
+  expect(preview).toEqual(expect.arrayContaining(["scient_preview_list", "scient_preview_close"]));
+  expect(preview).toEqual(
+    expect.arrayContaining(Object.values(PreviewToolkit.tools).map((tool) => tool.name)),
   );
 });
