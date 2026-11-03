@@ -32,6 +32,7 @@ import {
   SettingsSection,
 } from "~/components/settings/settingsLayout";
 import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -73,6 +74,8 @@ import {
   accountManagePage,
   accountStatusLabel,
   activityLine,
+  type GitHubIdentity,
+  githubIdentities,
   type KeyInUse,
   isBrowserSignIn,
   isSavedPassword,
@@ -93,7 +96,6 @@ import { useWebsiteSessions } from "./useWebsiteSessions";
 
 /** Where each kind of sign-in is managed, for the "Other sign-ins" links. */
 const MANAGED_IN = {
-  github: "Source Control",
   "custom-model": "Custom models",
   claude: "Claude",
   codex: "Codex",
@@ -333,7 +335,7 @@ function ManagedAccountRow({
   environmentId,
 }: {
   row: {
-    kind: "github" | "custom-model" | "extension" | "claude" | "codex";
+    kind: "custom-model" | "extension" | "claude" | "codex";
     instanceId?: ProviderInstanceId;
     name: string;
     detail?: string | undefined;
@@ -341,9 +343,7 @@ function ManagedAccountRow({
   };
   environmentId: EnvironmentId;
 }) {
-  const domain =
-    managedHost(row.detail) ??
-    (row.kind === "github" ? "github.com" : row.kind === "claude" ? "claude.ai" : undefined);
+  const domain = managedHost(row.detail) ?? (row.kind === "claude" ? "claude.ai" : undefined);
   // Our own logos first: the extension catalogue has no GitHub or Claude sign-in entries.
   const logo = accountIconUrl(
     row.kind === "claude"
@@ -383,6 +383,45 @@ function ManagedAccountRow({
     <Link to={row.href} className={className}>
       {content}
     </Link>
+  );
+}
+
+const SOURCE_CONTROL_VIA = { gh: "GitHub CLI", app: "Scient for GitHub", token: "Token" } as const;
+
+/** One GitHub login with a chip per use; each chip shows that use's own state. */
+function GitHubIdentityRow({ identity }: { identity: GitHubIdentity }) {
+  const logo = accountIconUrl(["github.com"], identity.login);
+  const via = identity.sourceControl?.via;
+  const connector = identity.connector;
+  return (
+    <div className="flex min-h-15 items-center gap-3 rounded-lg px-4 py-2 text-foreground">
+      {logo ? <AccountLogo src={logo} className="size-10 shrink-0 rounded-[25%]" /> : null}
+      <span className="grid min-w-0 flex-1 gap-1">
+        <span className="truncate text-sm font-medium">{identity.login}</span>
+        <span className="flex flex-wrap gap-1">
+          {identity.sourceControl ? (
+            <Badge variant="success" render={<Link to="/settings/source-control" />}>
+              {via ? `Source Control · ${SOURCE_CONTROL_VIA[via]}` : "Source Control"}
+            </Badge>
+          ) : null}
+          {connector ? (
+            <Badge
+              variant={connector.status === "connected" ? "success" : "warning"}
+              render={
+                <Link
+                  to="/settings/extensions/item/connector/$connectorId"
+                  params={{ connectorId: connector.connectorId }}
+                />
+              }
+            >
+              {connector.status === "connected"
+                ? "Connector"
+                : `Connector · ${connector.status === "needs-auth" ? "Needs sign-in" : "Account missing"}`}
+            </Badge>
+          ) : null}
+        </span>
+      </span>
+    </div>
   );
 }
 
@@ -812,9 +851,13 @@ function AccountsContent({
   // managed elsewhere) are one row each, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
+  const githubRows = githubIdentities(snapshot.managedElsewhere, inventory.data?.connectors ?? []);
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
-    ...(snapshot.managedElsewhere ??
+    // GitHub's rows are its identities above.
+    ...(snapshot.managedElsewhere?.flatMap((row) =>
+      row.kind === "custom-model" ? [{ ...row, kind: row.kind }] : [],
+    ) ??
       snapshot.customModelKeys.map((connection) => ({
         kind: "custom-model" as const,
         id: connection.connectionId,
@@ -966,11 +1009,14 @@ function AccountsContent({
             onOpen={() => setDialog("sign-in-codes")}
           />
         ) : null}
-        {managedRows.length ? (
+        {managedRows.length || githubRows.length ? (
           <ListRow
             icon={<LinkIcon />}
             title="Other sign-ins"
-            detail={managedRows.map((row) => row.name).join(", ")}
+            detail={[
+              ...githubRows.map((row) => row.login),
+              ...managedRows.map((row) => row.name),
+            ].join(", ")}
             onOpen={() => setDialog("other-sign-ins")}
           />
         ) : null}
@@ -1079,6 +1125,9 @@ function AccountsContent({
       ) : null}
       {dialog === "other-sign-ins" ? (
         <ListDialog title="Other sign-ins" onClose={() => setDialog(null)}>
+          {githubRows.map((identity) => (
+            <GitHubIdentityRow key={identity.id} identity={identity} />
+          ))}
           {managedRows.map((row) => (
             <ManagedAccountRow
               key={`${row.kind}:${row.id}`}

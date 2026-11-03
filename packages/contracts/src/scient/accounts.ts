@@ -692,6 +692,8 @@ export const AccountsSnapshot = Schema.Struct({
         name: TrimmedNonEmptyString,
         detail: Schema.optional(TrimmedNonEmptyString),
         href: Schema.Literals(["/settings/source-control", "/settings/custom-models"]),
+        /** How Source Control holds a GitHub login: the gh CLI, the app sign-in, or a token. */
+        via: Schema.optional(Schema.Literals(["gh", "app", "token"])),
       }),
     ),
   ),

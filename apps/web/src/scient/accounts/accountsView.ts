@@ -20,6 +20,7 @@ import {
   type AccountStoresStatus,
   type AccountsSnapshot,
   type AccountSummary,
+  type ConnectorSummary,
   type AccountUseAction,
   type AccountSaveInput,
   type DesktopCapturedSignIn,
@@ -639,6 +640,43 @@ type ProviderManagedAccount = {
   name: string;
   href: "/settings/extensions/installed";
 };
+
+/** One GitHub login, with each use of it kept apart: one working use never marks another. */
+export interface GitHubIdentity {
+  /** `host:login`, lower case. */
+  readonly id: string;
+  readonly host: string;
+  readonly login: string;
+  /** Source Control holds this login; how, when the server says. */
+  readonly sourceControl?: { readonly via: "gh" | "app" | "token" | undefined };
+  /** The connector borrowing this login from Source Control. */
+  readonly connector?: ConnectorSummary;
+}
+
+/**
+ * GitHub logins Scient has actually seen: Source Control's, and those its connectors were
+ * connected as. A connector with its own token says nothing about whose it is, so it stays apart.
+ */
+export function githubIdentities(
+  managed: AccountsSnapshot["managedElsewhere"],
+  connectors: ReadonlyArray<ConnectorSummary>,
+): ReadonlyArray<GitHubIdentity> {
+  const identities = new Map<string, GitHubIdentity>();
+  const keyOf = (host: string, login: string) => `${host.toLowerCase()}:${login.toLowerCase()}`;
+  for (const row of managed ?? []) {
+    if (row.kind !== "github") continue;
+    const host = row.detail ?? "github.com";
+    const id = keyOf(host, row.name);
+    identities.set(id, { id, host, login: row.name, sourceControl: { via: row.via } });
+  }
+  for (const connector of connectors) {
+    if (connector.auth.type !== "source-control") continue;
+    const { host, account } = connector.auth;
+    const id = keyOf(host, account);
+    identities.set(id, { ...(identities.get(id) ?? { id, host, login: account }), connector });
+  }
+  return [...identities.values()];
+}
 
 export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>) {
   return providers

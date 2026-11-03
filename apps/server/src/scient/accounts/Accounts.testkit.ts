@@ -20,6 +20,8 @@ import * as AccountPersistence from "./AccountPersistence.ts";
 import { AccountSources } from "./AccountSources.ts";
 import { AccountsService } from "./AccountsService.ts";
 import * as AccountsServiceLive from "./AccountsServiceLive.ts";
+import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
+import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
 
 export const syntheticValue = () => NodeCrypto.randomUUID();
 const unavailable = () =>
@@ -87,6 +89,11 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   options: {
     readonly storage?: ReturnType<typeof memoryStore>;
     readonly sourceOverrides?: Partial<AccountSources["Service"]>;
+    /** What Source Control discovers and the GitHub credential it holds. */
+    readonly sourceControl?: {
+      readonly discover: SourceControlProviderRegistry["Service"]["discover"];
+      readonly github: GitHubSourceControlCredential["Service"];
+    };
   } = {},
 ) {
   const storage = options.storage ?? memoryStore();
@@ -109,6 +116,17 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
       Layer.provide(Layer.succeed(AccountSources, sources)),
       Layer.provide(Layer.succeed(AccountVault, vault)),
       Layer.provide(Layer.succeed(ServerSecretStore, storage.store)),
+      Layer.provide(
+        options.sourceControl === undefined
+          ? Layer.empty
+          : Layer.mergeAll(
+              Layer.mock(SourceControlProviderRegistry)({
+                resolveLink: () => undefined,
+                discover: options.sourceControl.discover,
+              }),
+              Layer.succeed(GitHubSourceControlCredential, options.sourceControl.github),
+            ),
+      ),
     ),
   );
   return { service: Context.get(context, AccountsService), vault, ...storage };
