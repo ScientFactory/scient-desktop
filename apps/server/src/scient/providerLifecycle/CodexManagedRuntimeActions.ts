@@ -7,6 +7,7 @@ import {
   MANAGED_RUNTIME_POLICY,
   ManagedCodexRuntime,
   detectManagedRuntimeTarget,
+  isManagedRuntimeUpdate,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveReviewedCodexArtifact,
@@ -45,7 +46,6 @@ import {
   managedRuntimeDowngradeMessage,
   managedRuntimeSwitchPlan,
 } from "./ManagedProviderRuntimeActions.ts";
-import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
 

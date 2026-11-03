@@ -946,7 +946,6 @@
   "src/scient/providerLifecycle/antigravityBrowserHelperPreflight.test.ts": 0.925,
   "src/scient/providerLifecycle/antigravityConversationSidecars.test.ts": 0.308,
   "src/scient/providerLifecycle/codexSubscriptionSharingPolicy.test.ts": 0.541,
-  "src/scient/providerLifecycle/managedRuntimeVersion.test.ts": 0.252,
   "src/scient/skills/BuiltInSkillReleases.test.ts": 0.329,
   "src/scient/skills/ProviderSkillManagement.test.ts": 1.351,
   "src/scient/skills/ScientSkillEffectivePolicy.test.ts": 0.34,

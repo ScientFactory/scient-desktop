@@ -1,6 +1,7 @@
 import {
   ManagedProviderRuntimeError,
   compareManagedRuntimeReleases,
+  compareManagedRuntimeVersions,
   parseManagedMuseVersion,
   type ManagedRuntimeArtifactReceipt,
   hydrateManagedRuntimeArtifact,
@@ -40,7 +41,6 @@ import {
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
 } from "./ManagedRuntimeCatalog.ts";
-import { compareManagedRuntimeVersions } from "./managedRuntimeVersion.ts";
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
