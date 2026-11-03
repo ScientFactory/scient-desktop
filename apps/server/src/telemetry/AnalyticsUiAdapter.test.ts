@@ -16,19 +16,18 @@ function fixture() {
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
-    deleteData: Effect.sync(() => {
-      epoch += 1;
-      return true;
-    }),
     flush: Effect.void,
   });
-  return { service, events };
+  // Another client's consent change or a deletion moves the service to a new epoch.
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  const deleteData = Effect.sync(() => {
+    epoch += 1;
+  });
+  return { service, events, setConsent, deleteData };
 }
 
 describe("UI operation consent context", () => {
@@ -45,7 +44,7 @@ describe("UI operation consent context", () => {
       expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
         accepted: true,
       });
-      yield* f.service.deleteData;
+      yield* f.deleteData;
       expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
         accepted: false,
       });
@@ -84,13 +83,13 @@ describe("UI operation consent context", () => {
         properties: { operationKind: "document-export" },
         collectionContext: original.collectionContext,
       };
-      yield* f.service.setConsent("off");
+      yield* f.setConsent("off");
       expect(yield* ui.record(event)).toEqual({ accepted: false });
       expect((yield* ui.status).collectionContext).toBeUndefined();
-      yield* f.service.setConsent("product");
+      yield* f.setConsent("product");
       expect(yield* ui.record(event)).toEqual({ accepted: false });
       const afterConsent = yield* ui.status;
-      yield* f.service.deleteData;
+      yield* f.deleteData;
       expect(
         yield* ui.record({ ...event, collectionContext: afterConsent.collectionContext }),
       ).toEqual({ accepted: false });

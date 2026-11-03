@@ -230,16 +230,14 @@ const analyticsFixture = Effect.gen(function* () {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
   });
-  return { events, terminalEvents, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, terminalEvents, service, setConsent };
 });
 
 type ArtifactFixtureMode =
@@ -643,7 +641,7 @@ describe("analysis artifact analytics", () => {
     Effect.gen(function* () {
       const harness = yield* makeServiceTestLayer(artifactTestAdapter("captured"));
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.service.setConsent("off");
+      if (mode === "off") yield* analytics.setConsent("off");
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
@@ -654,8 +652,8 @@ describe("analysis artifact analytics", () => {
             runtimeId,
           });
           const runId = yield* Queue.take(harness.startedRuns);
-          if (mode === "epoch-change") yield* analytics.service.setConsent("off");
-          yield* analytics.service.setConsent("product");
+          if (mode === "epoch-change") yield* analytics.setConsent("off");
+          yield* analytics.setConsent("product");
           const updates = yield* service.subscribeRuns({ cwd: harness.projectRoot });
           yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
           yield* updates.pipe(
@@ -707,7 +705,7 @@ describe("analysis outcome analytics", () => {
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.service.setConsent("off");
+      if (mode === "off") yield* analytics.setConsent("off");
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
@@ -724,8 +722,8 @@ describe("analysis outcome analytics", () => {
             sourceRevision,
             runtimeId,
           });
-          if (mode === "epoch-change") yield* analytics.service.setConsent("off");
-          yield* analytics.service.setConsent("product");
+          if (mode === "epoch-change") yield* analytics.setConsent("off");
+          yield* analytics.setConsent("product");
           const cancelled = yield* service.cancelRun({
             cwd: harness.projectRoot,
             runId: queued.receipt.runId,

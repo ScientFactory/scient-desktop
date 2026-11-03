@@ -3,11 +3,7 @@ import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Option from "effect/Option";
 
-import {
-  annotateEnvironmentRequest,
-  failEnvironmentInternal,
-  requireEnvironmentScope,
-} from "../auth/http.ts";
+import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/http.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 import { makeAnalyticsUiAdapter } from "./AnalyticsUiAdapter.ts";
 
@@ -28,10 +24,6 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" }),
           collectionEpoch: Effect.succeed(0),
-          setConsent: Effect.fn("AnalyticsService.setConsent")(function () {
-            return Effect.succeed({ available: false, consent: "off" });
-          }),
-          deleteData: Effect.succeed(false),
         }),
     );
     const ui = makeAnalyticsUiAdapter(analytics);
@@ -49,32 +41,10 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
-        "preferences",
-        Effect.fn("environment.scientAnalytics.preferences")(function* (args) {
-          yield* authorize(args.endpoint.name);
-          yield* analytics.setConsent(args.payload.consent);
-          return yield* ui.status;
-        }),
-      )
-      .handle(
         "record",
         Effect.fn("environment.scientAnalytics.record")(function* (args) {
           yield* authorize(args.endpoint.name);
           return yield* ui.record(args.payload);
-        }),
-      )
-      .handle(
-        "deleteData",
-        Effect.fn("environment.scientAnalytics.deleteData")(function* (args) {
-          yield* authorize(args.endpoint.name);
-          const deleted = yield* analytics.deleteData;
-          if (!deleted) {
-            return yield* failEnvironmentInternal(
-              "scient_analytics_deletion_failed",
-              "analytics-deletion-not-acknowledged",
-            );
-          }
-          return { deleted: true } as const;
         }),
       );
   }),

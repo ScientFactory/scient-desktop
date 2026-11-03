@@ -8,7 +8,7 @@ reliability and delivery counters), like T3: there is no in-app switch, and a
 preference saved by an older build no longer applies.
 Native and WSL backend configuration receive the same bounded release metadata.
 An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch.
-For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can expose the controls
+For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can turn analytics on
 in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
 credentials, paths and query strings are rejected. Use only synthetic state;
@@ -32,9 +32,8 @@ path, link or email address. Such fields are dropped before queueing; the gatewa
 Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
-The Settings privacy section, including its switch, “What’s shared?” panel and
-“Delete data” request, is hidden: `AnalyticsPrivacySettings` is not mounted. The
-service's consent and deletion controls remain so the section can return.
+The Settings privacy section, with its switch and “Delete data” request, was
+removed, along with the server's consent and deletion routes.
 
 The notification is implemented but disabled by default at its component boundary
 pending an approved audience and timing policy. This gate does not change analytics

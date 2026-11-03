@@ -93,8 +93,6 @@ import {
   ScientMarkdownImageUploadResult,
 } from "../scientMarkdown.ts";
 import {
-  ScientAnalyticsDeletionResult,
-  ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
   ScientAnalyticsStatus,
   ScientAnalyticsUiEvent,
@@ -171,8 +169,6 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_latex_toolchain_failed",
   "scient_latex_install_failed",
   "scient_markdown_operation_failed",
-  "scient_analytics_consent_update_failed",
-  "scient_analytics_deletion_failed",
   "scient_thread_queue_operation_failed",
   "scient_conversation_export_failed",
   "scient_conversation_import_failed",
@@ -558,25 +554,10 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
-      HttpApiEndpoint.post("preferences", "/api/scient/analytics/preferences", {
-        headers: OptionalBearerHeaders,
-        payload: ScientAnalyticsPreferenceUpdate,
-        success: ScientAnalyticsStatus,
-        error: EnvironmentHttpCommonError,
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
       HttpApiEndpoint.post("record", "/api/scient/analytics/events", {
         headers: OptionalBearerHeaders,
         payload: ScientAnalyticsUiEvent,
         success: ScientAnalyticsRecordResult,
-        error: EnvironmentHttpCommonError,
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("deleteData", "/api/scient/analytics/delete", {
-        headers: OptionalBearerHeaders,
-        success: ScientAnalyticsDeletionResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}

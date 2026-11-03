@@ -441,8 +441,6 @@ describe("Scient Sources MCP handlers", () => {
         status: Effect.succeed({ available: true, consent: "product" }),
         collectionEpoch: Effect.succeed(0),
         flush: Effect.void,
-        deleteData: Effect.succeed(true),
-        setConsent: (consent) => Effect.succeed({ available: true, consent }),
       });
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-add-"));
       const projectId = ProjectId.make("project-agent-add");
