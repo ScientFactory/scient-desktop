@@ -619,6 +619,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`61c3794c32b0eeebfac09add43e403618c65d2d7` is recorded in
+[the 2026-11-03 61c3794c32 receipt](docs/internals/t3-upstream-sync-20261103-61c3794c32.md).
+Literal merge `b5e8c858ddac7cb973dcbb58f46ff6d1e8110c9e` has owned base
+`7ae844aad21c2700eaabaa863d6e8b334f283916` (#753, #748) and the frozen official target as parents,
+retaining the 102 official commits after `30084f0018`. Effect moves to 4.1.2 with its split crypto
+services, Kiro arrives off by default with Scient's instructions and tool names, forks from an
+earlier turn no longer copy the whole session, and Scient code touched by the merge is realigned or
+trimmed. One migration (82). Release remains separate.
+
+The previous committed alignment through
 `30084f0018c5751a07291222e8d04e16d513700a` is recorded in
 [the 2026-11-03 30084f0018 receipt](docs/internals/t3-upstream-sync-20261103-30084f0018.md).
 Literal merge `6a48c5374b0002f54ff134789e14870a9ac00c58` has owned base
@@ -627,7 +637,7 @@ retaining the 18 official commits after `c8a601c0df`. Claude skips its own threa
 longer waits for Tailscale, PR watches survive host outages, removing provider settings asks first,
 and agents start background work with `delegate_task`. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `c8a601c0dfa5c7626e51e06d727076f6b840a005` is recorded in
 [the 2026-11-02 c8a601c0df receipt](docs/internals/t3-upstream-sync-20261102-c8a601c0df.md).
 Literal merge `21583b219b2c15541f038efa0addb5d2de3c1b8a` has owned base
