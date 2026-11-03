@@ -4,6 +4,8 @@ const PROVIDER_ACCOUNT_URLS = {
   antigravity: "https://one.google.com/settings",
   claude: "https://claude.ai/settings/billing",
   codex: "https://chatgpt.com/#settings/Subscription",
+  // Where Droid itself sends users to manage billing.
+  droid: "https://app.factory.ai/settings/billing",
 } as const;
 
 export function ProviderAccountManagementLink(props: {

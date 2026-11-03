@@ -279,7 +279,9 @@ in Full access.
   not replace the environment's key.
 - **Quota**: Droid usage draws on your Factory plan. If the CLI reports an out-of-quota or
   payment-required error, the turn fails with that message and you can retry after topping up or
-  waiting for the quota window.
+  waiting for the quota window. Droid reports Factory credits only inside its own session files, so
+  Scient does not show them; the account name on Droid's ready status opens Factory's billing
+  page, where usage and credits are listed.
 - **Runtime updates:** Scient can update recognized system package installations and standard
   macOS/Linux standalone installations when you choose **Update**. Other installations remain
   manual-only. Native update restrictions are respected. Repair and remove affect only Scient's

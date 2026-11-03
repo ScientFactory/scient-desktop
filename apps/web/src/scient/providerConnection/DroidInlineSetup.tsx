@@ -40,6 +40,7 @@ import {
   startReviewedProviderRuntimeAction,
   updateManagedOrExternalProviderRuntime,
 } from "./providerLifecycleActions";
+import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -483,9 +484,13 @@ export function DroidInlineSetup(props: {
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
-            isReady
-              ? (providerAccountIdentity(props.provider) ?? "Factory account")
-              : (props.provider.message ?? "Your Factory account is connected.")
+            isReady ? (
+              <ProviderAccountManagementLink provider="droid">
+                {providerAccountIdentity(props.provider) ?? "Factory account"}
+              </ProviderAccountManagementLink>
+            ) : (
+              (props.provider.message ?? "Your Factory account is connected.")
+            )
           }
           icon={
             isReady ? (
