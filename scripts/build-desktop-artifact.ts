@@ -111,6 +111,9 @@ const WorkspaceConfig = Schema.Struct({
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  // SCIENT-FORK:START — the seeded stage lockfile is checked against the workspace's release age.
+  minimumReleaseAgeExclude: Schema.optional(Schema.Array(Schema.String)),
+  // SCIENT-FORK:END
 });
 type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
@@ -136,6 +139,9 @@ const StageWorkspaceConfig = Schema.Struct({
     ),
   ),
   nodeLinker: Schema.optional(Schema.Literals(["hoisted"])),
+  // SCIENT-FORK:START — the seeded stage lockfile is checked against the workspace's release age.
+  minimumReleaseAgeExclude: Schema.optional(Schema.Array(Schema.String)),
+  // SCIENT-FORK:END
 });
 type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
 
@@ -1900,11 +1906,23 @@ export function createStageWorkspaceConfig(input: {
   readonly allowBuilds?: Record<string, boolean>;
   readonly patchedDependencies?: Record<string, string>;
   readonly overrides?: Record<string, string>;
+  // SCIENT-FORK:START — seeded stages verify every workspace lockfile entry, so they need the
+  // workspace's reviewed exclusions; without them a dependency newer than the age cutoff fails.
+  readonly minimumReleaseAgeExclude?: ReadonlyArray<string>;
+  // SCIENT-FORK:END
   // Windows primary and WSL share this sidecar, so stage both Windows and Linux natives.
   // ASAR packing/extraction cannot preserve pnpm links; node_modules must be physical and hoisted.
   readonly linuxServerBackend?: boolean;
 }): StageWorkspaceConfig {
-  const { platform, arch, allowBuilds, patchedDependencies, overrides, linuxServerBackend } = input;
+  const {
+    platform,
+    arch,
+    allowBuilds,
+    patchedDependencies,
+    overrides,
+    minimumReleaseAgeExclude,
+    linuxServerBackend,
+  } = input;
   const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
   const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
   // Linux AppImages require glibc native optional dependencies; tell pnpm explicitly.
@@ -1935,6 +1953,10 @@ export function createStageWorkspaceConfig(input: {
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
     ...(linuxServerBackend ? { nodeLinker: "hoisted" as const } : {}),
     packageExtensions: STAGE_PACKAGE_EXTENSIONS,
+    // SCIENT-FORK
+    ...(minimumReleaseAgeExclude && minimumReleaseAgeExclude.length > 0
+      ? { minimumReleaseAgeExclude: [...minimumReleaseAgeExclude] }
+      : {}),
   };
 }
 
@@ -3552,6 +3574,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly allowBuilds: Record<string, boolean>;
   readonly patchedDependencies: Record<string, string>;
   readonly overrides: Record<string, string>;
+  // SCIENT-FORK
+  readonly minimumReleaseAgeExclude: ReadonlyArray<string>;
   readonly wslPrebuildPath: string | undefined;
   readonly wslSyncTexRuntimePath: string | undefined;
   readonly asarPath: string;
@@ -3618,6 +3642,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     allowBuilds: input.allowBuilds,
     patchedDependencies: sidecarPatchedDependencies,
     overrides: input.overrides,
+    minimumReleaseAgeExclude: input.minimumReleaseAgeExclude,
     linuxServerBackend: true,
   });
   const sidecarWorkspaceConfigString = yield* encodeStageWorkspaceConfig(sidecarWorkspaceConfig);
@@ -4286,6 +4311,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const workspaceOverrides = workspaceConfig.overrides ?? {};
   const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
   const workspaceAllowBuilds = workspaceConfig.allowBuilds ?? {};
+  // SCIENT-FORK
+  const workspaceMinimumReleaseAgeExclude = workspaceConfig.minimumReleaseAgeExclude ?? [];
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -4741,6 +4768,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     allowBuilds: workspaceAllowBuilds,
     patchedDependencies: stagePatchedDependencies,
     overrides: resolvedOverrides,
+    minimumReleaseAgeExclude: workspaceMinimumReleaseAgeExclude,
   });
   const stageWorkspaceConfigString = yield* encodeStageWorkspaceConfig(stageWorkspaceConfig);
   yield* fs.writeFileString(
@@ -4792,6 +4820,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       allowBuilds: workspaceAllowBuilds,
       patchedDependencies: workspacePatchedDependencies,
       overrides: resolvedOverrides,
+      minimumReleaseAgeExclude: workspaceMinimumReleaseAgeExclude,
       wslPrebuildPath: options.wslPrebuild,
       wslSyncTexRuntimePath: options.wslSyncTexRuntime,
       asarPath: windowsServerAsarPath,

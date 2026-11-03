@@ -991,6 +991,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
       packageExtensions: stagePackageExtensions,
     });
+    // SCIENT-FORK: the seeded stage lockfile is checked against the workspace's release age, so
+    // the workspace's reviewed exclusions travel with it.
+    assert.deepStrictEqual(
+      createStageWorkspaceConfig({
+        platform: "linux",
+        arch: "x64",
+        minimumReleaseAgeExclude: ["alchemy@2.0.0-beta.85"],
+      }).minimumReleaseAgeExclude,
+      ["alchemy@2.0.0-beta.85"],
+    );
     // The Windows app stage only serves the desktop main process; the server
     // sidecar stage is the one that needs Linux natives (below).
     assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "win", arch: "x64" }), {
