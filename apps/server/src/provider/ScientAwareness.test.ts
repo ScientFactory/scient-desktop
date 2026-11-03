@@ -32,8 +32,8 @@ const SCIENT_AWARENESS_DELIVERY = {
   fx: "first-prompt",
   grok: "rules-append",
   kiro: "first-prompt",
-  // Muse sends runtime text every turn and has no first-prompt or private system seam.
-  muse: "unsupported-no-prompt-seam",
+  // Muse has no system seam: the first turn carries it, and a changed one again.
+  muse: "first-turn-and-on-change",
   opencode: "managed-server-per-message-system",
   omp: "before-agent-start-system-append",
   pi: "before-agent-start-system-append",

@@ -146,8 +146,8 @@ For supported adapters the existing authenticated Scient MCP session receives:
 Muse uses its native session-MCP configuration for this scoped delivery, with a
 host-issued bearer and an explicit native grant. Disabling MCP or lacking that
 grant withholds the skill channel. Its SDK has no private system/developer
-instruction seam and no first-prompt instruction path, so Muse receives no Scient
-awareness; ordinary turn input is not treated as private policy injection.
+instruction seam, so Scient awareness rides the first turn of a session and is sent
+again only when it changes.
 
 Supported providers keep the authenticated skill transport available with an
 empty initial scope marked `pending`. Immediately before a turn, the server
@@ -182,7 +182,7 @@ Every built-in provider has implemented skill transport through Scient's
 authenticated MCP session. Codex, Claude, Droid, Grok, Scient-managed OpenCode,
 Pi, Oh My Pi and Scient Agent receive awareness privately; Antigravity, Cursor,
 ACP registry agents, fx and Kiro receive it in their wrapped first-prompt
-instructions (see [Provider architecture](./providers.md#scient-awareness)). Transport support does not
+instructions, and Muse with its first turn (see [Provider architecture](./providers.md#scient-awareness)). Transport support does not
 establish spontaneous model discovery or equal task quality across providers.
 An externally managed OpenCode server does not
 receive Scient's per-session MCP connection and is therefore unsupported for

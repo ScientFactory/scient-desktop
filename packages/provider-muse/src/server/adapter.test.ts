@@ -214,6 +214,9 @@ const makeHarness = Effect.fnUntraced(function* (
     | "modelCatalog"
     | "continuationRequests"
     | "runtimeInstructions"
+    // SCIENT-FORK:START — host awareness delivery.
+    | "scientAwareness"
+    // SCIENT-FORK:END
   > = {},
   configureMcp?: boolean,
 ) {
@@ -488,6 +491,64 @@ describe("MuseAdapterV2", () => {
           },
         });
       }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+  it.effect("sends host awareness with the first turn and again only when the grants change", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(THREAD_ID));
+      const grant = (capabilities: ReadonlyArray<string>) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: THREAD_ID,
+          providerSessionId: "test-session",
+          providerInstanceId: INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: "Bearer thread-scoped-test-token",
+          capabilities: new Set(capabilities),
+          connectors: [],
+        });
+      yield* grant(["accounts"]);
+      const fake = yield* makeFakeMuse();
+      fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          scientAwareness: (capabilities) => `aware:${[...capabilities].sort().join(",")}`,
+        },
+      );
+      const turnTexts = Effect.fnUntraced(function* (ordinal: number) {
+        yield* harness.runtime.startTurn(
+          yield* turnInput(harness.providerThread, ordinal, harness.policy),
+        );
+        const call = yield* fake.takeCall("turn/start");
+        yield* fake.emit("turn/completed", { turnId: call.commandId, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+        const input = call.params.input as ReadonlyArray<{ readonly text?: string }>;
+        return input.flatMap((part) => (part.text === undefined ? [] : [part.text]));
+      });
+
+      const first = yield* turnTexts(1);
+      assert.strictEqual(first[0], "<scient_instructions>\naware:accounts\n</scient_instructions>");
+      assert.include(first[1], "<runtime_info>");
+      const second = yield* turnTexts(2);
+      assert.isFalse(second.some((text) => text.includes("<scient_instructions>")));
+      yield* grant(["accounts", "compute"]);
+      const widened = yield* turnTexts(3);
+      assert.strictEqual(
+        widened[0],
+        "<scient_instructions>\naware:accounts,compute\n</scient_instructions>",
+      );
+      const unchanged = yield* turnTexts(4);
+      assert.isFalse(unchanged.some((text) => text.includes("<scient_instructions>")));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
   // SCIENT-FORK:END
