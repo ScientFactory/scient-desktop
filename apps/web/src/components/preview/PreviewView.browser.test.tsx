@@ -195,6 +195,9 @@ import { openPreviewSession } from "./openPreviewSession";
 import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
 
+const visits = () =>
+  useBrowserShortcuts.getState().profiles[DEFAULT_BROWSER_PROFILE_ID]?.visits ?? {};
+
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
   threadId: ThreadId.make("thread-1"),
@@ -247,7 +250,7 @@ function setup() {
   mocks.controller = "none";
   mocks.profileId = undefined;
   mocks.noTab = false;
-  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
+  useBrowserShortcuts.setState({ profiles: {}, unclaimed: null });
   mocks.exportDisabled = null;
   mocks.runtime = undefined;
   mocks.sourceUrl = "http://example.com/";
@@ -281,7 +284,7 @@ describe("PreviewView", () => {
       ),
     );
     expect(mocks.recordVisitForThread).toHaveBeenCalled();
-    expect(useBrowserShortcuts.getState().visits["mail.google.com"]?.count).toBe(1);
+    expect(visits()["mail.google.com"]?.count).toBe(1);
   });
 
   it("opens Gmail in the profile the toolbar shows when there is no tab yet", async () => {
@@ -342,7 +345,10 @@ describe("PreviewView", () => {
     await using _screen = await render(
       <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
     );
-    await userEvent.fill(page.getByRole("searchbox"), "protein folding");
+    await userEvent.fill(
+      page.getByRole("combobox", { name: "Search or enter an address" }),
+      "protein folding",
+    );
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(openPreviewSession).toHaveBeenCalledWith(
@@ -358,7 +364,10 @@ describe("PreviewView", () => {
     setup();
     mocks.showEmptyState = true;
     await using _screen = await render(view());
-    await userEvent.fill(page.getByRole("searchbox"), "example.org");
+    await userEvent.fill(
+      page.getByRole("combobox", { name: "Search or enter an address" }),
+      "example.org",
+    );
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "https://example.org/"),
@@ -390,20 +399,38 @@ describe("PreviewView", () => {
     setup();
     await using _first = await render(view());
     await submitAddress("nature.com");
-    await vi.waitFor(() =>
-      expect(useBrowserShortcuts.getState().visits["nature.com"]?.count).toBe(1),
-    );
+    await vi.waitFor(() => expect(visits()["nature.com"]?.count).toBe(1));
+    expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
     await _first[Symbol.asyncDispose]();
     mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
     await using _second = await render(view());
     await submitAddress("science.org");
     await vi.waitFor(() =>
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
-        expect.anything(),
-        "https://science.org/",
-      ),
+      expect(mocks.navigate).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, "https://science.org/"),
     );
-    expect(useBrowserShortcuts.getState().visits["science.org"]).toBeUndefined();
+    await mocks.navigate.mock.results.at(-1)?.value;
+    await act(async () => {});
+    expect(useBrowserShortcuts.getState().profiles[INCOGNITO_BROWSER_PROFILE_ID]).toBeUndefined();
+    expect(visits()["science.org"]).toBeUndefined();
+    expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
+  });
+
+  it("counts a first address under the profile the new tab took, not the toolbar's", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1", profileId: "work" },
+    } as never);
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+    );
+    await submitAddress("nature.com");
+    await vi.waitFor(() =>
+      expect(useBrowserShortcuts.getState().profiles.work?.visits["nature.com"]?.count).toBe(1),
+    );
+    expect(visits()["nature.com"]).toBeUndefined();
   });
   // SCIENT-FORK:END
 
@@ -498,6 +525,22 @@ describe("PreviewView", () => {
   });
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — Scient Browser: incognito has no history to show.
+  it("offers History in a normal tab but not in incognito", async () => {
+    setup();
+    await using first = await render(view());
+    await page.getByRole("button", { name: "Preview menu" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "History" })).toBeInTheDocument();
+    await first[Symbol.asyncDispose]();
+
+    mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
+    await using _second = await render(view());
+    await page.getByRole("button", { name: "Preview menu" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "Hard reload" })).toBeInTheDocument();
+    await expect.element(page.getByRole("menuitem", { name: "History" })).not.toBeInTheDocument();
+  });
+  // SCIENT-FORK:END
+
   it.each(["mailto:alice@example.com", "http://"])(
     "reports rejected address %s without navigating or recording it",
     async (address) => {
@@ -514,6 +557,32 @@ describe("PreviewView", () => {
       await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
+
+  // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+  it("leaves a site that didn't load to the tab's own page, and reports what it can't show", async () => {
+    setup();
+    mocks.navigate
+      .mockRejectedValueOnce(
+        new Error(
+          "Error invoking remote method 'desktop:preview-navigate': PreviewOperationError: Desktop preview operation failed: navigate.loadURL",
+        ),
+      )
+      .mockRejectedValueOnce(new Error("The tab is gone."));
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const input = page.getByPlaceholder("Search or enter URL");
+
+    await input.fill("https://down.example/");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledOnce());
+    await input.fill("https://example.org/");
+    await userEvent.keyboard("{Enter}");
+
+    await expect.element(page.getByText("The tab is gone.")).toBeVisible();
+    expect(page.getByText("Could not open this address").all()).toHaveLength(1);
+    expect(mocks.recordVisitForThread).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
+  });
+  // SCIENT-FORK:END
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
@@ -588,7 +657,7 @@ describe("PreviewView", () => {
       },
     } as NonNullable<typeof window.desktopBridge>;
     await using screen = await render(view());
-    const address = page.getByRole("textbox");
+    const address = page.getByRole("combobox", { name: "Search or enter URL" });
     const input = address.element() as HTMLInputElement;
     const forward = () =>
       act(() => {
@@ -615,7 +684,7 @@ describe("PreviewView", () => {
   it("focuses the address bar each time the focus-url shortcut fires", async () => {
     setup();
     await using _screen = await render(view());
-    const address = page.getByRole("textbox");
+    const address = page.getByRole("combobox", { name: "Search or enter URL" });
 
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();

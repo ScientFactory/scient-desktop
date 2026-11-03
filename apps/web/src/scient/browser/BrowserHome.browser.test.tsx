@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, INCOGNITO_BROWSER_PROFILE_ID, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -30,12 +30,13 @@ function renderHome(
   onOpenUrl: (url: string) => void = vi.fn(),
   onSearch: (query: string) => void = vi.fn(),
 ) {
-  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
+  useBrowserShortcuts.setState({ profiles: {}, unclaimed: null });
   accounts.data = null;
   return render(
     <BrowserHome
       threadRef={threadRef}
       profileId="main"
+      incognito={false}
       onOpenUrl={onOpenUrl}
       onSearch={onSearch}
     />,
@@ -46,7 +47,7 @@ it("searches what was typed, and ignores an empty box", async () => {
   const onSearch = vi.fn();
   await using _screen = await renderHome(undefined, onSearch);
   await expect.element(page.getByText("Scient Browser")).toBeVisible();
-  const search = page.getByRole("searchbox", { name: "Search or enter an address" });
+  const search = page.getByRole("combobox", { name: "Search or enter an address" });
   await expect.element(search).not.toHaveFocus();
 
   await userEvent.fill(search, "   ");
@@ -77,18 +78,31 @@ it("opens Gmail, each shortcut and Google from Apps", async () => {
 it("shows the university's Moodle only on that university's profile", async () => {
   const onOpenUrl = vi.fn();
   accounts.data = {
-    profiles: [{ profileId: "uni", source: { email: "a@mail.huji.ac.il" } }, { profileId: "main" }],
-    accounts: [],
+    profiles: [
+      { profileId: "uni", source: { email: "a@mail.huji.ac.il" } },
+      { profileId: "main", source: { email: "a@gmail.com" } },
+    ],
+    accounts: [
+      {
+        details: {
+          kind: "website",
+          profileId: "main",
+          username: "a",
+          sites: ["moodle.huji.ac.il"],
+        },
+      },
+    ],
   };
   const home = (profileId: string) => (
     <BrowserHome
       threadRef={threadRef}
       profileId={profileId}
+      incognito={false}
       onOpenUrl={onOpenUrl}
       onSearch={vi.fn()}
     />
   );
-  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
+  useBrowserShortcuts.setState({ profiles: {}, unclaimed: null });
   await using screen = await render(home("uni"));
   await page.getByRole("button", { name: "Moodle" }).click();
   expect(onOpenUrl).toHaveBeenCalledWith("https://moodle.huji.ac.il/");
@@ -201,19 +215,69 @@ it("changes nothing when the edit is cancelled", async () => {
   await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Changed");
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect.element(page.getByRole("button", { name: "Overleaf", exact: true })).toBeVisible();
-  expect(useBrowserShortcuts.getState().added).toEqual([]);
+  expect(useBrowserShortcuts.getState().profiles).toEqual({});
+});
+
+it("shows each profile its own shortcuts", async () => {
+  const home = (profileId: string) => (
+    <BrowserHome
+      threadRef={threadRef}
+      profileId={profileId}
+      incognito={false}
+      onOpenUrl={vi.fn()}
+      onSearch={vi.fn()}
+    />
+  );
+  useBrowserShortcuts.setState({ profiles: {}, unclaimed: null });
+  useBrowserShortcuts.getState().save("work", null, "https://example.org/", "Lab wiki");
+  await using screen = await render(home("work"));
+  await expect.element(page.getByRole("button", { name: "Lab wiki" })).toBeVisible();
+  await screen.rerender(home("personal"));
+  await expect.element(page.getByRole("button", { name: "Lab wiki" })).not.toBeInTheDocument();
+});
+
+it("offers only the starting sites in incognito, with nothing to change", async () => {
+  useBrowserShortcuts.setState({ profiles: {}, unclaimed: null });
+  useBrowserShortcuts.getState().save("main", null, "https://example.org/", "Lab wiki");
+  const onOpenUrl = vi.fn();
+  await using _screen = await render(
+    <BrowserHome
+      threadRef={threadRef}
+      profileId={INCOGNITO_BROWSER_PROFILE_ID}
+      incognito
+      onOpenUrl={onOpenUrl}
+      onSearch={vi.fn()}
+    />,
+  );
+  await page.getByRole("button", { name: "Scholar" }).click();
+  expect(onOpenUrl).toHaveBeenCalledWith("https://scholar.google.com/");
+  await expect.element(page.getByRole("button", { name: "Lab wiki" })).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Add" })).not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Scholar options" }))
+    .not.toBeInTheDocument();
 });
 
 it("keeps every label inside its circle at a narrow panel width", async () => {
   useBrowserShortcuts.setState({
-    added: ["https://a-very-long-subdomain.of-a-very-long-site.example.org/"],
-    names: {},
-    hidden: [],
-    visits: {},
+    profiles: {
+      main: {
+        added: ["https://a-very-long-subdomain.of-a-very-long-site.example.org/"],
+        names: {},
+        hidden: [],
+        visits: {},
+      },
+    },
   });
   await using screen = await render(
     <div data-testid="narrow" style={{ width: 260 }}>
-      <BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={vi.fn()} onSearch={vi.fn()} />
+      <BrowserHome
+        threadRef={threadRef}
+        profileId="main"
+        incognito={false}
+        onOpenUrl={vi.fn()}
+        onSearch={vi.fn()}
+      />
     </div>,
   );
   const panel = screen.container.querySelector("[data-testid=narrow]")!;

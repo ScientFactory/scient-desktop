@@ -7,6 +7,15 @@ import {
   withNativeFilePublicationLease,
 } from "../workspace/NativeFilePublication.ts";
 
+/** What every command's scratch holds besides its token: Git reads its home, config and excludes here. */
+export const GIT_SCRATCH_LAYOUT = {
+  home: "home",
+  temp: "tmp",
+  hooks: "hooks-disabled",
+  globalConfig: "gitconfig",
+  globalExcludes: "empty",
+} as const;
+
 export async function makeGitScratch(runtimeRoot: string, windows: boolean, helper?: string) {
   if (windows && helper === undefined) throw new Error("Private-directory helper unavailable.");
   const privateDirectory = async (directory: string): Promise<string> => {
@@ -45,8 +54,38 @@ export async function makeGitScratch(runtimeRoot: string, windows: boolean, help
     if (/^git-[A-Za-z0-9-]+$/u.test(name))
       await NodeFSP.rm(NodePath.join(root, name), { recursive: true, force: true });
   }
+  const create = async () => {
+    const directory = await privateDirectory(NodePath.join(root, `git-${NodeCrypto.randomUUID()}`));
+    for (const name of [GIT_SCRATCH_LAYOUT.home, GIT_SCRATCH_LAYOUT.temp, GIT_SCRATCH_LAYOUT.hooks])
+      await NodeFSP.mkdir(NodePath.join(directory, name), { recursive: true });
+    for (const name of [GIT_SCRATCH_LAYOUT.globalConfig, GIT_SCRATCH_LAYOUT.globalExcludes])
+      await NodeFSP.writeFile(NodePath.join(directory, name), "");
+    return directory;
+  };
+  /** Still as made: a sweep may have removed it, and Git must never find a config in it. */
+  const intact = (directory: string) =>
+    Promise.all(
+      [GIT_SCRATCH_LAYOUT.globalConfig, GIT_SCRATCH_LAYOUT.globalExcludes].map((name) =>
+        NodeFSP.lstat(NodePath.join(directory, name)),
+      ),
+    ).then(
+      (files) => files.every((file) => file.isFile() && file.size === 0),
+      () => false,
+    );
+  let shared: Promise<string> | undefined;
   return {
-    create: () => privateDirectory(NodePath.join(root, `git-${NodeCrypto.randomUUID()}`)),
+    create,
+    /** One scratch for every command without a token; on Windows each new one costs a helper launch. */
+    shared: async () => {
+      const known = shared;
+      if (known !== undefined) {
+        const directory = await known.catch(() => null);
+        if (directory !== null && (await intact(directory))) return directory;
+        if (shared === known) shared = undefined;
+      }
+      shared ??= create();
+      return shared;
+    },
     remove: (directory: string) =>
       NodeFSP.rm(directory, {
         recursive: true,

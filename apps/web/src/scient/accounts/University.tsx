@@ -284,7 +284,7 @@ export function UniversityCrest({
   const askAgain = useStableCallback((open: boolean) => {
     if (!open || !canWrite) return;
     for (const account of universities) {
-      const last = account.lastCheck ? Date.parse(account.lastCheck.at) : 0;
+      const last = account.signIn ? Date.parse(account.signIn.at) : 0;
       if (checking.has(account.accountId) || Date.now() - last < RECHECK_AFTER_MS) continue;
       setChecking((current) => new Set(current).add(account.accountId));
       void check({ accountId: account.accountId }).finally(() =>

@@ -70,7 +70,7 @@ it.effect("leaves a refused sign-in on record, so a blocked retry can't clear it
   Effect.gen(function* () {
     const { result, recorded, resolved } = yield* attempt({
       ...account,
-      lastSignInOutcome: "password-rejected",
+      signIn: { state: "password-rejected", at: "1970-01-01T00:00:00.000Z" },
     });
     expect(result.outcome).toBe("failed");
     expect(recorded).toEqual([]);
@@ -82,7 +82,7 @@ it.effect("reports a limit without touching when it began", () =>
   Effect.gen(function* () {
     const { result, recorded } = yield* attempt({
       ...account,
-      lastCheck: { state: "limited", at: "1970-01-01T00:00:00.000Z" },
+      signIn: { state: "limited", at: "1970-01-01T00:00:00.000Z" },
     });
     expect(result.outcome).toBe("limited");
     expect(recorded).toEqual([]);
@@ -92,7 +92,7 @@ it.effect("reports a limit without touching when it began", () =>
 it.effect("won't sign in by itself again right after a sign-in that worked", () =>
   Effect.gen(function* () {
     const { result, resolved } = yield* attempt(
-      { ...account, lastCheck: { state: "signed-in", at: "1970-01-01T00:00:00.000Z" } },
+      { ...account, signIn: { state: "signed-in", at: "1970-01-01T00:00:00.000Z" } },
       true,
     );
     expect(result).toMatchObject({

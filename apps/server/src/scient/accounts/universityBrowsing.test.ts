@@ -33,7 +33,7 @@ const university = (
   secrets: {},
   controls: defaultAccountControls("website"),
   status: "ready",
-  lastCheck: { state, at: "2026-11-02T00:00:00.000Z" },
+  signIn: { state, at: "2026-11-02T00:00:00.000Z" },
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });

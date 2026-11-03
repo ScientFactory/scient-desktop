@@ -449,6 +449,9 @@ export const ClientSettingsSchema = Schema.Struct({
   browserSearchEngine: BrowserSearchEngine.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_SEARCH_ENGINE)),
   ),
+  // SCIENT-FORK:START — Scient Browser: search suggestions.
+  browserSearchSuggestions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // SCIENT-FORK:END
 
   // Kept when the engine is switched away from "custom" so switching back restores it.
   browserCustomSearchUrl: BrowserCustomSearchUrl.pipe(
@@ -1976,6 +1979,9 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserSearchEngine: Schema.optionalKey(BrowserSearchEngine),
+  // SCIENT-FORK:START — Scient Browser: search suggestions.
+  browserSearchSuggestions: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
   browserCustomSearchUrl: Schema.optionalKey(BrowserCustomSearchUrl),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),

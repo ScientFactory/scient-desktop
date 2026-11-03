@@ -50,6 +50,9 @@ import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
+// SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+import { useForgetBrowserProfile } from "~/scient/browser/useForgetBrowserProfile";
+// SCIENT-FORK:END
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -719,6 +722,7 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
 function BrowserSearchEngineSetting() {
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
   const customUrl = useClientSettings((settings) => settings.browserCustomSearchUrl);
+  const suggestions = useClientSettings((settings) => settings.browserSearchSuggestions);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
@@ -760,6 +764,19 @@ function BrowserSearchEngineSetting() {
               ))}
             </SelectPopup>
           </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("browser-search-suggestions")}
+        description="Show searches from your search engine as you type. What you type is sent to it, except addresses and anything typed in an incognito tab."
+        control={
+          <Switch
+            checked={suggestions}
+            aria-label="Search suggestions"
+            onCheckedChange={(checked) =>
+              updateSettings({ browserSearchSuggestions: Boolean(checked) })
+            }
+          />
         }
       />
       {engine === "custom" ? (
@@ -1126,6 +1143,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
+  // SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+  const forgetBrowsing = useForgetBrowserProfile();
+  // SCIENT-FORK:END
   const primaryEnvironment = usePrimaryEnvironment();
   // Cookie import runs on this desktop, whose policy the primary environment reports.
   const cookieImportDenial = managedCapabilityDenial(
@@ -1250,6 +1270,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
         : {}),
     });
+    // SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+    forgetBrowsing(id);
+    // SCIENT-FORK:END
     setProfileRemovalInFlight(false);
     setProfilePendingRemoval(null);
   };
