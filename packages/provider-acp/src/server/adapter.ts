@@ -8091,7 +8091,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
             // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
-            ...(mcpSession === undefined ? {} : { capabilities: mcpSession.capabilities }),
+            // Only host copy reads the grants; upstream's default composer does not.
+            ...(mcpSession === undefined || flavor.application?.composePrompt === undefined
+              ? {}
+              : { capabilities: mcpSession.capabilities }),
             // SCIENT-FORK:END
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
