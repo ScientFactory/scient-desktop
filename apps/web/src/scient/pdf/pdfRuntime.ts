@@ -75,7 +75,7 @@ export function startPdfDocumentLoad(
   callbacks: PdfLoadCallbacks,
 ): PDFDocumentLoadingTask {
   const assetRoot = pdfAssetRoot();
-  sharedWorker ??= new PDFWorker();
+  if (sharedWorker === undefined || sharedWorker.destroyed) sharedWorker = new PDFWorker();
   const loadingTask = getDocument({
     url,
     worker: sharedWorker,
