@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- workflow contract tests read checked-in YAML only.
 import * as NodeFS from "node:fs";
+import * as NodeVM from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
 import * as YAML from "yaml";
 
@@ -69,26 +70,34 @@ describe("Compute CI suite selection", () => {
   it("narrows every native matrix to Linux only on an explicit linux", () => {
     const jobs = (
       workflow("scient-compute-python-kernel.yml") as {
-        jobs: Record<string, { strategy: { matrix: { runner: string } } }>;
+        jobs: Record<
+          string,
+          {
+            strategy: { matrix: { runner: string } };
+            steps?: Array<{ env?: Record<string, string> }>;
+          }
+        >;
       }
     ).jobs;
-    const runners = (platforms: string, expression: string) =>
-      JSON.parse(
-        // The one expression shape these matrices use: a && 'linux list' || 'full list'.
-        /^\$\{\{ fromJSON\(inputs\.platforms == 'linux' && '(.*)' \|\| '(.*)'\) \}\}$/
-          .exec(expression)!
-          .at(platforms === "linux" ? 1 : 2)!,
-      ) as string[];
+    // Each value is one `${{ ... }}` expression; these use only ==, &&, || and fromJSON.
+    const evaluate = (expression: string, context: object) =>
+      NodeVM.runInNewContext(expression.slice(3, -2), { fromJSON: JSON.parse, ...context });
+    const all = ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"];
     for (const id of ["managed_python", "real_kernel", "real_languages"]) {
-      const matrix = jobs[id]!.strategy.matrix.runner;
-      expect(runners("linux", matrix), id).toEqual(["ubuntu-24.04"]);
-      expect(runners("all", matrix), id).toEqual([
-        "ubuntu-24.04",
-        "macos-15",
-        "macos-15-intel",
-        "windows-2025",
-      ]);
+      const runner = jobs[id]!.strategy.matrix.runner;
+      expect(evaluate(runner, { inputs: { platforms: "linux" } }), id).toEqual(["ubuntu-24.04"]);
+      expect(evaluate(runner, { inputs: { platforms: "all" } }), id).toEqual(all);
+      // Manual dispatch has no such input.
+      expect(evaluate(runner, { inputs: {} }), id).toEqual(all);
     }
+    const target = jobs.managed_python!.steps!.find((step) => step.env?.EXPECTED_TARGET)!.env!
+      .EXPECTED_TARGET!;
+    expect(all.map((runner) => evaluate(target, { matrix: { runner } }))).toEqual([
+      "linux-x64",
+      "darwin-arm64",
+      "darwin-x64",
+      "win32-x64",
+    ]);
   });
 
   it("qualifies recipes and the opted-in managed product in their respective lanes", () => {
