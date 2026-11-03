@@ -2837,6 +2837,9 @@ function OpenCommandPaletteDialog(props: {
     // SCIENT-FORK:END
     if (event.key === "Backspace" && query === "" && isSubmenu) {
       event.preventDefault();
+      // SCIENT-FORK:START — clearing the clone path never leaves the clone; the back arrow does.
+      if (addProjectCloneFlow?.step === "confirm") return;
+      // SCIENT-FORK:END
       popView();
       return;
     }
@@ -3198,7 +3201,13 @@ function OpenCommandPaletteDialog(props: {
       }}
       onValueChange={handleQueryChange}
       panelSize="project-picker"
-      showBackHint={isSubmenu && !isBrowsing}
+      showBackHint={
+        isSubmenu &&
+        !isBrowsing &&
+        // SCIENT-FORK:START — Backspace doesn't leave the clone path step.
+        addProjectCloneFlow?.step !== "confirm"
+        // SCIENT-FORK:END
+      }
       value={query}
     >
       {newProjectPathPreview !== null ? (
