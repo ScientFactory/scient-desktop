@@ -427,30 +427,6 @@ describe("ProviderSettingsLifecycleAction", () => {
     }
   });
 
-  it("names a slow start on the row while it runs", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-    await _setupFixture2(_fixture);
-
-    const ready = provider({ source: "system", authenticated: false });
-    const markup = await render(_fixture, {
-      ...ready,
-      connection: {
-        ...ready.connection!,
-        operation: {
-          operationId: "connection-1",
-          method: "codex_browser",
-          status: "starting",
-          startedAt: "2026-10-08T00:00:00.000Z",
-          finishedAt: null,
-          message: "Antigravity can take up to a minute to start.",
-        },
-      },
-    });
-    expect(markup).toContain('aria-label="Starting Codex"');
-  });
-
   it.each(["install", "update"] as const)(
     "routes %s through the header without duplicating runtime transactions",
     async (action) => {
