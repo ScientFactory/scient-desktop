@@ -59,7 +59,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   }
   switch (message.method) {
     case "initialize":
-      return reply(message, { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] });
+      return reply(message, { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { fork: {} } }, authMethods: [] });
     case "session/new":
     case "session/load":
       return reply(message, { sessionId: "scripted", configOptions: options() });

@@ -592,6 +592,9 @@ export interface AcpAdapterV2Flavor {
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
     sessionId: string,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  // SCIENT-FORK:START — a flavor can keep Scient's portable fork when its agent advertises session/fork.
+  readonly nativeSessionFork?: false;
+  // SCIENT-FORK:END
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -7358,12 +7361,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
-        const capabilities = negotiatedCapabilities(
+        // SCIENT-FORK:START — see AcpAdapterV2Flavor.nativeSessionFork.
+        const negotiated = negotiatedCapabilities(
           flavor.capabilities,
           started,
           flavor.modelOptionArrivesLate === true,
           flavor.forkFromTurn?.supported(started.initializeResult) === true,
         );
+        const capabilities =
+          flavor.nativeSessionFork === false
+            ? {
+                ...negotiated,
+                threads: { ...negotiated.threads, canForkThread: false, canForkFromTurn: false },
+              }
+            : negotiated;
+        // SCIENT-FORK:END
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;

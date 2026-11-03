@@ -146,6 +146,8 @@ export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
     modelContextWindow: (runtime, selection) =>
       runtimes.get(runtime)?.getContextWindow?.(selection.model),
     supportsCompaction: true,
+    // Droid 1.2.0 advertises session/fork; forks stay on the qualified portable path.
+    nativeSessionFork: false,
     beforeRuntimeReuse: Effect.fn("DroidAdapterV2.beforeRuntimeReuse")(function* (runtime) {
       const droid = runtimes.get(runtime);
       if (droid?.checkConfiguration)

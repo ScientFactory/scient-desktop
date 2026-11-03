@@ -1351,6 +1351,8 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
           assert.isTrue(capabilities.subagents.supportsSubagents);
           assert.isTrue(capabilities.subagents.emitsSubagentLifecycle);
           assert.isFalse(capabilities.subagents.exposesSubagentThreadIds);
+          // Droid advertises session/fork (as 1.2.0 does); forks stay portable.
+          assert.isFalse(h.runtime.providerSession.capabilities.threads.canForkThread);
           yield* h.send(1, "full-access");
           assert.equal((yield* h.terminal).status, "completed");
           yield* h.send(2, "full-access");
