@@ -3,6 +3,7 @@ import {
   AnnotationMode,
   GlobalWorkerOptions,
   PasswordResponses,
+  PDFWorker,
   getDocument,
   type PDFDocumentLoadingTask,
   type PDFDocumentProxy,
@@ -22,6 +23,11 @@ import { observeResize } from "~/lib/observeResize";
 import { createPdfResizeSettlement } from "./pdfResizeSettlement";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+// Without a shared worker, pdf.js starts a worker and recompiles its 1.3 MB
+// script for every document, about 80 ms per open. Destroying a document
+// leaves a worker the caller supplied running.
+let sharedWorker: PDFWorker | undefined;
 
 export type PdfPasswordReason = "required" | "incorrect";
 
@@ -69,8 +75,10 @@ export function startPdfDocumentLoad(
   callbacks: PdfLoadCallbacks,
 ): PDFDocumentLoadingTask {
   const assetRoot = pdfAssetRoot();
+  sharedWorker ??= new PDFWorker();
   const loadingTask = getDocument({
     url,
+    worker: sharedWorker,
     cMapPacked: true,
     cMapUrl: `${assetRoot}cmaps/`,
     standardFontDataUrl: `${assetRoot}standard_fonts/`,
