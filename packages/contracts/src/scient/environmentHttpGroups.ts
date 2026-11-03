@@ -100,13 +100,9 @@ import {
   ScientAnalyticsUiEvent,
 } from "../scientAnalytics.ts";
 import {
-  ScientThreadQueueEnqueueRequest,
   ScientThreadQueueListRequest,
   ScientThreadQueueControlRequest,
-  ScientThreadQueueRemoveRequest,
-  ScientThreadQueueReorderRequest,
   ScientThreadQueueSnapshot,
-  ScientThreadQueueUpdateRequest,
 } from "../scientThreadQueue.ts";
 import {
   ScientPandocToolStatus,
@@ -594,38 +590,6 @@ export function makeScientEnvironmentHttpGroups({
       HttpApiEndpoint.post("list", "/api/scient/thread-queue/v2/list", {
         headers: OptionalBearerHeaders,
         payload: ScientThreadQueueListRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/v2/enqueue", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueEnqueueRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("update", "/api/scient/thread-queue/v2/update", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueUpdateRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("remove", "/api/scient/thread-queue/v2/remove", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueRemoveRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/v2/reorder", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueReorderRequest,
         success: ScientThreadQueueSnapshot,
         error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
       }).middleware(EnvironmentAuthenticatedAuth),

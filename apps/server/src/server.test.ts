@@ -10008,24 +10008,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                 const cookie = yield* getAuthenticatedSessionCookieHeader();
                 const headers = { cookie, "content-type": "application/json" };
                 const queueItemId = "qitem_httpclone";
-                const enqueueResponse = yield* fetchEffect(
-                  yield* getHttpServerUrl("/api/scient/thread-queue/v2/enqueue"),
-                  {
-                    method: "POST",
-                    headers,
-                    body: jsonRequestBody({
-                      threadId,
-                      queueItemId,
-                      text: "Keep the captured skills",
-                      attachments: [],
-                      selectedScientSkillNames: ["analysis"],
-                      modelSelection: defaultModelSelection,
-                    }),
-                  },
+                yield* app.v2.orchestrator.dispatch({
+                  type: "legacy-queue.import",
+                  commandId: CommandId.make("queue-http-clone-held"),
+                  threadId,
+                  queueItemId,
+                  messageId: MessageId.make("queue-http-clone-held-message"),
+                  text: "Keep the captured skills",
+                  attachments: [],
+                  selectedScientSkillNames: ["analysis"],
+                  modelSelection: defaultModelSelection,
+                  createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                });
+                const listResponse = yield* fetchEffect(
+                  yield* getHttpServerUrl("/api/scient/thread-queue/v2/list"),
+                  { method: "POST", headers, body: jsonRequestBody({ threadId }) },
                 );
-                assert.equal(enqueueResponse.status, 200);
+                assert.equal(listResponse.status, 200);
                 const admitted = yield* decodeQueueSnapshot(
-                  yield* responseJsonEffect<unknown>(enqueueResponse),
+                  yield* responseJsonEffect<unknown>(listResponse),
                 );
                 assert.equal(admitted.items.length, 1);
                 assert.deepEqual(admitted.items[0]?.selectedScientSkillNames, ["analysis"]);
