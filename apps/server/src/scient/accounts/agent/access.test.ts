@@ -202,7 +202,7 @@ it.effect("picks a profile only by sign-ins the agent may use", () =>
       details: { kind: "website", sites: ["example.com"], profileId: workId },
       secrets: {},
       controls: defaultAccountControls("website"),
-      lastSignInOutcome: "signed-in",
+      signIn: { state: "signed-in", at: "2026-01-01T00:00:00.000Z" },
       status: "ready",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",

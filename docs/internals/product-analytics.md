@@ -93,7 +93,8 @@ deploy, so desktop and gateway releases no longer have to ship in order.
 Legacy events may omit `contractRevision`; new events carry the revision.
 
 The conformance corpus contains ordinary and hostile-input cases for each
-event with a normalizer. Regenerate and compare both repositories from the desktop root:
+event with a normalizer. Each event's ordinary case supplies only the fields its normalizer uses;
+`passthrough` cases show fields the server records today with no normalizer. Regenerate and compare both repositories from the desktop root:
 
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \

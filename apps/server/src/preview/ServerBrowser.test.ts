@@ -2090,6 +2090,110 @@ it.live("overlapping file pickers keep the newer offer answerable", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+// SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+it.live("reports an empty tab when Back reaches the blank page, but not while one starts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const nextStatus = Effect.gen(function* () {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || event.tabId !== tabId) {
+          event = yield* PubSub.take(events);
+        }
+        return event.snapshot.navStatus;
+      });
+
+      yield* Effect.promise(() => page.goto("about:blank"));
+      yield* Effect.promise(() => page.goto("https://example.com/"));
+      expect(yield* nextStatus).toMatchObject({ _tag: "Success", url: "https://example.com/" });
+
+      yield* Effect.promise(() => page.goto("about:blank"));
+      expect(yield* nextStatus).toEqual({ _tag: "Idle" });
+
+      yield* Effect.promise(() => page.goto("https://example.com/"));
+      expect(yield* nextStatus).toMatchObject({ _tag: "Success", url: "https://example.com/" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("reports an empty tab when Back leaves a page that's still loading", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const nextStatus = Effect.gen(function* () {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || event.tabId !== tabId) {
+          event = yield* PubSub.take(events);
+        }
+        return event.snapshot.navStatus;
+      });
+
+      page.emit("request", {
+        isNavigationRequest: () => true,
+        frame: () => page,
+        url: () => "https://slow.test/",
+        method: () => "GET",
+      });
+      expect(yield* nextStatus).toMatchObject({ _tag: "Loading", url: "https://slow.test/" });
+
+      page.emit("framenavigated", page);
+      expect(yield* nextStatus).toEqual({ _tag: "Idle" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("keeps the empty page when Back cancels a page that was still loading", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* browserHostReady;
+      const opened = yield* manager.open({ threadId: scope.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const page = contexts[0]!.page;
+      const slow = {
+        isNavigationRequest: () => true,
+        frame: () => page,
+        url: () => "https://slow.test/report.pdf",
+        method: () => "GET",
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      };
+      page.emit("request", slow);
+      page.emit("requestfailed", slow);
+      page.emit("framenavigated", page);
+
+      // Back left the page, so it's no download for the empty tab to show or fail on: a file it
+      // still sends is offered like any other.
+      const saved = yield* Queue.unbounded<string>();
+      const written = Promise.withResolvers<void>();
+      page.emit("download", {
+        failure: async () => null,
+        delete: async () => {},
+        saveAs: (path: string) => {
+          Queue.offerUnsafe(saved, path);
+          return written.promise;
+        },
+        suggestedFilename: () => "report.pdf",
+        url: () => slow.url(),
+      });
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(yield* Queue.take(saved), "%PDF");
+      written.resolve();
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
+      expect(offered).toMatchObject({ _tag: "download", fileName: "report.pdf" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
 it.live("a detached file picker stays open across same-document navigation", () =>
   Effect.scoped(
     Effect.gen(function* () {

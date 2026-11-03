@@ -95,6 +95,7 @@ const attempt = Effect.fn("AccountsAgent.guardedSignIn")(function* (
               ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
               signInOutcome: exit.value.outcome,
               outcome: exit.value.outcome === "signed-in" ? "ok" : "error",
+              ...("savedPasswordUsed" in exit.value ? { savedPasswordUsed: true } : {}),
             },
             "message" in exit.value ? exit.value.message : undefined,
           )

@@ -548,6 +548,16 @@ import {
   WsServerRemoveCustomModelRpc,
   WsServerTestCustomModelRpc,
 } from "./scient/customModelRpcs.ts";
+// SCIENT-FORK:START — Scient Browser: history.
+import {
+  SCIENT_BROWSER_HISTORY_WS_METHODS,
+  WsBrowserHistoryClearRpc,
+  WsBrowserHistoryListRpc,
+  WsBrowserHistoryRemoveRpc,
+  WsBrowserHistorySuggestRpc,
+  WsBrowserSearchSuggestRpc,
+} from "./scient/browserHistoryRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient file opening RPCs.
 import {
@@ -621,6 +631,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient Accounts methods.
   ...SCIENT_ACCOUNT_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient Browser: history.
+  ...SCIENT_BROWSER_HISTORY_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -2544,6 +2558,13 @@ export const WsInteractiveRpcGroup = RpcGroup.make(
   WsPreviewClearProfileRpc,
   WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
+  // SCIENT-FORK:START — Scient Browser: history.
+  WsBrowserHistoryListRpc,
+  WsBrowserHistoryRemoveRpc,
+  WsBrowserHistoryClearRpc,
+  WsBrowserHistorySuggestRpc,
+  WsBrowserSearchSuggestRpc,
+  // SCIENT-FORK:END
   WsSubscribePreviewEventsRpc,
 );
 

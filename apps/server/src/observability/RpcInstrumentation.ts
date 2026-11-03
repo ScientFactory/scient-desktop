@@ -209,6 +209,13 @@ const RPC_AGGREGATES = {
   [WS_METHODS.previewClearProfile]: "preview",
   [WS_METHODS.previewReportProfiles]: "preview",
   [WS_METHODS.previewReportStatus]: "preview",
+  // SCIENT-FORK:START — Scient Browser: history.
+  [WS_METHODS.browserHistoryList]: "preview",
+  [WS_METHODS.browserHistoryRemove]: "preview",
+  [WS_METHODS.browserHistoryClear]: "preview",
+  [WS_METHODS.browserHistorySuggest]: "preview",
+  [WS_METHODS.browserSearchSuggest]: "preview",
+  // SCIENT-FORK:END
   [WS_METHODS.subscribePreviewEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",
   [WS_METHODS.previewStopLocalServer]: "preview",

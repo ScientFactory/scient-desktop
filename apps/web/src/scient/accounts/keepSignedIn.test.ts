@@ -1,21 +1,21 @@
 import {
   AccountId,
   defaultAccountControls,
-  type AccountCheckState,
+  type AccountSignInState,
   type AccountSummary,
 } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { afterVisit, nextQuietVisit, sessionEnded, type QuietVisits } from "./keepSignedIn";
 
 const HOUR = 60 * 60 * 1000;
-const account = (id: string, site: string, state: AccountCheckState): AccountSummary => ({
+const account = (id: string, site: string, state: AccountSignInState): AccountSummary => ({
   accountId: AccountId.make(`acc_fixture${id}`),
   name: site,
   details: { kind: "website", sites: [site], profileId: "work" },
   secrets: {},
   controls: defaultAccountControls("website"),
   status: "ready",
-  lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+  signIn: { state, at: "2026-10-31T00:00:00.000Z" },
   createdAt: "2026-10-31T00:00:00.000Z",
   updatedAt: "2026-10-31T00:00:00.000Z",
 });

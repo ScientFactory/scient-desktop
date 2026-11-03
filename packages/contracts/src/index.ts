@@ -104,6 +104,7 @@ export * from "./scient/nativeSubagentControl.ts";
 // SCIENT-FORK:START — Scient Accounts contracts (new files, no upstream edits).
 export * from "./scient/accounts.ts";
 export * from "./scient/accountRpcs.ts";
+export * from "./scient/browserHistoryRpcs.ts";
 export * from "./scient/desktopAccountsBridge.ts";
 // SCIENT-FORK:END
 export * from "./scientLatex.ts";

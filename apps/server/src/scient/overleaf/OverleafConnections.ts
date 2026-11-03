@@ -158,6 +158,8 @@ export interface OverleafConnectionStatus {
   readonly busy: boolean;
   /** The link record's revision: it moves with every operation that changes the link. */
   readonly revision: number;
+  /** A restored folder at the link's place that no operation has recorded as its own yet. */
+  readonly restored: boolean;
 }
 
 /** One Overleaf project ID: Overleaf's 24 hexadecimal digits. */
@@ -901,6 +903,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       keptCopies: document.retention.copies.length,
       busy,
       revision: document.revision,
+      restored: false,
     };
     if (document.state === "archived")
       return {
@@ -917,10 +920,9 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       found: OverleafConnectionDocument["folder"]["identity"] | null,
       recorded: OverleafConnectionDocument["folder"]["identity"],
     ) => found !== null && platformFileIdentity.equal(found, recorded);
-    if (
-      (!same(checkout, document.checkout.identity) || !same(folder, document.folder.identity)) &&
-      (checkout === null || !(yield* isRestored(document)))
-    )
+    const replaced =
+      !same(checkout, document.checkout.identity) || !same(folder, document.folder.identity);
+    if (replaced && (checkout === null || !(yield* isRestored(document))))
       return {
         ...base,
         availability: "unavailable",
@@ -940,14 +942,20 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         : reasons.some((reason) => reason !== "unresolved-sends")
           ? "attention"
           : "ready";
-    return { ...base, availability, reasons, local } satisfies OverleafConnectionStatus;
+    return {
+      ...base,
+      availability,
+      reasons,
+      local,
+      restored: replaced,
+    } satisfies OverleafConnectionStatus;
   });
 
   /**
    * A new folder at the link's place that still holds the project: a restore, or a cloud
-   * drive putting it back, perhaps edited since. Every file last synced is there and most
-   * are untouched; one shared file proves nothing, as templates share them. Anything else
-   * may not be this project's, so it waits for the person.
+   * drive putting it back. Every file last synced is there unchanged, though new ones may
+   * be added; papers from one template share most files, so anything else waits for the
+   * person.
    */
   const isRestored = Effect.fn("OverleafConnections.isRestored")(function* (
     document: OverleafConnectionDocument,
@@ -964,7 +972,8 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     return (
       compared._tag === "read" &&
       compared.deleted === 0 &&
-      compared.unchanged > compared.changed + compared.added
+      compared.changed === 0 &&
+      compared.unchanged > 0
     );
   });
 

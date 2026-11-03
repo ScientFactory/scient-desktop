@@ -93,9 +93,8 @@ describe("analytics contract conformance corpus", () => {
 
   it("matches every registered normalizer exactly", () => {
     expect(buildAnalyticsConformanceFixture()).toEqual(fixture);
-    expect(new Set(fixture.cases.map((entry) => entry.name)).size).toBe(
-      ANALYTICS_EVENT_NAMES.length,
-    );
+    const names = new Set(fixture.cases.map((entry) => entry.name));
+    for (const name of ANALYTICS_EVENT_NAMES) expect(names.has(name), name).toBe(true);
     expect(JSON.stringify(fixture)).not.toMatch(/PRIVATE-CONTENT|example\.invalid|\/private\//u);
   });
 
