@@ -83,7 +83,7 @@ export const accountAgentOperations = {
             readable: account.controls.visibility === "readable",
             status: account.status,
             usage: accountUsage(account),
-            ...(account.lastCheck ? { lastCheck: account.lastCheck.state } : {}),
+            ...(account.signIn ? { signIn: account.signIn.state } : {}),
           }))
         : [],
       profiles: session.agentAccess
@@ -205,10 +205,10 @@ export const accountAgentOperations = {
         });
         // A refused key is worth saying once and clearing as soon as a key works again.
         const refused = response.status === 401;
-        if (refused || account.lastCheck?.state === "rejected")
+        if (refused || account.signIn?.state === "failed")
           yield* accounts.recordCheck(accountId, {
-            state: refused ? "rejected" : "signed-in",
-            ...(refused ? { message: "The service refused this key." } : {}),
+            state: refused ? "failed" : "signed-in",
+            ...(refused ? { detail: "The service refused this key." } : {}),
           });
         const note = refused
           ? {

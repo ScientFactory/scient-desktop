@@ -200,7 +200,7 @@ export function fakeAccounts(
         if (index !== -1)
           accounts[index] = {
             ...accounts[index]!,
-            lastCheck: { ...check, at: "2026-01-01T00:00:00.000Z" },
+            signIn: { ...check, at: "2026-01-01T00:00:00.000Z" },
           };
       }),
     setControls: () => unsupported,

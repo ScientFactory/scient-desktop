@@ -1,20 +1,26 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountBrowserSessions,
+  type AccountId,
   type AccountSummary,
 } from "@t3tools/contracts";
+import { signedInMomentsAgo } from "./AccountDecisions.ts";
 
-/** Cookie presence is evidence only of a possible session; absence is meaningful after prior use. */
-export function websiteSessionStatus(
+/**
+ * Sign-ins whose cookies are gone, to record as signed out: one last signed in, or unknown after
+ * this source saw its cookies. A recorded one no longer qualifies. One signed in moments ago is
+ * skipped: the cookies may predate that sign-in, and recording would make it `needs-you`.
+ */
+export function endedWebsiteSessions(
   accounts: ReadonlyArray<AccountSummary>,
   sessions: AccountBrowserSessions,
   observed: Set<string>,
   now: number,
   sourceId?: string,
   defaultProfileId: string = DEFAULT_BROWSER_PROFILE_ID,
-): ReadonlyArray<AccountSummary> {
-  return accounts.map((account) => {
-    if (account.details.kind !== "website") return account;
+): ReadonlyArray<AccountId> {
+  return accounts.flatMap((account) => {
+    if (account.details.kind !== "website") return [];
     // Without a named profile, sign-ins and "Open site" use the user's default profile.
     const { sites, profileId = defaultProfileId } = account.details;
     const hosts = sites.flatMap((site) => {
@@ -24,7 +30,7 @@ export function websiteSessionStatus(
         return [];
       }
     });
-    if (hosts.length !== sites.length) return account;
+    if (hosts.length !== sites.length) return [];
     const key = JSON.stringify([
       sourceId,
       account.accountId,
@@ -33,7 +39,7 @@ export function websiteSessionStatus(
       account.details.username,
     ]);
     const session = sessions.find((entry) => entry.profileId === profileId);
-    if (!session || sites.length === 0) return account;
+    if (!session || sites.length === 0) return [];
     const live = session.cookies.filter(
       (cookie) =>
         (cookie.expires === undefined || cookie.expires === -1 || cookie.expires > now / 1000) &&
@@ -50,12 +56,14 @@ export function websiteSessionStatus(
     if (protectedPresent) observed.add(protectedKey);
     if (present && sourceId) observed.add(key);
     const sessionPresent = observed.has(protectedKey) ? protectedPresent : present;
-    return {
-      ...account,
-      signedOut:
-        !sessionPresent &&
-        (account.lastSignInOutcome === "signed-in" ||
-          (sourceId !== undefined && observed.has(key))),
-    };
+    const state = account.signIn?.state;
+    const ended =
+      !sessionPresent &&
+      !signedInMomentsAgo(account, now) &&
+      (state === "signed-in" ||
+        (sourceId !== undefined &&
+          observed.has(key) &&
+          (state === undefined || state === "unknown")));
+    return ended ? [account.accountId] : [];
   });
 }

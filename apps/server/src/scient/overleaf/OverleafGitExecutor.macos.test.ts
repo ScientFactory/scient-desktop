@@ -78,7 +78,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
             });
             const local = yield* git.execute({ cwd: clone, args: ["rev-parse", "HEAD"] });
             expect(text(remote.stdout).split("\t")[0]).toBe(text(local.stdout).trim());
-            expect(NodeFS.readdirSync(runtimeRoot)).toEqual([]);
+            // Only the scratch that commands without a token share remains, as it was made.
+            expect(
+              NodeFS.readdirSync(runtimeRoot).map((name) =>
+                NodeFS.readdirSync(NodePath.join(runtimeRoot, name)).sort(),
+              ),
+            ).toEqual([["empty", "gitconfig", "home", "hooks-disabled", "tmp"]]);
             // xcrun records each HOME it serves in a shared database (or a partial copy of
             // it): none of this executor's homes may appear there.
             for (const [name, stamp] of xcrunFiles(temp)) {

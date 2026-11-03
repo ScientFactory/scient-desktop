@@ -23,6 +23,14 @@ import { withExecutor } from "./OverleafGitExecutor.testkit.ts";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const bytes = (value: string) => new TextEncoder().encode(value);
+/** The runtime root's folders and what each holds; commands without a token share one scratch. */
+const scratchLeft = (runtimeRoot: string) =>
+  NodeFS.readdirSync(runtimeRoot).map((name) =>
+    NodeFS.statSync(NodePath.join(runtimeRoot, name)).isDirectory()
+      ? NodeFS.readdirSync(NodePath.join(runtimeRoot, name)).sort()
+      : name,
+  );
+const SHARED_SCRATCH = ["empty", "gitconfig", "home", "hooks-disabled", "tmp"];
 
 describe("Overleaf's rate limit", () => {
   const limited = new OverleafGitError({
@@ -206,7 +214,7 @@ describe("OverleafGitExecutor", () => {
         const output = text(filled.stdout);
         expect(output).toContain("username=git");
         expect(output).toContain("password=olp_FAKE-TOKEN-FOR-TEST");
-        expect(NodeFS.readdirSync(runtimeRoot)).toEqual([]);
+        expect(scratchLeft(runtimeRoot)).toEqual([SHARED_SCRATCH]);
       }),
     ),
   );
@@ -222,7 +230,7 @@ describe("OverleafGitExecutor", () => {
         expect(NodeFS.existsSync(abandoned)).toBe(false);
         expect(NodeFS.readFileSync(NodePath.join(runtimeRoot, "keep"), "utf8")).toBe("state");
         yield* restarted.execute({ cwd: work, args: ["--version"] });
-        expect(NodeFS.readdirSync(runtimeRoot)).toEqual(["keep"]);
+        expect(scratchLeft(runtimeRoot).sort()).toEqual(["keep", SHARED_SCRATCH].sort());
       }),
     ),
   );
@@ -280,7 +288,7 @@ describe("OverleafGitExecutor", () => {
           })
           .pipe(Effect.flip);
         expect(error.reason).toBe("timeout");
-        expect(NodeFS.readdirSync(runtimeRoot)).toEqual([]);
+        expect(scratchLeft(runtimeRoot)).toEqual([SHARED_SCRATCH]);
       }),
     ),
   );
