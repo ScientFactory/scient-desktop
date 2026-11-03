@@ -79,13 +79,13 @@ separate from the verified private-runtime actions below.
 
 ## What each action changes
 
-| Action   | What it does                                                             | What it preserves                                                               |
-| -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Install  | Downloads, verifies, tests, and activates a qualified private runtime.   | System/custom installations and provider credentials.                           |
-| Update   | Safely replaces a Scient-managed runtime with a newer qualified version. | The previous working copy until activation succeeds, plus provider credentials. |
-| Repair   | Installs or restores the latest qualified managed release.               | The previous working copy until repair succeeds, plus provider credentials.     |
-| Remove   | Deletes only Scient's private runtime.                                   | System/custom installations and provider credentials.                           |
-| Sign out | Asks the provider to revoke the account session and verifies the result. | Every provider runtime.                                                         |
+| Action   | What it does                                                             | What it preserves                                                                                                    |
+| -------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Install  | Downloads, verifies, tests, and activates a qualified private runtime.   | System/custom installations and provider credentials.                                                                |
+| Update   | Safely replaces a Scient-managed runtime with a newer qualified version. | The previous version, any version a running Scient still uses, and provider credentials. Older versions are deleted. |
+| Repair   | Installs or restores the latest qualified managed release.               | The previous working copy until repair succeeds, plus provider credentials.                                          |
+| Remove   | Deletes only Scient's private runtime.                                   | System/custom installations and provider credentials.                                                                |
+| Sign out | Asks the provider to revoke the account session and verifies the result. | Every provider runtime.                                                                                              |
 
 When provider update checks are enabled, Scient checks its qualified stable-release catalog when the
 app starts, periodically while it remains open, and when you click **Install**, **Update**, or

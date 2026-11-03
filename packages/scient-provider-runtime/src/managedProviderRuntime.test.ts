@@ -130,6 +130,10 @@ function privateRoot(root: string): string {
   return NodePath.join(root, "provider-runtimes", "test-provider");
 }
 
+function leasesDir(root: string): string {
+  return NodePath.join(root, "provider-runtimes", ".leases", "test-provider");
+}
+
 function statePath(root: string): string {
   return NodePath.join(privateRoot(root), "state.json");
 }
@@ -438,6 +442,89 @@ describe("ManagedProviderRuntime contract", () => {
       activeArtifact: { version: "2.0.0", catalogRevision: "test:2.0.0" },
       previousArtifact: { version: "1.0.0", catalogRevision: "test:1.0.0" },
     });
+  });
+
+  it("keeps versions a live server still launches, and prunes them once it has exited", async () => {
+    // This live process launched 1.0.0, as a server sharing the home with an updater would.
+    const { root, runtime } = await makeRuntime();
+    for (const version of ["1.0.0", "2.0.0", "3.0.0"]) await install(runtime, artifact(version));
+    const versions = NodePath.join(privateRoot(root), "versions");
+    const leases = leasesDir(root);
+    await runtime.reconcile();
+    expect((await NodeFSP.readdir(versions)).toSorted()).toEqual(["1.0.0", "2.0.0", "3.0.0"]);
+
+    const exited = await exitedProcessId();
+    for (const name of await NodeFSP.readdir(leases)) {
+      await NodeFSP.rename(
+        NodePath.join(leases, name),
+        NodePath.join(leases, name.replace(/^\d+-/u, `${exited}-`)),
+      );
+    }
+    // A park an interrupted prune left behind.
+    await NodeFSP.mkdir(NodePath.join(versions, ".pruning-1-0.5.0"));
+    await runtime.reconcile();
+    expect((await NodeFSP.readdir(versions)).toSorted()).toEqual(["2.0.0", "3.0.0"]);
+    expect(await NodeFSP.readdir(leases)).toEqual([]);
+  });
+
+  it("leases the requested version too when the active one is damaged", async () => {
+    // Callers then keep the requested version's path, which another server may install.
+    const { root, runtime } = await makeRuntime();
+    const installed = await install(runtime, artifact("1.0.0"));
+    await NodeFSP.rm(installed.launchPath);
+
+    expect((await runtime.status(artifact("2.0.0"))).installed).toBe(false);
+    expect((await NodeFSP.readdir(leasesDir(root))).toSorted()).toEqual([
+      `${process.pid}-1.0.0`,
+      `${process.pid}-2.0.0`,
+    ]);
+  });
+
+  it("records a new lease only once a pruner holding the prune lock is done", async () => {
+    const foundBusy = Promise.withResolvers<void>();
+    const { root, runtime } = await makeRuntime({
+      acquireMutationLock: async (lockPath) => {
+        const lock = await tryAcquireManagedRuntimeMutationLock(lockPath);
+        if (!lock && lockPath.endsWith("prune.lock")) foundBusy.resolve();
+        return lock;
+      },
+    });
+    await NodeFSP.mkdir(leasesDir(root), { recursive: true });
+    const pruner = await tryAcquireManagedRuntimeMutationLock(
+      NodePath.join(leasesDir(root), "prune.lock"),
+    );
+    let settled = false;
+    const status = runtime.status(artifact("1.0.0")).finally(() => {
+      settled = true;
+    });
+
+    await foundBusy.promise;
+    expect(settled).toBe(false);
+    await pruner!.release();
+    await status;
+    expect(await NodeFSP.readdir(leasesDir(root))).toEqual([`${process.pid}-1.0.0`]);
+  });
+
+  it("never recreates a runtime folder that Remove moved away", async () => {
+    const { root, runtime } = await makeRuntime();
+    await install(runtime, artifact("1.0.0"));
+    await runtime.remove();
+
+    await runtime.status(artifact("1.0.0"));
+
+    await expect(NodeFSP.access(privateRoot(root))).rejects.toThrow();
+  });
+
+  it("deletes nothing without a managed state", async () => {
+    const { root, runtime } = await makeRuntime();
+    await install(runtime, artifact("1.0.0"));
+    const versions = NodePath.join(privateRoot(root), "versions");
+    await NodeFSP.mkdir(NodePath.join(versions, "0.9.0"));
+    await NodeFSP.writeFile(statePath(root), "not json");
+
+    await runtime.reconcile();
+
+    expect((await NodeFSP.readdir(versions)).toSorted()).toEqual(["0.9.0", "1.0.0"]);
   });
 
   it("qualifies the final path before committing activation", async () => {
