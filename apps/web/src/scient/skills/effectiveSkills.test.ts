@@ -1,7 +1,7 @@
 import { ProviderDriverKind, type ScientSkillInventory } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { mergeEffectiveProviderSkills } from "./effectiveSkills";
+import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 
 const inventory: ScientSkillInventory = {
   supportedProviders: [ProviderDriverKind.make("codex")],

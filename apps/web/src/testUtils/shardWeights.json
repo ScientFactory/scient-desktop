@@ -486,7 +486,7 @@
   "src/scient/analysis/analysisArtifactPresentation.test.ts": 0.011,
   "src/scient/analysis/analysisRunUiState.test.ts": 0.009,
   "src/scient/analysis/previewMiniPlayerSeam.test.ts": 0.027,
-  "src/scient/analysis/sourceLanguage.test.ts": 0.004,
+  "src/scient/presentation/sourceLanguage.test.ts": 0.004,
   "src/scient/analytics/AnalyticsPrivacySettings.browser.test.tsx": 1.148,
   "src/scient/analytics/AnalyticsSharingNotice.browser.test.tsx": 0.435,
   "src/scient/analytics/client.browser.test.tsx": 0.177,

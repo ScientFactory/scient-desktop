@@ -160,7 +160,7 @@ import {
 import { usePanelFilesOpen } from "~/scient/rightPanel/PanelFilesColumn";
 import { TabHistoryButtons } from "~/scient/rightPanel/tabHistory";
 // SCIENT-FORK:END
-import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { FileRenameButton } from "./FileRenameButton";

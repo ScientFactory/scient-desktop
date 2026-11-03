@@ -4,12 +4,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  ScientVoiceComposerControl,
-  describeVoiceError,
-  describeVoiceRecorderError,
-  formatVoiceTimer,
-} from "./ScientVoiceComposerControl.tsx";
+import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
+import { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
+import { describeVoiceError } from "./voiceErrorPresentation.ts";
 
 function stubVoiceBridge(): void {
   const voice = {

@@ -39,9 +39,6 @@ import {
 import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 import type { VoiceDraftOrigin } from "./voiceDraftDelivery.ts";
 
-export { describeVoiceError } from "./voiceErrorPresentation.ts";
-export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
-
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;
   readonly environmentId?: EnvironmentId;
