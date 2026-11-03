@@ -1,13 +1,11 @@
 // SCIENT-FORK:START
 import {
-  keyboardResizePreviewMiniPlayerFromHandle,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   PREVIEW_MINI_PLAYER_MIN_SIZE,
   resizePreviewMiniPlayerRect,
   type PreviewMiniPlayerResizeDirection,
 } from "../../scient/rightPanel/previewResize";
 export {
-  keyboardResizePreviewMiniPlayerFromHandle,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   resizePreviewMiniPlayerRect,
   type PreviewMiniPlayerResizeDirection,
@@ -276,32 +274,6 @@ export function resolvePreviewMiniPlayerDefaultPosition(
   );
 }
 
-/** Move the player by one keyboard step without leaving the viewport. */
-export function keyboardNudgePreviewMiniPlayerPosition(
-  position: PreviewMiniPlayerPosition,
-  direction: "left" | "right" | "up" | "down",
-  step: number,
-  container: PreviewMiniPlayerSize,
-  player: PreviewMiniPlayerSize,
-): PreviewMiniPlayerPosition {
-  const offsets = {
-    left: { x: -step, y: 0 },
-    right: { x: step, y: 0 },
-    up: { x: 0, y: -step },
-    down: { x: 0, y: step },
-  } as const;
-  const offset = offsets[direction];
-  return clampPreviewMiniPlayerPosition(
-    { x: position.x + offset.x, y: position.y + offset.y },
-    container,
-    player,
-  );
-}
-
-/**
- * Move the edge owned by a focused resize handle in the arrow's screen
- * direction. A handle ignores arrows on axes it does not control.
- */
 /** Clamp per layout without persisting so narrow containers preserve the chosen width. */
 export function resolvePreviewMiniPlayerFrame(input: {
   readonly width: number | null;

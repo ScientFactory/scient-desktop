@@ -466,16 +466,6 @@ export function worksWithCardAgents(
     : support.filter((entry) => entry.status !== "unsupported");
 }
 
-export function preferCuratedStoreEntries<T extends { readonly name: string }>(
-  entries: ReadonlyArray<T>,
-  curated: ReadonlyArray<DiscoverEntry>,
-): ReadonlyArray<T> {
-  const aliases = new Set(
-    curated.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
-  );
-  return entries.filter((entry) => !aliases.has(entry.name));
-}
-
 export function providerServerDisplayName(
   server: Pick<ServerProviderMcpServer, "name" | "scope">,
 ): string {

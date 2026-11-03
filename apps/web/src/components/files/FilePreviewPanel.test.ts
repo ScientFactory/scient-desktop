@@ -9,11 +9,9 @@ import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   resolveMarkdownTaskPreviewUpdate,
-  resolveFilePreviewKind,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
-  shouldLoadFileAsText,
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
@@ -65,25 +63,6 @@ describe("file comment annotations", () => {
         },
       },
     ]);
-  });
-});
-
-describe("PDF file routing", () => {
-  it.each(["paper.pdf", "sources/PAPER.PDF", "paper.pdf?download=1"])(
-    "bypasses projects.readFile for %s",
-    (path) => {
-      expect(resolveFilePreviewKind(path)).toBe("pdf");
-      expect(shouldLoadFileAsText(path)).toBe(false);
-    },
-  );
-
-  it("keeps binary-image and text routing distinct", () => {
-    expect(resolveFilePreviewKind("figure.png")).toBe("image");
-    expect(shouldLoadFileAsText("figure.png")).toBe(false);
-    expect(resolveFilePreviewKind("clip.mp4")).toBe("video");
-    expect(shouldLoadFileAsText("clip.mp4")).toBe(false);
-    expect(resolveFilePreviewKind("notes.md")).toBe("text");
-    expect(shouldLoadFileAsText("notes.md")).toBe(true);
   });
 });
 

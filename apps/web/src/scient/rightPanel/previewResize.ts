@@ -10,43 +10,6 @@ export interface PreviewMiniPlayerRect {
   readonly size: PreviewMiniPlayerSize;
 }
 
-export function keyboardResizePreviewMiniPlayerFromHandle(
-  rect: PreviewMiniPlayerRect,
-  handleDirection: PreviewMiniPlayerResizeDirection,
-  key: "left" | "right" | "up" | "down",
-  step: number,
-  container: PreviewMiniPlayerSize,
-): PreviewMiniPlayerRect | null {
-  const horizontalEdge = handleDirection.includes("w")
-    ? "w"
-    : handleDirection.includes("e")
-      ? "e"
-      : null;
-  const verticalEdge = handleDirection.includes("n")
-    ? "n"
-    : handleDirection.includes("s")
-      ? "s"
-      : null;
-
-  if (key === "left" || key === "right") {
-    if (horizontalEdge === null) return null;
-    return resizePreviewMiniPlayerRect({
-      rect,
-      direction: horizontalEdge,
-      delta: { x: key === "left" ? -step : step, y: 0 },
-      container,
-    });
-  }
-
-  if (verticalEdge === null) return null;
-  return resizePreviewMiniPlayerRect({
-    rect,
-    direction: verticalEdge,
-    delta: { x: 0, y: key === "up" ? -step : step },
-    container,
-  });
-}
-
 /** Resize one edge or corner while keeping the opposite edges anchored. */
 export function resizePreviewMiniPlayerRect(input: {
   readonly rect: PreviewMiniPlayerRect;
