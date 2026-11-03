@@ -177,7 +177,6 @@
         "src/components/settings/ChatGptWelcomeCoordinator.tsx": ["files"],
         "src/components/settings/CodexSetupSection.logic.ts": ["files"],
         "src/components/settings/CodexSetupSection.tsx": ["files"],
-        "src/components/settings/ProviderAuthCallbackCoordinator.tsx": ["files"],
         "src/providerAuthDelivery.ts": ["files"],
       },
     },
