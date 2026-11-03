@@ -812,7 +812,6 @@
   "src/scient/markdownEditor/prosemirror/view.browser.test.ts": 17.44,
   "src/scient/markdownEditor/prosemirror/view.keyboard.browser.test.ts": 0.461,
   "src/scient/markdownEditor/prosemirror/view.mermaid.browser.test.ts": 5.59,
-  "src/scient/markdownEditor/richFenceContextMenu.test.ts": 0.012,
   "src/scient/markdownEditor/scientMarkdownAssetSeam.test.ts": 0.012,
   "src/scient/markdownEditor/ScientMarkdownDocument.browser.test.tsx": 0.076,
   "src/scient/markdownEditor/scientMarkdownEditorStyles.browser.test.ts": 0.474,
