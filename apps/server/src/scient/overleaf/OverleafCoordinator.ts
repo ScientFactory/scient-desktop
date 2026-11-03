@@ -159,7 +159,7 @@ export interface OverleafSelections {
   /**
    * Exactly the additions to send; a default one left out is kept only on this
    * computer. Absent: the review's default selection, every addition no rule
-   * skips (pr-c-design section 5).
+   * skips.
    */
   readonly selectedAdditions?: ReadonlyArray<string>;
   /** Files kept only on this computer to send now; they become managed once applied. */

@@ -146,8 +146,8 @@ For supported adapters the existing authenticated Scient MCP session receives:
 Muse uses its native session-MCP configuration for this scoped delivery, with a
 host-issued bearer and an explicit native grant. Disabling MCP or lacking that
 grant withholds the skill channel. Its SDK has no private system/developer
-instruction seam, so Scient core awareness remains explicitly unsupported;
-ordinary turn input is not treated as private policy injection.
+instruction seam and no first-prompt instruction path, so Muse receives no Scient
+awareness; ordinary turn input is not treated as private policy injection.
 
 Supported providers keep the authenticated skill transport available with an
 empty initial scope marked `pending`. Immediately before a turn, the server
@@ -180,7 +180,9 @@ scope; it is not persisted as a second catalog or cache.
 
 Every built-in provider has implemented skill transport through Scient's
 authenticated MCP session. Codex, Claude, Droid, Grok, Scient-managed OpenCode,
-and Pi also have application-awareness paths. Transport support does not
+Pi, Oh My Pi and Scient Agent receive awareness privately; Antigravity, Cursor,
+ACP registry agents, fx and Kiro receive it in their wrapped first-prompt
+instructions (see [Provider architecture](./providers.md#scient-awareness)). Transport support does not
 establish spontaneous model discovery or equal task quality across providers.
 An externally managed OpenCode server does not
 receive Scient's per-session MCP connection and is therefore unsupported for
@@ -269,11 +271,12 @@ release identity remains on load results and in server-side scope. These are
 agent discovery responses, not the Settings/composer catalog contract.
 Tool-name projection
 uses the registered canonical name; Claude receives its existing MCP prefix
-for the list/load tools and Browser/Documents guidance alike.
+for the list/load tools and Browser/Documents guidance alike, plus a note to load
+deferred tools through ToolSearch.
 
 The scale fixture covers 28/100/500 synthetic entries, explicitly verifies that
 a rare name is absent from unchanged ordinary input, then discovers and loads it
-through the host-composed executor using that ordinary turn's scope. It also
+through the registered handlers using that ordinary turn's scope. It also
 covers compact explicit selection and paging without omissions. It
 measures preparation and bytes, not model reasoning quality or consumed tokens.
 Immutable built-in release snapshots remain reused. Mutable project skills and
@@ -291,14 +294,15 @@ does not qualify spontaneous discovery. Keep provider-specific gaps in PR eviden
 do not describe the transport support table as behavioral qualification.
 
 `AGENTS.md` remains project-owned guidance, not a generated catalog or a fallback
-for missing provider awareness. A future Scient Agent can use the same skill
-services directly; MCP is the external-provider transport, not the skill owner.
+for missing provider awareness. Scient Agent reaches skills over MCP like any
+other provider; MCP is the transport, not the skill owner.
 
 Antigravity and Cursor receive Scient's authenticated MCP connection and exact
 turn-scoped skill tools; Antigravity retains that connection on resume. Their
 agents can browse the available list, and a user can explicitly select a skill
-through `$name`. Neither provider has a reviewed private awareness seam, so
-Scient does not claim equal automatic discovery quality. When the session has
+through `$name`. Neither provider has a reviewed private awareness seam; their
+awareness rides the first prompt, and Scient does not claim equal automatic
+discovery quality. When the session has
 Scient MCP skill capability, provider input carries only the compact current
 scope marker described above; it does not emulate a catalog or copy skill
 guidance into user input, generated project instructions, or provider
