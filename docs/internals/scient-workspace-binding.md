@@ -66,8 +66,10 @@ tools are explicitly declared host-owned tools with their own handlers and
 policy; those whose every call needs one grant are declared with it and hidden
 without it, after upstream's own `EnabledWhen` hiding: thread, orchestrator,
 attachment, project and environment tools need `orchestration`; browser and
-browser controls `preview`; worktree tools `worktree`; pull-request tools
-`pull-requests`; devices `device`. HTML tools need none. A thread-less OAuth
+browser controls `preview`; worktree handoff and status `worktree`; devices
+`device`. HTML tools need none. Pull-request tools and `scient_worktree_list`
+stay listed: forwarded to a linked environment they need only `orchestration`
+here. A thread-less OAuth
 client keeps the tools its grants allow. Unknown ownership is a composition
 error, not an implicit grant.
 

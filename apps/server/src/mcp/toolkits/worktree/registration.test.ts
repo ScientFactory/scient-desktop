@@ -226,14 +226,9 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      // The credential holds worktree, orchestration and preview: the device and
-      // pull-request tools, whose every call needs a grant it lacks, are not listed.
-      const unlisted = new Set(
-        [
-          ...McpHttpServer.hostMcpToolGrants.device,
-          ...McpHttpServer.hostMcpToolGrants["pull-requests"],
-        ].map((tool) => tool.name),
-      );
+      // The credential holds worktree, orchestration and preview: only the device
+      // tools, whose every call needs a grant it lacks, are not listed.
+      const unlisted = new Set(McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name));
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,

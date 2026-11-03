@@ -1411,6 +1411,8 @@ export const layerDeviceToolkit = Layer.mergeAll(
 
 // SCIENT-FORK:START — every listed tool has a declared owner; a session sees what its grants allow.
 // Every route of these tools reaches readCaller/loadCaller (or forwarding, which does).
+// Pull-request tools are not gated: forwarded to a linked environment, they need only
+// `orchestration` here, and `pull-requests` only when they run locally.
 const orchestrationTools = [
   ...Object.values(OrchestratorToolkit.tools),
   ...Object.values(ThreadToolkit.tools),
@@ -1422,14 +1424,18 @@ const previewTools = [
   ...Object.values(PreviewToolkit.tools),
   ...Object.values(PreviewControlsToolkit.tools),
 ];
-const worktreeTools = Object.values(WorktreeToolkit.tools);
-const pullRequestTools = Object.values(PullRequestsToolkit.tools);
+// scient_worktree_list is not gated: forwarded to a linked environment, it needs only
+// `orchestration` here.
+const worktreeTools = [
+  WorktreeToolkit.tools.scient_worktree_handoff,
+  WorktreeToolkit.tools.scient_worktree_status,
+];
 const deviceTools = Object.values(DeviceToolkit.tools);
 export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...orchestrationTools,
   ...previewTools,
-  ...worktreeTools,
-  ...pullRequestTools,
+  ...Object.values(WorktreeToolkit.tools),
+  ...Object.values(PullRequestsToolkit.tools),
   ...Object.values(HtmlRenderToolkit.tools),
   ...Object.values(HtmlPreviewToolkit.tools),
   ...deviceTools,
@@ -1438,7 +1444,6 @@ export const hostMcpToolGrants = {
   orchestration: orchestrationTools,
   preview: previewTools,
   worktree: worktreeTools,
-  "pull-requests": pullRequestTools,
   device: deviceTools,
 };
 const layerScientToolList = makeScientToolListLayer(hostMcpTools, hostMcpToolGrants);

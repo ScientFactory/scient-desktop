@@ -410,7 +410,16 @@ it("lists each upstream tool only for credentials holding its mandatory grant", 
     );
   // McpSessionRegistry's default credential: preview alone.
   const previewOnly = listed(["preview"]);
-  for (const name of ["preview_open", "scient_preview_list", "scient_preview_close", "html_render"])
+  // Pull-request tools and scient_worktree_list stay listed: forwarded to a linked
+  // environment, they need only `orchestration` here.
+  for (const name of [
+    "preview_open",
+    "scient_preview_list",
+    "scient_preview_close",
+    "html_render",
+    "link_pull_request",
+    "scient_worktree_list",
+  ])
     expect(previewOnly).toContain(name);
   for (const name of [
     "scient_thread_list",
@@ -418,9 +427,7 @@ it("lists each upstream tool only for credentials holding its mandatory grant", 
     "scient_project_list",
     "scient_environment_read",
     "scient_attachment_prepare_upload",
-    "link_pull_request",
-    "read_pull_request_guide",
-    "scient_worktree_list",
+    "scient_worktree_status",
     "device_list",
   ])
     expect(previewOnly).not.toContain(name);
@@ -431,7 +438,7 @@ it("lists each upstream tool only for credentials holding its mandatory grant", 
     "scient_project_list",
     "link_pull_request",
     "read_pull_request_guide",
-    "scient_worktree_list",
+    "scient_worktree_status",
     "html_render",
   ])
     expect(oauth).toContain(name);
