@@ -26,6 +26,11 @@ import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserSession from "../BrowserSession.ts";
 import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
 import type { CookieReadResult } from "./CookieDatabase.ts";
+// SCIENT-FORK:START — Scient Accounts: partitioned cookies keep their key.
+import type { ImportedCookie } from "./CookieDatabase.ts";
+import { sessionCookieFromImported } from "@t3tools/shared/scientSessionCookies";
+import { setCookies, withCookieDebugger } from "../../scient/accounts/sessionCookies.ts";
+// SCIENT-FORK:END
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
 import {
@@ -163,6 +168,9 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   read: CookieReadResult,
   // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
   keepSites: ReadonlyArray<string> = [],
+  /** Electron's cookie API has no partition key, so partitioned cookies need their own writer. */
+  writePartitioned: (cookie: ImportedCookie) => Effect.Effect<boolean> = () =>
+    Effect.succeed(false),
   // SCIENT-FORK:END
 ) {
   let imported = 0;
@@ -174,6 +182,16 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   for (const cookie of read.cookies) {
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
     if (coveredBySite(cookie.url, keepSites)) continue;
+    if (cookie.partitionKey) {
+      if (yield* writePartitioned(cookie)) {
+        imported += 1;
+        importedHosts.add(cookieHost(cookie.url));
+      } else {
+        skipped += 1;
+        skippedDomains.add(cookieHost(cookie.url));
+      }
+      continue;
+    }
     // SCIENT-FORK:END
     const written = yield* Effect.tryPromise({
       try: () =>
@@ -366,7 +384,16 @@ export const make = Effect.gen(function* BrowserImportMake() {
 
     // Chromium serializes writes; a rejected cookie should not prevent the others.
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
-    return yield* writeCookies(session, result, input.input.keepSites);
+    return yield* writeCookies(session, result, input.input.keepSites, (cookie) =>
+      Effect.tryPromise(() =>
+        withCookieDebugger(session, (send) =>
+          setCookies(send, [sessionCookieFromImported(cookie)]),
+        ),
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
     // SCIENT-FORK:END
   });
 

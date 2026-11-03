@@ -235,6 +235,16 @@
       "purpose": "Leave working sign-ins alone when a browser refresh copies cookies."
     },
     {
+      "path": "apps/desktop/src/preview/BrowserImport/ChromiumCookies.ts",
+      "anchor": "Scient Accounts: keep partitioned cookies with their stored ancestor bit.",
+      "purpose": "Import Chrome's partitioned cookies with their stored cross-site-ancestor bit, and skip them without it."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserImport/CookieDatabase.ts",
+      "anchor": "Scient Accounts: keep partitioned cookies with their stored ancestor bit.",
+      "purpose": "Carry an imported cookie's partition key."
+    },
+    {
       "path": "packages/contracts/src/browserImport.ts",
       "anchor": "keepSites",
       "purpose": "Carry the sites a refresh must leave alone."
