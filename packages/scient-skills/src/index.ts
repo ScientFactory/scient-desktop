@@ -1,7 +1,6 @@
 export {
   catalogByReleaseKey,
   createSkillCatalog,
-  listSkillReleaseSummaries,
   loadSkillCatalog,
   resolveExactSkillRelease,
   type SkillCatalog,
