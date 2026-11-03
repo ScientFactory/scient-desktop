@@ -7,7 +7,5 @@ export {
   type CursorRuntimeResolution,
   type CursorRuntimeResolverInput,
 } from "./server/driver.ts";
-export { parseCursorAboutOutput } from "./server/about.ts";
-export { runCursorAboutCommand } from "./server/status.ts";
 export { readCursorUsageLimits } from "./server/usageLimits.ts";
 // SCIENT-FORK:END

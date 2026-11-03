@@ -16,11 +16,9 @@ import { describe, expect } from "vite-plus/test";
 import {
   applyDroidModelAndEffort,
   buildDroidModelsFromConfigOptions,
-  DROID_AGENT_INFO_NAME,
   discoverDroidModels,
   makeDroidAcpRuntime,
   resolveAdvertisedDroidAuthMethodId,
-  resolveDroidAuthMethodId,
 } from "./DroidAcpSupport.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -44,7 +42,7 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
     Effect.gen(function* () {
       const runtime = yield* makeProbeRuntime;
       const started = yield* runtime.start();
-      expect(started.initializeResult.agentInfo?.name).toBe(DROID_AGENT_INFO_NAME);
+      expect(started.initializeResult.agentInfo?.name).toBe("@factory/cli");
       expect(started.initializeResult.protocolVersion).toBe(1);
     }).pipe(
       TestClock.withLive,
@@ -212,10 +210,8 @@ describe.runIf(process.env.T3_DROID_ACP_PROBE === "1")("Droid ACP CLI probe", ()
       const advertised = (started.initializeResult.authMethods ?? []).map((method) => method.id);
       yield* Effect.log("droid authMethods", advertised);
       expect(advertised.length).toBeGreaterThan(0);
-      // The env-derived choice must be advertised; if the environment carries
-      // no API key, the headless fallback ladder must still resolve to one of
-      // the agent's advertised methods.
-      expect(resolveDroidAuthMethodId(process.env)).toBeDefined();
+      // If the environment carries no API key, the headless fallback ladder
+      // must still resolve to one of the agent's advertised methods.
       expect(
         resolveAdvertisedDroidAuthMethodId({
           environment: process.env,

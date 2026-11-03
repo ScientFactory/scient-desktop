@@ -4,9 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   compactExternalSkillDescription,
   collectExternalSkillProviders,
-  externalSkillSourceLabel,
   externalSkillStatus,
-  summarizeExternalSkills,
 } from "./externalSkills";
 
 function provider(
@@ -79,7 +77,6 @@ describe("external skill presentation", () => {
       "review",
       "docs",
     ]);
-    expect(summarizeExternalSkills(groups)).toBe("2 skills across 2 providers");
   });
 
   it("keeps an eligible provider visible when it reports no global skills", () => {
@@ -100,13 +97,6 @@ describe("external skill presentation", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0]?.skills).toEqual([]);
-    expect(summarizeExternalSkills(groups)).toBe("0 skills across 1 provider");
-  });
-
-  it("uses concise source labels", () => {
-    expect((["app", "personal", "system", "other"] as const).map(externalSkillSourceLabel)).toEqual(
-      ["Provider bundled", "Personal", "System", "Provider managed"],
-    );
   });
 
   it("reports activation and read-only authority independently", () => {

@@ -1,24 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  DEFAULT_VOICE_MODEL_ID,
   getVoiceModelDefinition,
   GGML_MAGIC_HEADER_HEX,
-  requireVoiceModelDefinition,
+  SMALL_VOICE_MODEL_ID,
   VOICE_MODEL_DEFINITIONS,
 } from "./modelManifest.ts";
 
 describe("voice model manifest", () => {
   it("ships the pinned Small, Medium, and Turbo models with Small as the default", () => {
     expect(VOICE_MODEL_DEFINITIONS).toHaveLength(3);
-    expect(DEFAULT_VOICE_MODEL_ID).toBe("whisper-small-multilingual-q5_1");
-    expect(VOICE_MODEL_DEFINITIONS[0]?.id).toBe(DEFAULT_VOICE_MODEL_ID);
+    expect(SMALL_VOICE_MODEL_ID).toBe("whisper-small-multilingual-q5_1");
+    expect(VOICE_MODEL_DEFINITIONS[0]?.id).toBe(SMALL_VOICE_MODEL_ID);
     expect(VOICE_MODEL_DEFINITIONS[1]?.id).toBe("whisper-medium-multilingual-q5_0");
     expect(VOICE_MODEL_DEFINITIONS[2]?.id).toBe("whisper-large-v3-turbo-multilingual-q5_0");
   });
 
   it("pins the Multilingual Medium artifact", () => {
-    const model = requireVoiceModelDefinition("whisper-medium-multilingual-q5_0");
+    const model = getVoiceModelDefinition("whisper-medium-multilingual-q5_0")!;
     expect(model.fileName).toBe("ggml-medium-q5_0-19fea4b3.bin");
     expect(model.displayName).toBe("Multilingual Medium");
     expect(model.byteSize).toBe(539_212_467);
@@ -27,7 +26,7 @@ describe("voice model manifest", () => {
   });
 
   it("pins the Multilingual Turbo artifact", () => {
-    const model = requireVoiceModelDefinition("whisper-large-v3-turbo-multilingual-q5_0");
+    const model = getVoiceModelDefinition("whisper-large-v3-turbo-multilingual-q5_0")!;
     expect(model.fileName).toBe("ggml-large-v3-turbo-q5_0-39422170.bin");
     expect(model.displayName).toBe("Multilingual Turbo");
     expect(model.byteSize).toBe(574_041_195);
@@ -36,7 +35,7 @@ describe("voice model manifest", () => {
   });
 
   it("pins the verified provenance copied from upstream", () => {
-    const model = requireVoiceModelDefinition(DEFAULT_VOICE_MODEL_ID);
+    const model = getVoiceModelDefinition(SMALL_VOICE_MODEL_ID)!;
     expect(model.fileName).toBe("ggml-small-q5_1-ae85e4a9.bin");
     expect(model.displayName).toBe("Multilingual Small");
     expect(model.byteSize).toBe(190_085_487);
@@ -46,7 +45,7 @@ describe("voice model manifest", () => {
   });
 
   it("verifies with a 64-char sha256 and the GGML magic header", () => {
-    const model = requireVoiceModelDefinition(DEFAULT_VOICE_MODEL_ID);
+    const model = getVoiceModelDefinition(SMALL_VOICE_MODEL_ID)!;
     expect(model.sha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(model.byteSize).toBeGreaterThan(0);
     expect(model.headerHex).toBe(GGML_MAGIC_HEADER_HEX);
@@ -54,14 +53,13 @@ describe("voice model manifest", () => {
   });
 
   it("downloads from a revision-pinned whisper.cpp HuggingFace URL", () => {
-    const model = requireVoiceModelDefinition(DEFAULT_VOICE_MODEL_ID);
+    const model = getVoiceModelDefinition(SMALL_VOICE_MODEL_ID)!;
     expect(model.downloadUrl).toContain("huggingface.co/ggerganov/whisper.cpp");
     expect(model.downloadUrl).toContain(model.sourceRevision);
   });
 
   it("resolves definitions by id and rejects unknown ids", () => {
-    expect(getVoiceModelDefinition(DEFAULT_VOICE_MODEL_ID)?.id).toBe(DEFAULT_VOICE_MODEL_ID);
+    expect(getVoiceModelDefinition(SMALL_VOICE_MODEL_ID)?.id).toBe(SMALL_VOICE_MODEL_ID);
     expect(getVoiceModelDefinition("nope")).toBeUndefined();
-    expect(() => requireVoiceModelDefinition("nope")).toThrow(/Unknown voice model id/u);
   });
 });

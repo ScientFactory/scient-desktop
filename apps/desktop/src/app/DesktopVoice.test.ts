@@ -18,7 +18,7 @@ import {
   recommendVoiceModel,
   resolveDevelopmentSharedVoiceDirectory,
   resolveVoiceModelFreeBytes,
-  toVoiceModelRequestError,
+  toVoiceRequestError,
   type DesktopVoiceDependencies,
   type DesktopVoiceService,
 } from "./DesktopVoice.ts";
@@ -232,11 +232,11 @@ describe("projectVoiceModelState", () => {
   });
 });
 
-describe("toVoiceModelRequestError", () => {
+describe("toVoiceRequestError", () => {
   it("reports cancellation without exposing internal errors", () => {
     const cause = new Error("private path");
     cause.name = "AbortError";
-    expect(toVoiceModelRequestError(cause, "download")).toMatchObject({
+    expect(toVoiceRequestError(cause, "download")).toMatchObject({
       kind: "cancelled",
       safeMessage: "Offline voice setup was cancelled.",
     });
@@ -244,11 +244,11 @@ describe("toVoiceModelRequestError", () => {
 
   // regression: f1fcd2382a fix(voice): harden lifecycle and model setup
   it("uses operation-specific safe messages", () => {
-    expect(toVoiceModelRequestError(new Error("/private/model.bin"), "download")).toMatchObject({
+    expect(toVoiceRequestError(new Error("/private/model.bin"), "download")).toMatchObject({
       kind: "provider-error",
       safeMessage: "Offline voice setup failed. Please try again.",
     });
-    expect(toVoiceModelRequestError(new Error("/private/model.bin"), "remove")).toMatchObject({
+    expect(toVoiceRequestError(new Error("/private/model.bin"), "remove")).toMatchObject({
       kind: "provider-error",
       safeMessage: "The offline voice model could not be removed. Please try again.",
     });

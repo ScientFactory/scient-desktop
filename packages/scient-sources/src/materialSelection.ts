@@ -5,7 +5,7 @@ export type ScientSourceMaterialSupport = {
   readonly mediaType: string;
 };
 
-export const SCIENT_SOURCE_PDF_MATERIAL_SUPPORT = [
+const SCIENT_SOURCE_PDF_MATERIAL_SUPPORT = [
   { kind: "pdf", mediaType: "application/pdf" },
 ] as const satisfies ReadonlyArray<ScientSourceMaterialSupport>;
 

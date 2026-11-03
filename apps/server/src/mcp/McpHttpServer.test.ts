@@ -1518,7 +1518,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
       const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
       // SCIENT-FORK:START — Scient's discovery only lists declared host tools, so this
       // fixture declares its own instead of the production set.
-      const serverLayer = McpHttpServer.makeLayerMcpTransportForTest(
+      const serverLayer = McpHttpServer.makeLayerMcpTransport(
         makeScientToolListLayer(Object.values(LinksToolkit.tools)),
       )(
         // SCIENT-FORK:END

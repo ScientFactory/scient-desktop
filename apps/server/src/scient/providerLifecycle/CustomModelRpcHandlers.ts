@@ -24,7 +24,7 @@ import type * as ServerConfig from "../../config.ts";
 import { customModelProviderId } from "../../customModels.ts";
 import { droidCustomModelId } from "../../provider/droid/DroidCustomModels.ts";
 import { encodeOmpModelSlug } from "../../provider/omp/OmpModel.ts";
-import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
+import { encodePiModelSlug } from "@t3tools/provider-pi/server/model";
 import type * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import type * as ServerSettings from "../../serverSettings.ts";
 import { droidToolGuardTestRefusal } from "../../textGeneration/DroidTextGeneration.ts";

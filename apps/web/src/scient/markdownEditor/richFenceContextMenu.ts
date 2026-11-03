@@ -7,10 +7,6 @@ const RICH_FENCE_CONTEXT_MENU_ITEMS = [
   { id: "copy-source", label: "Copy source" },
 ] as const satisfies readonly ContextMenuItem<ScientRichFenceContextMenuAction>[];
 
-export function richFenceContextMenuItems(): readonly ContextMenuItem<ScientRichFenceContextMenuAction>[] {
-  return RICH_FENCE_CONTEXT_MENU_ITEMS;
-}
-
 export function showScientRichFenceContextMenu(
   position: { readonly x: number; readonly y: number },
   showContextMenu: (

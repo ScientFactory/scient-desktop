@@ -8,7 +8,6 @@ import {
   composerCitationsToPlainText,
   expandComposerCitationsForProvider,
   parseComposerCitationHref,
-  renderComposerCitationsAsText,
   serializeComposerCitation,
   withComposerCitationComment,
 } from "./composerCitations.ts";
@@ -123,8 +122,6 @@ describe("compute citations", () => {
   it("reads as its text wherever a chip cannot be drawn", () => {
     const prompt = `Look: ${serializeComposerCitation(cell)}`;
     expect(composerCitationsToPlainText(prompt)).toBe(`Look: ${base.text}`);
-    expect(renderComposerCitationsAsText(prompt)).toContain("> analysis\\.ipynb · Cell 3:");
-    expect(renderComposerCitationsAsText(prompt)).not.toContain("scient-compute-citation");
   });
 });
 

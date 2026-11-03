@@ -12,10 +12,10 @@ import {
   effectiveProfile,
   inScope,
   isGoogleSessionRow,
-  signInOnHold,
   siteMatches,
   withSignIn,
 } from "./AccountDecisions.ts";
+import { signInOnHold } from "@t3tools/shared/scientAccountSignIn";
 import { foldStoredAccounts } from "./AccountPersistence.ts";
 
 const projectId = ProjectId.make("synthetic-project");

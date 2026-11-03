@@ -92,27 +92,6 @@ export function resolveWhisperInferenceTimeoutMs(
   );
 }
 
-export function resolveWhisperRuntimePaths(input: {
-  readonly isPackaged: boolean;
-  readonly resourcesPath: string;
-  readonly desktopRuntimeDirectory: string;
-  readonly platform?: NodeJS.Platform;
-}): WhisperRuntimePaths {
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- non-Effect path helper; platform is injectable.
-  const platform = input.platform ?? NodeOS.platform();
-  const pathApi = platform === "win32" ? NodePath.win32 : NodePath.posix;
-  const runtimeDirectory = input.isPackaged
-    ? pathApi.join(input.resourcesPath, "whisper-runtime")
-    : pathApi.join(input.desktopRuntimeDirectory, "whisper-runtime");
-  return {
-    runtimeDirectory,
-    executablePath: pathApi.join(
-      runtimeDirectory,
-      platform === "win32" ? "whisper-server.exe" : "whisper-server",
-    ),
-  };
-}
-
 export function buildWhisperServerArguments(input: {
   readonly modelPath: string;
   readonly port: number;

@@ -17,8 +17,6 @@ import {
   normalizeComputeFileSplit,
   normalizeComputeFileSplitLayout,
   normalizeComputeFileResultsView,
-  nudgeComputeFileSplit,
-  computeFileSplitFromPointer,
   computeRuntimeDisplayLabel,
   computeConsoleRuntime,
   computeRuntimeChoiceLabel,
@@ -271,7 +269,6 @@ describe("python compute surface model", () => {
     expect(normalizeComputeFileResultsView("results")).toBe("results");
     expect(normalizeComputeFileResultsView("code")).toBe(DEFAULT_COMPUTE_FILE_RESULTS_VIEW);
     expect(normalizeComputeFileResultsView("console")).toBe(DEFAULT_COMPUTE_FILE_RESULTS_VIEW);
-    expect(MIN_COMPUTE_FILE_SPLIT).toBe(0.3);
     expect(computeFileViewAfterRun("code", "results")).toBe("results");
     expect(computeFileViewAfterRun("code", "split")).toBe("split");
     expect(computeFileViewAfterRun("results", "split")).toBe("results");
@@ -283,21 +280,6 @@ describe("python compute surface model", () => {
     expect(normalizeComputeFileSplitLayout("horizontal")).toBe("side-by-side");
     expect(normalizeComputeFileSplitLayout("vertical")).toBe("stacked");
     expect(normalizeComputeFileSplitLayout("invalid")).toBe(DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT);
-  });
-
-  it("maps pointer and keyboard movement into accessible divider bounds", () => {
-    expect(computeFileSplitFromPointer({ pointerX: 500, left: 0, width: 1000 })).toBe(0.5);
-    expect(computeFileSplitFromPointer({ pointerX: 0, left: 0, width: 0 })).toBe(
-      DEFAULT_COMPUTE_FILE_SPLIT,
-    );
-    expect(nudgeComputeFileSplit(0.5, "ArrowLeft")).toBe(0.48);
-    expect(nudgeComputeFileSplit(0.5, "ArrowRight")).toBe(0.52);
-    expect(nudgeComputeFileSplit(0.5, "ArrowUp")).toBeNull();
-    expect(nudgeComputeFileSplit(0.5, "ArrowUp", "y")).toBe(0.48);
-    expect(nudgeComputeFileSplit(0.5, "ArrowDown", "y")).toBe(0.52);
-    expect(nudgeComputeFileSplit(0.5, "Home")).toBe(MIN_COMPUTE_FILE_SPLIT);
-    expect(nudgeComputeFileSplit(0.5, "End")).toBe(1 - MIN_COMPUTE_FILE_SPLIT);
-    expect(nudgeComputeFileSplit(0.5, "Enter")).toBeNull();
   });
 
   it("keeps runtime readiness in one quiet contextual status", () => {

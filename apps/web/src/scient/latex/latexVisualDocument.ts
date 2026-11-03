@@ -3533,15 +3533,6 @@ export function latexVisualScientificSource(environment: string): string | null 
   return `\\begin{${environment}}\n\n\\end{${environment}}`;
 }
 
-export function latexVisualFigureSource(): string {
-  return [
-    "\\begin{figure}[htbp]",
-    "\\centering",
-    "\\includegraphics[width=0.8\\textwidth]{figures/image.png}",
-    "\\end{figure}",
-  ].join("\n");
-}
-
 function parseRichPreview(
   source: string,
   documentSource: string,

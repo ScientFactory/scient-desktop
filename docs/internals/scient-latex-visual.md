@@ -1656,9 +1656,7 @@ block decorations position content within a source-owned region. No generated
 breaks enter source. `multicols` retains its separate balanced layout, measured
 as an indivisible region so its parallel columns are not serialized into one flow. TeX line splitting, float placement, microtypography, and exact page breaks
 remain approximations.
-`latexVisualCompatibility.ts` reports nested source fallbacks with source lines
-and distinguishes them from layout approximations for diagnostics; it has no
-compatibility-summary control in the writing surface. Accepting a wrapper is not a
+Accepting a wrapper is not a
 claim that all class/package settings or PDF geometry have been reproduced.
 Local list spacing options retain their source when numbering changes.
 

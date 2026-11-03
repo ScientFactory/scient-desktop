@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { useSideChatCitationInbox } from "../../scient/chat/sideChatCitation";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
-import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
+import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 // SCIENT-FORK:START — skill cards and the composer share invocation and document helpers.
 import {
   composerSkillPrompt,

@@ -138,7 +138,3 @@ export function parseSyncTexInverseLocations(
     ];
   });
 }
-
-export function parseSyncTexInverseLocation(output: string): ParsedSyncTexInverseLocation | null {
-  return parseSyncTexInverseLocations(output)[0] ?? null;
-}

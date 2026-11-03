@@ -1,10 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 
-import {
-  classifyTurnDispatchFailure,
-  markTurnDispatchAttempted,
-} from "../../../provider/turnDispatchPhase.ts";
 import { handoffTokenCap } from "./handoffBudget.ts";
 import { nativeThreadKey } from "./nativeThreadKey.ts";
 
@@ -34,16 +29,5 @@ describe("nativeThreadKey", () => {
     expect(nativeThreadKey("codex", { threadId: "same-id" }, "instance-a")).not.toBe(
       nativeThreadKey("codex", { threadId: "same-id" }, "instance-b"),
     );
-  });
-});
-
-describe("classifyTurnDispatchFailure", () => {
-  it("treats failures before dispatch as not sent and later ones as maybe delivered", () => {
-    const before = new Error("validation");
-    expect(classifyTurnDispatchFailure(Cause.fail(before))).toBe("notSent");
-    const after = new Error("transport");
-    markTurnDispatchAttempted(after);
-    expect(classifyTurnDispatchFailure(Cause.fail(after))).toBe("maybeDelivered");
-    expect(classifyTurnDispatchFailure(Cause.die(new Error("defect")))).toBe("maybeDelivered");
   });
 });

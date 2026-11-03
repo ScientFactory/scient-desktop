@@ -1,8 +1,6 @@
 import { render as _fixtureRender } from "../../../test/render";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { useEditorState } from "@tiptap/react";
 import { useLayoutEffect } from "react";
 
 import { expect, it } from "vite-plus/test";
@@ -12,78 +10,7 @@ import {
   clearLatexEditingTarget,
   latexEditingTarget,
   useLatexEditingPresentation,
-  useLatexEditingState,
 } from "./latexEditingTarget";
-
-it("layout metadata preserves deferred typing while independent presentation and explicit selections update", async () => {
-  await using _fixture = _createFixture();
-
-  const host = document.createElement("div");
-  const paper = document.createElement("div");
-  document.body.append(host, paper);
-  const editor = new Editor({
-    element: paper,
-    extensions: [StarterKit],
-    content: "<p>Original text.</p>",
-  });
-  const key = new PluginKey<number>("syntheticLayout");
-  editor.registerPlugin(
-    new Plugin({ key, state: { init: () => 0, apply: (tr, value) => tr.getMeta(key) ?? value } }),
-  );
-  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
-  function Layout() {
-    const count = useEditorState({ editor, selector: ({ editor }) => key.getState(editor.state) });
-    return <output data-layout="">{count}</output>;
-  }
-  function Toolbar() {
-    const { state, editable } = useLatexEditingState(editor, true);
-    return (
-      <output data-toolbar="" data-editable={editable}>
-        {state?.doc.textContent}|{state?.selection.from}|
-        {state?.storedMarks?.map((mark) => mark.type.name).join(",")}
-      </output>
-    );
-  }
-  try {
-    await root.rerender(
-      <>
-        <Toolbar />
-        <Layout />
-      </>,
-    );
-    await expect
-      .poll(() => host.querySelector("[data-toolbar]")?.textContent)
-      .toContain("Original text.");
-    const original = host.querySelector("[data-toolbar]")!.textContent;
-    editor.view.dispatch(editor.state.tr.insertText("x", 3));
-    editor.view.dispatch(editor.state.tr.setMeta(key, 1));
-    await expect.poll(() => host.querySelector("[data-layout]")?.textContent).toBe("1");
-    expect(editor.state.doc.textContent).toBe("Orxiginal text.");
-    expect(host.querySelector("[data-toolbar]")!.textContent).toBe(original);
-    await expect
-      .poll(() => host.querySelector("[data-toolbar]")?.textContent)
-      .toContain("Orxiginal text.");
-    editor.commands.setTextSelection(5);
-    await expect.poll(() => host.querySelector("[data-toolbar]")?.textContent).toContain("|5|");
-    editor.commands.toggleBold();
-    await expect.poll(() => host.querySelector("[data-toolbar]")?.textContent).toContain("bold");
-    const stateBeforeEditability = editor.state;
-    editor.setEditable(false);
-    expect(editor.state).toBe(stateBeforeEditability);
-    await expect
-      .poll(() => host.querySelector("[data-toolbar]")?.getAttribute("data-editable"))
-      .toBe("false");
-    editor.setEditable(true);
-    await expect
-      .poll(() => host.querySelector("[data-toolbar]")?.getAttribute("data-editable"))
-      .toBe("true");
-  } finally {
-    await root.unmount();
-    editor.destroy();
-    host.remove();
-    paper.remove();
-  }
-});
 
 it("native typing leaves unchanged controls alone while selection, formatting and editability remain live", async () => {
   await using _fixture = _createFixture();

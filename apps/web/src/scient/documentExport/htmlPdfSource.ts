@@ -71,7 +71,3 @@ export function trackedHtmlAssetResource(
         access: "html-document",
       };
 }
-
-export function sameTrackedHtmlSource(left: TrackedHtmlSource, right: TrackedHtmlSource): boolean {
-  return sourceIdentity(left) === sourceIdentity(right);
-}

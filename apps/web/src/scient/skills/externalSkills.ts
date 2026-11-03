@@ -92,11 +92,3 @@ export function collectExternalSkillProviders(
     return [{ provider, skills }];
   });
 }
-
-export function summarizeExternalSkills(groups: ReadonlyArray<ExternalSkillProviderGroup>): string {
-  const skillCount = groups.reduce((total, group) => total + group.skills.length, 0);
-  if (groups.length === 0) return "No connected provider inventories";
-  const providerLabel = groups.length === 1 ? "provider" : "providers";
-  const skillLabel = skillCount === 1 ? "skill" : "skills";
-  return `${skillCount} ${skillLabel} across ${groups.length} ${providerLabel}`;
-}

@@ -91,7 +91,7 @@ function isChatAttachment(value: unknown): value is ChatAttachment {
  * The turn that is still in progress, if any: the session's active turn while
  * it runs, otherwise a latest turn that has not recorded its completion.
  */
-export function runningTurnId(thread: ConversationSnapshotThread): TurnId | null {
+function runningTurnId(thread: ConversationSnapshotThread): TurnId | null {
   if (thread.activeTurn !== undefined) return thread.activeTurn?.turnId ?? null;
   const sessionTurn =
     thread.session?.status === "running" ? (thread.session.activeTurnId ?? null) : null;

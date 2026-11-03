@@ -98,8 +98,6 @@ function analyticsFixture(consent: AnalyticsStatus["consent"] = "product") {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (next) => Effect.sync(() => changeConsent(next)),
-    deleteData: Effect.succeed(true),
     flush: Effect.void,
   });
   const observer = (trigger: "user" | "agent" = "user", provided = service) =>
@@ -419,7 +417,7 @@ describe("source import outcome analytics", () => {
           yield* Effect.promise(() => observeSourceImport(observer, async () => result, classify)),
         ).toBe(result);
         expect(classify).not.toHaveBeenCalled();
-        yield* f.service.setConsent("product");
+        yield* Effect.sync(() => f.changeConsent("product"));
         expect(
           yield* Effect.promise(() => observeSourceImport(observer, async () => result, classify)),
         ).toBe(result);

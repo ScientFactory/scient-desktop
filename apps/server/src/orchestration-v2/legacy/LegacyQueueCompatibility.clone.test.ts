@@ -130,33 +130,18 @@ it.effect.each(
       { createProject: () => Effect.void, onCloned: () => Effect.void },
     );
     assert.equal((yield* tracker.get(projectId))?.phase, "running");
-    if (action === "resume") {
-      const admitted = yield* compatibility.execute({
-        method: "enqueue",
-        payload: {
-          threadId,
-          queueItemId: "qitem_cloneheld",
-          text: "Keep this captured selection",
-          attachments: [],
-          modelSelection,
-          selectedScientSkillNames: ["analysis"],
-        },
-      });
-      assert.equal(admitted.items.length, 1);
-      assert.equal(admitted.awaitingCompletion, true);
-    } else
-      yield* orchestrator.dispatch({
-        type: "legacy-queue.import",
-        commandId: CommandId.make(`legacy-clone-held:${action}`),
-        threadId,
-        queueItemId: "qitem_cloneheld",
-        messageId: MessageId.make(`legacy-clone-held-message:${action}`),
-        text: "Keep this captured selection",
-        attachments: [],
-        modelSelection,
-        selectedScientSkillNames: ["analysis"],
-        createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
-      });
+    yield* orchestrator.dispatch({
+      type: "legacy-queue.import",
+      commandId: CommandId.make(`legacy-clone-held:${action}`),
+      threadId,
+      queueItemId: "qitem_cloneheld",
+      messageId: MessageId.make(`legacy-clone-held-message:${action}`),
+      text: "Keep this captured selection",
+      attachments: [],
+      modelSelection,
+      selectedScientSkillNames: ["analysis"],
+      createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+    });
     const before = yield* orchestrator.getThreadProjection(threadId);
     const imported = before.runs.find((run) => run.legacyQueue?.queueItemId === "qitem_cloneheld");
     assert.equal(imported?.status, "queued");

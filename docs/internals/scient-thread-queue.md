@@ -125,8 +125,8 @@ Startup imports retained queue JSON and `scient_thread_queue` data through V2
 `legacy/LegacyQueueCutover`, `HeldQueueAdmission`, and `LegacyQueueCompatibility`.
 Imported messages become native held runs with deterministic identities before runtime recovery
 and worker startup. Explicit Send/Resume releases them; reading or cloning a recovery payload does
-not execute it. The legacy queue HTTP compatibility surface translates into V2 and is not a
-second live ledger or sender.
+not execute it. The legacy queue HTTP compatibility surface (`list` and `control` only)
+translates into V2 and is not a second live ledger or sender.
 
 Preserve Scient migration 11 (`thread-queue`) and the independent
 `scient_schema_migrations` history. Old queue documents, receipts, incomplete barriers, files,

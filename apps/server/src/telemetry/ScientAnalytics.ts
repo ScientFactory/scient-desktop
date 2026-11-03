@@ -9,7 +9,6 @@ import {
   createAnalyticsRuntime,
   type AnalyticsRuntime,
 } from "@scientfactory/analytics";
-import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeSea from "node:sea";
@@ -52,7 +51,7 @@ export function localAnalyticsTestEndpoint(value: string): string | undefined {
   return url.href;
 }
 
-/** Scient consent and deletion controls on the analytics service. */
+/** Scient consent status and collection fences on the analytics service. */
 export type AnalyticsCollectionBoundaryPhase = "invalidated" | "ready";
 
 export interface ScientAnalyticsControls {
@@ -66,21 +65,10 @@ export interface ScientAnalyticsControls {
   readonly observeCollectionBoundary?: (
     listener: (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>,
   ) => Effect.Effect<() => void>;
-
-  /** Persist and apply a new local consent level before accepting later events. */
-  readonly setConsent: (consent: AnalyticsConsent) => Effect.Effect<AnalyticsStatus>;
-
-  /** Request remote deletion, then rotate local pseudonymous state on acknowledgement. */
-  readonly deleteData: Effect.Effect<boolean>;
 }
 
 export interface AnalyticsStatus {
   readonly available: boolean;
-  readonly consent: AnalyticsConsent;
-}
-
-interface StoredAnalyticsPreference {
-  readonly version: 1;
   readonly consent: AnalyticsConsent;
 }
 
@@ -120,14 +108,6 @@ function packagedAnalyticsWorkerUrl(): URL {
     : new URL("../../dist/analytics-worker.mjs", moduleUrl);
 }
 
-async function writeStoredConsent(path: string, consent: AnalyticsConsent): Promise<void> {
-  await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true, mode: 0o700 });
-  const temporaryPath = `${path}.tmp`;
-  const preference: StoredAnalyticsPreference = { version: 1, consent };
-  await NodeFSP.writeFile(temporaryPath, `${JSON.stringify(preference)}\n`, { mode: 0o600 });
-  await NodeFSP.rename(temporaryPath, path);
-}
-
 /** No-op analytics for tests and callers that intentionally disable analytics. */
 export const disabledAnalyticsService: AnalyticsService["Service"] = {
   record: () => Effect.void,
@@ -135,8 +115,6 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
   flush: Effect.void,
   status: Effect.succeed({ available: false, consent: "off" }),
   collectionEpoch: Effect.succeed(0),
-  setConsent: () => Effect.succeed({ available: false, consent: "off" }),
-  deleteData: Effect.succeed(false),
 };
 
 /** @public */
@@ -150,39 +128,31 @@ export const make = Effect.gen(function* () {
   }
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
-  const preferencePath = NodePath.join(serverConfig.stateDir, "analytics", "preferences.json");
   // Like T3, analytics is on for everyone; a saved preference no longer applies.
   // SCIENT_ANALYTICS_ENABLED=false is the off switch.
-  let consent = parseConsent(analyticsConfig.consent);
-  let sessionStartedAt = yield* Clock.currentTimeMillis;
+  const consent = parseConsent(analyticsConfig.consent);
+  const sessionStartedAt = yield* Clock.currentTimeMillis;
 
   if (consent === "off" && analyticsConfig.consent !== "off") {
     yield* Effect.logWarning("Invalid Scient analytics consent; analytics remains off");
   }
 
-  const createRuntime = (
-    runtimeConsent: AnalyticsConsent,
-    purpose: "collection" | "deletion" = "collection",
-  ) => {
+  const createRuntime = () => {
     const endpoint = localAnalyticsTestEndpoint(analyticsConfig.testEndpoint);
     return createAnalyticsRuntime({
       enabled: analyticsConfig.enabled,
-      consent: runtimeConsent,
+      consent,
       outboxPath,
       appVersion: analyticsConfig.appVersion,
       buildChannel: parseBuildChannel(analyticsConfig.buildChannel),
       workerUrl: packagedAnalyticsWorkerUrl(),
-      purpose,
       ...(endpoint === undefined ? {} : { endpoint }),
     });
   };
 
-  const runtimeHolder: { current: AnalyticsRuntime } = {
-    current: disabledRuntime(outboxPath),
-  };
-  runtimeHolder.current = yield* Effect.acquireRelease(
+  const runtime = yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createRuntime(consent),
+      try: createRuntime,
       catch: () => "analytics-initialization-failed" as const,
     }).pipe(
       Effect.catch(() =>
@@ -191,9 +161,8 @@ export const make = Effect.gen(function* () {
         ),
       ),
     ),
-    () =>
+    (activeRuntime) =>
       Effect.gen(function* () {
-        const activeRuntime = runtimeHolder.current;
         const sessionEndedAt = yield* Clock.currentTimeMillis;
         activeRuntime.record("app.session.ended", {
           durationMs: sessionEndedAt - sessionStartedAt,
@@ -206,56 +175,39 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics shutdown cleanup failed"))),
   );
 
-  const recordSessionStarted = (activeRuntime: AnalyticsRuntime, startedAt: number) => {
-    sessionStartedAt = startedAt;
-    activeRuntime.record("app.session.started", {
-      platform:
-        NodeProcess.platform === "darwin"
-          ? "macos"
-          : NodeProcess.platform === "win32"
-            ? "windows"
-            : NodeProcess.platform === "linux"
-              ? "linux"
-              : "other",
-      architecture:
-        NodeProcess.arch === "arm64" || NodeProcess.arch === "x64" ? NodeProcess.arch : "other",
-    });
-  };
-  recordSessionStarted(runtimeHolder.current, sessionStartedAt);
+  runtime.record("app.session.started", {
+    platform:
+      NodeProcess.platform === "darwin"
+        ? "macos"
+        : NodeProcess.platform === "win32"
+          ? "windows"
+          : NodeProcess.platform === "linux"
+            ? "linux"
+            : "other",
+    architecture:
+      NodeProcess.arch === "arm64" || NodeProcess.arch === "x64" ? NodeProcess.arch : "other",
+  });
 
-  let controlInProgress = false;
-  let collectionEpoch = 0;
-  type BoundaryListener = (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>;
-  const boundaryListeners = new Set<BoundaryListener>();
-  const notifyBoundary = async (
-    listener: BoundaryListener,
-    phase: AnalyticsCollectionBoundaryPhase,
-  ) => {
-    try {
-      await listener(collectionEpoch, phase);
-    } catch {
-      // An observer must fail closed itself; it cannot prevent Off or erasure.
-    }
-  };
-  const advanceCollectionEpoch = async (phase: AnalyticsCollectionBoundaryPhase) => {
-    collectionEpoch += 1;
-    await Promise.all([...boundaryListeners].map((listener) => notifyBoundary(listener, phase)));
-  };
+  // No control changes consent or identity while the server runs, so the
+  // collection epoch stays at 0 and an observer only ever sees "ready".
+  const collectionEpoch = 0;
   const observeCollectionBoundary: NonNullable<
     ScientAnalyticsControls["observeCollectionBoundary"]
   > = (listener) =>
     Effect.promise(async () => {
-      boundaryListeners.add(listener);
-      await notifyBoundary(listener, "ready");
-      return () => boundaryListeners.delete(listener);
+      try {
+        await listener(collectionEpoch, "ready");
+      } catch {
+        // An observer must fail closed itself.
+      }
+      return () => {};
     });
 
   const record: AnalyticsService["Service"]["record"] = (event, properties, expectedEpoch) =>
     Effect.try({
       try: () => {
-        if (controlInProgress || (expectedEpoch !== undefined && expectedEpoch !== collectionEpoch))
-          return;
-        runtimeHolder.current.record(event, properties);
+        if (expectedEpoch !== undefined && expectedEpoch !== collectionEpoch) return;
+        runtime.record(event, properties);
       },
       catch: () => "analytics-record-failed" as const,
     }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics event could not be queued")));
@@ -274,135 +226,23 @@ export const make = Effect.gen(function* () {
     );
 
   const flush: AnalyticsService["Service"]["flush"] = Effect.tryPromise({
-    try: () => runtimeHolder.current.flush(),
+    try: () => runtime.flush(),
     catch: () => "analytics-flush-failed" as const,
   }).pipe(
     Effect.catch(() => Effect.logWarning("Scient analytics delivery attempt failed")),
     Effect.asVoid,
   );
 
-  let controlQueue: Promise<void> = Promise.resolve();
-  const serializeControl = <A>(operation: () => Promise<A>): Promise<A> => {
-    const result = controlQueue.then(operation, operation);
-    controlQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
-
   const status: AnalyticsService["Service"]["status"] = Effect.sync(() => ({
     available: analyticsConfig.enabled,
     consent: analyticsConfig.enabled ? consent : "off",
   }));
-
-  const setConsent: AnalyticsService["Service"]["setConsent"] = Effect.fn(
-    "ScientAnalytics.setConsent",
-  )(
-    function* (nextConsent: AnalyticsConsent) {
-      const nextSessionStartedAt = yield* Clock.currentTimeMillis;
-      return yield* Effect.tryPromise({
-        try: () =>
-          serializeControl(async () => {
-            if (!analyticsConfig.enabled) return { available: false, consent: "off" } as const;
-            controlInProgress = true;
-            await advanceCollectionEpoch("invalidated");
-            const previousConsent = consent;
-            const previousRuntime = runtimeHolder.current;
-            let candidateRuntime: AnalyticsRuntime | null = null;
-            try {
-              if (
-                nextConsent === previousConsent &&
-                (nextConsent === "off" || previousRuntime.enabled)
-              ) {
-                await writeStoredConsent(preferencePath, nextConsent);
-                return { available: true, consent } as const;
-              }
-              if (nextConsent !== "off" && !previousRuntime.enabled) {
-                candidateRuntime = createRuntime(nextConsent);
-              } else if (previousRuntime.enabled) {
-                await previousRuntime.setConsent(nextConsent);
-              }
-              try {
-                await writeStoredConsent(preferencePath, nextConsent);
-              } catch (error) {
-                if (candidateRuntime) await candidateRuntime.close();
-                if (previousRuntime.enabled) await previousRuntime.setConsent(previousConsent);
-                throw error;
-              }
-              consent = nextConsent;
-              if (nextConsent === "off") {
-                await previousRuntime.close();
-                runtimeHolder.current = disabledRuntime(outboxPath);
-              } else if (candidateRuntime) {
-                runtimeHolder.current = candidateRuntime;
-                recordSessionStarted(candidateRuntime, nextSessionStartedAt);
-              }
-              return { available: true, consent } as const;
-            } finally {
-              await advanceCollectionEpoch("ready");
-              controlInProgress = false;
-            }
-          }),
-        catch: () => "analytics-consent-update-failed" as const,
-      });
-    },
-    Effect.tapError(() => Effect.logWarning("Scient analytics consent could not be updated")),
-    Effect.orDie,
-  );
-
-  const deleteData: AnalyticsService["Service"]["deleteData"] = Effect.gen(function* () {
-    const nextSessionStartedAt = yield* Clock.currentTimeMillis;
-    return yield* Effect.tryPromise({
-      try: () =>
-        serializeControl(async () => {
-          if (!analyticsConfig.enabled) return false;
-          controlInProgress = true;
-          await advanceCollectionEpoch("invalidated");
-          try {
-            const temporaryRuntime = runtimeHolder.current.enabled
-              ? null
-              : createRuntime("off", "deletion");
-            const deletionRuntime = temporaryRuntime ?? runtimeHolder.current;
-            try {
-              const deleted = await deletionRuntime.deleteData();
-              if (deleted) {
-                await deletionRuntime.close();
-                if (temporaryRuntime) await runtimeHolder.current.close();
-                try {
-                  const replacementRuntime = createRuntime(consent);
-                  runtimeHolder.current = replacementRuntime;
-                  recordSessionStarted(replacementRuntime, nextSessionStartedAt);
-                } catch {
-                  runtimeHolder.current = disabledRuntime(outboxPath);
-                }
-              }
-              return deleted;
-            } finally {
-              if (temporaryRuntime) await temporaryRuntime.close();
-            }
-          } finally {
-            await advanceCollectionEpoch("ready");
-            controlInProgress = false;
-          }
-        }),
-      catch: () => "analytics-deletion-failed" as const,
-    });
-  }).pipe(
-    Effect.catch(() =>
-      Effect.logWarning("Scient analytics data deletion could not be completed").pipe(
-        Effect.as(false),
-      ),
-    ),
-  );
 
   return {
     record,
     recordOwners,
     flush,
     status,
-    setConsent,
-    deleteData,
     collectionEpoch: Effect.sync(() => collectionEpoch),
     observeCollectionBoundary,
   } satisfies AnalyticsService["Service"];

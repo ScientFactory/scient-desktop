@@ -44,14 +44,13 @@ const encodeMetadata = Schema.encodeEffect(MetadataJson);
 const decodeOutput = Schema.decodeUnknownOption(OutputJson);
 const encodeOutput = Schema.encodeEffect(OutputJson);
 const decodeRuntimeSettings = Schema.decodeUnknownOption(RuntimeSettingsJson);
-const encodeRuntimeSettings = Schema.encodeEffect(RuntimeSettingsJson);
 
 const MAXIMUM_ARTIFACTS_PER_RUN = 50;
 const MAXIMUM_REPRESENTATIONS_PER_ARTIFACT = 8;
 const MAXIMUM_ARTIFACT_FILE_BYTES = 128 * 1024 * 1024;
 const MAXIMUM_ARTIFACT_RUN_BYTES = 512 * 1024 * 1024;
 
-async function sha256File(filePath: string): Promise<string> {
+export async function sha256File(filePath: string): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const hash = NodeCrypto.createHash("sha256");
     const stream = NodeFS.createReadStream(filePath);
@@ -88,10 +87,6 @@ export class LocalAnalysisStore extends Context.Service<
     readonly readRuntimeExecutablePath: (
       runtimeKind: string,
     ) => Effect.Effect<RuntimeExecutableConfiguration, LocalAnalysisStoreError>;
-    readonly writeRuntimeExecutablePath: (
-      runtimeKind: string,
-      executablePath: string | null,
-    ) => Effect.Effect<void, LocalAnalysisStoreError>;
     readonly persistRun: (
       run: AnalysisRunSnapshotType,
     ) => Effect.Effect<void, LocalAnalysisStoreError>;
@@ -190,21 +185,6 @@ const make = Effect.gen(function* () {
       executablePath: settings.executablePaths[runtimeKind] ?? null,
       warning,
     }));
-
-  const writeRuntimeExecutablePath = (runtimeKind: string, executablePath: string | null) =>
-    writeLock.withPermits(1)(
-      Effect.gen(function* () {
-        const { settings } = yield* readRuntimeSettings;
-        const executablePaths = { ...settings.executablePaths };
-        if (executablePath === null) delete executablePaths[runtimeKind];
-        else executablePaths[runtimeKind] = executablePath;
-        const contents = yield* encodeRuntimeSettings({
-          version: 1,
-          executablePaths,
-        }).pipe(mapStoreError("encode-runtime-settings", runtimeSettingsPath));
-        yield* atomicWrite(runtimeSettingsPath, contents);
-      }),
-    );
 
   const runDirectory = (projectId: string, runId: string) => path.join(runsRoot, projectId, runId);
   const hasRuns = (projectId: string) =>
@@ -687,7 +667,6 @@ const make = Effect.gen(function* () {
 
   return LocalAnalysisStore.of({
     readRuntimeExecutablePath,
-    writeRuntimeExecutablePath,
     persistRun,
     appendOutput,
     prepareArtifactStaging,

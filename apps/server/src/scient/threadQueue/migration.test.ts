@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerConfig from "../../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { readQueue } from "./Ledger.ts";
+import { readQueue } from "../../orchestration-v2/legacy/LegacyQueueLedger.ts";
 import { importLegacyQueue } from "./migration.ts";
 import { legacyQueueFilePath } from "./Store.ts";
 

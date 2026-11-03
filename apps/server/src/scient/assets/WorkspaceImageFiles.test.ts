@@ -16,7 +16,7 @@ import {
   inspectMarkdownImage,
   portableImageStem,
   uploadWorkspaceMarkdownImage,
-} from "./WorkspaceMarkdownFiles.ts";
+} from "./WorkspaceImageFiles.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const WorkspaceEntriesLayer = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));

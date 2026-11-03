@@ -20,6 +20,7 @@ import {
   AssistedSetupDeviceCode,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
+  AssistedSetupStatusFrame,
   AssistedSetupStatus,
   AssistedSetupUpdateButton,
   AssistedSetupUpdateStatus,
@@ -421,7 +422,7 @@ export function GrokInlineSetup(props: {
   if (accountConnected) {
     const account = providerAccountIdentity(props.provider) ?? "Grok subscription";
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         body={`${account} is connected.`}
         title="Grok is ready"
@@ -519,23 +520,6 @@ export function GrokInlineSetup(props: {
           provider={props.provider}
         />
       ) : null}
-    </AssistedSetupFrame>
-  );
-}
-
-function StatusFrame(props: {
-  readonly accountAction?: ReactNode;
-  readonly title: string;
-  readonly body: ReactNode;
-}) {
-  return (
-    <AssistedSetupFrame>
-      <AssistedSetupStatus
-        body={props.body}
-        icon={<CheckCircle2Icon className="size-5 text-success" />}
-        title={props.title}
-        trailing={props.accountAction}
-      />
     </AssistedSetupFrame>
   );
 }

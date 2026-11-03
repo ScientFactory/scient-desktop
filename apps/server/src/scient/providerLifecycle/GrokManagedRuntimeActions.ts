@@ -1,7 +1,6 @@
 import {
   MANAGED_RUNTIME_POLICY,
   ManagedGrokRuntime,
-  detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
   resolveReviewedGrokArtifact,
 } from "@scientfactory/provider-runtime";
@@ -11,20 +10,13 @@ import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_GROK_BINARY = "grok";
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 export interface GrokManagedRuntimeResolution extends ManagedProviderRuntimeResolution {}
 

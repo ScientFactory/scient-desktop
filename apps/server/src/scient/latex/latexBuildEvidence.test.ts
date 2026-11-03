@@ -16,9 +16,7 @@ import {
   MISSING_FILE_DIGEST,
   UNVERIFIED_FILE_DIGEST,
   collectLatexBuildEvidence,
-  decodeLatexBuildEvidence,
   decodePublishedLatexBuildEvidence,
-  encodeLatexBuildEvidence,
   encodePublishedLatexBuildEvidence,
   latexEvidenceMatches,
   probeLatexEvidence,
@@ -198,9 +196,6 @@ describe("latexBuildEvidence", () => {
         expect(dependency.byteLength).toBeGreaterThan(0);
       }
 
-      const restored = decodeLatexBuildEvidence(encodeLatexBuildEvidence(evidence));
-      expect(restored).toEqual(evidence);
-
       const published = {
         schemaVersion: 1 as const,
         artifactId: ArtifactId.make("artifact-evidence-test"),
@@ -212,18 +207,18 @@ describe("latexBuildEvidence", () => {
       ).toEqual(published);
       // The former unscoped file cannot be mistaken for evidence belonging to
       // whichever PDF revision happens to be bound after a restart.
-      expect(decodePublishedLatexBuildEvidence(encodeLatexBuildEvidence(evidence))).toBeNull();
+      expect(decodePublishedLatexBuildEvidence(JSON.stringify(evidence))).toBeNull();
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it("refuses a state file it cannot read rather than guessing at it", () => {
     // Every binding written before this check existed has no evidence file at
     // all, and a half-written one is no better; both mean "rebuild once".
-    expect(decodeLatexBuildEvidence("")).toBeNull();
-    expect(decodeLatexBuildEvidence("{ not json")).toBeNull();
-    expect(decodeLatexBuildEvidence(JSON.stringify({ schemaVersion: 2 }))).toBeNull();
+    expect(decodePublishedLatexBuildEvidence("")).toBeNull();
+    expect(decodePublishedLatexBuildEvidence("{ not json")).toBeNull();
+    expect(decodePublishedLatexBuildEvidence(JSON.stringify({ schemaVersion: 2 }))).toBeNull();
     expect(
-      decodeLatexBuildEvidence(
+      decodePublishedLatexBuildEvidence(
         JSON.stringify({
           schemaVersion: 1,
           rootRelativePath: "main.tex",

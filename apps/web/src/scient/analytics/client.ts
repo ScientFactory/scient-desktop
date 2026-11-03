@@ -1,12 +1,9 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
-  deleteEnvironmentScientAnalyticsData,
   getEnvironmentScientAnalyticsStatus,
   recordEnvironmentScientAnalyticsEvent,
-  updateEnvironmentScientAnalyticsPreference,
 } from "@t3tools/client-runtime/state/scient-analytics";
 import type {
-  ScientAnalyticsConsent,
   ScientAnalyticsStatus,
   ScientAnalyticsUiEvent,
   EnvironmentId,
@@ -93,34 +90,4 @@ export function readScientAnalyticsStatus(
   prepared: PreparedConnection,
 ): Promise<ScientAnalyticsStatus> {
   return gate.readStatus(prepared);
-}
-
-export async function setScientAnalyticsConsent(
-  prepared: PreparedConnection,
-  consent: ScientAnalyticsConsent,
-): Promise<ScientAnalyticsStatus> {
-  gate.beginControl(prepared);
-  try {
-    const status = await runtime.runPromise(
-      updateEnvironmentScientAnalyticsPreference({ prepared, consent }),
-    );
-    gate.endControl(prepared, status);
-    return status;
-  } catch (error) {
-    gate.endControl(prepared);
-    throw error;
-  }
-}
-
-export async function deleteScientAnalyticsData(prepared: PreparedConnection): Promise<void> {
-  gate.beginControl(prepared);
-  try {
-    await runtime.runPromise(deleteEnvironmentScientAnalyticsData(prepared));
-  } catch (error) {
-    gate.endControl(prepared);
-    throw error;
-  }
-  gate.endControl(prepared);
-  // A refresh failure must not report that a successful deletion did not happen.
-  await gate.readStatus(prepared).catch(() => undefined);
 }

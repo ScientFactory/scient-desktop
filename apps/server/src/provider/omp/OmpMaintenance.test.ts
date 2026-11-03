@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -11,7 +10,6 @@ import {
   OMP_HOMEBREW_FORMULA_URL,
   OMP_LATEST_RELEASE_URL,
   OMP_NPM_LATEST_URL,
-  ompMaintenance,
   parseOmpFormulaVersion,
   parseOmpReleaseVersion,
   resolveOmpLatestVersion,
@@ -86,27 +84,6 @@ describe("Oh My Pi installation channels", () => {
         .channel,
     ).toBe("managed");
   });
-
-  it.effect("never offers a native or package-manager update action", () =>
-    Effect.gen(function* () {
-      for (const path of [
-        "/usr/local/bin/omp",
-        "/home/test/.bun/bin/omp",
-        "/opt/homebrew/Cellar/omp/18.3.1/bin/omp",
-        "/home/test/.local/share/mise/installs/github-can1357-oh-my-pi/18.3.1/omp",
-        "/home/test/.scient-next/provider-runtimes/omp/versions/18.2.8/darwin-arm64/omp",
-      ]) {
-        const capabilities = yield* ompMaintenance
-          .resolve(context(path))
-          .pipe(Effect.provide(NodeServices.layer));
-        expect(capabilities.update).toBeNull();
-        expect(capabilities.packageName).toBeNull();
-      }
-      expect(
-        (yield* ompMaintenance.resolve(null).pipe(Effect.provide(NodeServices.layer))).update,
-      ).toBeNull();
-    }),
-  );
 });
 
 describe("Oh My Pi latest release lookup", () => {

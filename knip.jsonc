@@ -136,13 +136,11 @@
       "entry": [
         "scripts/warm-dep-cache.ts",
         "test/fixtures/**/*.mjs",
-        // Explicit standalone connected extracted-intent qualification configuration.
-        "extractedIntentSend.vitest.config.ts",
         // Documented standalone Chromium selection qualification configuration.
         "latexSelection.vitest.config.ts",
         "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
-        "src/scient/documentPage/main.tsx",
+        "src/scient/documentPage/main.tsx!",
         // The Visual performance benchmark: its production build configuration,
         // page entry (latex-visual-benchmark.html) and Node runner.
         "latexVisualBenchmark.config.ts",
@@ -179,7 +177,6 @@
         "src/components/settings/ChatGptWelcomeCoordinator.tsx": ["files"],
         "src/components/settings/CodexSetupSection.logic.ts": ["files"],
         "src/components/settings/CodexSetupSection.tsx": ["files"],
-        "src/components/settings/ProviderAuthCallbackCoordinator.tsx": ["files"],
         "src/providerAuthDelivery.ts": ["files"],
       },
     },

@@ -4,7 +4,6 @@ import {
   vegaLiteFileBaseName,
   vegaLiteMarkdownCopySource,
   vegaLitePngBlob,
-  vegaLitePngScale,
 } from "./vegaLiteExport";
 import type { VegaLiteViewController } from "./VegaLiteView";
 
@@ -20,13 +19,6 @@ describe("Vega-Lite export", () => {
     expect(vegaLiteMarkdownCopySource('{"mark":"bar"}', "vl", 'title="study"')).toBe(
       '```vl title="study"\n{"mark":"bar"}\n```\n\n',
     );
-  });
-
-  it("keeps PNG export within dimension and pixel bounds", () => {
-    expect(vegaLitePngScale(429, 320)).toBe(2);
-    expect(vegaLitePngScale(10_000, 1_000)).toBeCloseTo(0.8192);
-    expect(vegaLitePngScale(4_096, 4_096)).toBe(1);
-    expect(() => vegaLitePngScale(0, 320)).toThrow("no measurable size");
   });
 
   it("bounds the first canvas render instead of measuring with an unbounded canvas", async () => {

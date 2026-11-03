@@ -23,12 +23,6 @@ export function resetNaturalMeasurement(view: EditorView) {
   hosts.delete(view);
 }
 
-export interface NaturalLine {
-  readonly from: number;
-  readonly top: number;
-  readonly bottom: number;
-}
-
 /** Find line starts with logarithmic searches, including wrapped runs inside formatting marks. */
 export function naturalTextLines(
   text: globalThis.Node,

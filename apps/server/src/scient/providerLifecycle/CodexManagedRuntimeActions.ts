@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import {
   MANAGED_RUNTIME_POLICY,
   ManagedCodexRuntime,
-  detectManagedRuntimeTarget,
+  isManagedRuntimeUpdate,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveReviewedCodexArtifact,
@@ -41,11 +41,11 @@ import {
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 import {
+  detectTargetSafely,
   isManagedRuntimeDowngrade,
   managedRuntimeDowngradeMessage,
   managedRuntimeSwitchPlan,
 } from "./ManagedProviderRuntimeActions.ts";
-import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
 
@@ -71,14 +71,6 @@ export const hasManagedCodexCodeModeHost = Effect.fn("CodexManagedRuntime.hasCod
     }).pipe(Effect.orElseSucceed(() => false));
   },
 );
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({

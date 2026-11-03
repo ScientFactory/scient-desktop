@@ -9,7 +9,7 @@ import {
   isValidModelSegment,
   splitAgentModelSlug,
   thinkingLevelCapabilities,
-} from "../agentModel.ts";
+} from "@t3tools/provider-core/server/agentModel";
 
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -42,9 +42,6 @@ const ompModelSupportsFastMode = (model: OmpRpcModel): boolean => {
     (model.provider === "anthropic" && model.id.includes("opus"))
   );
 };
-
-export const ompModelSupportsImages = (model: OmpRpcModel): boolean =>
-  model.input?.includes("image") === true;
 
 export const ompThinkingLevel = (value: string | undefined): OmpThinkingLevel | undefined =>
   value === "off" ||

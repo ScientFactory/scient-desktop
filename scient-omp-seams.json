@@ -231,7 +231,7 @@
       "purpose": "Include Oh My Pi in the scheduled managed runtime catalog refresh."
     },
     {
-      "path": "apps/server/src/provider/agentModel.ts",
+      "path": "packages/provider-core/src/server/agentModel.ts",
       "anchor": "splitAgentModelSlug",
       "purpose": "Share the provider/model slug codec and reasoning descriptors between Pi and Oh My Pi."
     },
@@ -241,7 +241,7 @@
       "purpose": "Share the agent process environment rule between Droid and Oh My Pi."
     },
     {
-      "path": "apps/server/src/provider/pi/PiModel.ts",
+      "path": "packages/provider-pi/src/server/model.ts",
       "anchor": "splitAgentModelSlug",
       "purpose": "Keep Pi's canonical slug rule on top of the codec it now shares with Oh My Pi."
     },

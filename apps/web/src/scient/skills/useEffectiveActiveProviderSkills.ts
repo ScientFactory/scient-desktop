@@ -9,7 +9,7 @@ import type {
 
 import { useEnvironmentQuery } from "~/state/query";
 
-import { mergeEffectiveProviderSkills } from "./effectiveSkills";
+import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 import { resolveScientSkillListInput } from "./scientSkillListInput";
 import { scientSkillsInventory } from "./scientSkillsState";
 

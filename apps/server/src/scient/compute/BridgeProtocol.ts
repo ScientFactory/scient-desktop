@@ -85,23 +85,6 @@ export const SERVER_TO_BRIDGE_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "shutdown",
 ]);
 
-export const BRIDGE_TO_SERVER_TYPES: ReadonlySet<BridgeMessageType> = new Set([
-  "hello-ack",
-  "kernel-ready",
-  "accepted",
-  "stream",
-  "display",
-  "error",
-  "warning",
-  "execution-complete",
-  "interrupt-result",
-  "variables",
-  "table",
-  "restarted",
-  "shutdown-complete",
-  "fatal",
-]);
-
 export type BridgeDirection = "server-to-bridge" | "bridge-to-server";
 
 function bridgeMessageDirection(type: BridgeMessageType): BridgeDirection {
@@ -138,7 +121,7 @@ const NULLABLE_REQUEST_ID_TYPES: ReadonlySet<BridgeMessageType> = new Set([
 const Label = Schema.String.check(Schema.isMaxLength(256));
 const ShortText = Schema.String.check(Schema.isMaxLength(MaxDetailLength));
 
-export const HelloPayload = Schema.Struct({
+const HelloPayload = Schema.Struct({
   buildId: Label,
   frameLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   requiredCapabilities: Schema.Array(ComputeCapability),
@@ -359,7 +342,7 @@ export type ExecutionCompletePayload = typeof ExecutionCompletePayload.Type;
 export const InterruptPayload = Schema.Struct({});
 export type InterruptPayload = typeof InterruptPayload.Type;
 
-export const InterruptResultPayload = Schema.Struct({
+const InterruptResultPayload = Schema.Struct({
   result: Schema.Literals(["interrupted", "terminal", "rejected", "timeout"]),
 });
 

@@ -31,9 +31,6 @@ import type { DroidRequestLimitBreach } from "../droid/DroidKeyBroker.ts";
  * version-sensitive assumptions pinned by DroidAcpCliProbe.test.ts.
  */
 
-/** Compatibility marker advertised by genuine Droid ACP agents. */
-export const DROID_AGENT_INFO_NAME = "@factory/cli";
-
 const DROID_AUTH_METHOD_API_KEY = "factory-api-key";
 export const DROID_AUTH_METHOD_DEVICE_PAIRING = "device-pairing";
 
@@ -203,18 +200,6 @@ export function buildDroidAcpSpawnInput(
 
 export function hasDroidApiKeyEnvironment(environment: NodeJS.ProcessEnv | undefined): boolean {
   return DROID_API_KEY_ENV_KEYS.some((key) => Boolean(environment?.[key]?.trim()));
-}
-
-/**
- * Auth selection before `initialize` advertises the real method list: prefer
- * the noninteractive API key when the environment carries one, else fall
- * back to device-pairing (which authenticates headlessly whenever a cached
- * pairing exists). `_meta.headless` keeps every path browser-free.
- */
-export function resolveDroidAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
-  return hasDroidApiKeyEnvironment(environment)
-    ? DROID_AUTH_METHOD_API_KEY
-    : DROID_AUTH_METHOD_DEVICE_PAIRING;
 }
 
 /**

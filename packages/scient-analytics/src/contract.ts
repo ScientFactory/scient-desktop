@@ -467,7 +467,7 @@ function optionalModelKeys(
   );
 }
 
-export function countBucket(value: unknown): string {
+function countBucket(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
   if (value === 0) return "0";
   if (value === 1) return "1";
@@ -1218,7 +1218,7 @@ function normalizeEvent(
 }
 
 /** Public release coordinates only; custom build labels must never become identity hints. */
-export function analyticsAppVersion(value: string): string {
+function analyticsAppVersion(value: string): string {
   return /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-(?:beta|nightly|rc|dev)(?:\.\d{1,14}){0,3})?$/u.test(value)
     ? value
     : "unknown";

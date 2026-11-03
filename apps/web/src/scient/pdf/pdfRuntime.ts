@@ -78,8 +78,6 @@ export interface ScientPdfRuntime {
   refreshForContainerSize: () => void;
 }
 
-export type PdfJsFindState = (typeof FindState)[keyof typeof FindState];
-
 function pdfAssetRoot(): string {
   return new URL(`${import.meta.env.BASE_URL}pdfjs-assets/`, window.location.href).toString();
 }

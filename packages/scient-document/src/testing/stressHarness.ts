@@ -100,7 +100,7 @@ const classifyFailure = (error: unknown): DocumentPersistenceFailureKind => {
   return FAILURE_KINDS.find((candidate) => candidate === kind) ?? "terminal";
 };
 
-export function seededRandom(seed: number): () => number {
+function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;

@@ -236,27 +236,6 @@ export function applyChoices(input: {
 }
 
 /**
- * Nothing is written if any file about to change no longer matches what was
- * captured. Returns the first such path.
- */
-export function firstStaleFile(input: {
-  readonly captured: FileTree;
-  readonly target: FileTree;
-  /** Current content id of a path in the folder, or `undefined` when absent. */
-  readonly current: (path: string) => string | undefined;
-}): string | null {
-  for (const path of new Set([...input.captured.keys(), ...input.target.keys()])) {
-    if (
-      input.captured.get(path) !== input.target.get(path) &&
-      input.current(path) !== input.captured.get(path)
-    ) {
-      return path;
-    }
-  }
-  return null;
-}
-
-/**
  * Changes that succeed or fail together: everything that touches one file
  * identity or comes from one conflict decision. Applying them independently
  * let one decision land half-way, and the next sync published the opposite of
@@ -298,19 +277,6 @@ export function applyUnits(input: {
     }
   });
   return units.map((unit) => [...unit].sort((left, right) => left - right));
-}
-
-export type UnitOutcome = "done" | "skipped" | "interrupted";
-
-/**
- * A unit is done only if every part is. A unit that is partly on disk is
- * interrupted as a whole; one that left nothing behind is merely skipped.
- */
-export function unitOutcome(parts: ReadonlyArray<UnitOutcome>): UnitOutcome {
-  if (parts.every((part) => part === "done")) return "done";
-  return parts.some((part) => part === "done" || part === "interrupted")
-    ? "interrupted"
-    : "skipped";
 }
 
 /**
@@ -521,35 +487,6 @@ export function publicationTree(input: {
     else out.set(path, oid);
   }
   return out;
-}
-
-export type EarlierPublish =
-  /** Overleaf holds, or held, exactly what was sent. The base becomes what was sent. */
-  | "accepted"
-  /** Nothing in Overleaf's history shows it. The review must say so. */
-  | "not-established";
-
-/**
- * What became of a publish whose response never arrived. Without this, an
- * accepted publish followed by a collaborator's revert was published again
- * over their revert.
- */
-export function classifyEarlierPublish(input: {
-  readonly sentTree: string;
-  readonly sentCommit: string;
-  readonly remoteHeadCommit: string;
-  readonly remoteHeadTree: string;
-  /** Trees of Overleaf's commits since the head the publish was built on. */
-  readonly treesSince: ReadonlyArray<{ readonly commit: string; readonly tree: string }>;
-}): EarlierPublish {
-  if (input.remoteHeadCommit === input.sentCommit || input.remoteHeadTree === input.sentTree) {
-    return "accepted";
-  }
-  return input.treesSince.some(
-    (entry) => entry.commit === input.sentCommit || entry.tree === input.sentTree,
-  )
-    ? "accepted"
-    : "not-established";
 }
 
 /** A line Scient's own merge writes: Git's markers labelled with its two sides. */

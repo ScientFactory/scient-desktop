@@ -10,10 +10,7 @@ import { type ReactNode, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import {
-  type ProviderSettingsLifecyclePresentation,
-  useProviderSettingsLifecyclePresentation,
-} from "./providerSettingsLifecyclePresentation";
+import { useProviderSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -22,45 +19,6 @@ import {
 import { useEnvironmentIsOnThisDevice } from "./environmentLocality";
 import { oneClickSignInMethod } from "./oneClickSignIn";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
-
-export type ProviderSettingsPrimaryAction =
-  | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
-  | { readonly kind: "managed-runtime"; readonly action: "install" | "update" }
-  | { readonly kind: "browser-sign-in"; readonly method: ProviderConnectionMethod }
-  | { readonly kind: "external-update" }
-  | { readonly kind: "none" };
-
-/**
- * A row starts sign-in itself only for a provider with exactly one method that
- * signs in through a page Scient opens; any choice, code or pairing opens the
- * provider's setup view instead.
- */
-export function resolveProviderSettingsPrimaryAction(input: {
-  readonly provider: ServerProvider;
-  readonly presentation: ProviderSettingsLifecyclePresentation;
-  readonly canRunExternalUpdate: boolean;
-}): ProviderSettingsPrimaryAction {
-  switch (input.presentation.actionKind) {
-    case "runtime":
-      return input.presentation.runtimeAction === "install" ||
-        input.presentation.runtimeAction === "update"
-        ? { kind: "managed-runtime", action: input.presentation.runtimeAction }
-        : { kind: "open", runtimeAction: input.presentation.runtimeAction };
-    case "external-update":
-      return input.canRunExternalUpdate
-        ? { kind: "external-update" }
-        : { kind: "open", runtimeAction: null };
-    case "sign-in": {
-      const method = oneClickSignInMethod(input.provider);
-      return method ? { kind: "browser-sign-in", method } : { kind: "open", runtimeAction: null };
-    }
-    case "continue":
-    case "manage":
-      return { kind: "open", runtimeAction: null };
-    case null:
-      return { kind: "none" };
-  }
-}
 
 function actionErrorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
@@ -147,8 +105,7 @@ export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycle
           </Button>
         </ActionDetail>
       ) : action === "install" ? (
-        <ManagedRuntimeActionButton
-          action="install"
+        <InstallRuntimeButton
           displayName={props.displayName}
           environmentId={props.environmentId}
           onManage={props.onManage}
@@ -280,8 +237,7 @@ function BrowserSignInButton(props: {
   );
 }
 
-function ManagedRuntimeActionButton(props: {
-  readonly action: "install" | "update";
+function InstallRuntimeButton(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
@@ -305,13 +261,13 @@ function ManagedRuntimeActionButton(props: {
     let actionFailure: { readonly cause: unknown } | undefined;
     try {
       try {
-        const plan = await controller.planRuntime(props.action);
+        const plan = await controller.planRuntime("install");
         await controller.startRuntime(plan);
       } catch (error) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not ${props.action} ${props.displayName}`,
+            title: `Could not install ${props.displayName}`,
             description: actionErrorMessage(error),
           }),
         );
@@ -324,14 +280,7 @@ function ManagedRuntimeActionButton(props: {
     if (actionFailure) throw actionFailure.cause;
   };
 
-  const label =
-    props.action === "install"
-      ? pending
-        ? "Installing"
-        : "Install"
-      : pending
-        ? "Updating"
-        : "Update";
+  const label = pending ? "Installing" : "Install";
   return (
     <Button
       aria-label={`${label} ${props.displayName}`}
@@ -340,13 +289,7 @@ function ManagedRuntimeActionButton(props: {
       type="button"
       variant={pending ? "ghost-muted" : "ghost-primary"}
     >
-      {pending ? (
-        <LoaderIcon className="animate-spin" />
-      ) : props.action === "install" ? (
-        <DownloadIcon />
-      ) : (
-        <RefreshCwIcon />
-      )}
+      {pending ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
       {label}
     </Button>
   );

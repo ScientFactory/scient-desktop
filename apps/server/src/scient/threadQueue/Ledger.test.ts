@@ -6,11 +6,15 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { describe, expect, it } from "@effect/vitest";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { readQueue, writeQueue, suspendQueue, type QueueDocument } from "./Ledger.ts";
-import { enqueueQueue } from "./admission.ts";
+import {
+  readQueue,
+  writeQueue,
+  suspendQueue,
+  type QueueDocument,
+} from "../../orchestration-v2/legacy/LegacyQueueLedger.ts";
 
 const threadId = ThreadId.make("queue-owner");
-const otherThreadId = ThreadId.make("other-thread");
+const savedAt = "2026-01-01T00:00:00.000Z";
 const layer = SqlitePersistenceMemory.pipe(Layer.provide(NodeServices.layer));
 const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
   effect.pipe(Effect.provide(layer));
@@ -30,40 +34,29 @@ const change = <E>(
   );
 const enqueue = (id: string) =>
   change((doc) =>
-    enqueueQueue({ threadId, queueItemId: `qitem_${id}`, text: id, attachments: [] }, doc),
+    Effect.succeed({
+      ...doc,
+      items: [
+        ...doc.items,
+        {
+          threadId,
+          queueItemId: `qitem_${id}`,
+          text: id,
+          attachments: [],
+          state: "waiting" as const,
+          createdAt: savedAt,
+          updatedAt: savedAt,
+        },
+      ],
+    }),
   );
 
-describe("legacy queue admission and saved-document compatibility", () => {
-  it.effect("rejects a receipt ID reused by another thread", () =>
-    run(
-      Effect.gen(function* () {
-        yield* enqueue("A");
-        const result = yield* Effect.exit(
-          enqueueQueue(
-            {
-              threadId: otherThreadId,
-              queueItemId: "qitem_A",
-              text: "wrong target",
-              attachments: [],
-            },
-            yield* readQueue(otherThreadId),
-          ),
-        );
-        expect(Exit.isFailure(result)).toBe(true);
-        expect((yield* readQueue(otherThreadId)).items).toEqual([]);
-      }),
-    ),
-  );
-
-  it.effect("enforces capacity transactionally without leaving an accepted receipt", () =>
+describe("legacy queue saved-document compatibility", () => {
+  it.effect("refuses to save a document over the item cap", () =>
     run(
       Effect.gen(function* () {
         for (let index = 0; index < 20; index++) yield* enqueue(String(index));
         expect(Exit.isFailure(yield* Effect.exit(enqueue("overflow")))).toBe(true);
-        const sql = yield* SqlClient.SqlClient;
-        const receipts =
-          yield* sql`SELECT queue_item_id FROM scient_queue_receipts WHERE queue_item_id = 'qitem_overflow'`;
-        expect(receipts).toEqual([]);
         expect((yield* readQueue(threadId)).items).toHaveLength(20);
       }),
     ),

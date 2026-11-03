@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { LocalAnalysisStore } from "./LocalAnalysisStore.ts";
+import { sha256File, type LocalAnalysisStore } from "./LocalAnalysisStore.ts";
 
 const README_FILE_NAME = "README.md";
 const MANIFEST_FILE_NAME = "manifest.json";
@@ -42,16 +42,6 @@ export interface AnalysisRunPromotionResult {
   readonly manifestRelativePath: string;
   readonly artifactFileCount: number;
   readonly reused: boolean;
-}
-
-async function sha256File(filePath: string): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const hash = NodeCrypto.createHash("sha256");
-    const stream = NodeFS.createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolve(`sha256:${hash.digest("hex")}`));
-  });
 }
 
 function sha256Text(contents: string): string {

@@ -1,6 +1,5 @@
 export {
   runStressScenario,
-  seededRandom,
   totalStressStats,
   type StressDocumentFormat,
   type StressEdit,

@@ -219,8 +219,6 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   const analytics = AnalyticsService.AnalyticsService.of({
     status: Effect.succeed({ available: false, consent: "off" }),
     collectionEpoch: Effect.succeed(0),
-    setConsent: () => Effect.succeed({ available: false, consent: "off" }),
-    deleteData: Effect.succeed(false),
     record: (event, properties) =>
       failAnalytics
         ? Effect.die("analytics unavailable")

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createScientMarkdownProjection,
-  serializeScientMarkdownProjection,
+  projectScientMarkdownSource,
   withProjectedDocument,
 } from "./projection";
 import { scientMarkdownParser } from "./schema";
@@ -32,12 +32,12 @@ describe("Scient ProseMirror projection", () => {
 
     expect(projection.document.childCount).toBe(1);
     expect(projection.document.firstChild?.type.name).toBe("paragraph");
-    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe("");
+    expect(projectScientMarkdownSource(projection, projection.document).source).toBe("");
   });
 
   it("returns exact Markdown when the projected document is untouched", () => {
     const projection = createScientMarkdownProjection(SOURCE);
-    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(SOURCE);
+    expect(projectScientMarkdownSource(projection, projection.document).source).toBe(SOURCE);
   });
 
   it("round-trips 250 varied Unicode and CRLF projections without normalization", () => {
@@ -64,7 +64,7 @@ describe("Scient ProseMirror projection", () => {
           ...(seed % 4 === 0 ? ["", "````text meta=kept", `${left} ${right}`, "````"] : []),
         ].join(eol) + (seed % 3 === 0 ? "" : eol);
       const projection = createScientMarkdownProjection(source);
-      expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(source);
+      expect(projectScientMarkdownSource(projection, projection.document).source).toBe(source);
     }
   });
 

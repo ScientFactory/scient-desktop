@@ -1,9 +1,6 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-import {
-  scientMarkdownLinkContextMenuItems,
-  showScientMarkdownLinkContextMenu,
-} from "./linkContextMenu";
+import { scientMarkdownLinkContextMenuItems } from "./linkContextMenu";
 
 describe("Markdown link context menu", () => {
   it("offers the existing open and editing paths for an editable ordinary link", () => {
@@ -67,24 +64,5 @@ describe("Markdown link context menu", () => {
       { id: "edit", label: "Edit link", separatorBefore: true },
       { id: "remove", label: "Remove link" },
     ]);
-  });
-
-  it("uses the requested pointer position and returns the chosen action", async () => {
-    const show = vi.fn(async () => "edit" as const);
-    const request = {
-      canCopy: true,
-      canOpen: true,
-      editable: true,
-      fullPath: "/workspace/notes.md",
-      kind: "link" as const,
-      position: { x: 18, y: 27 },
-      target: "notes.md",
-    };
-
-    await expect(showScientMarkdownLinkContextMenu(request, show)).resolves.toBe("edit");
-    expect(show).toHaveBeenCalledWith(
-      scientMarkdownLinkContextMenuItems(request),
-      request.position,
-    );
   });
 });

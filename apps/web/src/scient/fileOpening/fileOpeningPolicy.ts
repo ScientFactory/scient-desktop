@@ -3,10 +3,6 @@ export const SCIENT_DEFAULT_RENDER_MARKDOWN = true;
 export const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 export const SCIENT_DEFAULT_FILE_EXPLORER_OPEN = false;
 
-export function resolveInitialFileExplorerOpen(savedPreference: boolean | null): boolean {
-  return savedPreference ?? SCIENT_DEFAULT_FILE_EXPLORER_OPEN;
-}
-
 export function resolveHtmlRenderedState(
   preferred: boolean,
   requestedMode: "source" | null,

@@ -21,7 +21,6 @@ export {
   agentSignInOnHold,
   automaticSignInOnHold,
   signedInMomentsAgo,
-  signInOnHold,
   signInRefused,
   siteLimiting,
   withSignIn,
