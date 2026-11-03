@@ -509,6 +509,8 @@ function SignInGroupRow({
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
+                id={profile.id}
+                browser={profile.record.source?.browser}
               />
             ))}
           </span>

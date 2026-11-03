@@ -24,7 +24,6 @@ import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon, RefreshCwIcon } 
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { QuitStep } from "~/components/settings/BrowserImportWizard";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
-import { AccountLogo } from "./AccountLogo";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "~/components/ui/collapsible";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import {
@@ -63,7 +62,6 @@ import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
   GMAIL_URL,
-  browserIconUrl,
   importProfileName,
   mergeProfiles,
   matchExistingProfile,
@@ -98,15 +96,6 @@ function sourceRecord(
       importedAt,
     },
   });
-}
-
-function BrowserLogo({ id, name }: { id: string; name: string }) {
-  const icon = browserIconUrl(id);
-  return icon ? (
-    <AccountLogo src={icon} className="size-10 rounded-[25%]" />
-  ) : (
-    <ProfilePicture name={name} />
-  );
 }
 
 /** One browser import at a time, even after its dialog closed and was opened again. */
@@ -160,6 +149,8 @@ function SignedInSitesDialog({
               name={profile.name}
               picture={profile.record.picture}
               color={profile.record.color}
+              id={profile.id}
+              browser={profile.record.source?.browser}
             />
             <div className="grid">
               <DialogTitle>{profile.name}</DialogTitle>
@@ -425,7 +416,7 @@ export function BrowserImportDialog({
                             key={source.id}
                             className="flex min-h-15 items-center gap-3 px-3 py-2"
                           >
-                            <BrowserLogo id={source.id} name={source.name} />
+                            <ProfilePicture name={source.name} browser={source.id} />
                             <span className="grid min-w-0 flex-1 text-sm">
                               <span>{source.name}</span>
                               <span className="text-xs text-muted-foreground">
@@ -468,15 +459,12 @@ export function BrowserImportDialog({
                                 (!!source.unavailable && source.unavailable !== "browserRunning")
                               }
                               icon={
-                                profile.picture ? (
-                                  <ProfilePicture
-                                    name={profile.name}
-                                    picture={profile.picture}
-                                    color={profile.color}
-                                  />
-                                ) : (
-                                  <BrowserLogo id={source.id} name={profile.name} />
-                                )
+                                <ProfilePicture
+                                  name={profile.name}
+                                  picture={profile.picture}
+                                  color={profile.color}
+                                  browser={source.id}
+                                />
                               }
                               title={profile.name}
                               description={
@@ -544,7 +532,7 @@ export function BrowserImportDialog({
                             key={source.id}
                             className="flex items-center gap-3 border-t border-border/60 px-3 py-3"
                           >
-                            <BrowserLogo id={source.id} name={source.name} />
+                            <ProfilePicture name={source.name} browser={source.id} />
                             <div className="flex min-w-0 flex-1 flex-col">
                               <span className="truncate text-sm font-medium">{source.name}</span>
                               <span className="text-xs text-muted-foreground">Not installed</span>
@@ -647,12 +635,7 @@ export function BrowserProfiles({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles).filter(
-    (profile) =>
-      profile.id !== DEFAULT_BROWSER_PROFILE_ID ||
-      settings.browserProfiles.length === 0 ||
-      settings.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID,
-  );
+  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
   const disabled = !canWrite || !hydrated || busy;
   const linkedProfiles = profiles.filter((profile) => profile.record.source);
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
@@ -894,6 +877,8 @@ export function BrowserProfiles({
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
+                id={profile.id}
+                browser={profile.record.source?.browser}
               />
               {renaming === profile.id ? (
                 <DraftInput
@@ -1069,6 +1054,7 @@ export function BrowserProfiles({
                           name={sourceProfile.name}
                           picture={sourceProfile.picture}
                           color={sourceProfile.color}
+                          browser={source.id}
                         />
                       }
                       title={sourceProfile.name}

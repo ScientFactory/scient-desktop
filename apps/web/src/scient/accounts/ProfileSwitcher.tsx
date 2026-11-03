@@ -84,6 +84,8 @@ export function ProfileSwitcher({
                   name={active.name}
                   picture={active.record.picture}
                   color={active.record.color}
+                  id={active.id}
+                  browser={active.record.source?.browser}
                 />
               </MenuTrigger>
             }
@@ -107,6 +109,8 @@ export function ProfileSwitcher({
                   name={profile.name}
                   picture={profile.record.picture}
                   color={profile.record.color}
+                  id={profile.id}
+                  browser={profile.record.source?.browser}
                 />
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{profile.name}</span>

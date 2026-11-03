@@ -8,13 +8,29 @@ import {
   ProjectId,
   ThreadId,
   defaultAccountControls,
+  defaultBrowserProfileRecord,
   type AccountSummary,
+  type AccountsSnapshot,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { render } from "../../../test/render";
 import { AccountRow } from "./AccountsPage";
-import { ProfileDetail } from "./BrowserProfiles";
+import { browserIconUrl } from "./accountsView";
+import { BrowserProfiles, ProfileDetail } from "./BrowserProfiles";
 
-const state = vi.hoisted(() => ({ open: vi.fn(), external: vi.fn() }));
+const state = vi.hoisted(() => ({
+  open: vi.fn(),
+  external: vi.fn(),
+  settings: {} as Partial<ClientSettings>,
+}));
+vi.mock("~/hooks/useSettings", async (original) => ({
+  ...(await original<typeof import("~/hooks/useSettings")>()),
+  useClientSettings: (select?: (settings: ClientSettings) => unknown) => {
+    const settings = { ...DEFAULT_CLIENT_SETTINGS, ...state.settings };
+    return select ? select(settings) : settings;
+  },
+  useClientSettingsHydrated: () => true,
+}));
 vi.mock("~/browser/openFileInPreview", () => ({ openUrlInPreview: state.open }));
 vi.mock("~/localApi", () => ({
   readLocalApi: () => ({ shell: { openExternal: state.external } }),
@@ -176,4 +192,43 @@ it("withholds native store links in a browser client", async () => {
   await expect
     .element(page.getByRole("menuitem", { name: "Sign in again", exact: true }))
     .not.toBeInTheDocument();
+});
+
+it("lists Main beside imported profiles, each showing where it came from", async () => {
+  state.settings = {
+    browserProfiles: [{ id: "profile-safari", name: "Personal", kind: "persistent" }],
+    browserDefaultProfileId: "profile-safari",
+  };
+  const snapshot = {
+    profiles: [
+      {
+        ...defaultBrowserProfileRecord("profile-safari"),
+        source: {
+          browser: "safari",
+          profileName: "Personal",
+          directory: ".",
+          importedAt: "2026-11-03T00:00:00.000Z",
+        },
+      },
+    ],
+    accounts: [],
+  } as unknown as AccountsSnapshot;
+  await using _screen = await render(
+    <BrowserProfiles
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      canWrite
+      onImport={() => undefined}
+    />,
+  );
+  const picture = (name: string) =>
+    page
+      .getByRole("button", { name: `Signed-in sites for ${name}` })
+      .element()
+      .querySelector("img");
+  await expect
+    .element(page.getByRole("button", { name: "Signed-in sites for Main" }))
+    .toBeVisible();
+  expect(picture("Main")?.getAttribute("src")).toContain("scient-symbol");
+  expect(picture("Personal")?.getAttribute("src")).toBe(browserIconUrl("safari"));
 });
