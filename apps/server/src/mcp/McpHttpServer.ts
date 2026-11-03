@@ -1410,28 +1410,35 @@ export const layerDeviceToolkit = Layer.mergeAll(
 );
 
 // SCIENT-FORK:START — every listed tool has a declared owner; a session sees what its grants allow.
-const previewTools = [
-  ...Object.values(PreviewToolkit.tools),
-  ...Object.values(PreviewControlsToolkit.tools),
-];
-const worktreeTools = Object.values(WorktreeToolkit.tools);
-const deviceTools = Object.values(DeviceToolkit.tools);
-export const hostMcpTools: ReadonlyArray<Tool.Any> = [
+// Every route of these tools reaches readCaller/loadCaller (or forwarding, which does).
+const orchestrationTools = [
   ...Object.values(OrchestratorToolkit.tools),
   ...Object.values(ThreadToolkit.tools),
   ...Object.values(AttachmentToolkit.tools),
   ...Object.values(ProjectToolkit.tools),
   ...Object.values(EnvironmentToolkit.tools),
+];
+const previewTools = [
+  ...Object.values(PreviewToolkit.tools),
+  ...Object.values(PreviewControlsToolkit.tools),
+];
+const worktreeTools = Object.values(WorktreeToolkit.tools);
+const pullRequestTools = Object.values(PullRequestsToolkit.tools);
+const deviceTools = Object.values(DeviceToolkit.tools);
+export const hostMcpTools: ReadonlyArray<Tool.Any> = [
+  ...orchestrationTools,
   ...previewTools,
   ...worktreeTools,
-  ...Object.values(PullRequestsToolkit.tools),
+  ...pullRequestTools,
   ...Object.values(HtmlRenderToolkit.tools),
   ...Object.values(HtmlPreviewToolkit.tools),
   ...deviceTools,
 ];
 export const hostMcpToolGrants = {
+  orchestration: orchestrationTools,
   preview: previewTools,
   worktree: worktreeTools,
+  "pull-requests": pullRequestTools,
   device: deviceTools,
 };
 const layerScientToolList = makeScientToolListLayer(hostMcpTools, hostMcpToolGrants);

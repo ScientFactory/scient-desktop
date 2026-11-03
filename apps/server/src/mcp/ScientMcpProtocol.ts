@@ -27,9 +27,9 @@ const isToolListResult = Schema.is(
  * objects at composition, never infer ownership from an unrecognized name.
  * `gated` lists host tools whose every call needs one grant; the list hides them
  * without it. Call-time checks still decide. */
-export function makeScientToolListLayer(
-  hostTools: ReadonlyArray<Tool.Any> = [],
-  gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>> = {},
+export function hostToolVisibility(
+  hostTools: ReadonlyArray<Tool.Any>,
+  gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>>,
 ) {
   const hostNames = new Set<string>();
   for (const tool of hostTools) {
@@ -47,6 +47,20 @@ export function makeScientToolListLayer(
       requiredGrant.set(tool.name, capability);
     }
   }
+  return {
+    owns: (name: string) => hostNames.has(name),
+    listed: (name: string, capabilities: ReadonlySet<McpCapability>) => {
+      const grant = requiredGrant.get(name);
+      return grant === undefined || capabilities.has(grant);
+    },
+  };
+}
+
+export function makeScientToolListLayer(
+  hostTools: ReadonlyArray<Tool.Any> = [],
+  gated: Partial<Record<McpCapability, ReadonlyArray<Tool.Any>>> = {},
+) {
+  const host = hostToolVisibility(hostTools, gated);
   return Layer.effect(
     ScientToolList,
     Effect.gen(function* () {
@@ -73,7 +87,7 @@ export function makeScientToolListLayer(
                 );
           const ids = new Set(available.map((operation) => operation.id));
           for (const tool of listed.tools) {
-            if (!scientOperationCatalog.forTool(tool.name) && !hostNames.has(tool.name))
+            if (!scientOperationCatalog.forTool(tool.name) && !host.owns(tool.name))
               return yield* Effect.die(new Error(`Undeclared MCP tool ownership: ${tool.name}`));
           }
           // Upstream tool text is renamed here, at the one listing every agent reads.
@@ -82,9 +96,9 @@ export function makeScientToolListLayer(
             tools: listed.tools
               .filter((tool) => {
                 const operation = scientOperationCatalog.forTool(tool.name);
-                if (operation !== undefined) return ids.has(operation.id);
-                const grant = requiredGrant.get(tool.name);
-                return grant === undefined || mcpInvocation.capabilities.has(grant);
+                return operation === undefined
+                  ? host.listed(tool.name, mcpInvocation.capabilities)
+                  : ids.has(operation.id);
               })
               .map(scientAgentToolCopy),
           };

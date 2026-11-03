@@ -63,10 +63,13 @@ as workspace re-verification before publication.
 One request-local `tools/list` middleware filters Scient tools using the same
 admission rules as calls. A previously returned list is not a grant. Upstream's
 tools are explicitly declared host-owned tools with their own handlers and
-policy; those whose every call needs one grant (browser and browser controls:
-`preview`; worktree: `worktree`; devices: `device`) are declared with it and
-hidden without it, after upstream's own `EnabledWhen` hiding. Unknown ownership
-is a composition error, not an implicit grant.
+policy; those whose every call needs one grant are declared with it and hidden
+without it, after upstream's own `EnabledWhen` hiding: thread, orchestrator,
+attachment, project and environment tools need `orchestration`; browser and
+browser controls `preview`; worktree tools `worktree`; pull-request tools
+`pull-requests`; devices `device`. HTML tools need none. A thread-less OAuth
+client keeps the tools its grants allow. Unknown ownership is a composition
+error, not an implicit grant.
 
 Effect continues to own the dated MCP wire schemas, transport, parameter
 validation and result encoding. The discovery adapter must be checked whenever
