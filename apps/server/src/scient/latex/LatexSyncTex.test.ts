@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -212,7 +213,7 @@ SyncTeX result end`);
         publicationHelper === undefined ? {} : { filePublicationHelperPath: publicationHelper },
       ),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
   );
 
   const publish = (revisionId: ArtifactRevisionId) =>
@@ -342,7 +343,10 @@ describe("LatexSyncTex", () => {
         "-d",
         expect.stringMatching(/revision-latex-synctex-first$/u),
       ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("maps each page of the build to the source file and line it begins in", () =>
@@ -415,7 +419,10 @@ describe("LatexSyncTex", () => {
         _tag: "unavailable",
         reason: "navigator-failed",
       });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("refuses stale revisions and removes their orphaned index", () =>
@@ -442,7 +449,10 @@ describe("LatexSyncTex", () => {
           path.join(harness.baseDir, "userdata", "latex", "synctex", artifactId, firstRevisionId),
         ),
       ).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("confines forward and inverse source paths to the workspace", () =>
@@ -475,7 +485,10 @@ describe("LatexSyncTex", () => {
         y: 72,
       });
       expect(inverse).toMatchObject({ _tag: "unavailable", reason: "invalid-source" });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("uses the first workspace-contained inverse candidate in helper order", () =>
@@ -519,7 +532,10 @@ SyncTeX result end`),
         line: 51,
         column: null,
       });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("passes source column and current PDF page as forward-search context", () =>
@@ -549,7 +565,10 @@ SyncTeX result end`),
         "-d",
         expect.stringMatching(/revision-latex-synctex-first$/u),
       ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("uses the bundled runtime and ignores legacy persisted command paths", () =>
@@ -597,7 +616,10 @@ SyncTeX result end`),
       });
       expect(legacyResult).toMatchObject({ _tag: "unavailable", reason: "index-invalid" });
       expect(yield* Ref.get(harness.invocations)).toHaveLength(1);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("sweeps indexes after the PDF store evicts their revision", () =>
@@ -612,7 +634,10 @@ SyncTeX result end`),
       const indexRoot = path.join(harness.baseDir, "userdata", "latex", "synctex", artifactId);
       expect(yield* fileSystem.exists(path.join(indexRoot, firstRevisionId))).toBe(false);
       expect(yield* fileSystem.exists(path.join(indexRoot, secondRevisionId))).toBe(true);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("reports each native navigation failure without collapsing its cause", () =>
@@ -674,7 +699,10 @@ SyncTeX result end`),
         reason: "navigator-unavailable",
         message: expect.stringContaining("integrity check"),
       });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
   it.effect(
     "rejects saved source coordinates from another revision without querying the index",
@@ -694,7 +722,10 @@ SyncTeX result end`),
         });
         expect(result).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
         expect(yield* Ref.get(harness.invocations)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+        Effect.scoped,
+      ),
   );
 
   it.effect("rejects externally saved source changes despite a still-live PDF", () =>
@@ -716,7 +747,10 @@ SyncTeX result end`),
         }),
       ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
       expect(yield* Ref.get(harness.invocations)).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("drops forward and inverse results when their source changes during the query", () =>
@@ -750,7 +784,10 @@ SyncTeX result end`),
           direction === "forward" ? "view" : "edit",
         ]);
       }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("rejects source ABA and replacement receipts even when source bytes match again", () =>
@@ -789,7 +826,10 @@ SyncTeX result end`),
           }),
         ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
       }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("does not grant navigation from legacy hash-only evidence", () =>
@@ -819,7 +859,10 @@ SyncTeX result end`),
         }),
       ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
       expect(yield* Ref.get(harness.invocations)).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("refuses navigation when publication proof fails before or during the query", () =>
@@ -856,6 +899,9 @@ SyncTeX result end`),
           phase === "before" ? [] : ["view"],
         );
       }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      Effect.scoped,
+    ),
   );
 });

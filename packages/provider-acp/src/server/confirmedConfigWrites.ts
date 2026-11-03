@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
@@ -57,7 +57,9 @@ export const makeAcpConfirmedConfigWrites = Effect.fn(
     | ((configId: string) => "request" | "request-confirmed")
     | undefined;
   readonly configOptionSettleTimeout: Duration.Input | undefined;
-  readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+  readonly configOptionsRef: SubscriptionRef.SubscriptionRef<
+    ReadonlyArray<EffectAcpSchema.SessionConfigOption>
+  >;
   readonly eventQueue: Queue.Enqueue<{
     readonly _tag: "ConfigOptionsUpdated";
     readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
@@ -87,35 +89,29 @@ export const makeAcpConfirmedConfigWrites = Effect.fn(
   let unreportedConfigWrite: EffectAcpErrors.AcpRequestError | undefined;
 
   // An empty acknowledgement confirms the requested value, not an empty model
-  // inventory. A conforming answer carries the authoritative list; without
-  // one, a notification that arrived during the request wins over the locally
-  // applied value.
+  // inventory. A conforming answer carries the authoritative list.
   const applySetConfigOptionResponse = Effect.fn(
     "confirmedConfigWrites.applySetConfigOptionResponse",
   )(function* (
     inventory: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-    previousConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     configId: string,
     value: string | boolean,
     rawPayload: unknown,
   ): Effect.fn.Return<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> {
-    const currentConfigOptions = yield* Ref.get(configOptionsRef);
+    const currentConfigOptions = yield* SubscriptionRef.get(configOptionsRef);
     const next =
       inventory ??
-      (currentConfigOptions !== previousConfigOptions
-        ? currentConfigOptions
-        : currentConfigOptions.map((option): EffectAcpSchema.SessionConfigOption => {
-            if (option.id !== configId) return option;
-            if (option.type === "select" && typeof value === "string") {
-              return { ...option, currentValue: value };
-            }
-            if (option.type === "boolean" && typeof value === "boolean") {
-              return { ...option, currentValue: value };
-            }
-            return option;
-          }));
-    if (next === currentConfigOptions) return next;
-    yield* Ref.set(configOptionsRef, next);
+      currentConfigOptions.map((option): EffectAcpSchema.SessionConfigOption => {
+        if (option.id !== configId) return option;
+        if (option.type === "select" && typeof value === "string") {
+          return { ...option, currentValue: value };
+        }
+        if (option.type === "boolean" && typeof value === "boolean") {
+          return { ...option, currentValue: value };
+        }
+        return option;
+      });
+    yield* SubscriptionRef.set(configOptionsRef, next);
     yield* Queue.offer(eventQueue, {
       _tag: "ConfigOptionsUpdated",
       configOptions: next,
@@ -132,7 +128,6 @@ export const makeAcpConfirmedConfigWrites = Effect.fn(
    */
   const confirmConfigWrite = Effect.fn("confirmedConfigWrites.confirmConfigWrite")(function* (
     requestPayload: EffectAcpSchema.SetSessionConfigOptionRequest,
-    previousConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     configId: string,
     value: string | boolean,
   ): Effect.fn.Return<
@@ -191,13 +186,7 @@ export const makeAcpConfirmedConfigWrites = Effect.fn(
         if (reportedInventory) {
           // An authoritative response is the agent's report.
           return yield* confirmApplied(
-            yield* applySetConfigOptionResponse(
-              reportedInventory,
-              previousConfigOptions,
-              configId,
-              value,
-              response,
-            ),
+            yield* applySetConfigOptionResponse(reportedInventory, configId, value, response),
           );
         }
         if (response !== undefined && ownUpdate !== undefined)

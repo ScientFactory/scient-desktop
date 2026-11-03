@@ -966,8 +966,8 @@ describe("PiAdapterV2 Models", () => {
         const updates = yield* PubSub.unbounded<ReturnType<typeof snapshot>>();
         fake.onSpawn((env) =>
           http
-            .get(env.SCIENT_PI_MODELS_URL!, {
-              headers: { authorization: "Bearer " + env.SCIENT_PI_MODELS_TOKEN! },
+            .get(String(env.SCIENT_PI_MODELS_URL), {
+              headers: { authorization: "Bearer " + String(env.SCIENT_PI_MODELS_TOKEN) },
             })
             .pipe(
               Effect.flatMap((response) => response.text),

@@ -7,6 +7,7 @@ import {
   RunAttemptId,
 } from "@t3tools/contracts";
 import type { OpenCodeClient } from "@opencode/client/effect";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
@@ -33,9 +34,17 @@ const selectedTurn = (nativeId = promptId): OrchestrationV2ProviderTurn => ({
 const acceptance = (turn: OrchestrationV2ProviderTurn, prompts: ReadonlyArray<string>) => {
   const nativeClient = {
     message: {
-      list: () =>
+      // Newest first; every prompt here is a user message.
+      list: (input: { readonly type?: string }) =>
         Effect.succeed({
-          data: prompts.map((id) => ({ id, type: "user" })),
+          data:
+            input.type === "user"
+              ? prompts.map((id, index) => ({
+                  id,
+                  type: "user",
+                  time: { created: DateTime.makeUnsafe(prompts.length - index) },
+                }))
+              : [],
           cursor: {},
         }),
     },

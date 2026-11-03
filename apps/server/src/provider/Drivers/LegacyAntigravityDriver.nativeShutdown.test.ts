@@ -3,6 +3,7 @@ import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExec
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -39,7 +40,7 @@ import * as Stream from "effect/Stream";
 import * as NetAddress from "effect/net/NetAddress";
 import { HttpClient, HttpServer } from "effect/http";
 import { PtyAdapter, PtySpawnError, type PtyExitEvent } from "@t3tools/shared/PtyAdapter";
-import { ChildProcessSpawner } from "effect/process";
+import { type ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -109,12 +110,12 @@ const mcp = Layer.effect(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("legacy-agy-native-shutdown")),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "legacy-agy-native-shutdown-",
 }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(ThreadCommandExecutor.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
@@ -159,7 +160,7 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
   }> = [];
   const launches: Array<{
     instanceId: string;
-    environment: Readonly<NodeJS.ProcessEnv>;
+    environment: NonNullable<ChildProcess.CommandOptions["env"]>;
     args: ReadonlyArray<string>;
     cwd: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
@@ -284,7 +285,7 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
         return yield* Effect.die("Unexpected fixture pipeline");
-      const home = command.options.env?.HOME;
+      const home = command.options.env?.HOME?.toString();
       const instanceId = path.basename(home ?? "");
       if (
         !home ||
@@ -308,7 +309,7 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
       launches.push({
         instanceId,
         environment: command.options.env ?? {},
-        args: command.args,
+        args: command.args.map(String),
         cwd: command.options.cwd,
         handle,
       });
@@ -627,6 +628,7 @@ const managerLayer = Effect.fn("LegacyShutdown.managerLayer")(function* (h: Harn
       ),
     ),
     NodeServices.layer,
+    NodeCrypto.layer,
   );
   return {
     released,

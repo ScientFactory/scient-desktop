@@ -36,6 +36,7 @@ require a cosmetic folder migration.
   - [OpenCode](./user/providers-opencode.md)
   - [Muse Code](./user/providers-muse.md)
   - [fx](./user/providers-fx.md)
+  - [Kiro](./user/providers-kiro.md)
   - [Pi](./user/providers-pi.md)
   - [Oh My Pi](./user/providers-omp.md)
   - [ACP registry](./user/providers-acp.md)

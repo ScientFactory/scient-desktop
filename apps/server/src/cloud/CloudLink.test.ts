@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { HttpClient, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -107,7 +108,7 @@ const withService = <A, E>(
         address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
       }),
       ServerConfig.layerTest("/", { prefix: "t3-cloud-preferences-test-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
       Layer.succeed(
         HttpClient.HttpClient,
@@ -290,6 +291,7 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
+      NodeCrypto.layer,
     );
     yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -13,7 +14,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -88,7 +89,7 @@ it.live(
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           fileSystem: fs,
           path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           serverConfig: config,
           idAllocator: yield* IdAllocatorV2,
           continuations: { offer: () => Effect.die("No unsolicited work in preflight fixture") },
@@ -305,7 +306,12 @@ it.live(
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            idAllocatorLayer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),

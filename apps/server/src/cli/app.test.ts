@@ -6,6 +6,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
@@ -87,7 +88,7 @@ const layerCliAuthority = Layer.mergeAll(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
     Layer.provide(
       ServerConfig.layerTest("/", { prefix: "scient-cli-authority-test-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
   ),
@@ -98,6 +99,7 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         NetService.layer,
         layerCliAuthority,
         ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
@@ -278,7 +280,10 @@ describe("t3 server command safety", () => {
             }
             expect(yield* pathExists(baseDir)).toBe(false);
           }
-        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
       ),
   );
 

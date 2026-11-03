@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, beforeAll, expect, it } from "@effect/vitest";
 import type { EditorFlushRequest, EditorFlushResponse } from "@t3tools/contracts";
@@ -20,7 +21,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { EditorFlush, layer, layerWith } from "./EditorFlush.ts";
 
 const flushLayer = (startupWait: Duration.Input) =>
-  layerWith({ retirement: "5 minutes", startupWait }).pipe(Layer.provide(NodeServices.layer));
+  layerWith({ retirement: "5 minutes", startupWait }).pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
 /** A new service that waits for nobody. */
 const NoStartupWait = flushLayer("0 millis");
 
@@ -289,7 +292,10 @@ it.effect("keeps failing on a window lost without a goodbye until it is retired"
       windows: [helperSaved],
     });
     // The production retirement and startup wait.
-  }).pipe(Effect.scoped, Effect.provide(layer.pipe(Layer.provide(NodeServices.layer)))),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(layer.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))),
+  ),
 );
 
 it.effect("forgets a window that says goodbye at once, even while a request awaits it", () =>

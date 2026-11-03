@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // SCIENT-FORK:START restored-behavior-guards
 import * as PlatformError from "effect/PlatformError";
 import * as Logger from "effect/Logger";
@@ -104,6 +105,7 @@ function layerEnvironment(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         DesktopConfig.layerTest({
           // SCIENT-FORK:START scient-backend-launch
           SCIENT_NEXT_HOME: baseDir,
@@ -163,7 +165,7 @@ const withHarness = <A, E, R>(
         ),
       ),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 interface PackagedWslHarnessContext {
   readonly baseDir: string;
@@ -255,7 +257,7 @@ const withPackagedWslHarness = <A, E, R>(
         ),
       ),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("DesktopBackendConfiguration", () => {
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
@@ -352,7 +354,7 @@ describe("DesktopBackendConfiguration", () => {
         path.join(resourcesPath, "server.asar/apps/server/dist/bin.mjs"),
       );
       assert.equal(config.env.ELECTRON_RUN_AS_NODE, "1");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the guarded bootstrap fields left every other desktop test green.
@@ -443,7 +445,7 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(config.args.slice(0, 2), ["-d", "Ubuntu"]);
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl launches a packaged backend from the WSL-local runtime cache", () => {
@@ -863,7 +865,7 @@ describe("DesktopBackendConfiguration", () => {
         // SCIENT-FORK:START scient-backend-launch
         assert.equal(config.env.SCIENT_NEXT_DEVELOPMENT_STATE, "true");
         assert.isTrue(Option.isNone(config.preflightFailure));
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl does not inherit the primary desktop data directory", () =>
@@ -923,7 +925,7 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("T3CODE_HOME", previousT3Home);
         restoreEnv("SCIENT_NEXT_HOME", previousScientNextHome);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
 
@@ -1032,7 +1034,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
 
@@ -1086,7 +1088,7 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("T3CODE_TELEMETRY_ENABLED", previousTelemetry);
         restoreEnv("OTEL_RESOURCE_ATTRIBUTES", previousResourceAttributes);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
@@ -1159,7 +1161,7 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("T3CODE_OTLP_PROTOCOL", previousOtlpProtocol);
         for (const [name, value] of ambientOtel) restoreEnv(name, value);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -1196,7 +1198,7 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -1239,7 +1241,7 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl marks a missing packaged server entry as fatal", () =>
@@ -1272,7 +1274,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("prefers the external packaged resource monitor over the copy inside the asar", () =>
@@ -1330,7 +1332,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // SCIENT-FORK:START scient-backend-launch
@@ -1379,7 +1381,7 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolves the development SyncTeX helper from the Scient-owned native tree", () =>
@@ -1415,7 +1417,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
 
@@ -1437,7 +1439,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
         Layer.provideMerge(layerEnvironment("/tmp/t3-wsl-isavailable", { platform: "win32" })),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     );
     try {
@@ -1484,7 +1486,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1547,7 +1549,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1612,7 +1614,7 @@ describe("DesktopBackendConfiguration", () => {
         error.message,
         `Failed to read persisted backend observability settings at ${settingsPath}.`,
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1661,7 +1663,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1706,7 +1708,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 

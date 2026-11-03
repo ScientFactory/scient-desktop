@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -60,7 +61,7 @@ const stores = Layer.mergeAll(
 const sink = EventSink.layer.pipe(Layer.provideMerge(stores));
 const TestLayer = Layer.mergeAll(Commit.layer, Maintenance.layer).pipe(
   Layer.provideMerge(sink),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const seedProject = Effect.gen(function* () {
@@ -204,7 +205,7 @@ const NativeImportLayer = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(sink),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-import-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.effect(

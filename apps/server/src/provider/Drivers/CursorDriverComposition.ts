@@ -12,7 +12,7 @@ import {
   type CursorRuntimeResolverInput,
   type CursorRuntimeResolution,
 } from "@t3tools/provider-cursor/server";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Effect from "effect/Effect";
 
@@ -29,7 +29,7 @@ import { buildScientRuntimeInstructions } from "../ScientRuntimeInstructions.ts"
 export type CursorDriverCompositionEnv =
   | ServerConfig.ServerConfig
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto;
+  | SecureRandom.SecureRandom;
 
 type CursorDriverCompositionExtension = Pick<
   ScientProviderInstance,

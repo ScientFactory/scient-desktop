@@ -1,5 +1,6 @@
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as NetAddress from "effect/net/NetAddress";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert } from "@effect/vitest";
 import {
@@ -587,7 +588,7 @@ function makeTestLayer(input: {
       layerProviderRuntimeTestServices(Layer.merge(configuredEventSinkLayer, TestStoresLayer)),
     ),
     Layer.provide(ThreadCommandExecutor.layer),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(input.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );
 }
@@ -608,6 +609,7 @@ const TestMcpRegistryLayer = McpSessionRegistry.layer.pipe(
       Layer.succeed(HttpServer.HttpServer, fakeHttpServer),
       Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment),
       NodeServices.layer,
+      NodeCrypto.layer,
     ),
   ),
 );

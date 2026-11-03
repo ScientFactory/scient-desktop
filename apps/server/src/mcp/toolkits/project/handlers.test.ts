@@ -386,7 +386,6 @@ const projectLaunchHarness = (input: {
             },
           }),
     }),
-    NodeCrypto.layer,
     Layer.mock(ProviderSessionManagerV2)({
       resolveMcpInvocationPolicy: (requested) =>
         Effect.sync(() => {
@@ -498,7 +497,7 @@ const projectLaunchHarness = (input: {
         Layer.provide(NodeServices.layer),
       ),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   return {
     projectId,

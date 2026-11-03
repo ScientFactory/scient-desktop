@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { initializeScientProject } from "@scientfactory/project-init";
@@ -58,6 +59,7 @@ const registryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       Layer.succeed(
         HttpServer.HttpServer,
         HttpServer.HttpServer.of({
@@ -375,7 +377,7 @@ it.live.each(
             projection.providerTurns.every((turn) => turn.status === "completed"),
         );
       }).pipe(Effect.provide(runtime));
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, idAllocatorLayer))),
   ),
 );
 

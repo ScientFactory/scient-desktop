@@ -3,7 +3,6 @@ import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -37,7 +36,7 @@ const provideNodeServices = <A, E>(
   effect: Effect.Effect<
     A,
     E,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
   >,
 ) => effect.pipe(Effect.provide(NodeServices.layer));
 

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadSectionId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -24,38 +25,41 @@ const settingsLayer = ServerSettingsModule.layer.pipe(
 const alpha = { id: ThreadSectionId.make("alpha"), name: "Alpha", order: 0 };
 const beta = { id: ThreadSectionId.make("beta"), name: "Beta", order: 0 };
 
-it.layer(NodeServices.layer)("server settings thread-section precondition", (it) => {
-  it.effect("applies a section edit only to the catalog it was based on", () =>
-    Effect.gen(function* () {
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      const empty = { threadSections: [], threadSectionsGeneralIndex: 0 };
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "server settings thread-section precondition",
+  (it) => {
+    it.effect("applies a section edit only to the catalog it was based on", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const empty = { threadSections: [], threadSectionsGeneralIndex: 0 };
 
-      // First client: based on the empty catalog, applies.
-      const first = yield* service.updateSettings({
-        threadSections: [alpha],
-        threadSectionsGeneralIndex: 0,
-        threadSectionsExpected: empty,
-      });
-      assert.deepStrictEqual(
-        first.threadSections.map((section) => section.id),
-        [alpha.id],
-      );
+        // First client: based on the empty catalog, applies.
+        const first = yield* service.updateSettings({
+          threadSections: [alpha],
+          threadSectionsGeneralIndex: 0,
+          threadSectionsExpected: empty,
+        });
+        assert.deepStrictEqual(
+          first.threadSections.map((section) => section.id),
+          [alpha.id],
+        );
 
-      // Second client, also based on the empty catalog: its section keys are
-      // dropped and the returned settings show what the server holds.
-      const second = yield* service.updateSettings({
-        threadSections: [beta],
-        threadSectionsGeneralIndex: 0,
-        threadSectionsExpected: empty,
-      });
-      assert.deepStrictEqual(
-        second.threadSections.map((section) => section.id),
-        [alpha.id],
-      );
-      assert.deepStrictEqual(
-        (yield* service.getSettings).threadSections.map((section) => section.id),
-        [alpha.id],
-      );
-    }).pipe(Effect.provide(settingsLayer)),
-  );
-});
+        // Second client, also based on the empty catalog: its section keys are
+        // dropped and the returned settings show what the server holds.
+        const second = yield* service.updateSettings({
+          threadSections: [beta],
+          threadSectionsGeneralIndex: 0,
+          threadSectionsExpected: empty,
+        });
+        assert.deepStrictEqual(
+          second.threadSections.map((section) => section.id),
+          [alpha.id],
+        );
+        assert.deepStrictEqual(
+          (yield* service.getSettings).threadSections.map((section) => section.id),
+          [alpha.id],
+        );
+      }).pipe(Effect.provide(settingsLayer)),
+    );
+  },
+);

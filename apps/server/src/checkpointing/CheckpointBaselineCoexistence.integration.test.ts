@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointScopeId,
@@ -54,7 +55,7 @@ it.live.each(["historical", "workspace-bound"] as const)(
         );
         const databaseLayer = makeSqlitePersistenceLive(
           path.join(config.stateDir, "cbc.sqlite"),
-        ).pipe(Layer.provide(NodeServices.layer));
+        ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
         const stores = Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
           Layer.provideMerge(databaseLayer),
         );
@@ -62,7 +63,7 @@ it.live.each(["historical", "workspace-bound"] as const)(
           Layer.provide(
             VcsDriverRegistry.layer.pipe(
               Layer.provide(Layer.mergeAll(VcsProcess.layer, Layer.succeed(ServerConfig, config))),
-              Layer.provide(NodeServices.layer),
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           ),
         );
@@ -359,6 +360,6 @@ it.live.each(["historical", "workspace-bound"] as const)(
             );
           }).pipe(Effect.provide(services)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     ),
 );

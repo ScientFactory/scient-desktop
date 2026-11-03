@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CommandId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   allocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-child-stop-" }).pipe(

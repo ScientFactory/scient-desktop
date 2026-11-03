@@ -1,5 +1,5 @@
 import type { ProviderAuthState, ProviderSetupError } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -17,21 +17,13 @@ const terminal = (state: ProviderAuthState) =>
 /** Scient's lifecycle surface uses the instance's SDK auth and credential ownership. */
 export const makeCursorSdkConnectionActions = Effect.fn("makeCursorSdkConnectionActions")(
   function* (controller: ProviderAuthController) {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     return {
       methods: ["cursor_browser"],
       start: Effect.fnUntraced(function* (method) {
         if (method !== "cursor_browser")
           return yield* failure("Cursor does not support this sign-in method.");
-        const owner = `scient-cursor-${yield* crypto.randomUUIDv4().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderConnectionActionError({
-                message: "Could not start Cursor sign-in. Try again.",
-                cause,
-              }),
-          ),
-        )}`;
+        const owner = `scient-cursor-${yield* random.uuidV4()}`;
         const started = yield* Effect.acquireRelease(
           controller.start(owner).pipe(Effect.mapError(mapSetupError)),
           (state) =>

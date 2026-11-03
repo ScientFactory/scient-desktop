@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -129,6 +130,7 @@ const promotionMcpRegistryLayer = McpSessionRegistry.layer.pipe(
         }),
       ),
       NodeServices.layer,
+      NodeCrypto.layer,
     ),
   ),
 );
@@ -728,7 +730,12 @@ const withNativeQueue = <A, E, R>(
       }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(threadCommandExecutorLayer))));
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          idAllocatorLayer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -2936,7 +2943,7 @@ it.live("a real checkpoint capture failure settles the native answer and drains 
         yield* waitFor((projection) => projection.runs.every((run) => run.status === "completed"));
         assert.deepEqual(offers, ["foreground", "first"]);
       }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.live(
@@ -4602,7 +4609,7 @@ it.live(
             ),
           ),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     ),
 );
 
@@ -4987,7 +4994,7 @@ it.live(
             ),
           ),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     ),
 );
 

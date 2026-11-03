@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -69,7 +70,11 @@ function layerEnvironment(baseDir: string, appVersion = "0.0.17") {
   }).pipe(
     Layer.provide(
       // SCIENT-FORK:START scient-desktop-settings
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir }),
+      ),
       // SCIENT-FORK:END scient-desktop-settings
     ),
   );
@@ -92,11 +97,11 @@ const withSettings = <A, E, R>(
       Effect.provide(
         DesktopAppSettings.layer.pipe(
           Layer.provideMerge(layerEnvironment(baseDir, options?.appVersion)),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     );
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
 
 function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
   return Effect.gen(function* () {

@@ -1,4 +1,5 @@
 import type { NonNullableUsage, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -13,7 +14,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
@@ -55,7 +56,12 @@ const threadId = ThreadId.make("thread:native-reading-identity");
 const instanceId = ProviderInstanceId.make("claude-native-reading");
 const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
 const nativeId = "00000000-0000-4000-8000-000000000001";
-const outer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer);
+const outer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  idAllocatorLayer,
+  McpProviderSessions.layer,
+);
 
 const waitFor = Effect.fn("nativeReading.waitFor")(function* (
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -176,7 +182,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
     yield* Deferred.await(receipt);
   });
   const nativeAdapter = yield* makeClaudeAdapterV2({
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     instanceId,
     settings: yield* decodeClaudeSettings({}),
     environment: {},

@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderDriverKind,
@@ -171,6 +172,7 @@ function makeHarness(
       getProviders: SubscriptionRef.get(providersRef),
       refresh: () => SubscriptionRef.get(providersRef),
       refreshAfterUpdate: () => SubscriptionRef.get(providersRef),
+      invalidateModelCaches: () => Effect.void,
       refreshInstance: () => SubscriptionRef.get(providersRef),
       refreshWorkspaceSnapshot: () => SubscriptionRef.get(providersRef),
       refreshInstanceStrict: () => SubscriptionRef.get(providersRef),
@@ -235,6 +237,7 @@ function makeHarness(
                 Layer.succeed(ProviderActivity, activity),
                 providerSessionsLayer,
                 NodeServices.layer,
+                NodeCrypto.layer,
               ),
             ),
           ),
@@ -246,7 +249,9 @@ function makeHarness(
           Effect.provideService(ProviderRegistry, registry),
           Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
           Effect.provideService(ProviderActivity, activity),
-          Effect.provide(Layer.mergeAll(providerSessionsLayer, NodeServices.layer)),
+          Effect.provide(
+            Layer.mergeAll(providerSessionsLayer, NodeServices.layer, NodeCrypto.layer),
+          ),
           Scope.provide(managerScope),
         );
     return {

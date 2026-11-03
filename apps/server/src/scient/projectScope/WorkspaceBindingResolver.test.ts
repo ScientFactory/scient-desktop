@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -161,7 +162,7 @@ const makeResolverLayer = (state: ResolverState) => {
   );
   const storeLayer = WorkspaceBindingStore.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
   return workspaceBindingResolverLayer.pipe(
@@ -169,7 +170,7 @@ const makeResolverLayer = (state: ResolverState) => {
       Layer.mergeAll(environmentLayer, authorityProjectionLayer, evidenceLayer, storeLayer),
     ),
     Layer.provide(ServerConfig.layerTest("/projects/example", { prefix: "workspace-resolver-" })),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 };
 

@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -159,7 +159,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const providerSessions = yield* ProviderSessionManagerV2;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
   const activity = yield* ProviderActivity;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveRuntimeOperation>>(
     new Map(),
   );
@@ -431,7 +431,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider setup plan changed. Review it again before continuing.",
         });
       }
-      const operationId = `runtime-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+      const operationId = `runtime-${yield* random.uuidV4()}`;
       const reserved = yield* lifecycleCoordinator.reserve({
         instanceId: input.instanceId,
         provider: target.provider,
@@ -800,7 +800,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     // Wait without holding the lifecycle reservation, so user actions stay
     // available while turns run; re-check once reserved.
     yield* waitForIdleTurns(provider, Effect.void);
-    const operationId = `reselect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+    const operationId = `reselect-${yield* random.uuidV4()}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId,
       provider,

@@ -4,7 +4,9 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Redacted, Schema, Stream } from "effect";
@@ -258,7 +260,11 @@ it.effect.skipIf(!binary)(
       // Nothing Droid sent Scient, and nothing it wrote to disk, holds the key.
       expect(acpTraffic.join("\n")).not.toContain(realKey);
       expect(filesContaining(root, realKey)).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );
 
@@ -402,7 +408,11 @@ for (const protocol of Object.keys(MODEL_PATHS) as Array<keyof typeof MODEL_PATH
         );
         expect(acpTraffic.join("\n")).not.toContain(realKey);
         expect(filesContaining(root, realKey)).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+        TestClock.withLive,
+      ),
     120_000,
   );
 }

@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { BindingGeneration, type PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   ScientDocumentPageExpectation,
@@ -64,7 +65,7 @@ export const documentExportTestLayer = (prefix: string) => {
       Layer.provide(T3ProjectFileLoader.layer),
     ),
     ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
-  ).pipe(Layer.provideMerge(NodeServices.layer));
+  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 };
 
 export async function makeFixtureDirectory(fixtures: string[], prefix: string): Promise<string> {

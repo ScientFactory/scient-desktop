@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
@@ -48,6 +49,7 @@ const testLayer = McpRegistry.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       NodeHttpClient.layerNodeHttp,
       OmpExecutableGate.layer,
       ServerSettings.layerTest(),
@@ -74,8 +76,9 @@ describe.runIf(ompQualifyBinary)("installed native OMP MCP authority", () => {
           );
           const registry = yield* McpSessionRegistry;
           let inventoryCalls = 0;
-          const routes = McpHttpServer.ScientComputeToolkitRegistrationLive.pipe(
-            Layer.provideMerge(McpHttpServer.layerMcpTransport),
+          const routes = McpHttpServer.layerMcpTransport(
+            McpHttpServer.ScientComputeToolkitRegistrationLive,
+          ).pipe(
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(McpSessionRegistry, registry),

@@ -2,6 +2,7 @@ import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExec
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -32,7 +33,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as NetAddress from "effect/net/NetAddress";
 import { HttpClient, HttpServer } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import { type ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -98,10 +99,10 @@ const mcp = Layer.effect(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("grok-native-shutdown")),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "grok-native-shutdown-" }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
   Layer.provideMerge(ModelManifest.layerTest),
@@ -110,7 +111,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "grok-native-s
   Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
-    TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+    TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   ),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -170,7 +173,7 @@ const harness = Effect.fn("GrokShutdown.harness")(function* () {
   };
   const launches: Array<{
     instanceId: string;
-    environment: Readonly<NodeJS.ProcessEnv>;
+    environment: NonNullable<ChildProcess.CommandOptions["env"]>;
     args: ReadonlyArray<string>;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
@@ -226,7 +229,7 @@ const harness = Effect.fn("GrokShutdown.harness")(function* () {
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand" || !command.args.includes("stdio"))
         return yield* spawner.spawn(command);
-      const instanceId = command.options.env?.GROK_SHUTDOWN_INSTANCE;
+      const instanceId = command.options.env?.GROK_SHUTDOWN_INSTANCE?.toString();
       if (instanceId === first) {
         const gate = controls.beforeTargetSpawn;
         controls.beforeTargetSpawn = Effect.void;
@@ -236,7 +239,7 @@ const harness = Effect.fn("GrokShutdown.harness")(function* () {
       launches.push({
         instanceId: instanceId ?? "unknown",
         environment: command.options.env ?? {},
-        args: command.args,
+        args: command.args.map(String),
         handle,
       });
       return handle;
@@ -450,6 +453,7 @@ const managerLayer = Effect.fn("GrokShutdown.managerLayer")(function* (h: Harnes
       ),
     ),
     NodeServices.layer,
+    NodeCrypto.layer,
   );
   return {
     revoked,

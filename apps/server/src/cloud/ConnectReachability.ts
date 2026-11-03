@@ -69,9 +69,10 @@ export function classifyReachability(
     "Restart Scient. If it remains unavailable, check the server log for relay client errors.";
 
   if (!facts.managedTunnelConfigured) {
+    // A running server reads a stored relay link only at startup.
     return fail(
       "not_linked",
-      "The server has not set up a T3 Connect tunnel.",
+      "The server has not set up a relay tunnel.",
       "Check this Scient installation's Settings > Connections. Cloud connections may be unavailable in this build.",
     );
   }
@@ -131,22 +132,18 @@ export function classifyReachability(
     );
   }
   if (status !== null) {
-    return fail(
-      "unexpected_response",
-      `The T3 Connect address answered with HTTP ${status}.`,
-      restart,
-    );
+    return fail("unexpected_response", `The relay address answered with HTTP ${status}.`, restart);
   }
   return endpoint.kind === "dns_failed"
     ? fail(
         "dns_failed",
-        "The T3 Connect address does not resolve from this machine.",
+        "The relay address does not resolve from this machine.",
         "Check the DNS settings on this machine or its VPN.",
         exitNodeHint(exitNode),
       )
     : fail(
         "timeout",
-        "The T3 Connect address did not answer from this machine.",
+        "The relay address did not answer from this machine.",
         "Check the network, VPN, or proxy on this machine.",
         exitNodeHint(exitNode),
       );
@@ -155,7 +152,7 @@ export function classifyReachability(
 /** The loud diagnosis the CLI prints and the server logs. */
 export function formatReachabilityFailure(result: Unreachable): string {
   return [
-    "✕ T3 Connect is NOT reachable from other devices",
+    "✕ The relay is NOT reachable from other devices",
     `  ${result.reason}`,
     ...(result.hint ? [`  ${result.hint}`] : []),
     `  Fix: ${result.fix}`,
@@ -287,7 +284,7 @@ const make = Effect.gen(function* () {
       );
     } else {
       yield* Effect.logInfo(
-        `T3 Connect is reachable from other devices. ${formatConnectReachable(result)}`,
+        `The relay is reachable from other devices. ${formatConnectReachable(result)}`,
       );
     }
     return result;

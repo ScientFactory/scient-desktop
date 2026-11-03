@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@t3tools/contracts";
@@ -14,6 +15,7 @@ import { nativeOmpOrchestration as fixture } from "../../provider/testUtils/nati
 
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   allocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-background-native-" }).pipe(

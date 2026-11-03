@@ -2,7 +2,9 @@
 import * as NodeHttp from "node:http";
 import { beforeAll } from "vite-plus/test";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
@@ -158,6 +160,10 @@ it.effect.skipIf(!binary)(
         expect(result._tag).toBe("Failure");
       }
       expect(requests.length).toBe(before);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   45000,
 );

@@ -101,7 +101,6 @@ import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
   deriveThreadPendingBackgroundTasks,
-  deriveWorkspaceMutationId,
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
@@ -185,6 +184,7 @@ import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
+  deriveWorkspaceMutationId,
   isCompleteTurnItemRow,
   shouldShowLoadEarlierControl,
   type CodexFeedbackSubmission,
@@ -203,6 +203,7 @@ import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -4233,141 +4234,143 @@ function ChatViewContent(props: ChatViewProps) {
               )}
               // SCIENT-FORK:END
             >
-              <ThreadTimeline
-                pendingApprovals={pendingApprovals}
-                heldApprovalRequestIds={heldApprovalRequestIds}
-                respondingRequestIds={respondingRequestIds}
-                onRespondToApproval={onRespondToApprovalStable}
-                canOperateThread={canOperateThread}
-                // SCIENT-FORK:START — the agents panel.
-                agentPanelModel={agentPanelModel}
-                onOpenAgents={addAgentsSurface}
-                // SCIENT-FORK:END
-                threadDetailRef={routeThreadDetailRef}
-                entriesInput={timelineEntriesInput}
-                draftEntries={isServerThread ? null : draftTimelineEntries}
-                activeThreadKey={activeThreadKey}
-                syncing={threadSyncPhase !== null}
-                detailLoading={threadDetailLoading}
-                citationRequest={citationRequest}
-                citationHistory={citationHistory}
-                onCiteAssistantText={citeAssistantTextStable}
-                {...(activeProject
-                  ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
-                  : {})}
-                // SCIENT-FORK:START — the working row waits for the sent prompt and its run's start.
-                isWorking={timelineWorking}
-                // SCIENT-FORK:END
-                runlessWorkActive={runlessWorkStartedAt !== null}
-                isCompacting={isCompacting}
-                awaitingUser={
-                  activePendingApproval !== null
-                    ? "approval"
-                    : activePendingUserInput !== null ||
-                        // A secret request has no runtime request; the shell carries it.
-                        activeThreadShell?.hasPendingUserInput === true
-                      ? "input"
-                      : null
-                }
-                awaitingRequestId={
-                  activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
-                }
-                activeTurnStartedAt={activeWorkStartedAt}
-                worktreeSetup={worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetupStable}
-                retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
-                onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
-                {...(draftId
-                  ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
-                  : {})}
-                {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
-                isPreparingWorktree={isPreparingWorktree}
-                footer={timelineFooter}
-                listRef={legendListRef}
-                runs={serverProjection?.runs ?? []}
-                latestRun={activeActivityRun}
-                announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
-                // The detail's own run: activeLatestRun falls back to the shell's run while the
-                // detail loads, which would make that incomplete frame look current.
-                detailBehindShell={isDetailBehindShell(
-                  serverLatestRun,
-                  activeThreadShell?.latestRun ?? null,
-                )}
-                runningRunId={activeRunningTurnId}
-                turnDiffSummaries={turnDiffSummaries}
-                activeThreadEnvironmentId={
-                  displayedThreadRef?.environmentId ?? activeThread.environmentId
-                }
-                routeThreadKey={displayedTimelineKey}
-                displayThreadKey={displayedTimelineKey}
-                announceTurnStatus={!isProviderSubagent}
-                onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
-                // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
-                {...(embedded
-                  ? {}
-                  : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
-                onOpenThread={onOpenRelatedThreadStable}
-                parentThreadLink={parentThreadLink}
-                workflowOpening={workflowOpening}
-                supportsConversationRollback={supportsConversationRollback}
-                threadStartCheckpointReady={threadStartCheckpointReady}
-                availableRevertTurnCounts={availableRevertTurnCounts}
-                onRevertToTurnCount={onRevertTimelineTurnStable}
-                onUseArtifactTemplate={insertArtifactTemplateStable}
-                onSendAppMessage={sendAppMessageStable}
-                // A fork being prepared copies this history: no rewinding until it is done.
-                isRevertingCheckpoint={isRevertingCheckpoint || isForkingThread}
-                // SCIENT-FORK:START — conversation fork actions.
-                hasForkBaseline={hasForkBaseline}
-                forkOriginThreadId={forkOriginThreadId}
-                forkBaselineAssistantMessageId={forkBaselineAssistantMessageId}
-                onForkAssistantMessage={onForkAssistantMessage}
-                onForkUserMessage={onForkUserMessage}
-                // SCIENT-FORK:END
-                onImageExpand={onExpandTimelineImageStable}
-                onFileOpen={openFileAttachmentStable}
-                onFileDownload={downloadFileAttachmentStable}
-                markdownCwd={gitCwd ?? undefined}
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={activeWorkspaceRoot}
-                skills={timelineSkills}
-                anchorMessageId={timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReadyStable}
-                onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
-                contentInsetEndAdjustment={composerTimelineInset}
-                // SCIENT-FORK:START — no live-follow flag (the timeline never pins to its end);
-                // placement in flight, the send follow (chat/responseFollow.ts) and releasing
-                // unused reserved room.
-                timelinePositioningPending={timelinePositioningPending}
-                readingFollowPromptId={responseFollow.promptId}
-                responseFollow={responseFollow.timeline}
-                onReleaseUnusedAnchor={releaseUnusedTimelineAnchor}
-                // SCIENT-FORK:END
-                onIsAtEndChange={onIsAtEndChange}
-                // SCIENT-FORK:START — the unread count below, for the Scroll to end control.
-                onUnreadBelowChange={setUnreadBelowCount}
-                // SCIENT-FORK:END
-                // SCIENT-FORK:START — the reader's navigation cancels placement and the follow.
-                onManualNavigation={cancelTimelinePositioning}
-                // SCIENT-FORK:END
-                cancelPositionRestoreRef={cancelPositionRestoreRef}
-                // SCIENT-FORK:START
-                onPositionedThreadKeyChange={forkLandingReveal.onPositionedThreadKeyChange}
-                // SCIENT-FORK:END
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                // SCIENT-FORK:START — the restore waits for history, and may page in older turns.
-                positionHistoryLoading={threadDetailLoading}
-                // SCIENT-FORK:END
-                emptyPlaceholderInset={composerReservedHeight}
-                topFadeEnabled={!hasTimelineTopBanner}
-                // SCIENT-FORK:START — older pages for the restore.
-                loadEarlier={loadEarlierTurns}
-                // SCIENT-FORK:END
-                {...(threadHistoryControls === undefined
-                  ? {}
-                  : { historyControls: threadHistoryControls })}
-              />
+              <WorkspaceMutationIdContext value={workspaceMutationId}>
+                <ThreadTimeline
+                  pendingApprovals={pendingApprovals}
+                  heldApprovalRequestIds={heldApprovalRequestIds}
+                  respondingRequestIds={respondingRequestIds}
+                  onRespondToApproval={onRespondToApprovalStable}
+                  canOperateThread={canOperateThread}
+                  // SCIENT-FORK:START — the agents panel.
+                  agentPanelModel={agentPanelModel}
+                  onOpenAgents={addAgentsSurface}
+                  // SCIENT-FORK:END
+                  threadDetailRef={routeThreadDetailRef}
+                  entriesInput={timelineEntriesInput}
+                  draftEntries={isServerThread ? null : draftTimelineEntries}
+                  activeThreadKey={activeThreadKey}
+                  syncing={threadSyncPhase !== null}
+                  detailLoading={threadDetailLoading}
+                  citationRequest={citationRequest}
+                  citationHistory={citationHistory}
+                  onCiteAssistantText={citeAssistantTextStable}
+                  {...(activeProject
+                    ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
+                    : {})}
+                  // SCIENT-FORK:START — the working row waits for the sent prompt and its run's start.
+                  isWorking={timelineWorking}
+                  // SCIENT-FORK:END
+                  runlessWorkActive={runlessWorkStartedAt !== null}
+                  isCompacting={isCompacting}
+                  awaitingUser={
+                    activePendingApproval !== null
+                      ? "approval"
+                      : activePendingUserInput !== null ||
+                          // A secret request has no runtime request; the shell carries it.
+                          activeThreadShell?.hasPendingUserInput === true
+                        ? "input"
+                        : null
+                  }
+                  awaitingRequestId={
+                    activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
+                  }
+                  activeTurnStartedAt={activeWorkStartedAt}
+                  worktreeSetup={worktreeSetup}
+                  onCancelWorktreeSetup={onCancelWorktreeSetupStable}
+                  retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
+                  onRetryWorkspacePreparation={onRetryWorkspacePreparationStable}
+                  {...(draftId
+                    ? { onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocallyStable }
+                    : {})}
+                  {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
+                  isPreparingWorktree={isPreparingWorktree}
+                  footer={timelineFooter}
+                  listRef={legendListRef}
+                  runs={serverProjection?.runs ?? []}
+                  latestRun={activeActivityRun}
+                  announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
+                  // The detail's own run: activeLatestRun falls back to the shell's run while the
+                  // detail loads, which would make that incomplete frame look current.
+                  detailBehindShell={isDetailBehindShell(
+                    serverLatestRun,
+                    activeThreadShell?.latestRun ?? null,
+                  )}
+                  runningRunId={activeRunningTurnId}
+                  turnDiffSummaries={turnDiffSummaries}
+                  activeThreadEnvironmentId={
+                    displayedThreadRef?.environmentId ?? activeThread.environmentId
+                  }
+                  routeThreadKey={displayedTimelineKey}
+                  displayThreadKey={displayedTimelineKey}
+                  announceTurnStatus={!isProviderSubagent}
+                  onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
+                  // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
+                  {...(embedded
+                    ? {}
+                    : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
+                  onOpenThread={onOpenRelatedThreadStable}
+                  parentThreadLink={parentThreadLink}
+                  workflowOpening={workflowOpening}
+                  supportsConversationRollback={supportsConversationRollback}
+                  threadStartCheckpointReady={threadStartCheckpointReady}
+                  availableRevertTurnCounts={availableRevertTurnCounts}
+                  onRevertToTurnCount={onRevertTimelineTurnStable}
+                  onUseArtifactTemplate={insertArtifactTemplateStable}
+                  onSendAppMessage={sendAppMessageStable}
+                  // A fork being prepared copies this history: no rewinding until it is done.
+                  isRevertingCheckpoint={isRevertingCheckpoint || isForkingThread}
+                  // SCIENT-FORK:START — conversation fork actions.
+                  hasForkBaseline={hasForkBaseline}
+                  forkOriginThreadId={forkOriginThreadId}
+                  forkBaselineAssistantMessageId={forkBaselineAssistantMessageId}
+                  onForkAssistantMessage={onForkAssistantMessage}
+                  onForkUserMessage={onForkUserMessage}
+                  // SCIENT-FORK:END
+                  onImageExpand={onExpandTimelineImageStable}
+                  onFileOpen={openFileAttachmentStable}
+                  onFileDownload={downloadFileAttachmentStable}
+                  markdownCwd={gitCwd ?? undefined}
+                  resolvedTheme={resolvedTheme}
+                  timestampFormat={timestampFormat}
+                  workspaceRoot={activeWorkspaceRoot}
+                  skills={timelineSkills}
+                  anchorMessageId={timelineAnchorMessageId}
+                  onAnchorReady={onTimelineAnchorReadyStable}
+                  onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
+                  contentInsetEndAdjustment={composerTimelineInset}
+                  // SCIENT-FORK:START — no live-follow flag (the timeline never pins to its end);
+                  // placement in flight, the send follow (chat/responseFollow.ts) and releasing
+                  // unused reserved room.
+                  timelinePositioningPending={timelinePositioningPending}
+                  readingFollowPromptId={responseFollow.promptId}
+                  responseFollow={responseFollow.timeline}
+                  onReleaseUnusedAnchor={releaseUnusedTimelineAnchor}
+                  // SCIENT-FORK:END
+                  onIsAtEndChange={onIsAtEndChange}
+                  // SCIENT-FORK:START — the unread count below, for the Scroll to end control.
+                  onUnreadBelowChange={setUnreadBelowCount}
+                  // SCIENT-FORK:END
+                  // SCIENT-FORK:START — the reader's navigation cancels placement and the follow.
+                  onManualNavigation={cancelTimelinePositioning}
+                  // SCIENT-FORK:END
+                  cancelPositionRestoreRef={cancelPositionRestoreRef}
+                  // SCIENT-FORK:START
+                  onPositionedThreadKeyChange={forkLandingReveal.onPositionedThreadKeyChange}
+                  // SCIENT-FORK:END
+                  hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                  // SCIENT-FORK:START — the restore waits for history, and may page in older turns.
+                  positionHistoryLoading={threadDetailLoading}
+                  // SCIENT-FORK:END
+                  emptyPlaceholderInset={composerReservedHeight}
+                  topFadeEnabled={!hasTimelineTopBanner}
+                  // SCIENT-FORK:START — older pages for the restore.
+                  loadEarlier={loadEarlierTurns}
+                  // SCIENT-FORK:END
+                  {...(threadHistoryControls === undefined
+                    ? {}
+                    : { historyControls: threadHistoryControls })}
+                />
+              </WorkspaceMutationIdContext>
 
               {/* SCIENT-FORK: a queue hidden below the reading area shows the control too. */}
               {(showScrollToBottom || queuedRunsHiddenBelow) && !isThreadFindActive && (

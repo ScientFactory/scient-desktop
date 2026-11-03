@@ -5,7 +5,7 @@
  */
 import { ExtensionsError, VaultSecretRef } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -94,7 +94,7 @@ const unavailable = (message: string) =>
 
 const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const writes = yield* Semaphore.make(1);
 
   const readEnvelope = Effect.fn("ConnectorCredentialStore.readEnvelope")(function* (
@@ -132,9 +132,7 @@ const make = Effect.gen(function* () {
           message: "User secrets require the Secrets vault, which is not available yet.",
         });
       }
-      const uuid = yield* crypto
-        .randomUUIDv4()
-        .pipe(Effect.mapError(() => unavailable("Connector credentials could not be saved.")));
+      const uuid = yield* random.uuidV4();
       const ref = VaultSecretRef.make(`connector-${uuid}`);
       yield* writeEnvelope(
         ref,

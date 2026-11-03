@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -22,7 +23,7 @@ import {
   type ModelSelection,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -77,6 +78,7 @@ const decodeRequest = Schema.decodeUnknownSync(
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-v2-parity-" }).pipe(
@@ -127,16 +129,13 @@ const harness = Effect.fnUntraced(function* (
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   if (scenario)
     yield* fs.remove(NodePath.join(config.stateDir, "watchdog-signal"), { force: true });
-  const requestsPath = NodePath.join(
-    config.stateDir,
-    `requests-${yield* crypto.randomUUIDv4()}.jsonl`,
-  );
-  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* crypto.randomUUIDv4()}.txt`);
+  const requestsPath = NodePath.join(config.stateDir, `requests-${yield* random.uuidV4()}.jsonl`);
+  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* random.uuidV4()}.txt`);
   const binary = writeFakeCli({
     directory: config.stateDir,
     name: "droid",
@@ -147,7 +146,7 @@ const harness = Effect.fnUntraced(function* (
       `await import(pathToFileURL(${JSON.stringify(mockAgentPath)}).href);`,
     ].join("\n"),
   });
-  const scenarioId = yield* crypto.randomUUIDv4();
+  const scenarioId = yield* random.uuidV4();
   const controlPath = NodePath.join(config.stateDir, `activity-control-${scenarioId}`);
   const pidsPath = NodePath.join(config.stateDir, `owned-pids-${scenarioId}`);
   const scripted = scenario
@@ -227,6 +226,8 @@ const harness = Effect.fnUntraced(function* (
           ? {
               protocolLogging: {
                 ...input.protocolLogging,
+                // Incoming frames are no longer logged by default; this stall needs them.
+                logIncoming: true,
                 logger: (event) =>
                   event.direction === "incoming" &&
                   event.stage === "raw" &&

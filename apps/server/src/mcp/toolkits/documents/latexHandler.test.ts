@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -80,7 +81,7 @@ const makeWorkspaceLayer = (root: string, stateRoot: string, helper = publicatio
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
     Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const source = {

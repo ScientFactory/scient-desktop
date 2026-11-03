@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { resolveAntigravityAcpCatalogAsset } from "@scientfactory/provider-runtime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -91,5 +92,8 @@ const main = Effect.gen(function* () {
 });
 
 await Effect.runPromise(
-  main.pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
+  main.pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
+  ),
 );

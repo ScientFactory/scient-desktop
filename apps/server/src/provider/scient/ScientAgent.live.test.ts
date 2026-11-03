@@ -9,6 +9,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -41,7 +42,7 @@ const scientAgentBinary = process.env.SCIENT_AGENT_QUALIFY_BINARY || undefined;
 const fullTurn = process.env.SCIENT_AGENT_QUALIFY_FULL_TURN === "1";
 const binary = scientAgentBinary ?? "";
 const layer = Layer.mergeAll(
-  NodeServices.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   OmpExecutableGate.layer,
   McpProviderSessions.layer,
 );
@@ -183,7 +184,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           env: environment,
           extraArgs: OMP_ISOLATED_ARGS,
         }).pipe(
-          Effect.provide(NodeServices.layer),
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           Effect.map((client) => ({
             events: client.events,
             command: client.command,

@@ -21,7 +21,7 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 // SCIENT-FORK:START
 import * as Cause from "effect/Cause";
 // SCIENT-FORK:END
@@ -174,11 +174,8 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
       } as EnvironmentRegistry["Service"]),
       // SCIENT-FORK:END
       Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => new Uint8Array(size),
-          digest: (_algorithm, data) => Effect.succeed(data),
-        }),
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size)),
       ),
     ),
   );
@@ -566,11 +563,8 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
     Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => new Uint8Array(size).fill(++randomSequence),
-          digest: (_algorithm, data) => Effect.succeed(data),
-        }),
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size).fill(++randomSequence)),
       ),
     ),
   );

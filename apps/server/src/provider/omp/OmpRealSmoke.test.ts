@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OmpSettings, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -70,7 +71,12 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+          OmpExecutableGate.layer,
+        ),
+      ),
     ),
   );
 
@@ -103,7 +109,11 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+          OmpExecutableGate.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -152,7 +162,11 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
   );

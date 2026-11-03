@@ -1,5 +1,6 @@
 /** Actual Droid ACP writes through V2 command, restart and queue ownership. */
 import { assert } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -71,6 +72,7 @@ const threadId = ThreadId.make("thread:droid-native-scheduling");
 export const selection = { instanceId, model: "droid-native" };
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "droid-native-scheduling-" }).pipe(

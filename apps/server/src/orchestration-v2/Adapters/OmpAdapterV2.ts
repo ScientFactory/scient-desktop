@@ -18,7 +18,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
@@ -130,7 +130,7 @@ export interface OmpAdapterV2Options extends Pick<
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly serverConfig: ServerConfig["Service"];
   readonly makeProcess: OmpProcessFactory;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -313,7 +313,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         const extension = yield* writeOmpExtensionFiles({
           target,
           directory: root,
-          name: `scient-extension-${yield* options.crypto.randomUUIDv4()}`,
+          name: `scient-extension-${yield* options.random.uuidV4()}`,
           source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath),
           bootstrap: {
             endpoint: mcp?.endpoint ?? null,
@@ -347,7 +347,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   {
                     observedAt,
                     event: {
-                      id: yield* options.crypto.randomUUIDv4(),
+                      id: yield* options.random.uuidV4(),
                       kind: record.kind,
                       provider: target.driverKind,
                       providerInstanceId: options.instanceId,
@@ -1144,7 +1144,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           target,
           client,
           scope,
-          continuationIdPrefix: yield* options.crypto.randomUUIDv4(),
+          continuationIdPrefix: yield* options.random.uuidV4(),
           onUpdate: applyUpdate,
           ...(options.nativeEventLogger
             ? {
@@ -1410,7 +1410,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           if ("messageBytes" in delivery) {
             const promptPath = path.join(
               root,
-              `scient-prompt-${yield* options.crypto.randomUUIDv4()}.txt`,
+              `scient-prompt-${yield* options.random.uuidV4()}.txt`,
             );
             yield* fs.writeFileString(promptPath, text, { mode: 0o600 });
             yield* Effect.addFinalizer(() => fs.remove(promptPath).pipe(Effect.ignore));

@@ -1217,8 +1217,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                 ref={rowRef}
                 // SCIENT-FORK: SidebarRowWindow restores focus to this trigger.
                 data-sidebar-row-trigger
-                role="treeitem"
-                tabIndex={-1}
+                role="button"
+                tabIndex={0}
                 data-sidebar-row={threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
@@ -1415,8 +1415,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
               ref={rowRef}
               // SCIENT-FORK: SidebarRowWindow restores focus to this trigger.
               data-sidebar-row-trigger
-              role="treeitem"
-              tabIndex={-1}
+              role="button"
+              tabIndex={0}
               data-sidebar-row={threadKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}

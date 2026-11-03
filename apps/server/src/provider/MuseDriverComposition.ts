@@ -4,7 +4,7 @@ import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -26,7 +26,7 @@ export type MuseCompositionEnv =
   | MuseDriverEnv
   | ServerConfig
   | ProviderLifecycleCoordinator
-  | Crypto.Crypto;
+  | SecureRandom.SecureRandom;
 
 /** Scient owns lifecycle policy; the original package remains the sole MSP implementation. */
 export const MuseDriver = makeMuseDriver<

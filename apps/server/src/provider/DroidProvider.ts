@@ -5,7 +5,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -261,7 +261,7 @@ const probeAndDiscoverDroidViaAcp = (
 ): Effect.Effect<
   DroidAcpProbeOutcome,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -412,7 +412,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
 ): Effect.fn.Return<
   DroidProviderStatusResult,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = droidModelsFromSettings(droidSettings.customModels);
@@ -628,7 +628,7 @@ export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(fu
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > {
   return (yield* checkDroidProviderStatusWithCapabilities(droidSettings, environment)).snapshot;
 });

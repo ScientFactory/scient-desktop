@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import { ChildProcessSpawner } from "effect/process";
 import * as Redacted from "effect/Redacted";
@@ -200,7 +202,7 @@ describe("makeDroidAcpRuntime", () => {
         expect(Exit.isFailure(exit) && String(exit.cause)).toContain(
           "cannot run Droid without tools in this process",
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 

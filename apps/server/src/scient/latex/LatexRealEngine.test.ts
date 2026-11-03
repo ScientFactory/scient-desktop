@@ -7,6 +7,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -129,7 +130,7 @@ const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: st
               : { syncTexNavigatorPath: process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH }),
           }),
         ),
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
         Layer.provideMerge(completionLayer),
       ),
     };
@@ -182,7 +183,10 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           });
           yield* expectPublishedPdf(store, finished.descriptor);
         }).pipe(Effect.provide(harness.serviceLayer));
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+        Effect.scoped,
+      ),
     COMPILE_TIMEOUT_MS,
   );
 
@@ -225,7 +229,10 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           ]);
           yield* expectPublishedPdf(store, finished.descriptor);
         }).pipe(Effect.provide(harness.serviceLayer));
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+        Effect.scoped,
+      ),
     COMPILE_TIMEOUT_MS,
   );
 });
@@ -332,7 +339,10 @@ describe.skipIf(!ENGINE_ON_PATH || !resolvesOnPath("pdftotext -v"))(
           yield* service.requestBuild(input);
           expect((yield* awaitTerminal(service, input)).state).toBe("succeeded");
         }).pipe(Effect.provide(harness.serviceLayer));
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+        Effect.scoped,
+      ),
     );
   },
 );
@@ -388,7 +398,10 @@ describe.skipIf(installedManagedRoot === undefined)(
             expect(defaultAfter.kind).toBe(defaultBefore.kind);
             expect(defaultAfter.executable).toBe(defaultBefore.executable);
           }).pipe(Effect.provide(h.serviceLayer));
-        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        }).pipe(
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+          Effect.scoped,
+        ),
     );
   },
 );

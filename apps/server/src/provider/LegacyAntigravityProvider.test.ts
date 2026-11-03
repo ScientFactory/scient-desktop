@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodePath } from "@effect/platform-node";
 import type { ServerProviderModel } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,15 +14,6 @@ import {
   isAgyApiKeyModeConfigurationError,
   parseAgyModelsOutput,
 } from "./LegacyAntigravityProvider.ts";
-
-/** Deterministic Crypto for tests that never reach random UUID generation. */
-const CryptoLayer = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => new Uint8Array(size),
-    digest: () => Effect.succeed(new Uint8Array(32)),
-  }),
-);
 
 /** A spawner that must never be reached by short-circuiting code paths. */
 const NeverSpawnerLayer = Layer.succeed(
@@ -144,9 +134,7 @@ describe("checkAntigravityProviderStatus wiring", () => {
     Effect.gen(function* () {
       const settings = { enabled: false, binaryPath: "agy", customModels: [] };
       const draft = yield* checkAntigravityProviderStatus(settings, {}).pipe(
-        Effect.provide(
-          Layer.mergeAll(FileSystem.layerNoop({}), NodePath.layer, CryptoLayer, NeverSpawnerLayer),
-        ),
+        Effect.provide(Layer.mergeAll(FileSystem.layerNoop({}), NodePath.layer, NeverSpawnerLayer)),
       );
       expect(draft.enabled).toBe(false);
     }),
@@ -201,10 +189,7 @@ describe("checkAntigravityProviderStatus wiring", () => {
         return commandHandle(result);
       }),
     );
-    return Layer.mergeAll(
-      CryptoLayer,
-      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
+    return Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
   }
 
   it.effect("uses provider-owned model discovery as the account and model truth", () =>

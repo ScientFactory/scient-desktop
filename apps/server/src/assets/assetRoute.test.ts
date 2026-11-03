@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import { EnvironmentFilePath, ThreadId } from "@t3tools/contracts";
@@ -41,7 +42,7 @@ const testLayer = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(FetchHttpClient.layer),
   Layer.provideMerge(configLayer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const runRequest = (relativeUrl: string, init?: RequestInit) =>

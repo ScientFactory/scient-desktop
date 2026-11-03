@@ -3,7 +3,9 @@ import * as Schema from "effect/Schema";
 
 import {
   ForgejoComment,
+  ForgejoReview,
   forgejoComment,
+  forgejoReview,
   // SCIENT-FORK:START forgejo-warning-outcome
   ForgejoStatus,
   forgejoChecks,
@@ -11,6 +13,7 @@ import {
 } from "./forgejoPullRequestJson.ts";
 
 const decodeForgejoComment = Schema.decodeSync(ForgejoComment);
+const decodeForgejoReview = Schema.decodeSync(ForgejoReview);
 
 describe("forgejoComment", () => {
   const createdAt = "2026-10-10T19:52:40Z";
@@ -39,6 +42,27 @@ describe("forgejoComment", () => {
     assert.strictEqual(mapped.id, "29061");
     assert.strictEqual(mapped.author?.login, "forgejo-actions");
     assert.strictEqual(mapped.editedAt, "2026-10-10T20:04:50.000Z");
+  });
+});
+
+describe("forgejoReview", () => {
+  it.each([
+    ["REQUEST_CHANGES", false, "CHANGES_REQUESTED"],
+    ["REQUEST_CHANGES", true, "DISMISSED"],
+    ["APPROVED", true, "DISMISSED"],
+  ])("reads %s with dismissed %s as %s", (state, dismissed, reviewState) => {
+    const mapped = forgejoReview(
+      decodeForgejoReview({
+        id: 8,
+        body: "",
+        user: { login: "maria" },
+        state,
+        dismissed,
+        submitted_at: "2026-10-10T19:52:40Z",
+        comments_count: 0,
+      }),
+    );
+    assert.strictEqual(mapped.reviewState, reviewState);
   });
 });
 

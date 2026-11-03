@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import * as NodeOS from "node:os";
-import * as Crypto from "effect/Crypto";
-import * as Hex from "effect/encoding/Hex";
+import * as Digest from "effect/crypto/Digest";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath } from "@t3tools/shared/devHome";
@@ -314,7 +314,7 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   host,
   port,
   devUrl,
-}: CreateDevRunnerEnvInput): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path | Crypto.Crypto> {
+}: CreateDevRunnerEnvInput): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path | Digest.Digest> {
   const path = yield* Path.Path;
   const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
   const webPort = BASE_WEB_PORT + webOffset;
@@ -342,10 +342,9 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     NodeOS.homedir(),
     ".scient-next",
     "dev-scratch",
-    Hex.encode(
-      yield* (yield* Crypto.Crypto)
-        .digest("SHA-256", new TextEncoder().encode(resolvedBaseDir))
-        .pipe(Effect.orDie),
+    yield* (yield* Digest.Digest).digestHex(
+      Digest.sha256,
+      new TextEncoder().encode(resolvedBaseDir),
     ),
     "scratch",
   );
@@ -1016,6 +1015,7 @@ const devRunnerCli = Command.make("dev-runner", {
 const cliRuntimeLayer = Layer.mergeAll(
   Logger.layer([Logger.consolePretty()]),
   NodeServices.layer,
+  NodeCrypto.layer,
   NetService.layer,
 );
 

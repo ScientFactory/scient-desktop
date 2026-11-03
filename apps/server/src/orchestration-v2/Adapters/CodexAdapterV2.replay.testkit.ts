@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import {
   CodexSettings,
   type ModelSelection,
@@ -369,7 +369,7 @@ export const makeCodexReplayHarness = (
       },
     };
     const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
-      crypto: yield* Crypto.Crypto,
+      digest: yield* Digest.Digest,
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
       settings: settings ?? DEFAULT_CODEX_SETTINGS,
       environment: {},

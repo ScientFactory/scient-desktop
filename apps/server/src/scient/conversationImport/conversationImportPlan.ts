@@ -34,7 +34,7 @@ import {
   type OrchestrationConversationImportOmission,
 } from "@t3tools/contracts";
 import { importedMessageMarkdown, importedWorkLogOmissions } from "@scientfactory/conversation";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -232,7 +232,7 @@ function assignTurns(input: ValidatedConversationImport, logical = false): TurnA
   return { byMessageId, byQuestionId, keys };
 }
 
-const uuid = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
+const uuid = SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4()));
 
 /**
  * Records in history order: by timestamp, then as listed. The sort is stable,

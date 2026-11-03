@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
@@ -38,9 +38,9 @@ const SERVER_NAME_PREFIX = "t3-code-";
 export const openCode2ConnectorKey = Effect.fn("openCode2ConnectorKey")(function* (
   threadId: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const digest = yield* crypto
-    .digest("SHA-256", new TextEncoder().encode(threadId))
+    .digest(Digest.sha256, new TextEncoder().encode(threadId))
     .pipe(Effect.orDie);
   return Hex.encode(digest).slice(0, 16);
 });

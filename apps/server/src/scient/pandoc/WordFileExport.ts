@@ -15,7 +15,7 @@ import { exportFileName } from "@scientfactory/conversation";
 import { inspectMarkdownDocument } from "@scientfactory/scient-markdown";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -84,7 +84,7 @@ const make = Effect.gen(function* () {
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const files = yield* ConversationExportFiles;
   const words = yield* PandocWordConverter;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -313,7 +313,7 @@ const make = Effect.gen(function* () {
         );
       yield* readSavedMarkdown(request);
       yield* withCapturedEpoch(root, mutationEpoch, () => Effect.void);
-      const exportId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const exportId = yield* random.uuidV4();
       const fileName = exportFileName(title, ".docx");
       const reserved = yield* files.reserve({ exportId, fileName });
       const converted = yield* words
@@ -475,7 +475,7 @@ const make = Effect.gen(function* () {
       citations: [],
       warnings: [],
     };
-    const exportId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const exportId = yield* random.uuidV4();
     const fileName = exportFileName(title, ".docx");
     const reserved = yield* files.reserve({ exportId, fileName });
     const converted = yield* words

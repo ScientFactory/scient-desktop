@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId, type ServerSettings } from "@t3tools/contracts";
@@ -182,7 +183,14 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           yield* client.shutdown;
           yield* client.close();
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+          ),
+        ),
+      ),
     120_000,
   );
 
@@ -252,7 +260,14 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           yield* client.shutdown;
           yield* client.close();
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+          ),
+        ),
+      ),
     120_000,
   );
 
@@ -402,7 +417,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     120_000,
@@ -478,7 +497,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     180_000,

@@ -1,4 +1,5 @@
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -902,6 +903,7 @@ it.live.each(
             allocatorLayer,
             McpProviderSessions.layer,
             NodeServices.layer,
+            NodeCrypto.layer,
           ),
         ),
       );

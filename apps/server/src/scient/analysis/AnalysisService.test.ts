@@ -17,6 +17,7 @@ import {
   type ExecutionOutputChunk,
   type ExecutionProcessPort,
 } from "@scientfactory/execution";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -192,12 +193,12 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(ServerConfig.layerTest(projectRoot, baseDir)),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const indexLayer = AnalysisRunIndex.layer.pipe(Layer.provide(SqlitePersistenceMemory));
   const localStoreLayer = LocalAnalysisStore.layer.pipe(
     Layer.provide(ServerConfig.ServerConfig.layerTest(projectRoot, baseDir)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const serviceStoreLayer = transformStore
     ? Layer.effect(
@@ -229,7 +230,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, processPort)),
     Layer.provide(workspaceLayer),
     Layer.provide(WorkspacePaths.layer),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
   return {
@@ -374,7 +375,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("runs once on another install, and only one the runtime offered", () =>
@@ -429,7 +430,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("reports a failed requested capture when preparation prevents process launch", () =>
@@ -473,7 +474,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("reports queued capture cancellation without launching its process", () =>
@@ -525,7 +526,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect.each(
@@ -608,7 +609,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("keeps the saved capture outcome when later run bookkeeping fails", () =>
@@ -660,7 +661,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect.each(
@@ -722,7 +723,7 @@ describe("analysis artifact analytics", () => {
         mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
       );
       expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 });
 
@@ -783,7 +784,7 @@ describe("analysis outcome analytics", () => {
         mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
       );
       expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
   it.effect.each(
     (["completed", "failed", "cancelled"] as const).map((outcome) => ({
@@ -853,7 +854,7 @@ describe("analysis outcome analytics", () => {
           ),
         ),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 });
 
@@ -888,7 +889,7 @@ describe("analysis service coordination", () => {
         );
         expect((yield* Effect.flip(service.cancelRun(close))).reason).toBe("process-failed");
       }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
   it.effect("retries a caller-owned batch identity without replaying its process", () =>
     Effect.gen(function* () {
@@ -921,7 +922,7 @@ describe("analysis service coordination", () => {
           })).receipt.status,
         ).toBe("cancelled");
       }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("tab close waits for the native process scope, not only its terminal receipt", () =>
@@ -956,7 +957,7 @@ describe("analysis service coordination", () => {
         yield* Deferred.succeed(cleanupRelease, undefined);
         expect((yield* Fiber.join(closing)).receipt.status).toBe("cancelled");
       }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("serializes concurrent starts so one file cannot acquire two active runs", () =>
@@ -982,7 +983,7 @@ describe("analysis service coordination", () => {
           yield* service.cancelRun({ cwd: harness.projectRoot, runId: startedRunId });
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("cancels a queued run without ever starting its process", () =>
@@ -1014,7 +1015,7 @@ describe("analysis service coordination", () => {
           yield* service.cancelRun({ cwd: harness.projectRoot, runId: first.receipt.runId });
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("never runs a file that changed while its run was waiting", () =>
@@ -1050,7 +1051,7 @@ describe("analysis service coordination", () => {
           expect(yield* Ref.get(harness.processStartCount)).toBe(1);
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("runs files in a registered folder, and keeps them after the folder is set up", () =>
@@ -1082,7 +1083,7 @@ describe("analysis service coordination", () => {
           yield* Queue.take(harness.startedRuns);
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("recovers a persisted non-terminal run as lost on the first history read", () =>
@@ -1153,7 +1154,7 @@ describe("analysis service coordination", () => {
         ),
       );
       expect(analytics.events).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("reuses verification only until runtime configuration changes", () =>
@@ -1189,7 +1190,7 @@ describe("analysis service coordination", () => {
           expect(yield* Ref.get(harness.processStartCount)).toBe(2);
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("never caches an old MATLAB profile under a failed new settings choice", () =>
@@ -1225,7 +1226,7 @@ describe("analysis service coordination", () => {
         const recovered = yield* service.inspectRuntimes({ cwd: harness.projectRoot });
         expect(recovered.runtimes[0]?.executablePath).toBe("/new/matlab");
       }).pipe(Effect.provide(harness.analysisLayer));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("promotes a persisted terminal run into its initialized project", () =>
@@ -1309,6 +1310,6 @@ describe("analysis service coordination", () => {
           ).toBe("partial output\n");
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 });

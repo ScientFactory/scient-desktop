@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -9,7 +10,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -329,7 +330,7 @@ it.live(
           environment: { HOME: home },
           fileSystem: fs,
           path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           idAllocator: yield* IdAllocatorV2,
           serverConfig: config,
@@ -612,6 +613,7 @@ it.live(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             idAllocatorLayer,
             McpProviderSessions.layer,
             ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-conjunction-" }).pipe(

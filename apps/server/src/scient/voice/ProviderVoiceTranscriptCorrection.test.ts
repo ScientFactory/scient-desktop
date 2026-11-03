@@ -54,7 +54,7 @@ it.layer(NodeServices.layer)("provider voice transcript correction", (it) => {
       let spawnedArgs: ReadonlyArray<string> | undefined;
       const spawner = ChildProcessSpawner.make((command) => {
         if (!ChildProcess.isStandardCommand(command)) return Effect.die("Expected one command.");
-        spawnedArgs = command.args;
+        spawnedArgs = command.args.map(String);
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),

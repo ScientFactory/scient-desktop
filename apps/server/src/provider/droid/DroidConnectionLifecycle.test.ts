@@ -1,4 +1,5 @@
 // @effect-diagnostics preferSchemaOverJson:off
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -21,7 +22,7 @@ import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./Droid
 const instanceId = ProviderInstanceId.make("droid");
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-droid-lifecycle-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const fixture = () =>
   Effect.gen(function* () {
