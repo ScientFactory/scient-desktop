@@ -731,21 +731,12 @@ describe("Scient LaTeX build handler", () => {
     }),
   );
 
-  it.effect("rejects missing authority and projectless invocations before building", () =>
+  it.effect("rejects projectless invocations before building", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-latex-authority-"));
       yield* Effect.promise(() => writeTex(root));
       const builds = makeBuildService({ initial: snapshot() });
       const { context, threadId } = yield* makeContext(root, builds);
-
-      const denied = yield* runBuild(buildScientLatexForInvocation(defaultInput), {
-        ...context,
-        invocation: makeInvocation(threadId, new Set()),
-      }).pipe(Effect.result);
-      expect(denied).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "ScientLatexBuildToolError", code: "capability-unavailable" },
-      });
 
       const projectless = yield* runBuild(buildScientLatexForInvocation(defaultInput), {
         ...context,

@@ -19,7 +19,7 @@ const toolError = (
 
 const requireSkillScope = Effect.fn("ScientSkillsToolkit.requireSkillScope")(function* () {
   const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-  if (!invocation.capabilities.has("skills:read") || !invocation.skillScope) {
+  if (!invocation.skillScope) {
     return yield* toolError(
       "capability-unavailable",
       "This provider cannot receive Scient skills.",

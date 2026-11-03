@@ -20,7 +20,6 @@ export class ScientComputeToolError extends Schema.TaggedError<ScientComputeTool
   "ScientComputeToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "session-not-found",

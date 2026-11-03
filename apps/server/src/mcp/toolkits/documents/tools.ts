@@ -40,7 +40,6 @@ export class ScientPdfBuildToolError extends Schema.TaggedError<ScientPdfBuildTo
   "ScientPdfBuildToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-source-path",
@@ -67,7 +66,6 @@ export class ScientDocumentExportToolError extends Schema.TaggedError<ScientDocu
   "ScientDocumentExportToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-source-path",
@@ -96,7 +94,6 @@ export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBui
   "ScientLatexBuildToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-source-path",

@@ -35,13 +35,7 @@ const ScientSourceAgentAttachment = Schema.Struct({
 export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesToolError>()(
   "ScientSourcesToolError",
   {
-    code: Schema.Literals([
-      "capability-unavailable",
-      "project-required",
-      "project-changed",
-      "not-found",
-      "operation-failed",
-    ]),
+    code: Schema.Literals(["project-required", "project-changed", "not-found", "operation-failed"]),
     message: NonEmptyString,
   },
 ) {}

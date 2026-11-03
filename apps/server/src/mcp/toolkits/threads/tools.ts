@@ -29,12 +29,7 @@ const ScientHandoffSummaryReadResult = Schema.Struct({
 export class ScientHandoffSummaryReadToolError extends Schema.TaggedError<ScientHandoffSummaryReadToolError>()(
   "ScientHandoffSummaryReadToolError",
   {
-    code: Schema.Literals([
-      "capability_denied",
-      "thread_not_found",
-      "thread_outside_project",
-      "orchestration_error",
-    ]),
+    code: Schema.Literals(["thread_not_found", "orchestration_error"]),
     message: Schema.Trimmed.check(Schema.isNonEmpty()),
   },
 ) {}
