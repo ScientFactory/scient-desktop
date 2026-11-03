@@ -160,25 +160,33 @@ export const layer = Layer.effect(
       }
     >();
 
+    // Discovery runs the source-control CLIs: too slow to repeat for every snapshot.
+    const githubSignIns = yield* Effect.cachedWithTTL(
+      Effect.gen(function* () {
+        const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
+        const github = providers.find((provider) => provider.kind === "github");
+        const githubAccounts =
+          github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
+        if (
+          github &&
+          githubAccounts.length === 0 &&
+          github.auth.status === "authenticated" &&
+          Option.isSome(github.auth.account)
+        ) {
+          githubAccounts.push({
+            account: github.auth.account.value,
+            host: Option.getOrElse(github.auth.host, () => "github.com"),
+            active: true,
+            authenticated: true,
+          });
+        }
+        return githubAccounts;
+      }),
+      "1 minute",
+    );
     const snapshotNow = Effect.gen(function* () {
       const customModelKeys = yield* sources.customModelKeys.pipe(Effect.orElseSucceed(() => []));
-      const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
-      const github = providers.find((provider) => provider.kind === "github");
-      const githubAccounts =
-        github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
-      if (
-        github &&
-        githubAccounts.length === 0 &&
-        github.auth.status === "authenticated" &&
-        Option.isSome(github.auth.account)
-      ) {
-        githubAccounts.push({
-          account: github.auth.account.value,
-          host: Option.getOrElse(github.auth.host, () => "github.com"),
-          active: true,
-          authenticated: true,
-        });
-      }
+      const githubAccounts = yield* githubSignIns;
       const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = [
         ...githubAccounts.map((account) => ({
           kind: "github" as const,

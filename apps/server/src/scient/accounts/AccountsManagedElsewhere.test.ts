@@ -4,10 +4,13 @@ import { Effect, Layer, Option } from "effect";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { makeHarness } from "./Accounts.testkit.ts";
 
+let discoveries = 0;
+
 it.effect(
-  "projects authenticated GitHub identities and the existing Custom models key inventory",
+  "projects authenticated GitHub identities and the existing Custom models key inventory, discovering them once",
   () =>
     Effect.gen(function* () {
+      discoveries = 0;
       const { service } = yield* makeHarness({
         sourceOverrides: {
           customModelKeys: Effect.succeed([
@@ -31,41 +34,45 @@ it.effect(
           href: "/settings/custom-models",
         },
       ]);
+      yield* service.snapshot;
+      expect(discoveries).toBe(1);
     }).pipe(
       Effect.provide(
         Layer.mock(SourceControlProviderRegistry)({
           resolveLink: () => undefined,
-          discover: Effect.succeed([
-            {
-              kind: SourceControlProviderKind.make("github"),
-              label: "GitHub",
-              implemented: true,
-              status: "available",
-              version: Option.none(),
-              installHint: "",
-              detail: Option.none(),
-              auth: {
-                status: "authenticated",
-                account: Option.some("synthetic-user"),
-                host: Option.some("github.example.test"),
+          discover: Effect.sync(() => (discoveries += 1)).pipe(
+            Effect.as([
+              {
+                kind: SourceControlProviderKind.make("github"),
+                label: "GitHub",
+                implemented: true,
+                status: "available",
+                version: Option.none(),
+                installHint: "",
                 detail: Option.none(),
-                accounts: [
-                  {
-                    host: "github.example.test",
-                    account: "synthetic-user",
-                    active: true,
-                    authenticated: true,
-                  },
-                  {
-                    host: "github.example.test",
-                    account: "signed-out",
-                    active: false,
-                    authenticated: false,
-                  },
-                ],
+                auth: {
+                  status: "authenticated",
+                  account: Option.some("synthetic-user"),
+                  host: Option.some("github.example.test"),
+                  detail: Option.none(),
+                  accounts: [
+                    {
+                      host: "github.example.test",
+                      account: "synthetic-user",
+                      active: true,
+                      authenticated: true,
+                    },
+                    {
+                      host: "github.example.test",
+                      account: "signed-out",
+                      active: false,
+                      authenticated: false,
+                    },
+                  ],
+                },
               },
-            },
-          ]),
+            ]),
+          ),
         }),
       ),
     ),
