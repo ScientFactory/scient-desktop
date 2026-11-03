@@ -2,13 +2,10 @@ import {
   downloadPresentationBlob,
   markdownFenceCopySource,
   presentationFileBaseName,
+  presentationPngScale,
 } from "../presentation/presentationExport";
 import { copyPngBlobToClipboard } from "../presentation/imageClipboard";
 import type { VegaLiteViewController } from "./VegaLiteView";
-
-const MAX_PNG_DIMENSION = 8_192;
-const MAX_PNG_PIXELS = 16_777_216;
-const DEFAULT_PNG_SCALE = 2;
 
 export function vegaLiteFileBaseName(title: string | null): string {
   const normalizedTitle = title?.replace(/(?:\.vega-?lite|\.vl)?\.json$/i, "") ?? null;
@@ -41,18 +38,6 @@ export async function downloadVegaLiteSvg(
   );
 }
 
-export function vegaLitePngScale(sourceWidth: number, sourceHeight: number): number {
-  if (!(sourceWidth > 0 && sourceHeight > 0)) {
-    throw new Error("The rendered chart has no measurable size.");
-  }
-  return Math.min(
-    DEFAULT_PNG_SCALE,
-    MAX_PNG_DIMENSION / sourceWidth,
-    MAX_PNG_DIMENSION / sourceHeight,
-    Math.sqrt(MAX_PNG_PIXELS / (sourceWidth * sourceHeight)),
-  );
-}
-
 function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -67,7 +52,7 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 
 export async function vegaLitePngBlob(controller: VegaLiteViewController): Promise<Blob> {
   const dimensions = controller.getDimensions();
-  const scale = vegaLitePngScale(dimensions.width, dimensions.height);
+  const scale = presentationPngScale(dimensions.width, dimensions.height, "chart");
   const canvas = await controller.toCanvas(scale);
   try {
     return await canvasToPngBlob(canvas);
