@@ -129,6 +129,49 @@ async function recordCopies(
   }
 }
 
+/**
+ * Profiles that stopped being unrestricted since the last snapshot: turned Off or Ask, limited to
+ * projects. On a baseline, every restricted one, so a change made while this desktop was away counts.
+ */
+function newlyRestricted(
+  previous: Pick<AccountsSnapshot, "profiles"> | undefined,
+  next: Pick<AccountsSnapshot, "profiles">,
+  eligible: (profileId: string) => boolean = otherPersistentProfile,
+) {
+  return next.profiles
+    .filter(
+      ({ profileId }) =>
+        eligible(profileId) &&
+        !isUnrestricted(recordOf(next, profileId)) &&
+        (previous === undefined || isUnrestricted(recordOf(previous, profileId))),
+    )
+    .map(({ profileId }) => profileId);
+}
+
+/**
+ * Main's rows for the units a withdrawal removed: a copy row goes, and a saved password whose row
+ * the copy marked stays, recorded signed out.
+ */
+export function withdrawnRows(
+  accounts: ReadonlyArray<AccountSummary>,
+  units: ReadonlyArray<ReadonlyArray<string>>,
+) {
+  const rows = accounts.filter((row) => {
+    const details = website(row);
+    return (
+      details?.profileId === DEFAULT_BROWSER_PROFILE_ID &&
+      row.signIn?.from === "copy" &&
+      details.sites.every((site) => units.some((unit) => unit.some((u) => under(site, u))))
+    );
+  });
+  return {
+    remove: rows.filter((row) => Object.keys(row.secrets).length === 0).map((row) => row.accountId),
+    signedOut: rows
+      .filter((row) => Object.keys(row.secrets).length > 0)
+      .map((row) => row.accountId),
+  };
+}
+
 const RETRIES = 2;
 const RETRY_GAP_MS = 10 * 60 * 1000;
 const IN_FLIGHT_LIMIT = 200;
@@ -150,6 +193,8 @@ export function mainFillTrigger(deps: {
   readonly eligible?: (profileId: string) => boolean;
   /** Trigger 3, run once the environment's first snapshot arrives. */
   readonly backfill?: (snapshot: AccountsSnapshot) => Promise<void>;
+  /** A profile no longer unrestricted takes back from Main what its copies still hold there. */
+  readonly withdraw?: (profileId: string) => Promise<void>;
 }) {
   let previous: AccountsSnapshot | undefined;
   let backfill: Promise<void> | undefined;
@@ -199,9 +244,12 @@ export function mainFillTrigger(deps: {
     /** Resolves once this snapshot's copies are done. */
     seen: (snapshot: AccountsSnapshot) => {
       const events = previous ? signInEvents(previous, snapshot, deps.eligible) : [];
+      const restricted = newlyRestricted(previous, snapshot, deps.eligible);
       previous = snapshot;
       backfill ??= deps.backfill?.(snapshot).catch(() => undefined);
       const copies: Array<Promise<void>> = backfill ? [backfill] : [];
+      for (const profileId of restricted)
+        copies.push(deps.withdraw?.(profileId).catch(() => undefined) ?? Promise.resolve());
       for (const row of events) {
         const key = keyOf(row);
         if (pending.has(key)) continue;
@@ -246,6 +294,18 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
             browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
           })).then(() => undefined),
       }),
+    withdraw: async (profileId) => {
+      const result = await window.desktopBridge?.accounts
+        ?.withdrawFromMain?.({ from: profileId, environmentId })
+        .catch(() => null);
+      const snapshot = read();
+      if (!result?.units.length || !snapshot) return;
+      const { remove, signedOut } = withdrawnRows(snapshot.accounts, result.units);
+      for (const accountId of remove)
+        await accountsState.remove.run(registry, { environmentId, input: { accountId } });
+      for (const accountId of signedOut)
+        await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
+    },
   });
   return registry.subscribe(
     atom,

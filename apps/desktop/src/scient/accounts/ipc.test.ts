@@ -1,12 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Generate ephemeral synthetic values instead of credential fixtures.
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type SessionCookie } from "@t3tools/contracts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
@@ -17,6 +21,7 @@ import {
   fillMainHandler,
   forwardCapturedSignIn,
   signedInSites,
+  withdrawFromMainHandler,
 } from "./ipc.ts";
 import { trackMainInserts } from "./mainInserts.ts";
 
@@ -251,7 +256,13 @@ function fillFixture() {
   };
   const frame = {};
   const mainContents = { id: 1, mainFrame: frame, isDestroyed: () => false };
+  const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-main-copies-"));
   const layer = Layer.mergeAll(
+    Layer.succeed(
+      DesktopEnvironment.DesktopEnvironment,
+      // Only the state folder: Main's copy records live there.
+      { stateDir, path: NodePath } as unknown as DesktopEnvironment.DesktopEnvironment["Service"],
+    ),
     Layer.mock(PreviewManager)({
       isBrowserPartition: () => true,
       getBrowserSession: (scope = "shared", persistent, namespace) =>
@@ -284,6 +295,8 @@ function fillFixture() {
     sessions,
     copy: (input: Record<string, unknown>, sender: unknown = event) =>
       fillMainHandler(fillInput(input), sender as never).pipe(Effect.provide(layer)),
+    withdraw: (from: string) =>
+      withdrawFromMainHandler({ from }, event as never).pipe(Effect.provide(layer)),
   };
 }
 
@@ -371,6 +384,30 @@ function fakeJarSession() {
     clearStorageData: vi.fn(async () => jar.clear()),
   };
 }
+
+describe("withdrawFromMain", () => {
+  it.effect("takes back only what a restricted profile's copies still hold in Main", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      f.profile("work").put(jarCookie({ domain: ".overleaf.com", value: "overleaf" }));
+      f.profile("home").put(jarCookie({ domain: ".gitlab.com", value: "home" }));
+      yield* f.copy({ from: "work", sourceControls: allowed });
+      yield* f.copy({ from: "home", sourceControls: allowed });
+      expect(f.main().jar.size).toBe(3);
+      // The site rotated Overleaf's session in Main since: it is Main's own now.
+      f.main().put(jarCookie({ domain: ".overleaf.com", value: "rotated" }));
+      expect(yield* f.withdraw("work")).toEqual({ units: [["github.com"]] });
+      expect([...f.main().jar.values()].map(({ domain, value }) => [domain, value])).toEqual([
+        [".overleaf.com", "rotated"],
+        [".gitlab.com", "home"],
+      ]);
+      // Taken back once: nothing is left to take, and the source profile is never touched.
+      expect(yield* f.withdraw("work")).toEqual({ units: [] });
+      expect(f.profile("work").jar.size).toBe(2);
+    }),
+  );
+});
 
 describe("fillMain", () => {
   it.effect("refuses other senders, Main, Incognito and any restricted profile", () =>

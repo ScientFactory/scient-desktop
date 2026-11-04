@@ -29,6 +29,7 @@ export function makeDesktopAccountsBridge(
     readSessions: (input) => ipc.invoke(Channels.READ_SESSIONS, input),
     signOutMainSite: (site, environmentId) =>
       ipc.invoke(Channels.SIGN_OUT_MAIN_SITE, { site, environmentId }),
+    withdrawFromMain: (input) => ipc.invoke(Channels.WITHDRAW_FROM_MAIN, input),
     qualifySessionCopy: () => ipc.invoke(Channels.QUALIFY_SESSION_COPY),
     loginForm: (tabId) => ipc.invoke(Channels.LOGIN_FORM, { tabId }),
     onLoginFormDetected: (listener) => {

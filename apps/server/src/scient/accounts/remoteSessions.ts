@@ -22,6 +22,7 @@ import {
   shareable,
   unitCookies,
   travels,
+  unitFingerprintText,
   unitSites,
   universitySites,
 } from "@t3tools/shared/scientSessionCookies";
@@ -95,23 +96,7 @@ const isLive = (cookie: SessionCookie, nowSeconds: number) =>
 /** A digest of a unit's live cookies, values included: what a copy wrote, to tell it from later changes. */
 const fingerprintOf = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
   NodeCrypto.createHash("sha256")
-    .update(
-      JSON.stringify(
-        cookies
-          .filter((cookie) => isLive(cookie, nowSeconds))
-          .map((c) => [
-            c.name,
-            c.domain,
-            c.path,
-            c.partitionKey?.topLevelSite ?? null,
-            c.partitionKey?.hasCrossSiteAncestor ?? null,
-            c.hostOnly,
-            c.value,
-          ])
-          .map((entry) => JSON.stringify(entry))
-          .sort(),
-      ),
-    )
+    .update(unitFingerprintText(cookies, nowSeconds))
     .digest("base64url");
 
 const fromSent = (cookie: AccountSessionsReceiveInput["units"][number]["cookies"]) =>

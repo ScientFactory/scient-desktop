@@ -3,6 +3,7 @@ import {
   BrowserProfileId,
   EnvironmentId,
   defaultAccountControls,
+  defaultBrowserProfileRecord,
   type AccountsSnapshot,
   type AccountSummary,
   type DesktopFillMainResult,
@@ -15,6 +16,7 @@ import {
   fillMainFromProfile,
   mainFillTrigger,
   replaceAllowedSince,
+  withdrawnRows,
 } from "./mainFill";
 
 const state = vi.hoisted(() => ({
@@ -72,6 +74,7 @@ function setup(result: DesktopFillMainResult | null = copied("copied")) {
   const timers: Array<() => Promise<void>> = [];
   let current: AccountsSnapshot | undefined;
   const recorded: unknown[] = [];
+  const withdrawn: string[] = [];
   const trigger = mainFillTrigger({
     environmentId,
     fillMain: async (input) => {
@@ -82,9 +85,11 @@ function setup(result: DesktopFillMainResult | null = copied("copied")) {
     record: async (_result, accounts) => void recorded.push(...accounts),
     later: (run) => void timers.push(run),
     eligible: (profileId) => profileId === "work" || profileId === "home",
+    withdraw: async (profileId) => void withdrawn.push(profileId),
   });
   return {
     fills,
+    withdrawn,
     timers,
     recorded,
     seen: async (next: AccountsSnapshot) => {
@@ -207,6 +212,56 @@ describe("trigger 2: a sign-in seen in another profile", () => {
     // The oldest was dropped past the limit, so only the other 200 wait to retry.
     expect(t.fills).toHaveLength(201);
     expect(t.timers).toHaveLength(200);
+  });
+});
+
+describe("a profile no longer unrestricted", () => {
+  const record = (profileId: string, patch: object = {}) => ({
+    ...defaultBrowserProfileRecord(BrowserProfileId.make(profileId)),
+    ...patch,
+  });
+
+  it("takes back its copies once when turned Off, Ask or limited to projects", async () => {
+    for (const patch of [
+      { access: "off" },
+      { access: "ask" },
+      { scope: { type: "projects", projectIds: [] } },
+      { allowedProjects: ["project-a"] },
+    ]) {
+      const t = setup();
+      await t.seen(snapshot([], [record("work"), record("home")]));
+      await t.seen(snapshot([], [record("work", patch), record("home")]));
+      await t.seen(snapshot([], [record("work", patch), record("home")]));
+      expect(t.withdrawn).toEqual(["work"]);
+    }
+  });
+
+  it("takes back a profile restricted while this desktop was away, and never Main's own", async () => {
+    const t = setup();
+    await t.seen(
+      snapshot([], [record("work", { access: "off" }), record("default", { access: "off" })]),
+    );
+    expect(t.withdrawn).toEqual(["work"]);
+  });
+});
+
+describe("withdrawnRows", () => {
+  it("drops Main's copy rows for the units taken back, and keeps a saved password signed out", () => {
+    const copy = { signIn: { state: "unknown" as const, at: AT, from: "copy" as const } };
+    const copiedRow = row("default", ["github.com"], copy);
+    const password = row("default", ["overleaf.com"], {
+      ...copy,
+      secrets: { password: { source: { type: "scient" } } } as AccountSummary["secrets"],
+    });
+    const ownSignIn = row("default", ["github.com"], signedIn(AT));
+    const otherUnit = row("default", ["gitlab.com"], copy);
+    const otherProfile = row("work", ["github.com"], copy);
+    expect(
+      withdrawnRows(
+        [copiedRow, password, ownSignIn, otherUnit, otherProfile],
+        [["github.com"], ["overleaf.com"]],
+      ),
+    ).toEqual({ remove: [copiedRow.accountId], signedOut: [password.accountId] });
   });
 });
 

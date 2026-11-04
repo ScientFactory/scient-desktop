@@ -196,6 +196,14 @@ export interface DesktopAccountsBridge {
   readonly fillMain?: (input: DesktopFillMainInput) => Promise<DesktopFillMainResult | null>;
   /** Accounts' Sign out on Main, under the same lock as every copy into it. */
   readonly signOutMainSite?: (site: string, environmentId?: string) => Promise<boolean>;
+  /**
+   * Removes from Main what a restricted profile's copies wrote there, unit by unit, where Main
+   * still holds exactly that; the units removed, or null when Main can't be opened.
+   */
+  readonly withdrawFromMain?: (input: {
+    readonly from: string;
+    readonly environmentId?: string;
+  }) => Promise<{ readonly units: ReadonlyArray<ReadonlyArray<string>> } | null>;
   /** Reads the primary environment's jar under the Main lock; null when refused. */
   readonly readSessions?: (
     input: DesktopReadSessionsInput,

@@ -29,6 +29,8 @@ import {
   readSessions,
   removeSiteCookies,
   signOutMainSite,
+  WithdrawMainInput,
+  withdrawFromMain,
 } from "./mainFill.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
@@ -298,6 +300,16 @@ const signOutMainHandler = Effect.fn("DesktopAccounts.signOutMainHandler")(funct
   ).pipe(Effect.orElseSucceed(() => false));
 });
 
+const decodeWithdrawMain = Schema.decodeUnknownOption(WithdrawMainInput);
+export const withdrawFromMainHandler = Effect.fn("DesktopAccounts.withdrawFromMainHandler")(
+  function* (raw: unknown, event?: AccountsInvokeEvent) {
+    if (!(yield* appWindowSender(event))) return null;
+    const input = decodeWithdrawMain(raw);
+    if (Option.isNone(input)) return null;
+    return yield* withdrawFromMain(input.value);
+  },
+);
+
 const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -357,6 +369,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.FILL_MAIN, handler: fillMainHandler });
   yield* ipc.handle({ channel: Channels.READ_SESSIONS, handler: readSessionsHandler });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_MAIN_SITE, handler: signOutMainHandler });
+  yield* ipc.handle({ channel: Channels.WITHDRAW_FROM_MAIN, handler: withdrawFromMainHandler });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
   if (!Electron.app.isPackaged)

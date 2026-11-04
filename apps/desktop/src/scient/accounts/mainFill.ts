@@ -22,17 +22,21 @@ import {
   shareable,
   unitCookies,
   unitSites,
+  withdrawMainCopies,
   type CdpSend,
   type CookieStore,
+  type MainCopy,
   type UnitOutcome,
 } from "@t3tools/shared/scientSessionCookies";
 import type * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
+import { mainCopyFingerprint, mainCopyRecords } from "./mainCopies.ts";
 import { mainInsertTracker, markOwnWrites, watchForeignInserts } from "./mainInserts.ts";
 import { withCookieDebugger } from "./sessionCookies.ts";
 import { siteCookieRemovals, siteOf } from "./signedInSites.ts";
@@ -98,11 +102,15 @@ export function jarStore(session: Electron.Session, send: CdpSend): CookieStore 
   };
 }
 
-/** Copies the source session's units into Main, one transaction each; the source is only read. */
+/**
+ * Copies the source session's units into Main, one transaction each; the source is only read.
+ * `record` keeps what each unit that landed holds, while the Main lock is still held.
+ */
 export async function copyIntoMain(
   source: Electron.Session,
   main: Electron.Session,
   input: FillMainInput,
+  record?: (copies: ReadonlyArray<Omit<MainCopy, "from">>) => Promise<void>,
 ): Promise<DesktopFillMainResult> {
   const tracker = mainInsertTracker(main);
   const failed = refusedIn(main);
@@ -146,6 +154,17 @@ export async function copyIntoMain(
         }
         units.push({ sites: [...unit], outcome });
       }
+      const nowSeconds = Date.now() / 1000;
+      await record?.(
+        planned.flatMap((unit, index) => {
+          const outcome = units[index]?.outcome;
+          if (outcome !== "copied" && outcome !== "same") return [];
+          const written = unitCookies(unit, jar, site).filter(
+            (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
+          );
+          return [{ sites: [...unit], fingerprint: mainCopyFingerprint(written, nowSeconds) }];
+        }),
+      );
       if (units.some(({ outcome }) => outcome === "copied" || outcome.endsWith("failed")))
         await main.cookies.flushStore().catch(() => undefined);
       return { units, unsupported };
@@ -183,10 +202,16 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
   if (typeof from === "string") {
     const source = yield* profileSession(from).pipe(Effect.option);
     if (source._tag === "None") return null;
+    const records = yield* copyRecords;
     return yield* Effect.promise(() =>
-      underMainLock(environmentId, () => copyIntoMain(source.value, main.value, input)).catch(
-        () => null,
-      ),
+      underMainLock(environmentId, () =>
+        copyIntoMain(source.value, main.value, input, (copies) =>
+          records.record(
+            environmentId,
+            copies.map((copy) => ({ ...copy, from })),
+          ),
+        ),
+      ).catch(() => null),
     );
   }
   const scope = `scient-import-staging:${crypto.randomUUID()}`;
@@ -206,6 +231,51 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
     underMainLock(environmentId, () => copyIntoMain(staging.value, main.value, input))
       .catch(() => null)
       .finally(() => staging.value.clearStorageData().catch(() => undefined)),
+  );
+});
+
+const copyRecords = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  return mainCopyRecords(
+    environment.path.join(environment.stateDir, "scient", "main-copies.json"),
+    site,
+  );
+});
+
+export const WithdrawMainInput = Schema.Struct({
+  environmentId: Schema.optional(EnvironmentId),
+  from: BrowserProfileId,
+});
+
+/**
+ * A profile turned Off, restricted or limited to projects takes back what it gave Main: each unit
+ * still holding exactly what its copy wrote is removed, under the Main lock. Later sign-ins in Main
+ * stay. The units removed, or null when Main can't be opened.
+ */
+export const withdrawFromMain = Effect.fn("DesktopAccounts.withdrawFromMain")(function* (
+  input: typeof WithdrawMainInput.Type,
+) {
+  const environmentId = input.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
+  const records = yield* copyRecords;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  const main = yield* manager
+    .getBrowserSession(scope.scope, scope.persistent, scope.namespace)
+    .pipe(Effect.option);
+  if (main._tag === "None") return null;
+  return yield* Effect.promise(() =>
+    underMainLock(environmentId, async () => {
+      const copies = await records.from(environmentId, input.from);
+      if (copies.length === 0) return { units: [] };
+      const units = await withCookieDebugger(main.value, (send) =>
+        withdrawMainCopies(jarStore(main.value, send), copies, (cookies) =>
+          mainCopyFingerprint(cookies, Date.now() / 1000),
+        ),
+      );
+      await records.forget(environmentId, input.from);
+      if (units.length) await main.value.cookies.flushStore().catch(() => undefined);
+      return { units: units.map((unit) => [...unit]) };
+    }).catch(() => null),
   );
 });
 

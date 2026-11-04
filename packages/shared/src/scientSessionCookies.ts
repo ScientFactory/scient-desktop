@@ -427,6 +427,65 @@ export async function applyUnit(
   }
 }
 
+/** A unit's live cookies, values included, in one order: hashed, it tells a copy from later changes. */
+export const unitFingerprintText = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
+  JSON.stringify(
+    cookies
+      .filter((cookie) => isLive(cookie, nowSeconds))
+      .map((c) =>
+        JSON.stringify([
+          c.name,
+          c.domain,
+          c.path,
+          c.partitionKey?.topLevelSite ?? null,
+          c.partitionKey?.hasCrossSiteAncestor ?? null,
+          c.hostOnly,
+          c.value,
+        ]),
+      )
+      .sort(),
+  );
+
+/** One unit a copy wrote into Main: from which profile, and the digest of exactly what it wrote. */
+export interface MainCopy {
+  readonly from: string;
+  readonly sites: ReadonlyArray<string>;
+  readonly fingerprint: string;
+}
+
+/** A newer copy of a unit replaces every record that shares a site with it. */
+export function withMainCopies(
+  records: ReadonlyArray<MainCopy>,
+  added: ReadonlyArray<MainCopy>,
+  siteOf: SiteOf,
+): ReadonlyArray<MainCopy> {
+  const replaced = (record: MainCopy) =>
+    added.some((copy) => {
+      const sites = unitSites(copy.sites, siteOf);
+      return [...unitSites(record.sites, siteOf)].some((site) => sites.has(site));
+    });
+  return [...records.filter((record) => !replaced(record)), ...added];
+}
+
+/**
+ * Removes each copy that still holds exactly what it wrote; a unit the site rotated or someone
+ * signed in to since is no longer the copy, and stays. Returns the units removed.
+ */
+export async function withdrawMainCopies(
+  store: CookieStore,
+  copies: ReadonlyArray<MainCopy>,
+  fingerprint: (cookies: ReadonlyArray<SessionCookie>) => string,
+): Promise<ReadonlyArray<ReadonlyArray<string>>> {
+  const removed: Array<ReadonlyArray<string>> = [];
+  for (const copy of copies) {
+    const present = await store.readUnit(copy.sites);
+    if (present.length === 0 || fingerprint(present) !== copy.fingerprint) continue;
+    await store.remove(present);
+    removed.push(copy.sites);
+  }
+  return removed;
+}
+
 type ProfileControls = Pick<BrowserProfileRecord, "access" | "scope" | "scriptSignIn">;
 
 /** A profile whose sign-ins go to other computers: Allowed or Ask for all projects, scripts on. */
