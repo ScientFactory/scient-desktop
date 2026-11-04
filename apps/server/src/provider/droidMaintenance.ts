@@ -9,21 +9,11 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
-  makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   resolvePackageManagedProviderMaintenance,
   type ProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-
-const PI_PACKAGE = "@earendil-works/pi-coding-agent";
-// The legacy package cannot reach Scient's minimum supported Pi version.
-// Unknown/legacy ownership remains manual-only; never silently migrate it.
-export const piMaintenance = makePackageManagedProviderMaintenanceResolver({
-  provider: ProviderDriverKind.make("pi"),
-  npmPackageName: PI_PACKAGE,
-  nativeUpdate: null,
-});
 
 export const droidMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("droidMaintenance.resolve")(function* (context) {

@@ -10,6 +10,7 @@ import {
 import type { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makePiDriver,
@@ -150,6 +151,21 @@ const resolvePiRuntime = Effect.fn("PiDriverComposition.resolvePiRuntime")(funct
     effectiveConfig,
     effectiveEnvironment: input.processEnv,
     runtimeSummary: managedRuntime.summary,
+    // Scient's runtime actions update its private Pi; `pi update --self` would replace the
+    // qualified build in place. System installations keep upstream's updater rule.
+    ...(managedRuntime.usesManagedPath
+      ? {
+          maintenanceResolver: {
+            resolve: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: PI_DRIVER,
+                  packageName: null,
+                }),
+              ),
+          },
+        }
+      : {}),
     makeRpcClient,
     makeConnection,
     customModelSnapshot: (settings: ServerSettingsData) =>

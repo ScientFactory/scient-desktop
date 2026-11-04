@@ -650,7 +650,7 @@
   "src/provider/pi/PiReasoning.live.test.ts": 0.001,
   "src/provider/pi/PiRuntime.live.test.ts": 0.001,
   "src/provider/pi/PiXai.live.test.ts": 0.001,
-  "src/provider/piDroidMaintenance.test.ts": 0.869,
+  "src/provider/droidMaintenance.test.ts": 0.869,
   "src/provider/providerCompatibility.test.ts": 2.173,
   "src/provider/providerEnabledDefaults.test.ts": 2.567,
   "src/provider/providerInstallation.test.ts": 2.723,
