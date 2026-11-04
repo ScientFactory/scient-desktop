@@ -1,210 +1,128 @@
 # Accounts & secrets
 
-Open **Settings → Accounts & secrets** to connect website and university sign-ins, API keys, databases,
-command-line logins and browser profiles. Choose the environment that will use them.
+**Settings → Accounts & secrets** holds what agents need to get past a login: website and
+university sign-ins, API keys, databases, command-line logins and browser profiles. Choose the
+computer whose accounts you are editing at the top.
 
-Use **Add account** to enter details and choose Scient’s encrypted store, a system keychain
-item or a 1Password reference. Connect 1Password under Password stores first. You can also
-import a password export or add browser profiles with their existing sign-ins and saved
-passwords. Saved passwords, sign-ins recorded while browsing and sign-ins managed elsewhere (Claude,
-Codex, Source Control, Extensions) are each one row that opens their list. There, each GitHub
-login is one row, with a chip for Source Control and one for the GitHub connector when it uses
-that login; each chip shows its own state. Main, Scient's own profile, shows the Scient symbol.
-Profiles imported from a browser show its current picture and name, or that browser's mark when it
-has no picture; the refresh button next to **Browser profiles** also brings in new sign-ins and
-passwords (quit that browser first for sign-ins). The import shows how many cookies each profile
-holds where the browser allows it, then what each brought, counted per site. A site the import
-brought a session for, where you keep a password or Scient knows the service, appears under
-**Browser sign-ins** as **Imported** (Google and university sign-in services aside) until a sign-in
-or a check sees it working, which then names who is signed in where the site says. Connected
-services remain managed in [Extensions](extensions.md).
+## Keys and passwords
 
-Everything you add starts **Allowed**. Change access to **Ask me** for approval on each use
-or **Off** to deny agents. Scope can limit access to selected projects. The global switch
-turns agent access off without changing individual controls. Read-only applies where Scient
-can enforce it; readable values are supplied to agents through private session files.
+**Add account** saves a key or password in Scient's encrypted store, a system keychain or
+1Password (connect it under Password stores first), or in several at once. Removing an account
+leaves its keychain and 1Password copies in place. Passwords also come in from a password export or
+a browser import.
 
-| Agent tool                       | Use                                                                             |
-| -------------------------------- | ------------------------------------------------------------------------------- |
-| `scient_accounts_list`           | List available accounts and profiles.                                           |
-| `scient_account_fill`            | Fill one saved field on a page the agent is working through, without seeing it. |
-| `scient_account_sign_in`         | Sign in through the browser, including supported 2FA.                           |
-| `scient_account_credentials`     | Create private credential files for readable accounts.                          |
-| `scient_account_request`         | Make an HTTPS request with a hidden key.                                        |
-| `scient_account_find_profile`    | Find a browser profile that can open a page.                                    |
-| `scient_account_browser_session` | Supply a site's browser session to scripts.                                     |
-| `scient_account_add`             | Ask you for a key, or to sign in to a website or university, in a card here.    |
-| `scient_paper_get`               | Save one paper's PDF through open access or your university.                    |
-| `scient_papers_queue`            | Queue any number of papers to fetch in the background.                          |
-| `scient_papers_status`           | Read what arrived, what waits for you and what can't be reached.                |
+When an agent needs a key you haven't saved, it asks in a private card and keeps your answer here.
+A key a service refuses shows **Key refused**. **Keys used by Scient** shows the keys Scient itself
+runs on. **Keys in plain files** lists secrets found in `.env` files and shell profiles; **Keep in
+Accounts** copies one in and leaves the file alone.
 
-When an agent needs a key you don't have in Accounts, it asks in a private card and saves your
-answer here, so later conversations reuse it. One-time secrets still use the plain card.
+## What agents may use
 
-A tab you or an agent opens without naming a profile goes to the profile you switched that site to
-in this conversation. Otherwise it keeps this conversation's profile, else the project's (**Use … in
-this project** in the tab's profile menu, or **Project settings → Browser → Browser profile**),
-unless another profile is signed in to the site and that one is not; then Main if it is signed in,
-else the profile that signed in first. The tab's profile menu says why, such as "Work · signed in to
-overleaf.com". Switching a tab's profile is remembered for the conversation and the site.
+Everything you add starts **Allowed**. **Ask me** asks you each time, **Off** keeps agents out, and
+scope limits it to some projects; the global switch turns all agent access off. An account's
+controls cover its saved password, and a profile's controls cover the sign-ins in that profile.
+Agents never see a hidden value: Scient types it, sends it or writes it to a private file for them.
 
-Main receives every sign-in. An import or Refresh into another profile, a sign-in in another
-profile (Scient's, yours through a sign-in service, or Google showing a new account), and a
-one-time copy of each profile when Scient first starts with this version all fill Main where it has
-nothing for that site; Main then opens new tabs, and **Use for new tabs** changes that. A check
-that only sees a session copies nothing. A copy shows **Copied** ("Copied from Work") until a
-sign-in or a check sees it working in Main. Only profiles
-with no limits give Main their sessions. **Sign out** in Main's signed-in sites is remembered: imports
-and the one-time copy never bring that site back, though signing in to it in another profile does.
-Signing out on a site's own page isn't seen, so a later import or sign-in elsewhere can fill Main
-again. A university sign-in is made in Main, so every conversation can use it.
+| Agent tool                       | Use                                                             |
+| -------------------------------- | --------------------------------------------------------------- |
+| `scient_accounts_list`           | List accounts and profiles.                                     |
+| `scient_account_fill`            | Fill one saved field on a page, unseen.                         |
+| `scient_account_sign_in`         | Sign in through the browser, codes included.                    |
+| `scient_account_credentials`     | Write private credential files for readable accounts.           |
+| `scient_account_request`         | Make an HTTPS request with a hidden key.                        |
+| `scient_account_find_profile`    | Find a profile that can open a page.                            |
+| `scient_account_browser_session` | Give scripts a site's browser session.                          |
+| `scient_account_add`             | Ask you for a key, or to sign in to a site or university.       |
+| `scient_paper_get`               | Save one paper's PDF through open access or your university.    |
+| `scient_papers_queue`            | Queue any number of papers.                                     |
+| `scient_papers_status`           | See what arrived, what waits for you and what can't be reached. |
 
-When an agent opens a new HTTPS page without choosing a profile, Scient checks for sign-in
-or access-denied pages. It tries up to eight other Allowed profiles and opens the page in the
-first that can access it, closing the failed tab. Checks use temporary background tabs; Ask me,
-Off and incognito profiles are skipped. Project scope and the global agent-access switch apply.
-If none works, the agent receives guidance to ask you to sign in or allow a profile in Accounts.
+## Browser profiles and Main
 
-When no profile opens a sign-in page and a saved sign-in for that site is Allowed, Scient signs in
-on that tab and returns to the page the agent wanted, so agents never chain these steps themselves.
-Ask me accounts wait for your approval. An attempt that didn't sign in holds that site and person,
-across duplicate rows and universities that share a sign-in service: nothing tries it again by
-itself until you sign in there, change the saved password or two-factor key, or press **Sign in**
-or **Check my accounts**. No time lifts it. An attempt that stops at a code, push, CAPTCHA or passkey
-keeps its tab; the next **Sign in**, paper chip or agent call in that conversation continues it
-there instead of typing the password again.
+A browser profile is one set of sign-ins, like a profile in Chrome. **Import from a browser** brings
+in a browser's profiles with their sign-ins, passwords and pictures (quit that browser first); the
+refresh button brings in new ones later. Their sites show as **Imported** under **Browser sign-ins**
+until Scient sees them working.
 
-Choosing a profile explicitly or navigating an existing tab keeps that profile. If access fails and
-no saved sign-in helps, Scient tells the agent to use `scient_account_find_profile` with the URL.
+**Main**, Scient's own profile, gets a copy of every sign-in from your other profiles, so it can open
+everything. On first start Scient fills Main once and opens new tabs in it; Browser profiles says so
+in a line you can dismiss, and **Use for new tabs** changes it. Copies show **Copied** until seen
+working, and only fill a site Main has nothing for or was signed out of. **Sign out** in Main is
+remembered. Your university signs in in Main. Signing in through Google, your university or another
+sign-in service adds that site to the profile, with Undo.
 
-You stay signed in across restarts and updates, including on sites that mark a sign-in as ending
-when the browser closes. To keep sign-ins alive, Scient quietly visits each signed-in site about
-once a day, and checks Google's accounts at startup, on focus and after sign-ins. It also ticks
-"Remember me" and "Trust this device" beside a saved sign-in, so codes come back less often. You can
-untick them; shared-computer options stay off.
+Only a profile agents may use in every project gives Main its sign-ins. Turn a profile **Off** or
+**Ask me**, or limit it to some projects, and Scient takes its copies back out of Main, except where
+that sign-in changed in Main since. Allow it again and its next sign-in is copied again.
 
-**Check my accounts** opens your browser sign-ins one at a time in their own profiles and shows what
-it found on each row: signed in, signed out, needs you, or rejected. It is your own press, so a
-signed-out account with a saved password gets one sign-in attempt, even one that failed before; an
-account that is Off is never typed. It looks at the least recently seen rows first.
-Imported passwords nobody has used are skipped; **Check sign-in** in a row's menu checks that one.
+**Which profile a tab opens in.** A site you switched to another profile in this conversation stays
+there. Otherwise the conversation's profile, then the project's (**Use … in this project** in the
+tab's profile menu), as long as it has a sign-in for the site; if it has none, Main. With neither,
+the profile for new tabs. The profile menu says why. If an agent's page then shows a sign-in,
+Scient signs in with the saved sign-in, or tries up to eight other Allowed profiles and moves the
+page to the first that gets in; if none does, the agent asks you.
 
-When a site sends a sign-in code, a private card asks for it on any of your devices, including the
-phone, and the code goes straight into the page. The agent never sees it. Under **Sign-in codes** you
-can let Scient find codes in Messages on a Mac (texts forwarded to it; this needs Full Disk Access,
-which also lets Scient read your other files). It's off until you turn it on.
+## Staying signed in
 
-The phone also shows approvals to answer and sign-ins waiting for you, with a notification. A CAPTCHA
-or passkey still needs the desktop.
+You stay signed in across restarts and updates. Scient quietly visits each signed-in site about
+once a day and ticks "Remember me" beside saved sign-ins, so codes come back less often.
 
-**Keys used by Scient** lists the keys Scient itself runs on, by name, what uses each and where to
-edit it. A provider variable can follow a saved key: replace the key in Accounts and the variable
-follows. **Keys in plain files** lists secrets found in project `.env` files and shell profiles, by
-name. **Keep in Accounts** copies one in and leaves the file as it is.
+Saved sign-ins fill login forms as they appear, without replacing what you type, and submit by
+themselves only to sign you back in where they worked before. The toolbar chip picks another.
+Incognito never fills, and an agent's tab gets only the sign-ins that agent may use. After you
+submit a new or changed password, Scient offers to save it.
 
-A key a service refuses shows **Key refused**, and the agent asks you for a new one in a private card.
+**When a sign-in doesn't go through**, Scient stops trying that site by itself, however long it
+waits, so it never repeats a wrong password. The row says **Sign in needed**, **Needs you**,
+**Password rejected** or **Code rejected**, with a **Sign in** button, and papers waiting on it show
+"N papers wait for you to sign in to …" in Sources. Signing in, **Check my accounts** or a changed
+saved password lets Scient try again.
 
-**Get PDF** on a source with a DOI or link finds the paper the same way an agent does, saves it in
-`papers/` and attaches it to the source. See [Papers behind a subscription](#papers-behind-a-subscription).
+**Sign in** opens the site's own sign-in beside your work. Scient types what it may and you finish
+the rest: a code, a push, a CAPTCHA or a passkey. The password you type is kept once the site lets
+you in. A site's code is asked for in a private card on any of your devices, phone included, and
+the agent never sees it; under **Sign-in codes** Scient can read them from Messages on a Mac (this
+needs Full Disk Access). A CAPTCHA or passkey needs the desktop.
 
-Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
-without replacing what you typed. They submit only to sign you back in: on your own tab, when it's
-the site's one saved sign-in, belongs to that profile, has worked there before and the site isn't
-limiting sign-ins, once every 10 minutes. Sign-ins from the same profile come first, then exact-site
-matches, then your most recently used sign-in. Use the small toolbar chip to choose another, or the key button to fill
-again. Incognito never autofills. A tab an agent controls gets only sign-ins that agent may use, and
-an agent can't act on your tab filled with a sign-in it may not use until that page changes.
-Turning an account Off stops agents using its password; a profile you allow still lets agents use
-the sites that profile is signed in to.
+**Check my accounts** opens your browser sign-ins one at a time and marks each signed in, signed
+out, needs you or rejected. It counts as your own press, so it tries a saved password once more.
+A Google sign-in copied from Chrome can stop working while you use Chrome; sign in to Google once
+inside Scient with **Sign in** beside "Signed out of Google".
 
-After you submit a login form, Scient offers to save a new sign-in or update a changed password.
-An unchanged password produces no prompt. Capture sees a real `<form>` submitted, or sent by a
-click on its submit button or Enter in a field; buttons that only run a script, and logins with no
-form, aren't seen. A code field is never taken for the password, and a username typed on an
-earlier step is carried to the password step.
+**Other sign-ins** lists those managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
+GitHub login is one row, with its own chip for Source Control and for the GitHub connector.
 
-A row's **Sign in again**, and **Sign in with the browser** in Add an account, open the site's own
-sign-in beside your work. Scient types what it may and you finish the rest. What you type there is
-kept once the site lets you in, when it was the one password you typed there; if you typed
-several, nothing is kept and you type it again next time. Scient trusts a kept password only once it
-signs you in with it; if it was wrong, that sign-in is refused once and the row says so. A password kept in Keychain,
-1Password or another linked store stays there. A tab streamed from a remote server says what you
-type isn't kept. An agent can ask you to sign in the same way, in a card in its conversation, and
-learns only the account's name. While Scient runs a sign-in, no agent can read or drive its tab or
-export that site's session, and a university's own sign-in pages stay closed to agents after. When
-you sign in to a site
-through Google, your university or another sign-in service, Scient adds that site for the profile
-and shows Undo. Coming back to the sign-in service's own sites, such as Google Docs after Google's
-sign-in, adds nothing. A site signed in from several profiles is one row with their pictures.
+## Other computers (Labs)
 
-Choose several stores when saving. Updates change every existing copy. If an external write
-fails, Scient keeps the password and reports the failed store. A 1Password vault that rejects a
-write is hidden from the choices until you reconnect 1Password; no setup step is needed.
-Removing an account leaves its external keychain and 1Password copies in place.
+Scient can copy this computer's sign-ins to a computer it connects to, such as a lab server over
+SSH, so agents there are signed in too. It is still being tested, so it stays off until you turn on
+**Settings → Labs → Send sign-ins to other computers**, and each computer's line in Accounts says so.
 
-Every other computer you connect, such as a lab server over SSH or your WSL backend, gets the
-sign-ins of your browser profiles here: Main to Main, Work to Work. Only profiles agents may use in
-every project with scripts go; a profile that is Off or limited to projects doesn't, and copies it
-already sent leave. Passwords and 2FA keys never go. Each computer's line under Other computers
-says what it has. When a site refuses a copy there, the line says it needs you: sign in once on
-that computer and the sign-in stays there. Signing out on that computer stays there until you next
-sign in to the site here. Copies leave a computer when you remove it here while it's connected,
-when you remove this computer's access there or press Forget this computer in its Accounts, or
-after 30 days without this computer connecting. On another computer, a program running as you can
-read the sign-ins Scient keeps there.
-
-CAPTCHAs, push approvals and passkeys need you. A Google sign-in copied from Chrome can stop
-working while you keep using Chrome, so sign in to Google once inside Scient: press Sign in next to "Signed out of Google" on the
-profile, or Gmail on an empty browser tab, which always opens the selected profile. Hidden values
-stay out of agent conversations, but Accounts does not protect them from a malicious process
-running as you. On Windows and Linux,
-other programs running as you can read system keychain items. A host without a usable
-keychain keeps Scient's encryption key in an owner-only file.
+When on, each profile goes to its namesake there (Main to Main), for the sites you have in Accounts
+only. Profiles that are Off, limited to projects or kept from scripts stay here, and their copies
+leave. Passwords, two-factor keys and your university's sign-in never go. If a site refuses a copy,
+press **Sign in there** once. Copies leave when you remove that computer here while it is connected,
+press **Forget this computer** there, or this computer stays away 30 days. Programs running as you
+on that computer can read them.
 
 ## Papers behind a subscription
 
-On a university network, Get PDF and agents reach closed papers with no setup: Scient tries the
-publisher first, and a publisher that recognises the network hands over the PDF.
+On a university network, **Get PDF** and agents reach closed papers with no setup. From anywhere
+else, connect your university: **Connect your university** is the first row in Sources. Its own
+sign-in opens beside your work, and its crest then stays beside the Sources title. If your
+university isn't listed, paste a link from your library's website. The first article you open at a
+journal reloads once through your university. Being on campus never counts as signed in, and
+scripts can't take your university sign-in's session.
 
-To reach papers from anywhere, connect your university. It works on any network, any time, whether
-or not a paper is waiting:
+**Get PDF** attaches a source's paper; **Get missing PDFs** fetches a project's whole list, and
+agents queue any number. One queue runs every paper, one at a time per publisher, and pauses a
+publisher that refuses several in a row. A sign-in or a publisher's check asks you once, then every
+paper waiting on it continues, even after a restart. Many university licences forbid systematic
+downloading, so how many papers you fetch is your call. Scient saves only a PDF that is the paper,
+in the project's `papers` folder, and never fetches one twice.
 
-- **Connect your university** is the first row in Sources until you do. Pick your university there,
-  in a conversation that asks for it, or under **University library** in Add an account.
-- Its own sign-in opens beside your work. When you finish and a check reaches a journal through it,
-  the tab closes and the university shows **Signed in**. If it already knows you, nothing opens to
-  type into. Pressing Sign in again continues a sign-in waiting at a code. The password you type is
-  kept, as on any other site.
-- If your university isn't listed, paste a link from your library's website.
-- The university's crest then stays beside the Sources title. Press it to see the sign-in's status,
-  sign in, or check it. An amber dot means it needs you.
+## What Accounts doesn't protect against
 
-Once you're signed in, journals know you in Scient's browser too. The first article you open at a
-journal reloads once through your university, and you land back on it with your university's
-access. Only article pages are sent this way, and only to your university's sign-in service.
-
-Scient searches a public directory of institutions with only the text you type. A university that
-uses OpenAthens signs in on your own OpenAthens page and reaches any journal it pays for through
-it, so no journal opens during sign-in or checks. Other universities sign in through a publisher,
-which Scient closes as soon as the university answers. A university account
-is a website sign-in held in one browser profile, your default unless you choose another. Being on
-campus never counts as being signed in. Scripts can't export the session at your university's
-sign-in service, because it can also open your mail and records.
-
-Every paper goes through one queue, so nothing is limited to a few at a time:
-
-- **Get missing PDFs** beside the Sources title fetches a project's whole list.
-- Agents use `scient_paper_get` for one paper and `scient_papers_queue` for any number.
-  `scient_papers_status` says what arrived, what waits for you, and what can't be reached.
-- Papers run one at a time per publisher with a pause between, with publishers side by side. If a
-  publisher refuses several in a row, Scient pauses that publisher, doubling the pause up to four
-  hours, and carries on with the others.
-- A sign-in or a publisher's check asks you once, on the Sources band or in the conversation, and
-  every paper waiting on it continues afterwards. The queue survives a restart.
-
-The list is yours to decide, however long it is. Many university licences forbid systematic
-downloading, and a publisher can suspend a university's access over it.
-
-Scient checks each PDF before saving it. A short preview of a longer paper, or a file about
-something else, is not kept. PDFs are saved in the project's `papers` folder, and a paper already
-there isn't fetched again.
+Hidden values stay out of agent conversations, but not away from a malicious program running as
+you. On Windows and Linux, other programs running as you can read keychain items. Without a usable
+keychain, Scient keeps its encryption key in a file only you can read.
