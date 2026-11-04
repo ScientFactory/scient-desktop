@@ -125,6 +125,8 @@ it.effect(
       const f = fixture();
       const capture = {
         url: "https://example.test",
+        path: "/login",
+        step: "password",
         username: NodeCrypto.randomBytes(16).toString("hex"),
         password: NodeCrypto.randomBytes(16).toString("hex"),
       };
@@ -149,6 +151,34 @@ it.effect(
       yield* f.run(forwardCapturedSignIn(f.guestEvent, { ...capture, url: "https://other.test" }));
       expect(f.sent).toHaveLength(1);
     }),
+);
+
+it.effect("carries a username step to the next password step, and never sends it alone", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const username = NodeCrypto.randomBytes(16).toString("hex");
+    const password = NodeCrypto.randomBytes(16).toString("hex");
+    const step = (patch: object) =>
+      f.run(
+        forwardCapturedSignIn(f.guestEvent, {
+          url: "https://example.test",
+          path: "/login",
+          step: "password",
+          username: "",
+          password,
+          ...patch,
+        }),
+      );
+    yield* step({ step: "username", username, password: "" });
+    expect(f.sent).toEqual([]);
+    yield* step({ path: "/password" });
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0]).toMatchObject({ path: "/password", usernameFrom: "earlier-step" });
+    expect((f.sent[0] as { username: string }).username === username).toBe(true);
+    // Used once: the next password step has nothing to carry.
+    yield* step({});
+    expect(f.sent[1]).toMatchObject({ username: "", usernameFrom: "form" });
+  }),
 );
 
 it.effect(

@@ -41,6 +41,7 @@ import {
   AccountMainSignedOutInput,
   AccountSignInSeenInput,
   AccountSessionsSeenInput,
+  AccountKeepTypedInput,
   AccountSessionsSeenResult,
   AccountsCheckInput,
   AccountsError,
@@ -72,6 +73,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSignInSeen: "accounts.signInSeen",
   accountsGoogleSessionsSeen: "accounts.googleSessions.seen",
   accountsSessionsSeen: "accounts.sessionsSeen",
+  accountsKeepTyped: "accounts.keepTyped",
   accountsSessionEnded: "accounts.sessionEnded",
   accountsSetCodeSources: "accounts.codeSources.set",
   accountsLinkKey: "accounts.keys.link",
@@ -359,5 +361,11 @@ export const WsAccountsMainBackfilledRpc = Rpc.make(
 export const WsAccountsSessionsSeenRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSessionsSeen, {
   payload: AccountSessionsSeenInput,
   success: AccountSessionsSeenResult,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsKeepTypedRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsKeepTyped, {
+  payload: AccountKeepTypedInput,
+  success: Schema.Struct({ kept: Schema.Boolean }),
   error: AccountsRpcError,
 });

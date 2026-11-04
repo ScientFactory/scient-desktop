@@ -143,6 +143,14 @@ export interface AccountsServiceShape {
   readonly sessionsSeen: (
     input: AccountSessionsSeenInput,
   ) => Effect.Effect<{ readonly created: ReadonlyArray<AccountId> }, AccountsError>;
+  /**
+   * Keeps a password the user typed in a proven sign-in, in one locked step: never on a removed
+   * row or one that is Off, and never over a linked password, which only gets an activity line.
+   */
+  readonly keepTyped: (
+    accountId: AccountId,
+    typed: { readonly username: string; readonly password: Redacted.Redacted<string> },
+  ) => Effect.Effect<"kept" | "linked" | "dropped", AccountsError>;
   /** Keeps one row per Google address in a profile, with the state Google reports. */
   readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
   /** Without an account, the variable keeps its value and stops following one. */

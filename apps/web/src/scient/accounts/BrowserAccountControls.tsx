@@ -202,6 +202,8 @@ function DesktopBrowserAccountControls({
   const signInSeen = useAccountCommand(accountsState.signInSeen, environmentId);
   const onCapture = useEffectEvent((capture: DesktopCapturedSignIn) => {
     if (capture.tabId !== tabId || capture.profileId !== profileId || !capture.password) return;
+    // Scient's own sign-in on this tab keeps what is typed once it is proven (`signInKeeps`).
+    if (inAttempt && data?.features?.keepTyped) return;
     try {
       const origin = new URL(capture.url).origin;
       if (!origin.startsWith("https://") || neverSaveSites().includes(origin)) return;

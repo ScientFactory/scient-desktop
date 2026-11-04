@@ -22,13 +22,18 @@ export interface DesktopProfileSignedInSite {
   readonly cookies: number;
 }
 
-/** A sign-in the user submitted in a desktop browser tab. */
+/** A sign-in the user submitted in a desktop browser tab: the step that sent a password. */
 export interface DesktopCapturedSignIn {
   readonly tabId: string;
   readonly profileId: string;
   readonly url: string;
+  /** The page's path when it was sent. */
+  readonly path: string;
+  readonly step: "password";
   readonly username: string;
   readonly password: string;
+  /** The username came from an earlier step of the same sign-in, in this tab and origin. */
+  readonly usernameFrom: "form" | "earlier-step";
 }
 
 export interface DesktopLoginForm {

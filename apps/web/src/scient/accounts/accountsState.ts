@@ -107,6 +107,10 @@ export const accountsState = {
     tag: WS_METHODS.accountsSessionsSeen,
     ...lane,
   }),
+  keepTyped: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:keepTyped",
+    tag: WS_METHODS.accountsKeepTyped,
+  }),
   sessionEnded: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:sessionEnded",
     tag: WS_METHODS.accountsSessionEnded,

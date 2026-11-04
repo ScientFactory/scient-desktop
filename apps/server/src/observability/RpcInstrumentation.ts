@@ -328,6 +328,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsMainSignedOut]: "accounts",
   [WS_METHODS.accountsMainBackfilled]: "accounts",
   [WS_METHODS.accountsSessionsSeen]: "accounts",
+  [WS_METHODS.accountsKeepTyped]: "accounts",
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions RPCs.
   [WS_METHODS.extensionsList]: "extensions",

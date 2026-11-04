@@ -4,6 +4,7 @@ import {
   AccountsError,
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
+  type AccountKeepTypedInput,
   type AccountSignInAttempt,
   type AccountSignInOutcome,
   type AccountSummary,
@@ -13,8 +14,10 @@ import {
 import { attemptKey, signInsForPage } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
@@ -22,6 +25,7 @@ import type { PaperRequester } from "../../papers/paperAttempt.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import {
   authorizationDecision,
+  siteMatches as siteMatchesOrigin,
   signedInMomentsAgo,
   signInHeld,
   siteLimiting,
@@ -118,6 +122,118 @@ interface Pending {
 }
 const pendingAttempts = new Map<string, Pending>();
 
+/**
+ * What one attempt saw, and what the user typed in its tab, in order. A candidate is kept only for
+ * an origin that asked for a password and never asked again after it (a rejected password brings
+ * the field back), where Scient didn't type the password itself, and only after the sign-in is
+ * proven. Values stay here until kept or dropped.
+ */
+interface Typed {
+  readonly threadId: string;
+  readonly tabId: PreviewTabId;
+  readonly sites: ReadonlyArray<string>;
+  readonly university: boolean;
+  readonly fields: Set<string>;
+  /** When each origin last showed a password field, in the order of `seen`. */
+  readonly passwordSeen: Map<string, number>;
+  readonly scientTyped: Set<string>;
+  readonly candidates: Map<
+    string,
+    {
+      readonly username: string;
+      readonly password: Redacted.Redacted<string>;
+      readonly at: number;
+    }
+  >;
+  seen: number;
+  readonly arrived: Deferred.Deferred<void>;
+  readonly accountId: AccountId;
+  accepted?: ReadonlySet<string>;
+}
+const typedIn = new Map<string, Typed>();
+/** After a proven sign-in, how long the first typed password may take to arrive, then a late one. */
+const FIRST_CANDIDATE = "3 seconds";
+const LATE_CANDIDATE = "10 seconds";
+
+/** Origins whose last typed password the site moved on from: no password field came back. */
+const acceptedOrigins = (typed: Typed) =>
+  new Set(
+    [...typed.passwordSeen].flatMap(([origin, at]) =>
+      !typed.scientTyped.has(origin) && (typed.candidates.get(origin)?.at ?? -1) > at
+        ? [origin]
+        : [],
+    ),
+  );
+
+/** Ends an attempt: its tab opens to agents again and anything typed in it is dropped. */
+const endAttempt = Effect.fn("AccountsAgent.endAttempt")(function* (attemptId: string) {
+  typedIn.delete(attemptId);
+  yield* (yield* AccountsService).removeAttempt(attemptId);
+});
+
+const keepCandidate = Effect.fn("AccountsAgent.keepCandidate")(function* (typed: Typed) {
+  const accepted = typed.accepted ?? new Set<string>();
+  const candidate = [...accepted].flatMap((origin) => typed.candidates.get(origin) ?? [])[0];
+  if (!candidate) return false;
+  typed.candidates.clear();
+  return (yield* (yield* AccountsService).keepTyped(typed.accountId, candidate)) === "kept";
+});
+
+/** The user's typing in a sign-in Scient runs, from the desktop's capture of that tab. */
+export const keepTyped = Effect.fn("AccountsAgent.keepTyped")(function* (
+  input: AccountKeepTypedInput,
+) {
+  const typed = typedIn.get(input.attemptId);
+  if (!typed || typed.threadId !== input.threadId || typed.tabId !== input.tabId)
+    return { kept: false };
+  const origin = URL.canParse(input.origin) ? new URL(input.origin).origin : "";
+  const onSite = typed.university
+    ? origin.startsWith("https://") && typed.fields.has(origin)
+    : siteMatchesOrigin(typed.sites, origin);
+  if (!onSite) return { kept: false };
+  const candidate = {
+    username: input.username,
+    password: Redacted.make(input.password),
+    at: typed.seen++,
+  };
+  // A late one, after the sign-in was proven: its page asked for a password and nothing since.
+  if (typed.accepted) {
+    if (!typed.passwordSeen.has(origin) || typed.scientTyped.has(origin)) return { kept: false };
+    typed.candidates.set(origin, candidate);
+    typed.accepted = new Set([origin]);
+    return { kept: yield* keepCandidate(typed) };
+  }
+  typed.candidates.set(origin, candidate);
+  yield* Deferred.succeed(typed.arrived, undefined);
+  return { kept: true };
+});
+
+/**
+ * After a proven sign-in: the password typed on the accepted page is kept once it arrives, within
+ * a few seconds, and a late one is still taken for a few more. True when it holds the attempt open
+ * for that.
+ */
+const drainTyped = Effect.fn("AccountsAgent.drainTyped")(function* (
+  attemptId: string,
+  draining: Effect.Effect<void>,
+) {
+  const typed = typedIn.get(attemptId);
+  // Only a password field the person faced can have a typed password to keep.
+  if (!typed || [...typed.passwordSeen.keys()].every((origin) => typed.scientTyped.has(origin)))
+    return false;
+  // The capture of the last step can come after the page that proved it.
+  if (acceptedOrigins(typed).size === 0)
+    yield* Deferred.await(typed.arrived).pipe(Effect.timeout(FIRST_CANDIDATE), Effect.ignore);
+  typed.accepted = acceptedOrigins(typed);
+  if (yield* keepCandidate(typed)) return false;
+  yield* draining;
+  yield* Effect.sleep(LATE_CANDIDATE).pipe(
+    Effect.andThen(endAttempt(attemptId)),
+    Effect.forkDetach,
+  );
+  return true;
+});
+
 const browserOf = Effect.fn("AccountsAgent.browserOf")(function* (invocation: Invocation) {
   const broker = yield* PreviewAutomationBroker;
   return previewInvoker(broker, invocation, { updateCurrentTab: false });
@@ -128,7 +244,7 @@ const dropPending = Effect.fn("AccountsAgent.dropPending")(function* (key: strin
   const kept = pendingAttempts.get(key);
   if (!kept) return;
   pendingAttempts.delete(key);
-  yield* (yield* AccountsService).removeAttempt(kept.attemptId);
+  yield* endAttempt(kept.attemptId);
   const invoke = yield* browserOf(kept.invocation);
   yield* invoke("close", {}, kept.tabId).pipe(Effect.ignore);
 });
@@ -285,15 +401,32 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
           unattended: caller.kind !== "person",
         };
   const attemptId = resume?.attemptId ?? NodeCrypto.randomUUID();
-  const register = (tabId: PreviewTabId, state: AccountSignInAttempt["state"]) =>
-    accounts.setAttempt({
-      attemptId,
-      threadId: invocation.threadId,
-      tabId,
-      accountId: account.accountId,
-      state,
-    });
   const university = universityDetails(account.details);
+  const arrived = yield* Deferred.make<void>();
+  const register = (tabId: PreviewTabId, state: AccountSignInAttempt["state"]) =>
+    Effect.suspend(() => {
+      if (!typedIn.has(attemptId) && account.details.kind === "website")
+        typedIn.set(attemptId, {
+          threadId: invocation.threadId,
+          tabId,
+          sites: account.details.sites,
+          university: university !== undefined,
+          fields: new Set(),
+          passwordSeen: new Map(),
+          scientTyped: new Set(),
+          candidates: new Map(),
+          seen: 0,
+          arrived,
+          accountId: account.accountId,
+        });
+      return accounts.setAttempt({
+        attemptId,
+        threadId: invocation.threadId,
+        tabId,
+        accountId: account.accountId,
+        state,
+      });
+    });
   const options: SignInOptions = {
     ...(caller.kind === "agent" ? yield* signInCodes(session, account) : {}),
     ...(automatic(caller) ? { stopAtCode: true } : {}),
@@ -306,6 +439,13 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       register(tabId, caller.kind === "person" ? "person" : "typing").pipe(
         Effect.andThen(request.onTab?.(tabId) ?? Effect.void),
       ),
+    onPage: (page) => {
+      const typed = typedIn.get(attemptId);
+      if (!typed) return;
+      if (page.fields) typed.fields.add(page.origin);
+      if (page.password) typed.passwordSeen.set(page.origin, typed.seen++);
+    },
+    onTyped: (origin) => typedIn.get(attemptId)?.scientTyped.add(origin),
   };
   const target = { type: "account", accountId: account.accountId } as const;
   const where = {
@@ -342,11 +482,11 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
           )
         : accounts
             .recordUse({ target, action: "sign-in", ...where, outcome: "error" }, undefined, true)
-            .pipe(Effect.andThen(accounts.removeAttempt(attemptId))),
+            .pipe(Effect.andThen(endAttempt(attemptId))),
     ),
     // A locked store or a full browser says nothing about the sign-in, so no outcome is recorded.
     Effect.catch((error) =>
-      accounts.removeAttempt(attemptId).pipe(
+      endAttempt(attemptId).pipe(
         Effect.as({
           outcome: "failed",
           message: isAccountsError(error)
@@ -375,7 +515,11 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
     yield* register(result.tabId, "pending");
   } else {
     if (pendingAttempts.get(key)?.attemptId === attemptId) pendingAttempts.delete(key);
-    yield* accounts.removeAttempt(attemptId);
+    // Verified first, then recorded, then kept: only a proven sign-in keeps what was typed.
+    const draining =
+      result.outcome === "signed-in" &&
+      (yield* drainTyped(attemptId, register(result.tabId, "draining")));
+    if (!draining) yield* endAttempt(attemptId);
   }
   if (caller.kind === "person")
     yield* result.outcome === "signed-in"

@@ -228,6 +228,7 @@ export function fakeAccounts(
     mainBackfilled: () => unsupported,
     googleSessionsSeen: () => unsupported,
     sessionsSeen: () => unsupported,
+    keepTyped: () => unsupported,
     setCodeSources: () => unsupported,
     setKeyLink: () => Effect.void,
     respondApproval: () => unsupported,

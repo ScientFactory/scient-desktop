@@ -230,7 +230,7 @@ export const layer = Layer.effect(
         recentActivity,
         customModelKeys,
         managedElsewhere,
-        features: { sessionsSeen: true, signInAnyRow: true },
+        features: { sessionsSeen: true, signInAnyRow: true, keepTyped: true },
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
@@ -1081,6 +1081,60 @@ export const layer = Layer.effect(
               return { created };
             }),
           ),
+        ),
+      ),
+      keepTyped: Effect.fn("AccountsService.keepTyped")((accountId, typed) =>
+        locked(
+          Effect.gen(function* () {
+            const row = findAccount(accountId);
+            if (!row || row.summary.details.kind !== "website") return "dropped" as const;
+            const { summary } = row;
+            const details = summary.details;
+            if (summary.controls.access === "off") return "dropped" as const;
+            const target = { type: "account", accountId } as const;
+            const linked = summary.secrets.password?.source.type;
+            if (linked !== undefined && linked !== "scient") {
+              yield* appendActivity({
+                target,
+                action: "sign-in",
+                decision: "allowed",
+                keptTyped: "linked",
+              });
+              return "linked" as const;
+            }
+            yield* save({
+              accountId,
+              name: summary.name,
+              details:
+                details.kind === "website" && details.username === undefined && typed.username
+                  ? { ...details, username: typed.username }
+                  : details,
+              secrets: { password: { type: "scient", value: Redacted.value(typed.password) } },
+            });
+            // The sign-in it came from already worked: its status stands, and the password with it.
+            const kept = findAccount(accountId);
+            if (kept) {
+              const at = yield* now;
+              const { signIn: _, ...rest } = kept.summary;
+              yield* commit(
+                replaceAccount({
+                  ...kept,
+                  summary: {
+                    ...rest,
+                    ...(summary.signIn ? { signIn: summary.signIn } : {}),
+                    secrets: verifiedPassword(kept.summary.secrets, at),
+                  },
+                }),
+              );
+            }
+            yield* appendActivity({
+              target,
+              action: "sign-in",
+              decision: "allowed",
+              keptTyped: "kept",
+            });
+            return "kept" as const;
+          }),
         ),
       ),
       googleSessionsSeen: Effect.fn("AccountsService.googleSessionsSeen")((input) =>

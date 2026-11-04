@@ -578,6 +578,55 @@ describe("AccountsService and Main", () => {
     }),
   );
 
+  it.effect("keeps a typed password once, never on a removed, Off or linked row", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const typed = { username: "person", password: Redacted.make("typed-password") };
+      const session = (yield* service.save(row("profile-work", ["example.com"]))).accountId;
+      yield* service.recordUse({
+        target: { type: "account", accountId: session },
+        action: "sign-in",
+        outcome: "ok",
+        signInOutcome: "signed-in",
+      });
+      yield* TestClock.adjust("1 second");
+      expect(yield* service.keepTyped(session, typed)).toBe("kept");
+      const kept = (yield* service.snapshot).accounts.find((row) => row.accountId === session)!;
+      expect(kept.details).toMatchObject({ username: "person" });
+      // The sign-in it came from stands, and the kept password is the one that worked.
+      expect(kept.signIn).toMatchObject({ state: "signed-in", by: "action" });
+      expect(kept.secrets.password?.verifiedAt).toBeDefined();
+      expect(
+        secretEquals(
+          (yield* service.resolveSecrets(session, ["password"])).password,
+          "typed-password",
+        ),
+      ).toBe(true);
+      expect((yield* service.activity({}))[0]).toMatchObject({ keptTyped: "kept" });
+      // Linked: left in its store, with a line saying so.
+      const linked = (yield* service.save({
+        ...website(),
+        secrets: { password: { type: "keychain", service: "synthetic", account: "synthetic" } },
+      })).accountId;
+      expect(yield* service.keepTyped(linked, typed)).toBe("linked");
+      expect(
+        (yield* service.snapshot).accounts.find((row) => row.accountId === linked)?.secrets.password
+          ?.source,
+      ).toMatchObject({ type: "keychain" });
+      // Off, or removed meanwhile: nothing written, nothing made.
+      yield* service.setControls({
+        target: { type: "account", accountId: session },
+        access: "off",
+      });
+      expect(
+        yield* service.keepTyped(session, { ...typed, password: Redacted.make("other") }),
+      ).toBe("dropped");
+      yield* service.remove(session);
+      expect(yield* service.keepTyped(session, typed)).toBe("dropped");
+      expect((yield* service.snapshot).accounts.map((row) => row.accountId)).toEqual([linked]);
+    }),
+  );
+
   it.effect("names a session row from the page, and never a row with a password", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();

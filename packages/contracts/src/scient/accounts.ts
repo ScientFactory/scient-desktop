@@ -421,6 +421,8 @@ export const AccountActivityEntry = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   /** Safe summary such as a site or `GET api.example.com`; never values, queries or bodies. */
   detail: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  /** A password the user typed while Scient signed them in: kept, or left for its linked store. */
+  keptTyped: Schema.optional(Schema.Literals(["kept", "linked"])),
 });
 export type AccountActivityEntry = typeof AccountActivityEntry.Type;
 
@@ -757,6 +759,8 @@ export const AccountsSnapshot = Schema.Struct({
       sessionsSeen: Schema.optional(Schema.Literal(true)),
       /** `accounts.universities.signIn` signs in to any website row. */
       signInAnyRow: Schema.optional(Schema.Literal(true)),
+      /** `accounts.keepTyped` keeps what the user types in a sign-in Scient runs. */
+      keepTyped: Schema.optional(Schema.Literal(true)),
     }),
   ),
   /** Sign-ins Scient is running, by tab; no values. Agents can't read these tabs meanwhile. */
@@ -964,6 +968,22 @@ export type AccountSessionsSeenInput = typeof AccountSessionsSeenInput.Type;
 
 /** The rows made for sessions that had none. */
 export const AccountSessionsSeenResult = Schema.Struct({ created: Schema.Array(AccountId) });
+
+/**
+ * What the user typed in a sign-in Scient runs, on that attempt's tab. Scient keeps it only once
+ * the sign-in is proven, and only the password the site accepted.
+ */
+export const AccountKeepTypedInput = Schema.Struct({
+  attemptId: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  origin: AccountFillValuesInput.fields.origin,
+  path: Schema.String.check(Schema.isMaxLength(2048)),
+  step: Schema.Literal("password"),
+  username: Schema.String.check(Schema.isMaxLength(256)),
+  password: SecretValue,
+});
+export type AccountKeepTypedInput = typeof AccountKeepTypedInput.Type;
 
 /** How a sign-in with this saved password on the user's own tab ended. */
 export const AccountSignInSeenInput = Schema.Struct({

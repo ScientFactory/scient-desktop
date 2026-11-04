@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
@@ -19,7 +20,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
-import { guardedSignIn, type SignInCaller } from "./guardedSignIn.ts";
+import { guardedSignIn, keepTyped, type SignInCaller } from "./guardedSignIn.ts";
 
 const scope = {
   threadId: ThreadId.make("thread-fixture"),
@@ -513,7 +514,10 @@ it.effect("a university sign-in counts once a check reaches the journal, then ti
   Effect.gen(function* () {
     const rows = connected();
     const visit = universityVisit(rows, "https://www.nature.com/");
-    expect((yield* visit.run).outcome).toBe("signed-in");
+    // The person typed on the university's page: its capture may still come.
+    const running = yield* visit.run.pipe(Effect.forkChild);
+    yield* TestClock.adjust("3 seconds");
+    expect((yield* Fiber.join(running)).outcome).toBe("signed-in");
     expect(rows[0]!.signIn?.state).toBe("signed-in");
     // The page that asked for the password is learned; the tab it handed back to closes.
     expect(visit.seen.saved).toEqual([
@@ -534,5 +538,125 @@ it.effect("a link back that the check can't confirm is no sign-in", () =>
     });
     expect(visit.continued()).toBe(false);
     expect(visit.seen.saved).toEqual([]);
+  }),
+);
+
+const signInPage = (origin = "https://example.com") => ({
+  origin,
+  username: "#user",
+  password: "#password",
+  otp: null,
+  submit: "button",
+  challenge: null,
+  signedIn: false,
+});
+const signedInPage = { ...signInPage(), username: null, password: null, signedIn: true };
+const publicPage = { ...signInPage(), username: null, password: null, submit: null };
+
+/**
+ * A person signing in on a site with nothing saved: each look shows the next page, and `typed`
+ * says what the desktop captured before which look.
+ */
+const typedVisit = (pages: ReadonlyArray<object>, typed: Readonly<Record<number, string>>) => {
+  const rows = [row("typed", { secrets: {} })];
+  const fake = fakeAccounts({ accounts: rows });
+  const kept: string[] = [];
+  let look = 0;
+  const service = AccountsService.of({
+    ...fake.service,
+    snapshot: Effect.sync(
+      () => ({ accounts: rows, agentAccess: true }) as unknown as AccountsSnapshot,
+    ),
+    keepTyped: (_accountId, candidate) =>
+      Effect.sync(() => {
+        kept.push(Redacted.value(candidate.password));
+        return "kept" as const;
+      }),
+    recordUse: () => Effect.void,
+  });
+  const send = (password: string) =>
+    keepTyped({
+      attemptId: [...fake.attempts.values()][0]!.attemptId,
+      threadId: scope.threadId,
+      tabId: "tab-fixture",
+      origin: "https://example.com",
+      path: "/login",
+      step: "password",
+      username: "",
+      password,
+    }).pipe(Effect.provideService(AccountsService, service));
+  const broker = PreviewAutomationBroker.of({
+    connect: () => Effect.succeed(Stream.empty),
+    focusHost: () => Effect.void,
+    respond: () => Effect.void,
+    invoke: <A>(request: { readonly operation: string; readonly input: unknown }) =>
+      Effect.gen(function* () {
+        const input = (request.input ?? {}) as Record<string, unknown>;
+        if (request.operation === "accountWaitForLoad" && input.settleMs === 400) {
+          look++;
+          const password = typed[look];
+          if (password !== undefined) yield* send(password).pipe(Effect.orDie);
+        }
+        if (request.operation === "evaluate") return pages[Math.min(look, pages.length - 1)] as A;
+        return {
+          tabId: "tab-fixture",
+          tabs: [{ tabId: "tab-fixture", url, profileId: "default", ownedByCaller: true }],
+        } as A;
+      }),
+  });
+  const run = guardedSignIn({ signIn: rows[0]!, caller: { kind: "person" } }).pipe(
+    Effect.provideService(AccountsService, service),
+    Effect.provideService(PreviewAutomationBroker, broker),
+    Effect.provideService(AgentInvocationContext, {
+      ...scope,
+      environmentId: EnvironmentId.make("env-fixture"),
+      providerSessionId: "user-run:thread-fixture",
+      providerInstanceId: ProviderInstanceId.make("scient"),
+      capabilities: new Set(["preview", "accounts"] as const),
+      issuedAt: 0,
+    }),
+  );
+  return { run, kept, send, attempts: fake.attempts };
+};
+
+it.effect("keeps the password a proven sign-in accepted, the right one after a wrong one", () =>
+  Effect.gen(function* () {
+    const visit = typedVisit([signInPage(), signInPage(), signInPage(), signedInPage], {
+      1: "wrong-password",
+      3: "right-password",
+    });
+    expect((yield* visit.run).outcome).toBe("signed-in");
+    expect(visit.kept).toEqual(["right-password"]);
+    expect(visit.attempts.size).toBe(0);
+  }),
+);
+
+it.effect("keeps a password whose capture arrives after the page moved on", () =>
+  Effect.gen(function* () {
+    const visit = typedVisit([signInPage(), signedInPage], {});
+    const running = yield* visit.run.pipe(Effect.forkChild);
+    yield* TestClock.adjust("3 seconds");
+    expect((yield* Fiber.join(running)).outcome).toBe("signed-in");
+    // Still open for a late capture, then gone.
+    expect([...visit.attempts.values()]).toMatchObject([{ state: "draining" }]);
+    expect(yield* visit.send("late-password")).toEqual({ kept: true });
+    expect(visit.kept).toEqual(["late-password"]);
+    yield* TestClock.adjust("10 seconds");
+    expect(visit.attempts.size).toBe(0);
+  }),
+);
+
+it.effect("keeps nothing without proof, or when the site's own page never moved on", () =>
+  Effect.gen(function* () {
+    // A wrong password, then a public page: no sign-in was seen.
+    const unproven = typedVisit([signInPage(), publicPage], { 1: "wrong-password" });
+    expect((yield* unproven.run).outcome).toBe("needs-user");
+    // A wrong password, then another way in: the password page never moved on.
+    const elsewhere = typedVisit(
+      [signInPage(), signInPage(), signInPage("https://sso.example.org"), signedInPage],
+      { 1: "wrong-password" },
+    );
+    expect((yield* elsewhere.run).outcome).toBe("signed-in");
+    expect([...unproven.kept, ...elsewhere.kept]).toEqual([]);
   }),
 );

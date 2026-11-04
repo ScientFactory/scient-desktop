@@ -28,7 +28,7 @@ import {
   listPapersAsUser,
   requestPapersAsUser,
 } from "../papers/getPaper.ts";
-import { guardedSignIn } from "./agent/guardedSignIn.ts";
+import { guardedSignIn, keepTyped } from "./agent/guardedSignIn.ts";
 import { userRunInvocation } from "./checkAccounts.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { openThroughUniversity } from "./universityBrowsing.ts";
@@ -158,6 +158,12 @@ export const makeAccountsRpcHandlers = ({
       ),
     [WS_METHODS.accountsSessionsSeen]: (input) =>
       observeRpcEffect(WS_METHODS.accountsSessionsSeen, accounts.sessionsSeen(input), attributes),
+    [WS_METHODS.accountsKeepTyped]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsKeepTyped,
+        keepTyped(input).pipe(Effect.provideService(AccountsService, accounts)),
+        attributes,
+      ),
     [WS_METHODS.accountsSessionEnded]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSessionEnded,
@@ -477,6 +483,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         recordCheck: unavailable,
         googleSessionsSeen: unavailable,
         sessionsSeen: unavailable,
+        keepTyped: unavailable,
         setCodeSources: unavailable,
         setKeyLink: unavailable,
         setControls: unavailable,

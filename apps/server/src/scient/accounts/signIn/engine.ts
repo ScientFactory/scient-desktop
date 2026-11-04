@@ -63,6 +63,14 @@ export interface SignInOptions {
   };
   /** Told the attempt's tab as soon as it has one. */
   readonly onTab?: (tabId: PreviewTabId) => Effect.Effect<void>;
+  /** Told each page it looks at: its origin, whether it asked for anything, and for a password. */
+  readonly onPage?: (page: {
+    readonly origin: string;
+    readonly fields: boolean;
+    readonly password: boolean;
+  }) => void;
+  /** Told each origin Scient typed the saved password into. */
+  readonly onTyped?: (origin: string) => void;
 }
 
 /** A second factor the person answers; an attempt stopped at one waits for them as it is. */
@@ -208,12 +216,10 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         ),
       );
       const timestamp = yield* Clock.currentTimeMillis;
-      if (
-        options.person?.learnOrigins &&
-        page.origin.startsWith("https://") &&
-        (page.username || page.password || page.otp)
-      )
+      const fields = Boolean(page.username || page.password || page.otp);
+      if (options.person?.learnOrigins && page.origin.startsWith("https://") && fields)
         learned.add(page.origin);
+      options.onPage?.({ origin: page.origin, fields, password: Boolean(page.password) });
       const otpPeriod =
         !page.otp || totp === undefined || /^\d{6,8}$/.test(totp)
           ? undefined
@@ -457,6 +463,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         fields: action.fields.map(({ field }) => field),
         otpPeriod,
       });
+      if (action.fields.some(({ field }) => field === "password")) options.onTyped?.(page.origin);
       submittedAt = yield* Clock.currentTimeMillis;
       if (action.submit) yield* invoke("click", { selector: action.submit }, target);
       else yield* invoke("press", { key: "Enter" }, target);

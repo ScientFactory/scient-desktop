@@ -4,8 +4,10 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   EnvironmentId,
   DesktopPreviewTabInputSchema,
+  type DesktopCapturedSignIn,
 } from "@t3tools/contracts";
 import * as Electron from "electron";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { readBrowserPasswords } from "./browserPasswords.ts";
 import * as Option from "effect/Option";
@@ -46,8 +48,10 @@ const Sites = Schema.Struct({
 });
 const Capture = Schema.Struct({
   url: Schema.String.check(Schema.isMaxLength(2048)),
+  path: Schema.String.check(Schema.isMaxLength(2048)),
+  step: Schema.Literals(["password", "username"]),
   username: Value,
-  password: Value.check(Schema.isMinLength(1)),
+  password: Value,
 });
 
 const decodeFill = Schema.decodeUnknownOption(Fill);
@@ -406,13 +410,33 @@ export const forwardCapturedSignIn = Effect.fn("DesktopAccounts.forwardCapturedS
   if (contents !== event.sender || !isCaptureGuest(event)) return;
   const origin = safeHttpOrigin(contents.getURL());
   if (origin === null || decoded.value.url !== origin) return;
+  const { step, username, password, path } = decoded.value;
+  const key = `${tabId}\u0000${origin}`;
+  const now = yield* Clock.currentTimeMillis;
+  // A username step is kept for the password step that follows, in this process: a page's own
+  // memory ends with the page. It is never sent on its own.
+  if (step === "username") {
+    if (username) earlierUsernames.set(key, { username, at: now });
+    return;
+  }
+  if (!password) return;
+  const earlier = earlierUsernames.get(key);
+  earlierUsernames.delete(key);
+  const carried = !username && earlier && now - earlier.at < USERNAME_STEP_MS;
   hostWindow.value.webContents.send(Channels.CAPTURED, {
-    ...decoded.value,
     url: origin,
+    path,
+    step,
+    username: carried ? earlier.username : username,
+    password,
+    usernameFrom: carried ? "earlier-step" : "form",
     tabId,
     profileId: identity.profileId,
-  });
+  } satisfies DesktopCapturedSignIn);
 });
+
+const USERNAME_STEP_MS = 10 * 60_000;
+const earlierUsernames = new Map<string, { readonly username: string; readonly at: number }>();
 
 const FormReport = Schema.Struct({
   url: Schema.String,

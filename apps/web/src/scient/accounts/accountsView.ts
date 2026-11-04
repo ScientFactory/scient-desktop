@@ -851,13 +851,17 @@ const SIGN_IN_OUTCOME_LABELS: Readonly<
 /** One line of an account's activity; `where` names the conversation. */
 export function activityLine(entry: AccountActivityEntry, where: string | undefined) {
   const what =
-    entry.decision === "denied"
-      ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-      : entry.signInOutcome
-        ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
-        : entry.outcome === "error"
-          ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-          : ACTIVITY_LABELS[entry.action];
+    entry.keptTyped === "kept"
+      ? "Kept the password you typed"
+      : entry.keptTyped === "linked"
+        ? "The typed password wasn't kept: it lives in its linked password store"
+        : entry.decision === "denied"
+          ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+          : entry.signInOutcome
+            ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
+            : entry.outcome === "error"
+              ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+              : ACTIVITY_LABELS[entry.action];
   return where ? `${what} · ${where}` : what;
 }
 

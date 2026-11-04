@@ -264,8 +264,11 @@ describe("Accounts decisions", () => {
       tabId: "synthetic-tab",
       profileId: "work",
       url: "https://example.com/login",
+      path: "/login",
+      step: "password" as const,
       username: "synthetic",
       password: "synthetic-password",
+      usernameFrom: "form" as const,
     };
     expect(capturedSignInInput(capture, []).details).toEqual({
       kind: "website",
@@ -706,6 +709,9 @@ describe("account status", () => {
     expect(
       activityLine({ ...entry, action: "sign-in", signInOutcome: "password-rejected" }, undefined),
     ).toBe("Password rejected");
+    expect(activityLine({ ...entry, action: "sign-in", keptTyped: "kept" }, undefined)).toBe(
+      "Kept the password you typed",
+    );
   });
 });
 
