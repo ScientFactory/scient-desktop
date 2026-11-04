@@ -22,6 +22,7 @@ import * as AccountPersistence from "./AccountPersistence.ts";
 import { AccountSources } from "./AccountSources.ts";
 import { AccountsService } from "./AccountsService.ts";
 import * as AccountsServiceLive from "./AccountsServiceLive.ts";
+import * as SignInAttemptsStore from "./agent/signInAttempts.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
 
@@ -115,6 +116,7 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   const context = yield* Layer.build(
     AccountsServiceLive.layer.pipe(
       Layer.provide(AccountPersistence.layer),
+      Layer.provide(SignInAttemptsStore.layer),
       Layer.provide(Layer.succeed(AccountSources, sources)),
       Layer.provide(Layer.succeed(AccountVault, vault)),
       Layer.provide(Layer.succeed(ServerSecretStore, storage.store)),
@@ -176,6 +178,7 @@ export function fakeAccounts(
     }),
   );
   const service = AccountsService.of({
+    signInAttempts: Effect.succeed(SignInAttemptsStore.makeSignInAttempts()),
     setHandoff: (entry) =>
       Effect.sync(() => {
         handoffs.set(entry.handoffId, entry);

@@ -24,6 +24,7 @@ import {
   signedInSites,
   withdrawFromMainHandler,
 } from "./ipc.ts";
+import { signOutMainSite } from "./mainFill.ts";
 import { trackMainInserts } from "./mainInserts.ts";
 
 vi.mock("./sessionCookies.ts", async (importOriginal) => ({
@@ -298,6 +299,8 @@ function fillFixture(
     copy: (input: Record<string, unknown>, sender: unknown = event) =>
       fillMainHandler(fillInput(input), sender as never).pipe(Effect.provide(layer)),
     stateDir,
+    signOutMain: (site: string) =>
+      signOutMainSite(site, PRIMARY_LOCAL_ENVIRONMENT_ID).pipe(Effect.provide(layer)),
     withdraw: (from: string) =>
       withdrawFromMainHandler({ from }, event as never).pipe(Effect.provide(layer)),
   };
@@ -325,6 +328,11 @@ function fakeJarSession() {
   };
   const cookies = Object.assign(new NodeEvents.EventEmitter(), {
     flushStore: vi.fn(async () => undefined),
+    // Electron's own cookie API, which Accounts' Sign out uses.
+    get: vi.fn(async () => [...jar.values()].map(electronCookie)),
+    remove: vi.fn(async (_url: string, name: string) => {
+      for (const [key, cookie] of jar) if (cookie.name === name) jar.delete(key);
+    }),
   });
   // One cookie per slot and partition, as in a real jar.
   const slot = (cookie: Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">) =>
@@ -617,7 +625,7 @@ describe("fillMain", () => {
       }),
   );
 
-  it.effect("refuses a unit whose restore failed for the rest of the run", () =>
+  it.effect("refuses a unit whose restore failed until the user signs out of it in Main", () =>
     Effect.gen(function* () {
       const f = fillFixture();
       f.profile("work").put(jarCookie());
@@ -633,6 +641,10 @@ describe("fillMain", () => {
       const again = yield* f.copy({ from: "work", sourceControls: allowed });
       expect(again?.units[0]?.outcome).toBe("restore-failed");
       expect(main.jar.size).toBe(0);
+      // The user's own Sign out of the site in Main lets copies write it again.
+      expect(yield* f.signOutMain("github.com")).toBe(true);
+      const afterSignOut = yield* f.copy({ from: "work", sourceControls: allowed });
+      expect(afterSignOut?.units[0]?.outcome).toBe("copied");
     }),
   );
 

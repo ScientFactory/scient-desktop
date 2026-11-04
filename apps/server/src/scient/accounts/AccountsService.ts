@@ -3,6 +3,7 @@
  * Scient's own use (sign-in, brokered requests, per-session files) or through
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
+import type { SignInAttempts } from "./agent/signInAttempts.ts";
 import type { RemoteSender } from "./AccountPersistence.ts";
 import type {
   AccountSignIn,
@@ -160,6 +161,8 @@ export interface AccountsServiceShape {
   ) => Effect.Effect<void, AccountsError>;
   /** On a remote: the desktops that send sign-ins here. */
   readonly remoteSenders: Effect.Effect<ReadonlyArray<RemoteSender>, AccountsError>;
+  /** The sign-in executor's locks and kept attempts, for the server's life. */
+  readonly signInAttempts: Effect.Effect<SignInAttempts["Service"]>;
   /** On a remote: records a sender, or forgets it with `undefined`. */
   readonly setRemoteSender: (
     source: EnvironmentId,

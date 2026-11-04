@@ -217,6 +217,13 @@ export function mainFillTrigger(deps: {
         return null;
       });
     const outcome = result?.units[0]?.outcome;
+    if (outcome === "restore-failed")
+      warn(
+        "A copy into Main couldn't be undone; signing out of the site in Main lets it copy again",
+        {
+          sites: website(row)!.sites,
+        },
+      );
     // A page writing the site meanwhile (`busy`) is retried like a failed copy.
     if (result && outcome !== "failed" && outcome !== "busy") {
       pending.delete(key);

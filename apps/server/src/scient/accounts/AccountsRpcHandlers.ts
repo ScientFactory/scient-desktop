@@ -49,6 +49,7 @@ import { messagesReadable } from "./signIn/messageCodes.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
+import { makeSignInAttempts } from "./agent/signInAttempts.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
 import { RemoteSessions, type AccountsCallerSession } from "./remoteSessions.ts";
 
@@ -610,6 +611,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
   Effect.map(
     Option.getOrElse(() =>
       AccountsService.of({
+        signInAttempts: Effect.succeed(makeSignInAttempts()),
         passwordStore: unavailable,
         snapshot: missingService,
         changes: Stream.empty,

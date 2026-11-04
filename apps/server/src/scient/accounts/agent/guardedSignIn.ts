@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import type { PaperRequester } from "../../papers/paperAttempt.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
@@ -31,13 +30,13 @@ import {
 } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { checkAccountNow } from "../checkAccounts.ts";
-import type { SignInSubmission } from "../signIn/decision.ts";
 import { SignInDetection, signInDetectionScript } from "../signIn/detection.ts";
 import { signIn, type SignInOptions } from "../signIn/engine.ts";
 import { closeLeftovers, withSignInService } from "../universitySignIn.ts";
 import { authorize } from "./accountUse.ts";
 import { previewInvoker } from "./broker.ts";
 import { signInCodes } from "./signInCodes.ts";
+import type { Typed } from "./signInAttempts.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
 const isAccountsError = Schema.is(AccountsError);
@@ -92,15 +91,6 @@ interface SignInRequest {
   readonly caller: SignInCaller;
 }
 
-const signInLocks = new Map<string, Semaphore.Semaphore>();
-const lockFor = (key: string) => {
-  const known = signInLocks.get(key);
-  if (known) return known;
-  const lock = Semaphore.makeUnsafe(1);
-  signInLocks.set(key, lock);
-  return lock;
-};
-
 const automatic = (caller: SignInCaller) => caller.kind === "page" || caller.kind === "paper";
 const userPress = (caller: SignInCaller) => caller.kind === "check" || caller.kind === "person";
 
@@ -109,49 +99,6 @@ const PERSON = { waitMs: 15 * 60_000, lookGapMs: 400 };
 const MOST_PENDING = 4;
 
 type Invocation = AgentInvocationContext["Service"];
-
-/**
- * An attempt stopped at a second factor, kept with its tab and what it submitted, so the next
- * press or agent call in its thread resumes it instead of typing the password again. In memory:
- * a restart ends it.
- */
-interface Pending {
-  readonly attemptId: string;
-  readonly accountId: AccountId;
-  readonly invocation: Invocation;
-  readonly tabId: PreviewTabId;
-  readonly submissions: ReadonlyArray<SignInSubmission>;
-  readonly submittedAt?: number | undefined;
-}
-const pendingAttempts = new Map<string, Pending>();
-
-/**
- * What one attempt saw and the user typed in its tab, in order. Only the one password typed before
- * the sign-in finished, with no field back on its page and nothing asked elsewhere since, is kept,
- * unverified; anything less keeps nothing. Values stay here until kept or the attempt ends.
- */
-interface Typed {
-  readonly threadId: string;
-  readonly tabId: PreviewTabId;
-  readonly sites: ReadonlyArray<string>;
-  readonly university: boolean;
-  readonly accountId: AccountId;
-  /** When each origin last asked for anything, and for a password, in the order of `seen`. */
-  readonly fieldsSeen: Map<string, number>;
-  readonly passwordSeen: Map<string, number>;
-  readonly scientTyped: Set<string>;
-  submitted: number;
-  /** Set once the sign-in worked: what arrives after can't be the password it followed. */
-  signedIn: boolean;
-  candidate?: {
-    readonly origin: string;
-    readonly username: string;
-    readonly password: Redacted.Redacted<string>;
-    readonly at: number;
-  };
-  seen: number;
-}
-const typedIn = new Map<string, Typed>();
 
 /** The one password the sign-in followed, when the attempt shows no other way it could have gone. */
 const typedCandidate = (typed: Typed) => {
@@ -167,7 +114,7 @@ const typedCandidate = (typed: Typed) => {
 
 /** Ends an attempt: its tab opens to agents again and anything typed in it is dropped. */
 const endAttempt = Effect.fn("AccountsAgent.endAttempt")(function* (attemptId: string) {
-  typedIn.delete(attemptId);
+  (yield* (yield* AccountsService).signInAttempts).typed.delete(attemptId);
   yield* (yield* AccountsService).removeAttempt(attemptId);
 });
 
@@ -175,7 +122,7 @@ const endAttempt = Effect.fn("AccountsAgent.endAttempt")(function* (attemptId: s
 export const keepTyped = Effect.fn("AccountsAgent.keepTyped")(function* (
   input: AccountKeepTypedInput,
 ) {
-  const typed = typedIn.get(input.attemptId);
+  const typed = (yield* (yield* AccountsService).signInAttempts).typed.get(input.attemptId);
   if (!typed || typed.threadId !== input.threadId || typed.tabId !== input.tabId)
     return { kept: false };
   const origin = URL.canParse(input.origin) ? new URL(input.origin).origin : "";
@@ -199,7 +146,7 @@ export const keepTyped = Effect.fn("AccountsAgent.keepTyped")(function* (
 
 /** After a sign-in that worked, the password it followed, if any, is kept; the rest is dropped. */
 const keepCandidate = Effect.fn("AccountsAgent.keepCandidate")(function* (attemptId: string) {
-  const typed = typedIn.get(attemptId);
+  const typed = (yield* (yield* AccountsService).signInAttempts).typed.get(attemptId);
   const candidate = typed && typedCandidate(typed);
   if (!typed || !candidate) return;
   yield* (yield* AccountsService).keepTyped(typed.accountId, candidate).pipe(Effect.ignore);
@@ -212,9 +159,10 @@ const browserOf = Effect.fn("AccountsAgent.browserOf")(function* (invocation: In
 
 /** Ends a kept attempt and closes its tab. */
 const dropPending = Effect.fn("AccountsAgent.dropPending")(function* (key: string) {
-  const kept = pendingAttempts.get(key);
+  const { pending } = yield* (yield* AccountsService).signInAttempts;
+  const kept = pending.get(key);
   if (!kept) return;
-  pendingAttempts.delete(key);
+  pending.delete(key);
   yield* endAttempt(kept.attemptId);
   const invoke = yield* browserOf(kept.invocation);
   yield* invoke("close", {}, kept.tabId).pipe(Effect.ignore);
@@ -226,7 +174,7 @@ const resumable = Effect.fn("AccountsAgent.resumable")(function* (
   caller: SignInCaller,
   invocation: Invocation,
 ) {
-  const kept = pendingAttempts.get(key);
+  const kept = (yield* (yield* AccountsService).signInAttempts).pending.get(key);
   const mayResume =
     caller.kind === "person" || (caller.kind === "agent" && !caller.scope.unattended);
   if (!kept || !mayResume || kept.invocation.threadId !== invocation.threadId) return undefined;
@@ -312,8 +260,9 @@ const run = Effect.fn("AccountsAgent.guardedSignIn")(function* (
     if (fitting.length > 1) return { outcome: "choose", accounts: fitting } satisfies SignInResult;
     account = fitting[0]!;
   } else account = request.signIn;
-  return yield* attempt(request, account.accountId).pipe(
-    lockFor(attemptKey(account) ?? account.accountId).withPermits(1),
+  return yield* (yield* (yield* AccountsService).signInAttempts).exclusive(
+    attemptKey(account) ?? account.accountId,
+    attempt(request, account.accountId),
   );
 });
 
@@ -335,6 +284,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
   const { caller } = request;
   const accounts = yield* AccountsService;
   const invocation = yield* AgentInvocationContext;
+  const { typed: typedIn, pending: pendingAttempts } = yield* accounts.signInAttempts;
   const { accounts: rows, agentAccess } = yield* accounts.snapshot;
   const account = rows.find((row) => row.accountId === accountId);
   if (!account)

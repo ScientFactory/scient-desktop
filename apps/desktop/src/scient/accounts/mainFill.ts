@@ -30,6 +30,7 @@ import {
   type MainCopy,
   type UnitOutcome,
 } from "@t3tools/shared/scientSessionCookies";
+import { siteOf } from "@t3tools/shared/scientSiteMatch";
 import type * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -82,7 +83,10 @@ function underMainLock<A>(environmentId: string, run: () => Promise<A>): Promise
   return next;
 }
 
-/** Units whose restore failed stay refused until the app restarts; one Main per environment. */
+/**
+ * Units whose restore failed are refused until the user signs out of them in Main (or restarts);
+ * one Main per environment.
+ */
 const refused = new WeakMap<object, Set<string>>();
 const refusedIn = (main: Electron.Session) => {
   let sites = refused.get(main);
@@ -287,7 +291,11 @@ export const signOutMainSite = Effect.fn("DesktopAccounts.signOutMainSite")(func
   const scope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
   const main = yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace);
   return yield* Effect.promise(() =>
-    underMainLock(environmentId, () => removeSiteCookies(main, site)).then(
+    underMainLock(environmentId, async () => {
+      await removeSiteCookies(main, site);
+      // The user's own sign-out starts the site afresh: copies may write it again.
+      refusedIn(main).delete(siteOf(site));
+    }).then(
       () => true,
       () => false,
     ),

@@ -52,6 +52,7 @@ import {
 } from "./AccountsService.ts";
 import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
 import { mainRowFor, withMainSignOutsCleared, withSignedOutSite } from "./mainRecord.ts";
+import { SignInAttempts } from "./agent/signInAttempts.ts";
 import { clientProfile, issueJar, issueUnit, withSendLog, withShared } from "./sendLog.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
@@ -132,6 +133,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const persistence = yield* AccountPersistence;
     const sources = yield* AccountSources;
+    const signInAttempts = yield* SignInAttempts;
     const cliStores = sources.passwordStores;
     const vault = yield* AccountVault;
     const serviceScope = yield* Scope.Scope;
@@ -1256,6 +1258,7 @@ export const layer = Layer.effect(
           }),
         ),
       ),
+      signInAttempts: Effect.succeed(signInAttempts),
       // Nothing stored means no senders: answered without opening the vault or reading Accounts,
       // so a server nobody has used yet starts without touching the keychain or Source Control.
       remoteSenders: Effect.suspend(() =>
