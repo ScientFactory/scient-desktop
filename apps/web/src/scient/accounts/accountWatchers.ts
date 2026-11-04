@@ -1,43 +1,56 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { environmentSummaries } from "~/state/presentation";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { watchAccountAutofill } from "./accountAutofill";
 import { watchGoogleSessions } from "./googleSessions";
 import { watchKeepSignedIn } from "./keepSignedIn";
 import { watchMainFill } from "./mainFill";
 import { watchSignInKeeps } from "./signInKeeps";
 
-/** Saved sign-ins and session checks run for every environment, whatever the notification settings. */
+/**
+ * Saved sign-ins and session checks run whatever the notification settings, for the primary
+ * environment only: they read the desktop's own jars, and another computer's tabs live in its
+ * browser. What the user types in a sign-in goes to the attempt of whichever environment runs it.
+ */
 export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
-  const watched = new Map<EnvironmentId, () => void>();
+  let watched: { readonly environmentId: EnvironmentId; readonly stop: () => void } | undefined;
+  const keeps = new Map<EnvironmentId, () => void>();
   const sync = () => {
+    const primary = registry.get(primaryEnvironmentIdAtom);
+    if (watched?.environmentId !== primary) {
+      watched?.stop();
+      watched = undefined;
+      if (primary !== null) {
+        const stops = [
+          watchAccountAutofill(registry, primary),
+          watchGoogleSessions(registry, primary),
+          watchKeepSignedIn(registry, primary),
+          watchMainFill(registry, primary),
+        ];
+        watched = { environmentId: primary, stop: () => stops.forEach((stop) => stop()) };
+      }
+    }
     const environmentIds = registry.get(environmentSummaries.environmentIdsAtom);
-    for (const [environmentId, stop] of watched) {
+    for (const [environmentId, stop] of keeps) {
       if (environmentIds.includes(environmentId)) continue;
       stop();
-      watched.delete(environmentId);
+      keeps.delete(environmentId);
     }
-    for (const environmentId of environmentIds) {
-      if (watched.has(environmentId)) continue;
-      const stopAutofill = watchAccountAutofill(registry, environmentId);
-      const stopGoogleSessions = watchGoogleSessions(registry, environmentId);
-      const stopKeepSignedIn = watchKeepSignedIn(registry, environmentId);
-      const stopMainFill = watchMainFill(registry, environmentId);
-      const stopSignInKeeps = watchSignInKeeps(registry, environmentId);
-      watched.set(environmentId, () => {
-        stopSignInKeeps();
-        stopAutofill();
-        stopGoogleSessions();
-        stopKeepSignedIn();
-        stopMainFill();
-      });
-    }
+    for (const environmentId of environmentIds)
+      if (!keeps.has(environmentId))
+        keeps.set(environmentId, watchSignInKeeps(registry, environmentId));
   };
-  const unsubscribe = registry.subscribe(environmentSummaries.environmentIdsAtom, sync);
+  const unsubscribe = [
+    registry.subscribe(primaryEnvironmentIdAtom, sync),
+    registry.subscribe(environmentSummaries.environmentIdsAtom, sync),
+  ];
   sync();
   return () => {
-    unsubscribe();
-    for (const stop of watched.values()) stop();
-    watched.clear();
+    for (const stop of unsubscribe) stop();
+    watched?.stop();
+    watched = undefined;
+    for (const stop of keeps.values()) stop();
+    keeps.clear();
   };
 }

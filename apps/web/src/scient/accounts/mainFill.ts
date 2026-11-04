@@ -19,7 +19,6 @@ import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { readPrimaryEnvironmentId } from "~/state/environments";
 
 import { accountsState } from "./accountsState";
 
@@ -214,7 +213,7 @@ export function mainFillTrigger(deps: {
   };
 }
 
-/** Starts trigger 2 for an environment, where the desktop can write Main. */
+/** Starts trigger 2 for the primary environment, where the desktop writes Main. */
 export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
   if (!fillMain) return () => undefined;
@@ -240,15 +239,11 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
               input: { profileIds: profileIds.map((id) => BrowserProfileId.make(id)) },
             })
           )._tag === "Success",
-        ...(environmentId === readPrimaryEnvironmentId()
-          ? {
-              makeMainDefault: () =>
-                persistClientSettingsUpdate((current) => ({
-                  ...current,
-                  browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
-                })).then(() => undefined),
-            }
-          : {}),
+        makeMainDefault: () =>
+          persistClientSettingsUpdate((current) => ({
+            ...current,
+            browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
+          })).then(() => undefined),
       }),
   });
   return registry.subscribe(
