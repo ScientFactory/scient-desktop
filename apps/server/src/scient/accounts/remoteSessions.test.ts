@@ -48,6 +48,7 @@ function browserFixture() {
     afterSet?: ((profileId: string) => void) | undefined;
     stopping?: boolean;
     stalled?: boolean;
+    quarantined?: boolean;
   } = {};
   const jarOf = (profileId: string) => jars.get(profileId) ?? [];
   const jar = (profileId: string): ProfileCookieJar => ({
@@ -66,11 +67,18 @@ function browserFixture() {
     },
     openTabSites: () => tabs.get(profileId) ?? [],
     stopping: () => hooks.stopping === true,
-    stalled: () => hooks.stalled === true,
+    stalled: () => hooks.stalled === true || hooks.quarantined === true,
+    quarantined: () => hooks.quarantined === true,
     independent: { names: async () => [], pages: () => 1 },
   });
   const browser = {
-    profileCookies: (profileId: string) => Effect.succeed(jar(profileId)),
+    // A fresh hold opens a fresh context: whatever stalled the last one is gone.
+    profileCookies: (profileId: string) =>
+      Effect.sync(() => {
+        hooks.quarantined = false;
+        hooks.stalled = false;
+        return jar(profileId);
+      }),
     clearProfile: () => Effect.void,
   } as unknown as ServerBrowser["Service"];
   return { jars, tabs, hooks, browser };
@@ -211,6 +219,26 @@ describe("receiving a desktop's sign-ins", () => {
         profileId: WORK,
       });
       expect(applied.units).toEqual([]);
+    }),
+  );
+
+  it.effect("checks a unit whose context stopped answering on a fresh one", () =>
+    Effect.gen(function* () {
+      const { remote, jars, hooks } = yield* setup();
+      const own = [cookie({ value: "synthetic-own" })];
+      // The copy landed, then the context stopped answering: the fresh read shows a change.
+      jars.set(WORK, own);
+      hooks.afterSet = () => (hooks.quarantined = true);
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(1)])))).toEqual([
+        "restore-failed",
+      ]);
+      // The context stopped answering, and the fresh read shows the unit as it was: only busy.
+      jars.set(WORK, own);
+      hooks.afterSet = () => {
+        hooks.quarantined = true;
+        jars.set(WORK, own);
+      };
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(2)])))).toEqual(["busy"]);
     }),
   );
 

@@ -2912,13 +2912,18 @@ const make = Effect.gen(function* () {
               release: lease.release,
             };
           } catch (cause) {
-            await lease.release();
+            // A helper that didn't open in time leaves a context nobody can trust.
+            await lease.release({ discard: true });
             throw cause;
           }
         },
         catch: (cause) => new ProfileCookiesError({ profileId, cause }),
       }),
-      (held) => Effect.promise(() => held.close().then(held.release)),
+      (held) =>
+        Effect.promise(async () => {
+          await held.close();
+          await held.release({ discard: held.jar.quarantined() });
+        }),
     ).pipe(Effect.map(({ jar }) => jar));
   // SCIENT-FORK:END
 

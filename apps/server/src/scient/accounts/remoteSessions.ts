@@ -18,6 +18,7 @@ import {
 import {
   SENDER_KEEP_DAYS,
   applyUnit,
+  sameUnit,
   shareable,
   unitCookies,
   travels,
@@ -451,6 +452,13 @@ export const makeRemoteSessions = Effect.gen(function* () {
         });
         const pending = decided.flatMap((unit) => (typeof unit === "string" ? [] : [unit]));
         const outcomes = new Map<(typeof pending)[number], SessionReceiveOutcome>();
+        // A context that stopped answering is discarded mid-unit: that unit is checked afresh.
+        let lost:
+          | {
+              readonly unit: (typeof pending)[number];
+              readonly before: ReadonlyArray<SessionCookie>;
+            }
+          | undefined;
         if (pending.length)
           yield* withJar(input.profileId, async (jar) => {
             for (const unit of pending) {
@@ -459,12 +467,36 @@ export const makeRemoteSessions = Effect.gen(function* () {
                 outcomes.set(unit, "busy");
                 continue;
               }
+              const before = await jar.readUnit(unit.sites).catch(() => undefined);
+              if (!before) {
+                outcomes.set(unit, jar.stalled() ? "busy" : "failed");
+                continue;
+              }
               const outcome = await receiveUnit(jar, unit, input.mode).catch(
                 (): SessionReceiveOutcome => "failed",
               );
-              outcomes.set(unit, jar.stalled() && outcome !== "restore-failed" ? "busy" : outcome);
+              if (jar.quarantined()) lost = { unit, before };
+              outcomes.set(
+                unit,
+                jar.quarantined()
+                  ? "restore-failed"
+                  : jar.stalled() && outcome !== "restore-failed"
+                    ? "busy"
+                    : outcome,
+              );
             }
           });
+        if (lost) {
+          const { unit, before } = lost;
+          const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;
+          const fresh = yield* withJar(input.profileId, (jar) => jar.readUnit(unit.sites)).pipe(
+            Effect.option,
+          );
+          const live = (cookies: ReadonlyArray<SessionCookie>) =>
+            cookies.filter((cookie) => isLive(cookie, nowSeconds));
+          if (Option.isSome(fresh) && sameUnit(live(fresh.value), live(before)))
+            outcomes.set(unit, "busy");
+        }
         const result = input.units.map((unit, index) => {
           const early = decided[index];
           return {

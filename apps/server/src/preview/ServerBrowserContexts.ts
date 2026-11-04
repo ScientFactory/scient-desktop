@@ -76,6 +76,8 @@ export const presentAsChrome = async (
 
 // SCIENT-FORK:START — Scient Accounts: after this long a waiting tab or clear asks the copy to stop.
 const LEASE_WAIT_MS = 10_000;
+/** A hold's closing of its context waits no longer; a context that doesn't close is dropped. */
+const LEASE_CLOSE_DEADLINE_MS = 30_000;
 // SCIENT-FORK:END
 
 export class ServerBrowserContexts {
@@ -266,7 +268,7 @@ export class ServerBrowserContexts {
    * Holds a persistent profile's context: tabs and clears wait for `release`, never alongside it.
    * One waiting 10 s sets `stopping`, and the copy stops at its next unit; a stalled cookie
    * operation is aborted at its own deadline. Tabs waiting go before the next hold. A context the
-   * hold opened closes on release unless a tab asked for it meanwhile.
+   * hold opened closes on release unless a tab asked for it meanwhile; a discarded one is dropped.
    */
   async lease(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) throw new Error("Incognito keeps no cookies.");
@@ -288,10 +290,24 @@ export class ServerBrowserContexts {
       return {
         context,
         stopping: () => lease.stopping,
-        release: async () => {
-          if (opened && !lease.wanted) {
+        /**
+         * `discard`: the context stopped answering. It is dropped, so the next tab or hold opens a
+         * fresh one from the same profile folder, and closed as far as it will.
+         */
+        release: async (options?: { readonly discard?: boolean }) => {
+          if (options?.discard || (opened && !lease.wanted)) {
             if (this.contexts.get(key) === pending) this.contexts.delete(key);
-            await context.close().catch(constVoid);
+            await new Promise<void>((resolve) => {
+              // @effect-diagnostics-next-line globalTimers:off -- Playwright resources live outside Effect.
+              const timer = setTimeout(resolve, LEASE_CLOSE_DEADLINE_MS);
+              void context
+                .close()
+                .catch(constVoid)
+                .finally(() => {
+                  clearTimeout(timer);
+                  resolve();
+                });
+            });
           }
           this.leases.delete(key);
           done.resolve();

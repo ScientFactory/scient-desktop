@@ -27,6 +27,8 @@ export interface ProfileCookieJar extends CookieStore {
   readonly stopping: () => boolean;
   /** A cookie operation passed its deadline and was aborted: stop, and give the hold back. */
   readonly stalled: () => boolean;
+  /** Opening, attaching or closing a helper stalled: the context is discarded on release. */
+  readonly quarantined: () => boolean;
   /** Reads through Playwright's own context API rather than CDP, for the qualification. */
   readonly independent: {
     readonly names: (url?: string) => Promise<ReadonlyArray<string>>;
@@ -43,15 +45,25 @@ export class ProfileCookiesError extends Data.TaggedError("ProfileCookiesError")
   }
 }
 
-/** A cookie operation longer than this has stalled: its helper page is closed to abort it. */
+/** A cookie operation, or a helper page's opening or closing, longer than this has stalled. */
 const COOKIE_OPERATION_DEADLINE_MS = 30_000;
 
 class CookieOperationStalled extends Error {}
 
+/** Rejects once `ms` passes; the operation itself may still be running. */
+const withinDeadline = <A>(operation: Promise<A>, ms: number) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    // @effect-diagnostics-next-line globalTimers:off -- Playwright calls live outside Effect.
+    timer = setTimeout(() => reject(new CookieOperationStalled()), ms);
+  });
+  return Promise.race([operation, deadline]).finally(() => clearTimeout(timer));
+};
+
 /**
- * CDP runs on a blank helper page in the profile's own context, so every Network command acts on
- * that context's jar. The page is never a tab: tabs adopt only pages an open tab opened. A stalled
- * command closes its page, and the next one opens a fresh page, so a restore can still run.
+ * CDP runs on a blank helper page in the profile's own context, never a tab. Every step has a
+ * deadline: a stalled command closes its page and the next opens a fresh one, so a restore runs.
+ * A stalled open, attach or close quarantines the jar: later operations fail, the holder discards it.
  */
 export async function openProfileCookieJar(
   context: BrowserContext,
@@ -59,39 +71,49 @@ export async function openProfileCookieJar(
   deadlineMs = COOKIE_OPERATION_DEADLINE_MS,
 ) {
   const helpers = new Set<Page>();
+  let stalled = false;
+  let quarantined = false;
+  const bounded = async <A>(operation: () => Promise<A>, lifecycle: boolean) => {
+    if (quarantined) throw new CookieOperationStalled();
+    try {
+      return await withinDeadline(operation(), deadlineMs);
+    } catch (cause) {
+      if (cause instanceof CookieOperationStalled) {
+        stalled = true;
+        if (lifecycle) quarantined = true;
+      }
+      throw cause;
+    }
+  };
+  const closeHelper = (page: Page) =>
+    bounded(() => page.close(), true).then(
+      () => void helpers.delete(page),
+      () => undefined,
+    );
   const open = async () => {
-    const page = await context.newPage();
+    const page = await bounded(() => context.newPage(), true);
     helpers.add(page);
     try {
-      return { page, cdp: await context.newCDPSession(page) };
+      return { page, cdp: await bounded(() => context.newCDPSession(page), true) };
     } catch (cause) {
-      await page.close().catch(() => undefined);
+      if (!quarantined) await closeHelper(page);
       throw cause;
     }
   };
   let current: Awaited<ReturnType<typeof open>> | undefined = await open();
-  let stalled = false;
   const send: CdpSend = async (method, params) => {
     const helper = (current ??= await open());
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      // @effect-diagnostics-next-line globalTimers:off -- Playwright calls live outside Effect.
-      timer = setTimeout(() => reject(new CookieOperationStalled()), deadlineMs);
-    });
     try {
-      return await Promise.race([
-        helper.cdp.send(method as Parameters<typeof helper.cdp.send>[0], params as never),
-        deadline,
-      ]);
+      return await bounded(
+        () => helper.cdp.send(method as Parameters<typeof helper.cdp.send>[0], params as never),
+        false,
+      );
     } catch (cause) {
-      if (cause instanceof CookieOperationStalled) {
-        stalled = true;
-        if (current === helper) current = undefined;
-        await helper.page.close().catch(() => undefined);
+      if (cause instanceof CookieOperationStalled && current === helper) {
+        current = undefined;
+        await closeHelper(helper.page);
       }
       throw cause;
-    } finally {
-      clearTimeout(timer);
     }
   };
   const readAll = async () => (await readJar(send)).cookies;
@@ -102,6 +124,7 @@ export async function openProfileCookieJar(
     remove: (cookies) => deleteCookies(send, cookies),
     stopping,
     stalled: () => stalled,
+    quarantined: () => quarantined,
     openTabSites: () =>
       context.pages().flatMap((page) => {
         if (helpers.has(page) || page.isClosed()) return [];
@@ -116,7 +139,7 @@ export async function openProfileCookieJar(
   return {
     jar,
     close: async () => {
-      await Promise.all([...helpers].map((page) => page.close().catch(() => undefined)));
+      if (!quarantined) await Promise.all([...helpers].map(closeHelper));
     },
   };
 }

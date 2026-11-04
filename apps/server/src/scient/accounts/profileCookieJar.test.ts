@@ -89,3 +89,56 @@ it("lets a waiting tab in once a stalled operation is aborted and the copy gives
   expect([opened, jar.stalled()]).toEqual([true, true]);
   await pool.close();
 });
+
+/** A context that stopped answering: no command, page close or context close ever finishes. */
+function hungContext() {
+  const never = () => new Promise<never>(() => undefined);
+  const page = { close: never, isClosed: () => false, url: () => "about:blank" };
+  const pages: Array<typeof page> = [];
+  return {
+    newPage: async () => {
+      pages.push(page);
+      return page;
+    },
+    newCDPSession: async () => ({ send: never }),
+    pages: () => pages,
+    on: () => undefined,
+    close: never,
+  } as unknown as BrowserContext;
+}
+
+it("discards a context whose helper never closes, and the waiting tab opens a fresh one", async () => {
+  const hung = hungContext();
+  const fresh = stallingContext().context;
+  const launch = vi
+    .spyOn(chromium, "launchPersistentContext")
+    .mockResolvedValueOnce(hung as never)
+    .mockResolvedValueOnce(fresh as never);
+  const pool = new ServerBrowserContexts({
+    profilesDir: "/test/profiles",
+    executable: async () => "/test/chromium",
+    env: {},
+  });
+  const lease = await pool.lease("work");
+  const { jar, close } = await openProfileCookieJar(lease.context, lease.stopping, 30_000);
+  // The copy as ServerBrowser.profileCookies runs it: the unit, then close and release.
+  const copy = jar
+    .readAll()
+    .catch(() => undefined)
+    .then(async () => {
+      await close();
+      await lease.release({ discard: jar.quarantined() });
+    });
+  let opened: BrowserContext | undefined;
+  const tab = pool.contextFor("work").then((context) => (opened = context));
+  // 30 s for the command, 30 s for the helper's close, 30 s for the context's close.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect([jar.stalled(), jar.quarantined(), opened]).toEqual([true, true, undefined]);
+  await expect(jar.readAll()).rejects.toThrow();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await copy;
+  await tab;
+  expect(opened).toBe(fresh);
+  expect(launch).toHaveBeenCalledTimes(2);
+  await pool.close();
+});
