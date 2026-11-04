@@ -230,6 +230,9 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
+// SCIENT-FORK:START — generated-image temp files a crash left behind.
+import { generatedImageTempSweepLayer } from "./generatedImageAttachments.ts";
+// SCIENT-FORK:END
 import { conversationImportUploadRouteLayer } from "./scient/conversationImport/http.ts";
 import {
   makeScientRouteServices,
@@ -877,6 +880,9 @@ export const layerMakeRoutes = Layer.mergeAll(
     wordDiagramRequestBodyLayer,
     scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
+    // SCIENT-FORK:START — generated-image temp files a crash left behind.
+    generatedImageTempSweepLayer,
+    // SCIENT-FORK:END
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
