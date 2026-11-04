@@ -679,37 +679,100 @@ type ProviderManagedAccount = {
   href: "/settings/extensions/installed";
 };
 
-export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>) {
-  return providers
-    .filter((provider) => provider.enabled && provider.installed)
-    .flatMap((provider): ReadonlyArray<ProviderManagedAccount> => {
-      if (provider.driver === "claudeAgent") {
-        return (provider.mcpServers ?? [])
-          .filter((server) => server.scope === "claudeai" && server.status === "connected")
-          .map((server) => ({
-            kind: "claude" as const,
-            id: JSON.stringify([provider.instanceId, server.name]),
-            instanceId: provider.instanceId,
-            // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
-            name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
-            href: "/settings/extensions/installed" as const,
-          }));
-      }
-      if (provider.driver !== "codex") return [];
-      const apps = new Map(
-        (provider.plugins ?? [])
-          .flatMap((plugin) => plugin.apps ?? [])
-          .filter((app) => app.connected)
-          .map((app) => [app.id ?? app.name, app]),
-      );
-      return [...apps].map(([id, app]) => ({
-        kind: "codex" as const,
-        id: JSON.stringify([provider.instanceId, id]),
-        instanceId: provider.instanceId,
-        name: app.name,
-        href: "/settings/extensions/installed" as const,
-      }));
-    });
+type ManagedRowsByInstance = ReadonlyMap<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>;
+
+function claudeRows(
+  provider: ServerProvider,
+  servers: NonNullable<ServerProvider["mcpServers"]>,
+  previous: ReadonlyArray<ProviderManagedAccount>,
+) {
+  return servers
+    .filter(
+      (server) =>
+        server.scope === "claudeai" &&
+        (server.status === "connected" ||
+          // A server still starting keeps the place it had; a refusal removes it.
+          ((server.status === "pending" || server.status === "unknown") &&
+            previous.some((row) => row.id === JSON.stringify([provider.instanceId, server.name])))),
+    )
+    .map((server) => ({
+      kind: "claude" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
+      name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider["plugins"]>) {
+  const apps = new Map(
+    plugins
+      .flatMap((plugin) => plugin.apps ?? [])
+      .filter((app) => app.connected)
+      .map((app) => [app.id ?? app.name, app]),
+  );
+  return [...apps].map(([id, app]) => ({
+    kind: "codex" as const,
+    id: JSON.stringify([provider.instanceId, id]),
+    instanceId: provider.instanceId,
+    name: app.name,
+    href: "/settings/extensions/installed" as const,
+  }));
+}
+
+/**
+ * Claude and Codex connections, kept steady while their inventory is unknown or refreshing.
+ * `providers` is the live list (which instances count), `inventory` the last extensions reply.
+ */
+export function providerManagedAccounts(
+  providers: ReadonlyArray<ServerProvider>,
+  inventory: ReadonlyArray<ServerProvider>,
+  previous: ManagedRowsByInstance,
+): { rows: ReadonlyArray<ProviderManagedAccount>; next: ManagedRowsByInstance } {
+  const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
+  for (const provider of providers) {
+    if (!provider.enabled || !provider.installed) continue;
+    if (provider.driver !== "claudeAgent" && provider.driver !== "codex") continue;
+    const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
+    const kept = previous.get(provider.instanceId) ?? [];
+    const rows =
+      provider.driver === "claudeAgent"
+        ? known?.mcpServers
+          ? claudeRows(provider, known.mcpServers, kept)
+          : kept
+        : known?.plugins
+          ? codexRows(provider, known.plugins)
+          : kept;
+    next.set(provider.instanceId, rows);
+  }
+  const rows = [...next.values()].flat().toSorted((a, b) => a.name.localeCompare(b.name));
+  return { rows, next };
+}
+
+export type ProviderRowsCache = Map<string, { connection: object; rows: ManagedRowsByInstance }>;
+
+/** Kept rows belong to the connection that read them; a new, lost or unpermitted one clears them. */
+export function steadyProviderRows(
+  cache: ProviderRowsCache,
+  environmentId: string,
+  live: {
+    connection: object | null;
+    canRead: boolean;
+    permitted: boolean;
+    providers: ReadonlyArray<ServerProvider>;
+    inventory: ReadonlyArray<ServerProvider>;
+  },
+) {
+  const cached = cache.get(environmentId);
+  if (!live.connection || !live.canRead || !live.permitted) {
+    cache.delete(environmentId);
+    return [];
+  }
+  const previous = cached?.connection === live.connection ? cached.rows : new Map();
+  const { rows, next } = providerManagedAccounts(live.providers, live.inventory, previous);
+  cache.set(environmentId, { connection: live.connection, rows: next });
+  return rows;
 }
 
 const KEY_PREFIXES = [

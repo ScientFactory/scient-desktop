@@ -22,6 +22,8 @@ import {
   libraryLinkTemplate,
   accountListRows,
   providerManagedAccounts,
+  steadyProviderRows,
+  type ProviderRowsCache,
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
@@ -485,24 +487,84 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
       { id: "second", name: "Second", source: "local" as const, enabled: false, apps },
     ],
   };
-  expect(
-    providerManagedAccounts([base, codex]).map((row) => [row.kind, row.name, row.instanceId]),
-  ).toEqual([
-    ["claude", "Signed in", base.instanceId],
+  const rows = (
+    providers: ReadonlyArray<ServerProvider>,
+    previous = new Map() as Parameters<typeof providerManagedAccounts>[2],
+    inventory = providers,
+  ) => providerManagedAccounts(providers, inventory, previous);
+  const first = rows([base, codex]);
+  expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["codex", "Connected app", codex.instanceId],
+    ["claude", "Signed in", base.instanceId],
   ]);
   expect(
-    providerManagedAccounts([
+    rows([
       { ...base, mcpServers: [] },
       { ...codex, plugins: [] },
-    ]),
+    ]).rows,
   ).toEqual([]);
+  // Uninstalling or disabling an instance removes its rows, even from the kept list.
   expect(
-    providerManagedAccounts([
-      { ...base, enabled: false },
-      { ...codex, installed: false },
-    ]),
+    rows(
+      [
+        { ...base, enabled: false },
+        { ...codex, installed: false },
+      ],
+      first.next,
+    ).rows,
   ).toEqual([]);
+  // A reset inventory (scope change) or Codex not yet reporting keeps the last known rows.
+  expect(rows([base, codex], first.next, []).rows).toEqual(first.rows);
+  expect(
+    rows([base, codex], first.next, [base, (({ plugins: _, ...rest }) => rest)(codex)]).rows,
+  ).toEqual(first.rows);
+  // A Claude server still starting keeps its place; one that asks to sign in again leaves.
+  const restarting = (status: "pending" | "needs-auth") => ({
+    ...base,
+    mcpServers: [{ name: "Signed in", status, scope: "claudeai" as const }],
+  });
+  expect(rows([restarting("pending"), codex], first.next).rows).toEqual(first.rows);
+  expect(rows([restarting("pending"), codex]).rows.map((row) => row.kind)).toEqual(["codex"]);
+  expect(rows([restarting("needs-auth"), codex], first.next).rows.map((row) => row.kind)).toEqual([
+    "codex",
+  ]);
+});
+
+it("keeps provider rows only under the connection and permission that read them", () => {
+  const claude: ServerProvider = {
+    instanceId: ProviderInstanceId.make("synthetic-claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [{ name: "Drive", status: "connected", scope: "claudeai" }],
+  };
+  const cache: ProviderRowsCache = new Map();
+  const live = {
+    connection: {} as object | null,
+    canRead: true,
+    permitted: true,
+    providers: [claude],
+  };
+  const read = (change: Partial<typeof live> & { inventory?: ReadonlyArray<ServerProvider> }) =>
+    steadyProviderRows(cache, "env", { ...live, inventory: [], ...change }).map((row) => row.name);
+  expect(read({ inventory: [claude] })).toEqual(["Drive"]);
+  expect(read({})).toEqual(["Drive"]);
+  expect(read({ connection: {} })).toEqual([]);
+  expect(read({ inventory: [claude] })).toEqual(["Drive"]);
+  expect(read({ permitted: false })).toEqual([]);
+  expect(read({})).toEqual([]);
+  read({ inventory: [claude] });
+  expect(read({ canRead: false })).toEqual([]);
+  read({ inventory: [claude] });
+  expect(read({ connection: null })).toEqual([]);
+  expect(read({})).toEqual([]);
 });
 
 it("recognizes key prefixes without retaining values or guessing unknown keys", async () => {

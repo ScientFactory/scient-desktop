@@ -1,5 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
 import {
+  AuthOrchestrationReadScope,
   DEFAULT_BROWSER_PROFILE_ID,
   GOOGLE_SITE,
   AccountId,
@@ -58,6 +60,7 @@ import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
+import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { environmentThreadShells } from "~/state/threads";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
@@ -81,7 +84,8 @@ import {
   isSavedPassword,
   keysInUse,
   mergeProfiles,
-  providerManagedAccounts,
+  type ProviderRowsCache,
+  steadyProviderRows,
   signedIntoUniversity,
 } from "./accountsView";
 import { UniversityIcon, useUniversitySignIn } from "./University";
@@ -93,6 +97,9 @@ import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useWebsiteSessions } from "./useWebsiteSessions";
+
+/** Provider rows last read per environment, so a refresh doesn't empty "Other sign-ins". */
+const providerRowsCache: ProviderRowsCache = new Map();
 
 /** Where each kind of sign-in is managed, for the "Other sign-ins" links. */
 const MANAGED_IN = {
@@ -866,6 +873,13 @@ function AccountsContent({
     projectsKnown: true,
     enabled: true,
   });
+  const providerRows = steadyProviderRows(providerRowsCache, environmentId, {
+    connection: Option.getOrNull(usePreparedConnection(environmentId)),
+    canRead: useEnvironmentScope(environmentId, AuthOrchestrationReadScope),
+    permitted: useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId)),
+    providers,
+    inventory: providerInventory.providers,
+  });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
   // Lists that grow on their own (saved passwords, sign-ins recorded while browsing, sign-ins
   // managed elsewhere) are one row each, so the page shows what was added on purpose.
@@ -873,7 +887,7 @@ function AccountsContent({
   const importingPasswords = useImportingPasswords();
   const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
   const managedRows = [
-    ...providerManagedAccounts(providerInventory.providers),
+    ...providerRows,
     ...(snapshot.managedElsewhere ??
       snapshot.customModelKeys.map((connection) => ({
         kind: "custom-model" as const,
