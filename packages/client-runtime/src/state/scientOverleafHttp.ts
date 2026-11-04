@@ -106,6 +106,21 @@ export const listEnvironmentOverleafConnections = Effect.fn(
   });
 });
 
+/** Moves the link records this release can't read aside; never reaches Overleaf. */
+export const setAsideEnvironmentOverleafUnreadable = Effect.fn(
+  "clientRuntime.state.setAsideEnvironmentOverleafUnreadable",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafWorkspaceRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: READ_TIMEOUT_MS,
+    url: (urls) => urls.setAsideUnreadable(),
+    run: ({ client, headers }) => client.setAsideUnreadable({ headers, payload: input.request }),
+  });
+});
+
 export const connectEnvironmentOverleaf = Effect.fn(
   "clientRuntime.state.connectEnvironmentOverleaf",
 )(function* (input: {

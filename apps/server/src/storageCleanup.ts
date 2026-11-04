@@ -1240,8 +1240,12 @@ const make = Effect.gen(function* () {
           )
           .pipe(
             Effect.catchTags({
-              CheckoutRecoveryRequiredError: () =>
-                Effect.succeed("an unfinished Overleaf sync needs recovery first"),
+              CheckoutRecoveryRequiredError: (error) =>
+                Effect.succeed(
+                  error.reason === "unreadable-record"
+                    ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
+                    : "an unfinished Overleaf sync needs recovery first",
+                ),
               CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
             }),
           );

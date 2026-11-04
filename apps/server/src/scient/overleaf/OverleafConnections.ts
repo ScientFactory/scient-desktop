@@ -1075,7 +1075,48 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
   /** Readable connection records with their recorded bindings, for ownership checks. */
   const documents = connections;
 
-  return { connect, disconnect, relink, status, list, documents, followRestored };
+  /** Records no release here can read: damaged, or written by a newer Scient. */
+  const unreadableRecords = Effect.gen(function* () {
+    let count = 0;
+    for (const id of yield* store.listConnections) {
+      const read = yield* store.readConnection(id);
+      if (read._tag !== "ready" && read._tag !== "missing") count += 1;
+    }
+    return count;
+  });
+
+  /**
+   * An unreadable record blocks linking and every bulk checkout change, because it
+   * might describe an unfinished sync. Moving it aside, bytes intact, is the user's
+   * call; the store refuses to move a record that has since become readable.
+   */
+  const setAsideUnreadable = Effect.fn("OverleafConnections.setAsideUnreadable")(function* () {
+    let setAside = 0;
+    for (const id of yield* store.listConnections) {
+      const read = yield* store.readConnection(id);
+      if (read._tag === "ready" || read._tag === "missing") continue;
+      const moved = yield* store
+        .quarantineConnection(id)
+        .pipe(
+          Effect.as(true),
+          Effect.catchTags({ OverleafConnectionUnavailableError: () => Effect.succeed(false) }),
+        );
+      if (moved) setAside += 1;
+    }
+    return setAside;
+  });
+
+  return {
+    connect,
+    disconnect,
+    relink,
+    status,
+    list,
+    documents,
+    followRestored,
+    unreadableRecords,
+    setAsideUnreadable,
+  };
 });
 
 export type OverleafConnections = Effect.Success<ReturnType<typeof makeOverleafConnections>>;

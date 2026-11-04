@@ -48,6 +48,8 @@ export interface OverleafWorkspaceSnapshot {
   /** The first list has answered (or failed). */
   readonly loaded: boolean;
   readonly connections: ReadonlyArray<OverleafConnection>;
+  /** The environment's link records this release can't read; they block linking. */
+  readonly unreadableRecords: number;
   readonly error: string | null;
   readonly statuses: ReadonlyMap<string, ScientOverleafStatus>;
   /** What Overleaf itself last said about each link. The status only reads the folder. */
@@ -94,6 +96,7 @@ export interface OverleafWorkspaceSnapshot {
 const EMPTY: OverleafWorkspaceSnapshot = {
   loaded: false,
   connections: [],
+  unreadableRecords: 0,
   error: null,
   statuses: new Map(),
   remoteStates: new Map(),
@@ -113,7 +116,7 @@ const EMPTY: OverleafWorkspaceSnapshot = {
 /** What one workspace view lists: its links and their status as this workspace reads them. */
 type WorkspacePart = Pick<
   OverleafWorkspaceSnapshot,
-  "loaded" | "connections" | "error" | "statuses"
+  "loaded" | "connections" | "unreadableRecords" | "error" | "statuses"
 >;
 /**
  * Everything about a link's syncs, reviews and decisions: one state per link
@@ -126,6 +129,7 @@ type Lifecycle = Omit<OverleafWorkspaceSnapshot, keyof WorkspacePart>;
 const EMPTY_PART: WorkspacePart = {
   loaded: false,
   connections: [],
+  unreadableRecords: 0,
   error: null,
   statuses: new Map(),
 };
@@ -441,6 +445,7 @@ export function loadOverleafWorkspace(
         loaded: true,
         error: null,
         connections: listed.connections,
+        unreadableRecords: listed.unreadableRecords ?? 0,
       }));
       await Promise.all(
         listed.connections.map((connection) =>
@@ -812,6 +817,30 @@ export function useOverleafWorkspace(
  * Whether none of the projects has a link, once each project's links are read; false while
  * any is still loading. Subscribing loads each project's links, like `useOverleafWorkspace`.
  */
+/** Unreadable link records belong to the environment; any of its workspace lists reports them. */
+export function useOverleafUnreadableRecords(
+  environmentId: EnvironmentId,
+  workspaceRoots: ReadonlyArray<string>,
+): number {
+  const rootsKey = workspaceRoots.join("\u0000");
+  const subscribe = (listener: () => void) => {
+    const roots = rootsKey === "" ? [] : rootsKey.split("\u0000");
+    const unsubscribes = roots.map((root) =>
+      subscribeOverleafWorkspace(environmentId, root, listener),
+    );
+    for (const root of roots) void loadOverleafWorkspace(environmentId, root);
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  };
+  return useSyncExternalStore(subscribe, () =>
+    Math.max(
+      0,
+      ...workspaceRoots.map((root) => viewOf(keyOf(environmentId, root)).unreadableRecords),
+    ),
+  );
+}
+
 export function useNoOverleafLinks(
   environmentId: EnvironmentId,
   workspaceRoots: ReadonlyArray<string>,

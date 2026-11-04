@@ -12,6 +12,7 @@ import {
   removeEnvironmentOverleafToken,
   restoreEnvironmentOverleafKeptCopy,
   saveEnvironmentOverleafToken,
+  setAsideEnvironmentOverleafUnreadable,
   syncEnvironmentOverleaf,
   undoEnvironmentOverleafSend,
   listEnvironmentOverleafUndoableSends,
@@ -69,6 +70,18 @@ export async function removeOverleafToken(environmentId: EnvironmentId) {
 export async function listOverleafConnections(environmentId: EnvironmentId, workspaceRoot: string) {
   return runtime.runPromise(
     listEnvironmentOverleafConnections({
+      prepared: prepared(environmentId),
+      request: { workspaceRoot },
+    }),
+  );
+}
+
+export async function setAsideUnreadableOverleafRecords(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+) {
+  return runtime.runPromise(
+    setAsideEnvironmentOverleafUnreadable({
       prepared: prepared(environmentId),
       request: { workspaceRoot },
     }),

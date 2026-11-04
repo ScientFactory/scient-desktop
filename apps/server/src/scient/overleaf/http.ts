@@ -217,8 +217,10 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
         Effect.gen(function* () {
           yield* annotateEnvironmentRequest(endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const connections = yield* mapErrors(overleaf.list(workspace(payload.workspaceRoot)));
-          return { connections };
+          const caller = workspace(payload.workspaceRoot);
+          const connections = yield* mapErrors(overleaf.list(caller));
+          const unreadableRecords = yield* mapErrors(overleaf.unreadableRecords(caller));
+          return { connections, unreadableRecords };
         }),
       )
       .handle("connect", ({ endpoint, payload }) =>
@@ -329,6 +331,16 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
             accepted: result.attempts?.accepted ?? null,
             unresolved: result.attempts?.unresolved ?? null,
           };
+        }),
+      )
+      .handle("setAsideUnreadable", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const setAside = yield* mapErrors(
+            overleaf.setAsideUnreadable(workspace(payload.workspaceRoot)),
+          );
+          return { setAside };
         }),
       )
       .handle("keptCopies", ({ endpoint, payload }) =>

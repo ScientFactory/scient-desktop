@@ -11,6 +11,7 @@ const client = vi.hoisted(() => ({
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   removeOverleafToken: vi.fn(),
+  setAsideUnreadableOverleafRecords: vi.fn(),
   connectOverleaf: vi.fn(),
   syncOverleaf: vi.fn(),
   previewOverleaf: vi.fn(),

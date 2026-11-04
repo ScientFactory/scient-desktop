@@ -163,7 +163,9 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
       return Effect.succeed(
         toolError(
           "recovery-required",
-          `${error.message} Use scient_overleaf_manage with action recover.`,
+          field("reason") === "unreadable-record"
+            ? `${error.message} Ask the user to do this; it can't be done from a tool.`
+            : `${error.message} Use scient_overleaf_manage with action recover.`,
         ),
       );
     case "CheckoutSuspendedError":

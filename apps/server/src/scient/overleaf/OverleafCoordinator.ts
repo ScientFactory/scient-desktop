@@ -2774,7 +2774,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
 
   // A bulk checkout change first settles a pending apply when nothing else holds
   // that connection, otherwise it refuses. It fails closed: an unreadable record
-  // refuses every bulk change until quarantined or repaired.
+  // refuses every bulk change until the user sets it aside (setAsideUnreadable).
   yield* barrier.settleBeforeBulk((section) =>
     Effect.gen(function* () {
       const refuse = new CheckoutBarrier.CheckoutRecoveryRequiredError({ checkout: section.root });
@@ -2783,7 +2783,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         const read = yield* store.readConnection(connectionId).pipe(Effect.mapError(() => refuse));
         // Removed between listing and reading: nothing pending there.
         if (read._tag === "missing") continue;
-        if (read._tag !== "ready") return yield* refuse;
+        if (read._tag !== "ready")
+          return yield* new CheckoutBarrier.CheckoutRecoveryRequiredError({
+            checkout: section.root,
+            reason: "unreadable-record",
+          });
         if (read.document.state !== "active") continue;
         const connection = read.document;
         // The connection's checkout, or one enclosing it, is the one changing.

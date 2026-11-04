@@ -20,14 +20,20 @@ import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjects } from "~/state/entities";
 
-import { removeOverleafToken, saveOverleafToken } from "./client";
+import {
+  removeOverleafToken,
+  saveOverleafToken,
+  setAsideUnreadableOverleafRecords,
+} from "./client";
 import { lastSyncLabel } from "./OverleafFileChip";
 import { openOverleafProject, runOverleafSync, unlinkOverleaf } from "./overleafActions";
 import { OVERLEAF_TOKEN_PAGE_URL, operationErrorText, overleafChipView } from "./overleafModel";
 import {
+  loadOverleafWorkspace,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
   useNoOverleafLinks,
+  useOverleafUnreadableRecords,
   useOverleafWorkspace,
 } from "./overleafStore";
 
@@ -235,17 +241,79 @@ function OverleafProjectLinks(props: {
   );
 }
 
+/**
+ * Link records this release can't read (damaged, or made by a newer Scient). They
+ * can't be tied to a project, and they stop linking and bulk folder changes until
+ * the user sets them aside.
+ */
+function OverleafUnreadableRecords(props: {
+  readonly environmentId: EnvironmentId;
+  readonly workspaceRoots: ReadonlyArray<string>;
+  readonly count: number;
+}) {
+  const { environmentId, workspaceRoots, count } = props;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [firstRoot] = workspaceRoots;
+  if (firstRoot === undefined) return null;
+  const setAside = () => {
+    setBusy(true);
+    setError(null);
+    void settleOverleafOperation(
+      async () => {
+        await setAsideUnreadableOverleafRecords(environmentId, firstRoot);
+        await Promise.all(
+          workspaceRoots.map((root) => loadOverleafWorkspace(environmentId, root, { force: true })),
+        );
+      },
+      (cause) => setError(operationErrorText(cause)),
+      () => setBusy(false),
+    );
+  };
+  return (
+    <div className="grid gap-2">
+      <p className="text-xs text-foreground">
+        {count === 1
+          ? "Scient can't read one of its Overleaf link records."
+          : `Scient can't read ${count} of its Overleaf link records.`}{" "}
+        Until {count === 1 ? "it's" : "they're"} set aside, Scient won't link folders or change
+        project files in bulk, for example when switching branches.
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Setting aside moves the record to a recovery folder. Nothing on Overleaf or in your folders
+        changes. A link made by a newer version of Scient has to be linked again.
+      </p>
+      <div>
+        <Button size="xs" variant="outline" disabled={busy} onClick={setAside}>
+          Set aside
+        </Button>
+      </div>
+      {error ? (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Every project's links on this computer, or a line saying none is linked. */
 function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const noneLinked = useNoOverleafLinks(
-    environmentId,
-    projects.map((project) => project.workspaceRoot),
-  );
+  const workspaceRoots = projects.map((project) => project.workspaceRoot);
+  const noneLinked = useNoOverleafLinks(environmentId, workspaceRoots);
+  const unreadable = useOverleafUnreadableRecords(environmentId, workspaceRoots);
   return (
     <div className="grid gap-3">
       <p className="text-xs font-medium text-foreground">Linked folders</p>
+      {unreadable > 0 ? (
+        <OverleafUnreadableRecords
+          environmentId={environmentId}
+          workspaceRoots={workspaceRoots}
+          count={unreadable}
+        />
+      ) : null}
       {noneLinked ? <p className="text-xs text-muted-foreground">No folder is linked.</p> : null}
       {projects.map((project) => (
         <OverleafProjectLinks

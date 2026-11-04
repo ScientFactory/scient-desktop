@@ -1055,7 +1055,7 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
     ),
   );
 
-  it.live("refuses to link while a connection record cannot be read", () =>
+  it.live("refuses to link while a connection record cannot be read, until it is set aside", () =>
     run(
       Effect.gen(function* () {
         const w = yield* world({
@@ -1084,6 +1084,22 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
             requestId: "c2",
           }),
         ).toMatchObject({ _tag: "refused", reason: "records-unreadable" });
+        expect(yield* w.service.unreadableRecords(w.at(w.main))).toBe(1);
+        expect(yield* w.service.setAsideUnreadable(w.at(w.main))).toBe(1);
+        expect(yield* w.service.unreadableRecords(w.at(w.main))).toBe(0);
+        expect(
+          (yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(w.stateRoot, "quarantine"))))
+            .length,
+        ).toBe(1);
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: false,
+            project: PROJECT,
+            requestId: "c3",
+          }),
+        ).toMatchObject({ _tag: "connected" });
       }),
     ),
   );
