@@ -5,8 +5,19 @@ import {
   type AccountTarget,
   type PreviewAutomationStatus,
   type PreviewTabId,
+  type AccountKeepTypedInput,
+  type AccountSignInAsPersonInput,
+  type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
@@ -24,7 +35,9 @@ import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
 import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { fillField } from "./fillField.ts";
-import { guardedSignIn } from "./guardedSignIn.ts";
+import { guardedSignIn, keepTyped } from "./guardedSignIn.ts";
+import { continueWaitingPapers } from "../../papers/getPaper.ts";
+import { userRunInvocation } from "../checkAccounts.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { previewInvoker } from "./broker.ts";
@@ -358,3 +371,94 @@ export const accountAgentOperations = {
 type ToolInput<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]
 >;
+
+/**
+ * The user's own sign-in to a row, beside their conversation: it runs on after the reply, which
+ * names the tab as soon as it opens, in the service's scope, so shutdown interrupts it.
+ */
+const signInAsPerson = Effect.fn("AccountsAgent.signInAsPerson")(function* (
+  scope: Scope.Scope,
+  input: AccountSignInAsPersonInput,
+  environmentId: EnvironmentId,
+) {
+  const accounts = yield* AccountsService;
+  const account = (yield* accounts.snapshot).accounts.find(
+    (row) => row.accountId === input.accountId,
+  );
+  if (account?.details.kind !== "website")
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: "Choose a website or university to sign in to.",
+    });
+  const opened = yield* Deferred.make<PreviewTabId>();
+  const services = yield* Effect.context<
+    AccountsService | FileSystem.FileSystem | Path.Path | PreviewAutomationBroker
+  >();
+  const signing = yield* guardedSignIn({
+    signIn: account,
+    caller: {
+      kind: "person",
+      afterSignIn: continueWaitingPapers(environmentId).pipe(Effect.provideContext(services)),
+      ...(input.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
+    },
+    onTab: (tabId) => Deferred.succeed(opened, tabId).pipe(Effect.asVoid),
+  }).pipe(
+    Effect.provideService(AgentInvocationContext, userRunInvocation(input.threadId, environmentId)),
+    Effect.forkIn(scope),
+  );
+  const tabId = yield* Deferred.await(opened).pipe(
+    Effect.raceFirst(
+      Fiber.join(signing).pipe(
+        Effect.flatMap((ended) =>
+          Effect.fail(
+            new AccountsError({
+              reason: "unavailable",
+              message:
+                ("message" in ended && ended.message) || "The browser could not open the sign-in.",
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+  return { tabId, threadId: input.threadId };
+});
+
+/** The person's own sign-ins, and what they type in one Scient runs, for the server's life. */
+export class AccountAgentService extends Context.Service<
+  AccountAgentService,
+  {
+    readonly signInAsPerson: (
+      input: AccountSignInAsPersonInput,
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      { readonly tabId: PreviewTabId; readonly threadId: ThreadId },
+      AccountsError,
+      PreviewAutomationBroker | FileSystem.FileSystem | Path.Path
+    >;
+    readonly keepTyped: (input: AccountKeepTypedInput) => Effect.Effect<{ readonly kept: boolean }>;
+  }
+>()("t3/scient/accounts/agent/AccountAgentService") {}
+
+export const layer = Layer.effect(
+  AccountAgentService,
+  Effect.gen(function* () {
+    const scope = yield* Effect.scope;
+    const accounts = yield* AccountsService;
+    return AccountAgentService.of({
+      signInAsPerson: Effect.fn("AccountAgentService.signInAsPerson")(function* (
+        input: AccountSignInAsPersonInput,
+        environmentId: EnvironmentId,
+      ) {
+        return yield* signInAsPerson(scope, input, environmentId).pipe(
+          Effect.provideService(AccountsService, accounts),
+        );
+      }),
+      keepTyped: Effect.fn("AccountAgentService.keepTyped")(function* (
+        input: AccountKeepTypedInput,
+      ) {
+        return yield* keepTyped(input).pipe(Effect.provideService(AccountsService, accounts));
+      }),
+    });
+  }),
+);

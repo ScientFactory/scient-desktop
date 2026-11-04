@@ -18,30 +18,16 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import {
-  Clock,
-  Deferred,
-  Effect,
-  Fiber,
-  FileSystem,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-  Stream,
-} from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Redacted, Schema, Stream } from "effect";
 import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
   continuePapersAsUser,
-  continueWaitingPapers,
   getPaperForSource,
   listPapersAsUser,
   requestPapersAsUser,
 } from "../papers/getPaper.ts";
-import { guardedSignIn, keepTyped } from "./agent/guardedSignIn.ts";
-import { userRunInvocation } from "./checkAccounts.ts";
-import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
+import { AccountAgentService } from "./agent/AccountAgentService.ts";
 import { openThroughUniversity } from "./universityBrowsing.ts";
 import { searchUniversities } from "../papers/universityDirectory.ts";
 import { FetchHttpClient } from "effect/http";
@@ -85,6 +71,9 @@ const withRemoteSessions = <A>(
           ),
     ),
   );
+
+/** The person's own sign-ins and typing; absent where Accounts runs without a browser. */
+const accountAgent = Effect.serviceOption(AccountAgentService);
 
 export const makeAccountsRpcHandlers = ({
   accounts,
@@ -208,7 +197,11 @@ export const makeAccountsRpcHandlers = ({
     [WS_METHODS.accountsKeepTyped]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsKeepTyped,
-        keepTyped(input).pipe(Effect.provideService(AccountsService, accounts)),
+        accountAgent.pipe(
+          Effect.flatMap((agent) =>
+            Option.isNone(agent) ? Effect.succeed({ kept: false }) : agent.value.keepTyped(input),
+          ),
+        ),
         attributes,
       ),
     [WS_METHODS.accountsSessionEnded]: (input) =>
@@ -496,6 +489,7 @@ const unavailable = Effect.fn("AccountsService.unavailable")(function* () {
 /** What the user runs themselves through the browser, which RPC handlers otherwise don't need. */
 export const accountsUserRunsForRpc = Effect.gen(function* () {
   const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
+  const agent = yield* Effect.serviceOption(AccountAgentService);
   const accounts = yield* accountsForRpc;
   const environment = yield* ServerEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -536,7 +530,11 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
       ),
     papers: {
       signInAsPerson: (input: AccountSignInAsPersonInput) =>
-        run((environmentId) => signInAsPerson(input, environmentId)),
+        Option.isNone(agent)
+          ? Effect.fail(
+              new AccountsError({ reason: "unavailable", message: "The browser is unavailable." }),
+            )
+          : run((environmentId) => agent.value.signInAsPerson(input, environmentId)),
       universityBrowse: (input: UniversityBrowseInput) =>
         run((environmentId) =>
           accounts.snapshot.pipe(
@@ -556,57 +554,6 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
         searchUniversities(query).pipe(Effect.provide(FetchHttpClient.layer)),
     },
   };
-});
-
-/**
- * The user's own sign-in to a row, beside their conversation: it runs on after the reply, which
- * names the tab as soon as it opens.
- */
-const signInAsPerson = Effect.fn("Accounts.signInAsPerson")(function* (
-  input: AccountSignInAsPersonInput,
-  environmentId: EnvironmentId,
-) {
-  const accounts = yield* AccountsService;
-  const account = (yield* accounts.snapshot).accounts.find(
-    (row) => row.accountId === input.accountId,
-  );
-  if (account?.details.kind !== "website")
-    return yield* new AccountsError({
-      reason: "invalid-input",
-      message: "Choose a website or university to sign in to.",
-    });
-  const opened = yield* Deferred.make<PreviewTabId>();
-  const services = yield* Effect.context<
-    AccountsService | FileSystem.FileSystem | Path.Path | PreviewAutomationBroker
-  >();
-  const signing = yield* guardedSignIn({
-    signIn: account,
-    caller: {
-      kind: "person",
-      afterSignIn: continueWaitingPapers(environmentId).pipe(Effect.provideContext(services)),
-      ...(input.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
-    },
-    onTab: (tabId) => Deferred.succeed(opened, tabId).pipe(Effect.asVoid),
-  }).pipe(
-    Effect.provideService(AgentInvocationContext, userRunInvocation(input.threadId, environmentId)),
-    Effect.forkDetach,
-  );
-  const tabId = yield* Deferred.await(opened).pipe(
-    Effect.raceFirst(
-      Fiber.join(signing).pipe(
-        Effect.flatMap((ended) =>
-          Effect.fail(
-            new AccountsError({
-              reason: "unavailable",
-              message:
-                ("message" in ended && ended.message) || "The browser could not open the sign-in.",
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
-  return { tabId, threadId: input.threadId };
 });
 
 export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
