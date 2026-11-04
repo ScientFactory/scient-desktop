@@ -23,7 +23,7 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as Receipts from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as Executor from "../../orchestration-v2/ThreadCommandExecutor.ts";
-import * as Maintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import { planConversationFork } from "../../orchestration-v2/scient-fork/ConversationForkPlan.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
@@ -59,7 +59,7 @@ const stores = Layer.mergeAll(
   Executor.layer,
 ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
 const sink = EventSink.layer.pipe(Layer.provideMerge(stores));
-const TestLayer = Layer.mergeAll(Commit.layer, Maintenance.layer).pipe(
+const TestLayer = Layer.mergeAll(Commit.layer, ProjectionReplay.layer).pipe(
   Layer.provideMerge(sink),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
@@ -137,7 +137,7 @@ it.effect(
       assert.lengthOf(plan.history, plan.retained.length);
       yield* commit.dispatch(command);
       assert.deepEqual(yield* projections.getThreadProjection(command.threadId), projection);
-      yield* (yield* Maintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(yield* projections.getThreadProjection(command.threadId), projection);
       const now = yield* DateTime.now;
       yield* (yield* EventSink.EventSinkV2).write({

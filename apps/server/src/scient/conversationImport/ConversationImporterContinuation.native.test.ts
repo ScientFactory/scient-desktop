@@ -92,9 +92,9 @@ import {
 import { CommandReceiptStoreV2 } from "../../orchestration-v2/CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import {
-  ProjectionMaintenanceV2,
-  layer as projectionMaintenanceLayer,
-} from "../../orchestration-v2/ProjectionMaintenance.ts";
+  ProjectionReplay,
+  layer as projectionReplayLayer,
+} from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import { historicalMessage } from "../../orchestration-v2/ScientHistoricalContext.ts";
 import {
   ConversationImporter,
@@ -2323,9 +2323,9 @@ it.live(
         );
 
         // A projection rebuild replays events; the fork's shared history is unchanged.
-        const verification = yield* ProjectionMaintenanceV2.use(
-          (maintenance) => maintenance.rebuild,
-        ).pipe(Effect.provide(projectionMaintenanceLayer));
+        const verification = yield* ProjectionReplay.use((maintenance) => maintenance.rebuild).pipe(
+          Effect.provide(projectionReplayLayer),
+        );
         assert.isTrue(verification.valid);
         const rebuilt = yield* store.getThreadProjection(forkId);
         assert.deepEqual(rebuilt.visibleTurnItems, frozen.visibleTurnItems);
@@ -2411,8 +2411,8 @@ it.live(
         const grandchild = shownText(yield* store.getThreadProjection(grandchildId));
         assert.deepEqual(grandchild.messages, shownBefore.messages);
         assert.deepEqual(grandchild.items.slice(0, -1), shownBefore.items.slice(0, -1));
-        yield* ProjectionMaintenanceV2.use((maintenance) => maintenance.rebuild).pipe(
-          Effect.provide(projectionMaintenanceLayer),
+        yield* ProjectionReplay.use((maintenance) => maintenance.rebuild).pipe(
+          Effect.provide(projectionReplayLayer),
         );
         assert.deepEqual(shownText(yield* store.getThreadProjection(forkId)), shownBefore);
         assert.deepEqual(
@@ -3188,9 +3188,9 @@ it.live(
         );
         const replayed = yield* forks.dispatch(command);
         assert.deepEqual(replayed, receipt);
-        const verification = yield* ProjectionMaintenanceV2.use(
-          (maintenance) => maintenance.rebuild,
-        ).pipe(Effect.provide(projectionMaintenanceLayer));
+        const verification = yield* ProjectionReplay.use((maintenance) => maintenance.rebuild).pipe(
+          Effect.provide(projectionReplayLayer),
+        );
         assert.isTrue(verification.valid);
         const rebuilt = yield* store.getThreadProjection(childId);
         assert.deepEqual(rebuilt.turnItems, reverted.turnItems);

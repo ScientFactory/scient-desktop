@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
 import WorkspaceAuthorityCutover from "../../orchestration-v2/scient-fork/migrations/019_WorkspaceAuthorityCutover.ts";
 
@@ -344,28 +346,70 @@ it.effect(
     }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect(
-  "preserves authority across real event compaction and independent projection rebuild",
-  () =>
-    Effect.gen(function* () {
-      yield* createProject();
-      yield* writeThread("before-compact", { worktreePath: "/worktrees/owned" });
-      // Compaction deletes superseded metadata; a visit no longer supersedes it.
-      yield* writeThread("updated-before-compact", { worktreePath: "/worktrees/owned" });
-      yield* writeThread(
-        "visited-before-compact",
-        { worktreePath: "/worktrees/owned", lastVisitedAt: now },
-        "thread.visited",
-      );
-      const authority = yield* Authority.WorkspaceAuthorityProjection;
-      const expected = yield* authority.getThreadContext(threadId);
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const compacted = yield* maintenance.compactEventStore();
-      assert.isTrue(compacted.deletedEventCount > 0);
-      assert.deepEqual(yield* authority.getThreadContext(threadId), expected);
-      yield* maintenance.rebuild;
-      assert.deepEqual(yield* authority.getThreadContext(threadId), expected);
-    }).pipe(Effect.provide(testLayer)),
+it.effect("keeps a moved thread's authority revision after its earlier states are pruned", () =>
+  Effect.gen(function* () {
+    yield* createProject();
+    yield* writeThread("before-prune", { worktreePath: "/worktrees/owned" });
+    yield* writeThread("updated-before-prune", { worktreePath: "/worktrees/owned" });
+    yield* writeThread(
+      "visited-before-prune",
+      { worktreePath: "/worktrees/owned", lastVisitedAt: now },
+      "thread.visited",
+    );
+    // A later non-state event becomes the stream head, so pruning may delete every state.
+    const sink = yield* EventSink.EventSinkV2;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("native-authority:item-after-states"),
+          type: "turn-item.updated",
+          threadId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make("native-authority:item"),
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "reasoning",
+            title: null,
+            status: "completed",
+            text: "Thinking",
+            streaming: false,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+    });
+    const authority = yield* Authority.WorkspaceAuthorityProjection;
+    const expected = Option.getOrThrow(yield* authority.getThreadContext(threadId));
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    yield* maintenance.pruneEventStore();
+    yield* TestClock.adjust("1 day");
+    assert.isAbove((yield* maintenance.pruneEventStore()).deletedEventCount, 0);
+    const sql = yield* SqlClient.SqlClient;
+    assert.deepEqual(
+      yield* sql`SELECT event_id FROM orchestration_events WHERE stream_id = ${threadId}`,
+      [{ event_id: "native-authority:item-after-states" }],
+    );
+    assert.deepEqual(Option.getOrThrow(yield* authority.getThreadContext(threadId)), expected);
+    // Renaming keeps the worktree, so the revision must not move.
+    yield* writeThread("renamed-after-prune", {
+      worktreePath: "/worktrees/owned",
+      title: "Renamed after pruning",
+    });
+    assert.equal(
+      Option.getOrThrow(yield* authority.getThreadContext(threadId)).scopeRevision,
+      expected.scopeRevision,
+    );
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("rolls back the append if its canonical authority stamp cannot be persisted", () =>

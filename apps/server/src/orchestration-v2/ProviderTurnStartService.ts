@@ -44,6 +44,7 @@ import {
   makeTurnStartHistory,
   startFrozenConversationFork,
 } from "./scient-fork/PortableTurnStart.ts";
+import { providerTurnsOutsideRolledBackRuns } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — a pending start keeps its session out of idle release.
 import { reserveSessionForStartup } from "./scient-provider/StartupSessionHold.ts";
@@ -1410,7 +1411,9 @@ export const layer: Layer.Layer<
             return yield* loadFromProvider(
               session.forkThread({
                 sourceProviderThread,
-                sourceProviderTurns: sourceProjection.providerTurns,
+                // SCIENT-FORK:START — one rule drops rolled-back turns here and in frozen forks.
+                sourceProviderTurns: providerTurnsOutsideRolledBackRuns(sourceProjection),
+                // SCIENT-FORK:END
                 targetThreadId: projection.thread.id,
                 modelSelection: run.modelSelection,
                 runtimePolicy: resolvedRuntimePolicy,

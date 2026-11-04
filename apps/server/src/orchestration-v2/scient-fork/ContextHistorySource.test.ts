@@ -24,21 +24,24 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { layerFromPath, layerMemory } from "../../persistence/Sqlite.ts";
 import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as EventStore from "../EventStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import { historicalMessage } from "../ScientHistoricalContext.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
 import { isLegacyContextHistoryReadable, selectContextHistory } from "./ContextHistorySource.ts";
 import { nativeHistoryEstimate } from "./NativeHistoryEstimate.ts";
+import CopyLegacyHandoffSources from "./migrations/028_CopyLegacyHandoffSources.ts";
 
 const StoreLayer = Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
   Layer.provideMerge(layerMemory),
 );
 const TestLayer = Layer.mergeAll(
-  ProjectionMaintenance.layer.pipe(Layer.provideMerge(StoreLayer)),
+  ProjectionReplay.layer.pipe(Layer.provideMerge(StoreLayer)),
   ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer)),
 );
 const now = DateTime.makeUnsafe("2026-10-12T00:00:00Z");
@@ -798,7 +801,7 @@ it.layer(TestLayer)("bounded immutable context sources", (it) => {
           alreadyDeliveredItemIds: new Set(),
         });
       assert.equal((yield* read()).messages[0]?.text, captured.text);
-      assert.isTrue((yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
       assert.equal((yield* read()).messages[0]?.text, captured.text);
       const later = {
         id: EventId.make("rebuild:changed-after-capture"),
@@ -810,9 +813,7 @@ it.layer(TestLayer)("bounded immutable context sources", (it) => {
       yield* events.append({ events: [later] });
       yield* store.apply(later);
       for (const _repeat of [0, 1]) {
-        assert.isTrue(
-          (yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid,
-        );
+        assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
         assert.equal((yield* read()).messages[0]?.text, captured.text);
       }
       const sql = yield* SqlClient.SqlClient;
@@ -885,4 +886,87 @@ it.effect("validates cold legacy history on the writer of a file-backed database
       assert.deepEqual(yield* store.getUnreadableThreadIds(), [threadId]);
     }).pipe(Effect.provide(dependencies));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("serves a legacy handoff summary and history after pruning deletes its event", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const { store, handoff } = yield* fixture([item(0, "Summary owner")]);
+    const { history: _history, historySource: _source, ...base } = handoff;
+    const summary = "Legacy summary kept after pruning";
+    const message = historicalMessage(item(1, "Legacy body kept after pruning"))!;
+    const stored = yield* (yield* EventStore.EventStoreV2).append({
+      events: [
+        {
+          id: EventId.make("legacy:pruned-handoff"),
+          type: "context-handoff.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...base,
+            summaryText: summary,
+            history: { coverage: "Legacy coverage", messages: [message], omittedItems: 0 },
+          },
+        },
+        // A later event keeps the handoff event from being the stream's retained head.
+        {
+          id: EventId.make("legacy:after-handoff"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: item(2, "Later item"),
+        },
+      ],
+    });
+    for (const entry of stored) yield* store.apply(entry.event);
+    yield* sql`INSERT INTO orchestration_v2_projection_metadata
+      (projection_name, schema_version, last_sequence, updated_at)
+      VALUES ('thread-projections', ${ProjectionStore.ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION},
+        ${stored.at(-1)!.sequence}, '1970-01-01T00:00:00.000Z')
+      ON CONFLICT(projection_name) DO UPDATE SET last_sequence = excluded.last_sequence`;
+    const sourceId = "legacy-event:legacy:pruned-handoff";
+    const copied = yield* sql<{ readonly payload_json: string | null }>`
+      SELECT payload_json FROM scient_handoff_legacy_sources WHERE source_id = ${sourceId}`;
+    assert.include(copied[0]?.payload_json ?? "", summary);
+    // Earlier builds stored only the event reference; the migration copies the body.
+    yield* sql`UPDATE scient_handoff_legacy_sources SET payload_json = NULL WHERE source_id = ${sourceId}`;
+    yield* CopyLegacyHandoffSources;
+    assert.deepEqual(
+      yield* sql`SELECT payload_json FROM scient_handoff_legacy_sources WHERE source_id = ${sourceId}`,
+      copied,
+    );
+
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    yield* maintenance.pruneEventStore();
+    yield* TestClock.adjust("1 day");
+    yield* maintenance.pruneEventStore();
+    assert.lengthOf(
+      yield* sql`SELECT 1 FROM orchestration_events WHERE event_id = 'legacy:pruned-handoff'`,
+      0,
+    );
+
+    assert.deepEqual(yield* store.getUnreadableThreadIds(), []);
+    const page = yield* store.getContextHandoffSummaryPage(threadId, handoff.id, 0, 1_000);
+    assert.equal(page?.text, summary);
+    const recorded = (yield* store.getThreadRecords(threadId, [
+      "contextHandoffs",
+    ])).contextHandoffs.find((candidate) => candidate.id === handoff.id)!;
+    const resolved = yield* store.resolveContextHistory({
+      handoffs: [recorded],
+      coverage: "Legacy coverage",
+      budget: 16_000,
+      alreadyDeliveredItemIds: new Set(),
+    });
+    assert.deepEqual(
+      resolved.messages.map((entry) => entry.text),
+      ["Legacy body kept after pruning"],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ProjectionMaintenance.layer.pipe(Layer.provideMerge(StoreLayer)),
+        ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer)),
+      ),
+    ),
+  ),
 );

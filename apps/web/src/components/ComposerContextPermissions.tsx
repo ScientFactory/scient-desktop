@@ -1,6 +1,6 @@
-import { managedRuntimeModeDenial, type EnvironmentId, type RuntimeMode } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-// SCIENT-FORK:START — the strip button opens its own Permissions card.
+// SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
 import { useRef, useState } from "react";
 // SCIENT-FORK:END
 
@@ -8,52 +8,45 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { useManagedPolicy } from "../state/managedPolicy";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { ComposerControl } from "./chat/ComposerControl";
-// SCIENT-FORK:START — the strip button opens its own Permissions card.
-import { focusRequestedPermission, useComposerMenuProps } from "./chat/composerEventScope";
 import { ComposerPermissionsSection } from "./chat/ComposerFooterControls";
-import { resolveCompatibleRuntimeMode, runtimeModeConfig } from "./chat/runtimeModeConfig";
-import { Menu, MenuPopup, MenuTrigger } from "./ui/menu";
-// SCIENT-FORK:END
+import { focusRequestedPermission, useComposerMenuProps } from "./chat/composerEventScope";
+import {
+  resolveCompatibleRuntimeMode,
+  resolveRuntimeModeOptions,
+  runtimeModeConfig,
+} from "./chat/runtimeModeConfig";
 import { ComposerContextLabel } from "./ComposerContextLabel";
+import { Menu, MenuPopup, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/** The new-thread strip names the permissions the first send will use; clicking opens them. */
 export function ComposerContextPermissions(props: {
-  environmentId: EnvironmentId;
+  environmentId: EnvironmentId | null;
   runtimeMode: RuntimeMode;
-  // SCIENT-FORK:START — the strip button opens its own Permissions card.
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
-  // SCIENT-FORK:END
 }) {
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
     "composer.mode",
   );
-  // SCIENT-FORK:START — the strip button opens its own Permissions card.
-  const composerMenuProps = useComposerMenuProps();
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const { modes, mode } = resolveCompatibleRuntimeMode(
+  const { mode, modes } = resolveCompatibleRuntimeMode(
     props.runtimeMode,
     props.supportedRuntimeModes,
   );
-  // Modes above an administrator's ceiling stay listed, disabled with the reason.
-  const managedPolicy = useManagedPolicy(props.environmentId);
-  const options = modes.map((option) => {
-    const disabledReason = managedRuntimeModeDenial(managedPolicy, option);
-    return {
-      mode: option,
-      ...runtimeModeConfig[option],
-      ...(disabledReason === undefined ? {} : { disabledReason }),
-    };
-  });
+  const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId));
+  const composerMenuProps = useComposerMenuProps();
+  // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // SCIENT-FORK:END
   const { icon: Icon, label } = runtimeModeConfig[mode];
   return (
     <Menu
+      // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
       open={open}
       onOpenChange={setOpen}
       onOpenChangeComplete={(isOpen) => focusRequestedPermission(isOpen, triggerRef.current)}
+      // SCIENT-FORK:END
     >
       <Tooltip>
         <TooltipTrigger
@@ -61,12 +54,14 @@ export function ComposerContextPermissions(props: {
             <MenuTrigger
               render={
                 <ComposerControl
+                  // SCIENT-FORK:START — composer.mode focuses the checked permission, like the footer chip.
                   ref={triggerRef}
+                  data-composer-shortcut="composer.mode"
+                  // SCIENT-FORK:END
                   size="xs"
                   className="ms-auto min-w-0 shrink-0"
                   aria-label={`Permissions: ${label}`}
                   data-composer-context-control
-                  data-composer-shortcut="composer.mode"
                 />
               }
             />
@@ -77,7 +72,7 @@ export function ComposerContextPermissions(props: {
         </TooltipTrigger>
         <TooltipPopup>Permissions{shortcutLabel ? ` · ${shortcutLabel}` : null}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="end" {...composerMenuProps}>
+      <MenuPopup side="top" align="end" {...composerMenuProps}>
         <ComposerPermissionsSection
           runtimeMode={mode}
           runtimeModeOptions={options}
@@ -86,5 +81,4 @@ export function ComposerContextPermissions(props: {
       </MenuPopup>
     </Menu>
   );
-  // SCIENT-FORK:END
 }

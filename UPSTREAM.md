@@ -619,6 +619,18 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`7c22e24e3fa1a3bb3a95f27aea000067f198fe7f` is recorded in
+[the 2026-11-04 7c22e24e3f receipt](docs/internals/t3-upstream-sync-20261104-7c22e24e3f.md).
+Literal merge `6d16ce63d44f32164b9157b43537d319c792e812` has owned base
+`03ce72e8702d8b6b4bc2546da1d04df3ac0ecf8e` and the frozen official target as parents, retaining
+the 58 official commits after `61c3794c32`. T3 now prunes event history the projections cover;
+Scient keeps V1 import baselines and copies legacy handoff bodies so nothing it reads is lost.
+Copy thread keeps Scient's in-app link behind one origin seam for shareable links, managed policy
+gains Group Policy templates under Scient's key, and forks after an undo drop undone turns on
+Scient's frozen path too. One migration (83) and one Scient-track migration (28). Release remains
+separate.
+
+The previous committed alignment through
 `61c3794c32b0eeebfac09add43e403618c65d2d7` is recorded in
 [the 2026-11-03 61c3794c32 receipt](docs/internals/t3-upstream-sync-20261103-61c3794c32.md).
 Literal merge `b5e8c858ddac7cb973dcbb58f46ff6d1e8110c9e` has owned base
@@ -628,7 +640,7 @@ services, Kiro arrives off by default with Scient's instructions and tool names,
 earlier turn no longer copy the whole session, and Scient code touched by the merge is realigned or
 trimmed. One migration (82). Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `30084f0018c5751a07291222e8d04e16d513700a` is recorded in
 [the 2026-11-03 30084f0018 receipt](docs/internals/t3-upstream-sync-20261103-30084f0018.md).
 Literal merge `6a48c5374b0002f54ff134789e14870a9ac00c58` has owned base

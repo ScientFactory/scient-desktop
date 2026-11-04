@@ -106,6 +106,9 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
+// SCIENT-FORK:START — thread links go through Scient's own origin, never T3's hosted app.
+import { scientHostedThreadOrigin } from "@t3tools/shared/scientThreadLinks";
+// SCIENT-FORK:END
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   pickableProjectGroups,
@@ -1070,6 +1073,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   });
   const boringSidebarEnabled = useBoringSidebarEnabled();
+  const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
@@ -1103,7 +1107,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
-  const headerSearchRef = useRef<HTMLDivElement | null>(null);
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
@@ -3028,7 +3031,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             }
             return;
           case "copy-thread":
-            void copyThreadReference(threadChipCopyTarget(threadRef, thread.title));
+            void copyThreadReference(
+              threadChipCopyTarget(threadRef, thread.title, scientHostedThreadOrigin()),
+            );
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
@@ -3167,15 +3172,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
 
-  // SCIENT-FORK:START — a plain click uses the same target-picker rule as chat.new.
-  // The boring sidebar's folders already show the context, so it starts in the
-  // current project (upstream's rule).
-  const opensNewThreadTargetPicker =
-    !boringSidebarEnabled &&
-    shouldOpenNewThreadTargetPicker({
-      legacySidebarEnabled: false,
-      projectGroupCount: projectGroups.length,
-    });
+  // SCIENT-FORK:START — a plain click uses the same target-picker rule as chat.new,
+  // in the grouped sidebar too; only the legacy sidebar starts in the current project.
+  const opensNewThreadTargetPicker = shouldOpenNewThreadTargetPicker({
+    legacySidebarEnabled,
+    projectGroupCount: projectGroups.length,
+  });
   const handleNewThreadClick = () => {
     if (!opensNewThreadTargetPicker) {
       if (isMobile) setOpenMobile(false);
@@ -3305,7 +3307,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hideNewThreadButton
               groupingToggle={sections.toggle}
               // SCIENT-FORK:END
-              searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <Combobox
@@ -3377,8 +3378,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
                   <ComboboxPopup
                     align="start"
-                    anchor={headerSearchRef}
-                    className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
+                    collisionAvoidance={{ side: "flip", align: "shift" }}
+                    className="w-[min(18rem,var(--available-width))] overflow-hidden"
                     finalFocus={(closeType) => closeType === "keyboard"}
                   >
                     <ComboboxSearchInput
@@ -3499,7 +3500,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
               showNewThreadInProjectHint={
-                !boringSidebarEnabled &&
+                !legacySidebarEnabled &&
                 !shouldCreateNewThreadInCurrentProject(
                   false,
                   scopeGroups.length,

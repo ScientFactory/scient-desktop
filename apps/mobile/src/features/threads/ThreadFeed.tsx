@@ -62,6 +62,9 @@ import {
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+// SCIENT-FORK:START — thread links go through Scient's own origin, never T3's hosted app.
+import { scientThreadCopyLink } from "@t3tools/shared/scientThreadLinks";
+// SCIENT-FORK:END
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -3058,9 +3061,12 @@ export const ThreadFeed = memo(function ThreadFeed({
         else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
         return;
       }
-      if (resolveLinkedThread(href)) {
+      const thread = resolveLinkedThread(href);
+      if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(href);
+        // SCIENT-FORK: the link as written until Scient has a hosted origin.
+        else if (actionId === "copy-thread-link")
+          copyTextWithHaptic(scientThreadCopyLink(thread, href));
         return;
       }
       const target = resolveFileChipTarget(href, props.workspaceRoot);

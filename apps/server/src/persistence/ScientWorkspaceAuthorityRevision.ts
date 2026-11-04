@@ -85,16 +85,23 @@ export const stampThreadWorkspaceAuthorityRevision = Effect.fn(
   const { event, sequence, encoded } = input;
   let persistedEvent = event;
   if (sequence !== undefined && isThreadState(event.payload)) {
-    const previous = yield* sql<{
-      readonly sequence: number;
-      readonly payload_json: string;
-    }>`
-        SELECT sequence, payload_json FROM orchestration_events
-        WHERE aggregate_kind = 'thread' AND stream_id = ${event.threadId}
-          AND application_event_version = 2 AND sequence < ${sequence}
-          AND CASE WHEN json_valid(payload_json)
-            THEN json_type(payload_json, '$.lineage.rootThreadId') = 'text' ELSE 0 END
-        ORDER BY sequence DESC LIMIT 1
+    // Event pruning deletes older thread states, so the prior state is the thread
+    // projection. Only a state appended after the projection's last applied event, such
+    // as an earlier one in this batch, is newer, and pruning never reaches those.
+    const previous = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM (
+          SELECT 1 AS rank, sequence, payload_json FROM orchestration_events
+          WHERE aggregate_kind = 'thread' AND stream_id = ${event.threadId}
+            AND application_event_version = 2 AND sequence < ${sequence}
+            AND sequence > COALESCE((SELECT last_sequence FROM orchestration_v2_projection_metadata
+              WHERE projection_name = 'thread-projections'), 0)
+            AND CASE WHEN json_valid(payload_json)
+              THEN json_type(payload_json, '$.lineage.rootThreadId') = 'text' ELSE 0 END
+          UNION ALL
+          SELECT 2 AS rank, 0 AS sequence, payload_json FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${event.threadId}
+        )
+        ORDER BY rank, sequence DESC LIMIT 1
       `;
     const priorRow = previous[0];
     const prior =

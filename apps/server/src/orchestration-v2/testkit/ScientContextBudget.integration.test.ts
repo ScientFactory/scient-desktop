@@ -65,7 +65,7 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import * as EffectWorker from "../EffectWorker.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./ProjectionReplay.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
@@ -815,7 +815,7 @@ it.live.each(
               event.payload.budgetPolicy === durablePolicy,
           ),
         );
-        yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+        yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
         const rebuilt = yield* orchestrator.getThreadProjection(target);
         const rebuiltHandoff = rebuilt.contextHandoffs.find(
           (candidate) => candidate.id === handoff.id,
@@ -1245,7 +1245,7 @@ it.live.each(
         }
       }).pipe(
         Effect.provide(
-          ProjectionMaintenance.layer.pipe(
+          ProjectionReplay.layer.pipe(
             Layer.provideMerge(
               ProviderReplayHarness.layerWithRegistry(
                 { name, runtimePolicyOverride: { cwd } },

@@ -41,7 +41,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -137,7 +137,7 @@ const fixture = Effect.gen(function* () {
       stores,
       sink,
       reconciliation,
-      ProjectionMaintenance.layer.pipe(Layer.provide(stores)),
+      ProjectionReplay.layer.pipe(Layer.provide(stores)),
       ProviderEventIngestor.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -238,7 +238,7 @@ it.live(
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* AttachmentReservationReconciliation;
-            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            const maintenance = yield* ProjectionReplay.ProjectionReplay;
             yield* maintenance.rebuild;
             expect(yield* attachmentHasReservations(attachment!.id)).toBe(false);
             const projection = yield* ProjectionStore.ProjectionStoreV2;

@@ -27,7 +27,7 @@ import { OrchestratorV2 } from "./Orchestrator.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
@@ -204,7 +204,7 @@ it.live(
             runEffectWorker: true,
           },
         );
-        const native = Layer.merge(Snapshot.layer, ProjectionMaintenance.layer).pipe(
+        const native = Layer.merge(Snapshot.layer, ProjectionReplay.layer).pipe(
           Layer.provideMerge(base.pipe(Layer.provideMerge(database))),
         );
         const threadId = ThreadId.make("citation-source");
@@ -383,7 +383,7 @@ it.live(
             assertClients(clients, reforked);
             gate.release("citation-terminal");
             yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
-            yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+            yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
             assert.equal(assistant(yield* orchestrator.getThreadProjection(threadId)).text, raw);
             assert.equal(
               assistant(

@@ -29,7 +29,6 @@ import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import { openCode2ReplayRuntime } from "./Adapters/OpenCode2AdapterV2.testkit.ts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
@@ -92,9 +91,7 @@ const modelCatalog = {
 const stores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
 );
-const testLayer = Layer.merge(EventSink.layer, ProjectionMaintenance.layer).pipe(
-  Layer.provideMerge(stores),
-);
+const testLayer = EventSink.layer.pipe(Layer.provideMerge(stores));
 const instanceId = ProviderInstanceId.make("opencode");
 const driver = ProviderDriverKind.make("opencode");
 const seed = Effect.fnUntraced(function* () {
