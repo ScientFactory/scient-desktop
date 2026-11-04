@@ -7,7 +7,6 @@ import { isIdentityProvider, signedInSite, type CookieMetadata } from "./session
 import { accountsState } from "./accountsState";
 import { profileAccounts } from "./accountsView";
 import { useAccountCommand } from "./useAccounts";
-import { isSigningIn } from "./useAccountBrowser";
 
 /** Returns being recorded now, so two views of one tab record it once. */
 const recording = new Set<string>();
@@ -25,6 +24,8 @@ export function useSignInRecording(input: {
   accounts: ReadonlyArray<AccountSummary>;
   /** The server keeps sessions seen (`accounts.sessionsSeen`); an older one only saves rows. */
   sessionsSeen: boolean;
+  /** This tab's sign-in is Scient's own while it runs: its outcome is recorded there. */
+  signingIn: boolean;
   enabled: boolean;
 }) {
   const seen = useAccountCommand(accountsState.sessionsSeen, input.environmentId);
@@ -68,7 +69,7 @@ export function useSignInRecording(input: {
       before: ReadonlyArray<CookieMetadata>,
       after: ReadonlyArray<CookieMetadata>,
     ) => {
-      if (isSigningIn(input.environmentId, input.profileId, input.url)) return false;
+      if (input.signingIn) return false;
       // Where a university's own sign-in link lands is that sign-in, not a new site.
       if (universitiesOf(input.accounts).length > 0 && signInReturn(input.url)) return false;
       const site = signedInSite({ previousUrl, url: input.url, before, after, incognito });

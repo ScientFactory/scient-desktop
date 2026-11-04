@@ -13,6 +13,7 @@ import {
   type AccountActivityEntry,
   type AccountApproval,
   type AccountHandoff,
+  type AccountSignInAttempt,
   type PaperQueueSummary,
   type AccountApprovalDecision,
   type AccountControls,
@@ -150,6 +151,7 @@ export const layer = Layer.effect(
         target.type === "account" ? target.accountId : target.profileId,
       ]);
     const handoffs = new Map<string, AccountHandoff>();
+    const attempts = new Map<string, AccountSignInAttempt>();
     const paperQueues = new Map<string, PaperQueueSummary>();
     // In memory only, never trimmed while the server runs: a forgotten entry would expose a filled
     // page. The account autofill put into a tab, keyed by thread and tab.
@@ -222,12 +224,13 @@ export const layer = Layer.effect(
           cli: cliStores.statuses(),
         },
         handoffs: [...handoffs.values()],
+        attempts: [...attempts.values()],
         paperQueues: [...paperQueues.values()],
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
         managedElsewhere,
-        features: { sessionsSeen: true },
+        features: { sessionsSeen: true, signInAnyRow: true },
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
@@ -736,6 +739,22 @@ export const layer = Layer.effect(
             handoffReveals.delete(handoffId);
             cancelledHandoffs.delete(handoffId);
             yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
+      attempts: Effect.sync(() => [...attempts.values()]),
+      setAttempt: Effect.fn("AccountsService.setAttempt")((attempt) =>
+        locked(
+          Effect.gen(function* () {
+            attempts.set(attempt.attemptId, attempt);
+            yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
+      removeAttempt: Effect.fn("AccountsService.removeAttempt")((attemptId) =>
+        locked(
+          Effect.gen(function* () {
+            if (attempts.delete(attemptId)) yield* publish(false);
           }),
         ).pipe(Effect.ignore),
       ),

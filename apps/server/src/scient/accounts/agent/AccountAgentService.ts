@@ -259,9 +259,21 @@ export const accountAgentOperations = {
       (account.details.kind !== "website" || !anySiteMatches(account.details.sites, input.url))
     )
       return yield* fail("denied", "The requested site does not match this website account.");
+    const { accounts: rows } = yield* accounts.snapshot;
     // The session at a university's sign-in service opens its mail and records too.
-    if (isUniversitySignInService((yield* accounts.snapshot).accounts, input.url))
+    if (isUniversitySignInService(rows, input.url))
       return yield* fail("denied", "A university's sign-in stays in the browser.");
+    // A sign-in under way on the site is the user's until it ends.
+    const signingIn = new Set((yield* accounts.attempts).map((attempt) => attempt.accountId));
+    if (
+      rows.some(
+        (row) =>
+          signingIn.has(row.accountId) &&
+          row.details.kind === "website" &&
+          anySiteMatches(row.details.sites, input.url),
+      )
+    )
+      return yield* fail("denied", "The user is signing in to this site. Wait for the sign-in.");
     const profileId =
       input.profileId ??
       (account && "profileId" in account.details ? account.details.profileId : undefined);

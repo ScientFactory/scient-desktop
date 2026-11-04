@@ -16,8 +16,9 @@ import {
   type AccountPlainKeyInput,
   type AccountsCheckInput,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { Clock, Deferred, Effect, Fiber, FileSystem, Option, Path, Schema, Stream } from "effect";
 import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
@@ -27,7 +28,9 @@ import {
   listPapersAsUser,
   requestPapersAsUser,
 } from "../papers/getPaper.ts";
-import { startUniversitySignIn } from "./universitySignIn.ts";
+import { guardedSignIn } from "./agent/guardedSignIn.ts";
+import { userRunInvocation } from "./checkAccounts.ts";
+import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { openThroughUniversity } from "./universityBrowsing.ts";
 import { searchUniversities } from "../papers/universityDirectory.ts";
 import { FetchHttpClient } from "effect/http";
@@ -65,7 +68,10 @@ export const makeAccountsRpcHandlers = ({
     ) => Effect.Effect<ReadonlyArray<PaperItem>, AccountsError>;
     readonly universitySignIn: (
       input: UniversitySignInInput,
-    ) => Effect.Effect<{ readonly tabId: PreviewTabId }, AccountsError>;
+    ) => Effect.Effect<
+      { readonly tabId: PreviewTabId; readonly threadId: ThreadId },
+      AccountsError
+    >;
     readonly universityBrowse: (
       input: UniversityBrowseInput,
     ) => Effect.Effect<{ readonly routed: boolean }, AccountsError>;
@@ -385,9 +391,7 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
       ),
     papers: {
       universitySignIn: (input: UniversitySignInInput) =>
-        run((environmentId) =>
-          startUniversitySignIn(input, environmentId, continueWaitingPapers(environmentId)),
-        ),
+        run((environmentId) => signInAsPerson(input, environmentId)),
       universityBrowse: (input: UniversityBrowseInput) =>
         run((environmentId) =>
           accounts.snapshot.pipe(
@@ -407,6 +411,57 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
         searchUniversities(query).pipe(Effect.provide(FetchHttpClient.layer)),
     },
   };
+});
+
+/**
+ * The user's own sign-in to a row, beside their conversation: it runs on after the reply, which
+ * names the tab as soon as it opens.
+ */
+const signInAsPerson = Effect.fn("Accounts.signInAsPerson")(function* (
+  input: UniversitySignInInput,
+  environmentId: EnvironmentId,
+) {
+  const accounts = yield* AccountsService;
+  const account = (yield* accounts.snapshot).accounts.find(
+    (row) => row.accountId === input.accountId,
+  );
+  if (account?.details.kind !== "website")
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: "Choose a website or university to sign in to.",
+    });
+  const opened = yield* Deferred.make<PreviewTabId>();
+  const services = yield* Effect.context<
+    AccountsService | FileSystem.FileSystem | Path.Path | PreviewAutomationBroker
+  >();
+  const signing = yield* guardedSignIn({
+    signIn: account,
+    caller: {
+      kind: "person",
+      afterSignIn: continueWaitingPapers(environmentId).pipe(Effect.provideContext(services)),
+      ...(input.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
+    },
+    onTab: (tabId) => Deferred.succeed(opened, tabId).pipe(Effect.asVoid),
+  }).pipe(
+    Effect.provideService(AgentInvocationContext, userRunInvocation(input.threadId, environmentId)),
+    Effect.forkDetach,
+  );
+  const tabId = yield* Deferred.await(opened).pipe(
+    Effect.raceFirst(
+      Fiber.join(signing).pipe(
+        Effect.flatMap((ended) =>
+          Effect.fail(
+            new AccountsError({
+              reason: "unavailable",
+              message:
+                ("message" in ended && ended.message) || "The browser could not open the sign-in.",
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+  return { tabId, threadId: input.threadId };
 });
 
 export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
@@ -434,6 +489,9 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         mainBackfilled: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
+        attempts: Effect.succeed([]),
+        setAttempt: Effect.fn("AccountsService.setAttempt")(() => Effect.void),
+        removeAttempt: Effect.fn("AccountsService.removeAttempt")(() => Effect.void),
         setPaperQueue: Effect.fn("AccountsService.setPaperQueue")(() => Effect.void),
         handoffCancelled: Effect.fn("AccountsService.handoffCancelled")(() =>
           Effect.succeed(false),

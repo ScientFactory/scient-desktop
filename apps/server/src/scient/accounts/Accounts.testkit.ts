@@ -8,6 +8,7 @@ import {
   defaultAccountControls,
   type AccountActivityEntry,
   type AccountHandoff,
+  type AccountSignInAttempt,
   type AccountSaveInput,
   type AccountsSnapshot,
   type AccountSummary,
@@ -139,6 +140,7 @@ export function fakeAccounts(
   } = {},
 ) {
   const handoffs = new Map<string, AccountHandoff>();
+  const attempts = new Map<string, AccountSignInAttempt>();
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
@@ -164,6 +166,15 @@ export function fakeAccounts(
         cancelled.delete(id);
       }),
     handoffCancelled: (id) => Effect.sync(() => cancelled.has(id)),
+    attempts: Effect.sync(() => [...attempts.values()]),
+    setAttempt: (attempt) =>
+      Effect.sync(() => {
+        attempts.set(attempt.attemptId, attempt);
+      }),
+    removeAttempt: (id) =>
+      Effect.sync(() => {
+        attempts.delete(id);
+      }),
     setPaperQueue: () => Effect.void,
     showHandoff: () => unsupported,
     cancelHandoff: (id) =>
@@ -259,5 +270,5 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses, handoffs, cancelled, saves, checks };
+  return { service, calls, uses, handoffs, attempts, cancelled, saves, checks };
 }

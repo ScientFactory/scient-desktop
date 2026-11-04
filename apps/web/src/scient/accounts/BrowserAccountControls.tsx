@@ -160,6 +160,7 @@ function DesktopBrowserAccountControls({
   url: string;
 }) {
   const { data, canWrite } = useAccounts(environmentId);
+  const inAttempt = (data?.attempts ?? []).some((attempt) => attempt.tabId === previewTabId);
   const [pending, setPending] = useState<{
     capture: DesktopCapturedSignIn;
     comparison: AccountMatchSignInResult;
@@ -171,6 +172,7 @@ function DesktopBrowserAccountControls({
     url,
     accounts: data?.accounts ?? [],
     sessionsSeen: data?.features?.sessionsSeen === true,
+    signingIn: inAttempt,
     enabled: canWrite && pending === null,
   });
   useUniversityBrowsing({

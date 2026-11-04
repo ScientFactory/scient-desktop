@@ -1,5 +1,6 @@
 import {
   AccountSaveInput,
+  DEFAULT_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
   type AccountDetails,
   type AccountId,
@@ -63,6 +64,7 @@ import {
 import { CliPasswordPicker } from "./CliPasswordStores";
 import { SaveStores } from "./SaveStores";
 import { useAccountBrowser } from "./useAccountBrowser";
+import { useSignIn } from "./useSignIn";
 import { useAccountCommand } from "./useAccounts";
 
 const decodeSave = Schema.decodeOption(AccountSaveInput);
@@ -556,6 +558,9 @@ export function AccountDialog({
   onSaved?: (accountId: AccountId) => void;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
+  const signIn = useSignIn(environmentId);
+  const newTabProfileId =
+    useClientSettings((settings) => settings.browserDefaultProfileId) ?? DEFAULT_BROWSER_PROFILE_ID;
   const [connecting, setConnecting] = useState(false);
   const configuredProfiles = useClientSettings((settings) => settings.browserProfiles);
   const searchUrlTemplate = useClientSettings(resolveSearchUrlTemplate);
@@ -913,7 +918,7 @@ export function AccountDialog({
                 <AccountField
                   label="Name"
                   action={
-                    !account && details.kind === "website" ? (
+                    !account && details.kind === "website" && snapshot.features?.signInAnyRow ? (
                       <Button
                         size="xs"
                         variant="ghost-muted"
@@ -923,18 +928,23 @@ export function AccountDialog({
                           details.profileId === "incognito" ||
                           busy
                         }
-                        onClick={() => {
+                        onClick={async () => {
                           setBusy(true);
-                          void openBrowser(
-                            details.loginUrl || details.sites[0]!,
-                            details.profileId,
-                            { name, site: details.sites[0]! },
-                          ).then((opened) => {
-                            setBusy(false);
-                            if (opened) {
-                              onClose();
-                            }
+                          // A row for the sign-in, which goes again if nothing comes of it.
+                          const saved = await save({
+                            name,
+                            details: {
+                              ...details,
+                              profileId: details.profileId ?? newTabProfileId,
+                              origin: "browser-session",
+                            },
+                            secrets: {},
                           });
+                          const opened =
+                            saved.ok &&
+                            (await signIn(saved.value.accountId, { discardIfUnfinished: true }));
+                          setBusy(false);
+                          if (opened) onClose();
                         }}
                       >
                         Sign in with the browser

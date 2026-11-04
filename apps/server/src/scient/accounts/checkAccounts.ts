@@ -259,12 +259,14 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
       signIn: account,
       caller: { kind: "check" },
     });
-    if ("tabId" in result && result.tabId) tabs.add(result.tabId);
+    // A sign-in waiting at a second factor keeps its tab, for the person to finish there.
+    if (result.pending && result.tabId) tabs.delete(result.tabId);
+    else if (result.tabId) tabs.add(result.tabId);
     // Nothing reached the site, so nothing else says what was seen here.
     else
       yield* accounts.recordCheck(account.accountId, {
         state,
-        ...("message" in result ? { detail: result.message } : {}),
+        ...(result.message === undefined ? {} : { detail: result.message }),
       });
   }).pipe(
     Effect.ensuring(

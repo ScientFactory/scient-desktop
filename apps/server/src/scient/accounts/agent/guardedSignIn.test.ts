@@ -292,3 +292,247 @@ it.effect("find types only a sign-in this profile may use, and asks when several
     );
   }),
 );
+
+/** A site that asks for a code after the password; the person may answer it in the tab. */
+const codeSite = (rows: Array<AccountSummary>) => {
+  const site = { phase: "login" as "login" | "code" | "done", gone: false, passwords: 0, opens: 0 };
+  const fake = fakeAccounts({ accounts: rows, values: { password: "synthetic-password" } });
+  const service = AccountsService.of({
+    ...fake.service,
+    snapshot: Effect.sync(
+      () => ({ accounts: rows, agentAccess: true }) as unknown as AccountsSnapshot,
+    ),
+    recordUse: (entry) =>
+      Effect.sync(() => {
+        const index = rows.findIndex(
+          (account) =>
+            entry.target.type === "account" && account.accountId === entry.target.accountId,
+        );
+        if (index !== -1 && entry.signInOutcome)
+          rows[index] = {
+            ...rows[index]!,
+            signIn: {
+              state: entry.signInOutcome === "needs-user" ? "needs-you" : entry.signInOutcome,
+              at: iso(1_000),
+              by: "action",
+            },
+          };
+      }),
+  });
+  const broker = PreviewAutomationBroker.of({
+    connect: () => Effect.succeed(Stream.empty),
+    focusHost: () => Effect.void,
+    respond: () => Effect.void,
+    invoke: <A>(request: { readonly operation: string; readonly input: unknown }) =>
+      Effect.sync(() => {
+        const input = (request.input ?? {}) as Record<string, unknown>;
+        if (request.operation === "open" && input.url) site.opens++;
+        if (request.operation === "accountType" && input.selector === "#password") site.passwords++;
+        if (request.operation === "click" && site.phase === "login") site.phase = "code";
+        if (request.operation === "evaluate")
+          return {
+            origin: "https://example.com",
+            username: site.phase === "login" ? "#user" : null,
+            password: site.phase === "login" ? "#password" : null,
+            otp: site.phase === "code" ? "#code" : null,
+            submit: "button",
+            challenge: null,
+            signedIn: site.phase === "done",
+          } as A;
+        return {
+          tabId: "tab-fixture",
+          tabs: site.gone
+            ? []
+            : [{ tabId: "tab-fixture", url, profileId: "default", ownedByCaller: true }],
+        } as A;
+      }),
+  });
+  const run = (signIn: AccountSummary, caller: SignInCaller) =>
+    guardedSignIn({ signIn, caller }).pipe(
+      Effect.provideService(AccountsService, service),
+      Effect.provideService(PreviewAutomationBroker, broker),
+      Effect.provideService(AgentInvocationContext, {
+        ...scope,
+        environmentId: EnvironmentId.make("env-fixture"),
+        providerSessionId: "user-run:thread-fixture",
+        providerInstanceId: ProviderInstanceId.make("scient"),
+        capabilities: new Set(["preview", "accounts"] as const),
+        issuedAt: 0,
+      }),
+    );
+  return { run, site, attempts: fake.attempts };
+};
+
+it.effect("a paper stopped at a code waits there; the press resumes it, one password in all", () =>
+  Effect.gen(function* () {
+    const rows = [row("code")];
+    const { run, site, attempts } = codeSite(rows);
+    expect(yield* run(rows[0]!, paper("all"))).toMatchObject({
+      outcome: "needs-user",
+      pending: true,
+    });
+    expect([...attempts.values()]).toMatchObject([{ tabId: "tab-fixture", state: "pending" }]);
+    // Nothing automatic tries again while it waits.
+    expect((yield* run(rows[0]!, paper("all"))).outcome).toBe("failed");
+    // The person answers the code in the kept tab.
+    site.phase = "done";
+    expect((yield* run(rows[0]!, { kind: "person" })).outcome).toBe("signed-in");
+    expect(site.passwords).toBe(1);
+    expect(site.opens).toBe(0);
+    expect(attempts.size).toBe(0);
+  }),
+);
+
+it.effect("with the kept tab gone, the press is one fresh attempt", () =>
+  Effect.gen(function* () {
+    const rows = [row("gone")];
+    const { run, site } = codeSite(rows);
+    yield* run(rows[0]!, paper("all"));
+    site.gone = true;
+    site.phase = "login";
+    expect(yield* run(rows[0]!, { kind: "person" })).toMatchObject({ outcome: "needs-user" });
+    expect(site.passwords).toBe(2);
+    // A new page for the fresh attempt; the first one stayed on the tab it was given.
+    expect(site.opens).toBe(1);
+  }),
+);
+
+/** A person signing in to their university: its page asks for a password, then hands back. */
+const universityVisit = (rows: Array<AccountSummary>, checkSees: string) => {
+  const seen = { phase: "idp" as "idp" | "back", closed: [] as string[], saved: [] as unknown[] };
+  const fake = fakeAccounts({ accounts: rows });
+  const write = (accountId: string, state: "signed-in" | "signed-out" | "needs-you") => {
+    const index = rows.findIndex((account) => account.accountId === accountId);
+    if (index !== -1) rows[index] = { ...rows[index]!, signIn: { state, at: iso(2_000) } };
+  };
+  const service = AccountsService.of({
+    ...fake.service,
+    snapshot: Effect.sync(
+      () => ({ accounts: rows, agentAccess: true }) as unknown as AccountsSnapshot,
+    ),
+    save: (input) =>
+      Effect.sync(() => {
+        seen.saved.push(input.details);
+        return { accountId: input.accountId! };
+      }),
+    recordCheck: (accountId, check) =>
+      Effect.sync(() => write(accountId, check.state as "signed-in" | "signed-out")),
+    recordUse: (entry) =>
+      Effect.sync(() => {
+        if (entry.target.type === "account" && entry.signInOutcome)
+          write(
+            entry.target.accountId,
+            entry.signInOutcome === "signed-in" ? "signed-in" : "needs-you",
+          );
+      }),
+  });
+  const broker = PreviewAutomationBroker.of({
+    connect: () => Effect.succeed(Stream.empty),
+    focusHost: () => Effect.void,
+    respond: () => Effect.void,
+    invoke: <A>(request: {
+      readonly operation: string;
+      readonly input: unknown;
+      readonly tabId?: string;
+    }) =>
+      Effect.sync(() => {
+        const input = (request.input ?? {}) as Record<string, unknown>;
+        if (request.operation === "close" && request.tabId) seen.closed.push(request.tabId);
+        // The person signs in between two looks.
+        if (request.operation === "accountWaitForLoad" && input.settleMs === 400)
+          seen.phase = "back";
+        if (request.operation === "evaluate")
+          return (
+            String(input.expression).includes("finalUrl")
+              ? { finalUrl: checkSees, title: "", passwordField: false, deniedText: false }
+              : seen.phase === "idp"
+                ? {
+                    origin: "https://idp.example.edu",
+                    username: "#user",
+                    password: "#password",
+                    otp: null,
+                    submit: "button",
+                    challenge: null,
+                    signedIn: false,
+                  }
+                : {
+                    origin: "https://www.nature.com",
+                    url: "https://www.nature.com/",
+                    username: null,
+                    password: null,
+                    otp: null,
+                    submit: null,
+                    challenge: null,
+                    signedIn: false,
+                  }
+          ) as A;
+        if (request.operation === "accountCookies") return [] as A;
+        return { tabId: "tab-person", tabs: [] } as A;
+      }),
+  });
+  let continued = false;
+  const run = guardedSignIn({
+    signIn: rows[0]!,
+    caller: {
+      kind: "person",
+      afterSignIn: Effect.sync(() => {
+        continued = true;
+      }),
+    },
+  }).pipe(
+    Effect.provideService(AccountsService, service),
+    Effect.provideService(PreviewAutomationBroker, broker),
+    Effect.provideService(AgentInvocationContext, {
+      ...scope,
+      environmentId: EnvironmentId.make("env-fixture"),
+      providerSessionId: "user-run:thread-fixture",
+      providerInstanceId: ProviderInstanceId.make("scient"),
+      capabilities: new Set(["preview", "accounts"] as const),
+      issuedAt: 0,
+    }),
+  );
+  return { run, seen, continued: () => continued };
+};
+
+const connected = () => [
+  row("university", {
+    secrets: {},
+    details: {
+      kind: "website",
+      sites: ["example.edu"],
+      institution: {
+        name: "Example University",
+        entityId: "https://idp.example.edu/shibboleth",
+        domain: "example.edu",
+      },
+    },
+  }),
+];
+
+it.effect("a university sign-in counts once a check reaches the journal, then tidies up", () =>
+  Effect.gen(function* () {
+    const rows = connected();
+    const visit = universityVisit(rows, "https://www.nature.com/");
+    expect((yield* visit.run).outcome).toBe("signed-in");
+    expect(rows[0]!.signIn?.state).toBe("signed-in");
+    // The page that asked for the password is learned; the tab it handed back to closes.
+    expect(visit.seen.saved).toEqual([
+      expect.objectContaining({ sites: ["example.edu", "https://idp.example.edu"] }),
+    ]);
+    expect(visit.seen.closed).toContain("tab-person");
+    expect(visit.continued()).toBe(true);
+  }),
+);
+
+it.effect("a link back that the check can't confirm is no sign-in", () =>
+  Effect.gen(function* () {
+    const rows = connected();
+    const visit = universityVisit(rows, "https://idp.example.edu/login");
+    expect(yield* visit.run).toMatchObject({
+      outcome: "needs-user",
+      message: "Couldn't confirm the sign-in.",
+    });
+    expect(visit.continued()).toBe(false);
+    expect(visit.seen.saved).toEqual([]);
+  }),
+);

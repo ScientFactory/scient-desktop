@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   external: vi.fn(),
   settings: {} as Partial<ClientSettings>,
   calls: [] as unknown[],
+  features: { signInAnyRow: true } as { signInAnyRow?: true },
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -52,7 +53,7 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: {} }),
 }));
 vi.mock("./useAccounts", () => ({
-  useAccounts: () => ({ data: null, canWrite: true }),
+  useAccounts: () => ({ data: { features: state.features }, canWrite: true }),
   useAccountCommand: () => async (input: unknown) => {
     state.calls.push(["record", input]);
     return { ok: true, value: {} };
@@ -108,16 +109,19 @@ const row = (value = account) => (
   />
 );
 
-it("offers sign-in again in the account profile, then removes the status and action once signed in", async () => {
+it("signs in again through Scient, then removes the status and action once signed in", async () => {
   using _fixture = fixture();
+  state.calls = [];
+  state.features = { signInAnyRow: true };
   await using screen = await render(row());
   await expect.element(page.getByText("Signed out", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Account menu" }).click();
   await page.getByRole("menuitem", { name: "Sign in again", exact: true }).click();
   await vi.waitFor(() =>
-    expect(state.open).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://example.com/login", profileId: "work" }),
-    ),
+    expect(state.calls).toContainEqual([
+      "record",
+      { accountId: account.accountId, threadId: "synthetic-thread" },
+    ]),
   );
   await screen.rerender(
     row({ ...account, signIn: { state: "signed-in", at: "2026-10-26T00:00:00.000Z" } }),
@@ -127,6 +131,21 @@ it("offers sign-in again in the account profile, then removes the status and act
   await expect
     .element(page.getByRole("menuitem", { name: "Sign in again", exact: true }))
     .not.toBeInTheDocument();
+});
+
+it("says an older server can't sign in to a website row from here", async () => {
+  using _fixture = fixture();
+  state.features = {};
+  await using _screen = await render(row());
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await expect
+    .element(
+      page.getByRole("menuitem", {
+        name: "Update Scient on this computer to sign in from here",
+        exact: true,
+      }),
+    )
+    .toBeVisible();
 });
 
 it("offers Sign in beside a Google sign-out, without leaving the row or clipping", async () => {

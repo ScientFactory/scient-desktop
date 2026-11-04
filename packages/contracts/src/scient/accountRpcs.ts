@@ -58,6 +58,7 @@ import {
   PasswordImportResult,
 } from "./accounts.ts";
 import { PreviewTabId } from "../preview.ts";
+import { ThreadId } from "../baseSchemas.ts";
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_ACCOUNT_WS_METHODS = {
@@ -211,7 +212,8 @@ export const WsAccountsUniversitySignInRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySignIn,
   {
     payload: UniversitySignInInput,
-    success: Schema.Struct({ tabId: PreviewTabId }),
+    /** `threadId` is where the tab opened; older servers leave it out. */
+    success: Schema.Struct({ tabId: PreviewTabId, threadId: Schema.optional(ThreadId) }),
     error: AccountsRpcError,
   },
 );

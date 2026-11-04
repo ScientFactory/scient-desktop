@@ -88,7 +88,7 @@ import {
   steadyProviderRows,
   signedIntoUniversity,
 } from "./accountsView";
-import { UniversityIcon, useUniversitySignIn } from "./University";
+import { UniversityIcon } from "./University";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { BrowserImportDialog, BrowserProfiles, useImportingPasswords } from "./BrowserProfiles";
 import { clickableAccountRow } from "./clickableAccountRow";
@@ -96,6 +96,7 @@ import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./Password
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+import { useSignIn } from "./useSignIn";
 import { useWebsiteSessions } from "./useWebsiteSessions";
 
 /** Provider rows last read per environment, so a refresh doesn't empty "Other sign-ins". */
@@ -139,11 +140,12 @@ export function AccountRow({
   const check = useAccountCommand(accountsState.check, environmentId);
   const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
   const university = universityDetails(details);
-  const universitySignIn = useUniversitySignIn(environmentId);
+  const signIn = useSignIn(environmentId);
+  const signInAnyRow = useAccounts(environmentId).data?.features?.signInAnyRow === true;
   const signInAgain = ["signed-out", "needs-you"].includes(account.signIn?.state ?? "");
-  const openSite = async (url = site) => {
-    if (!url) return;
-    await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
+  const openSite = async () => {
+    if (!site) return;
+    await openBrowser(site, details.kind === "website" ? details.profileId : undefined);
   };
   const iconUrl = accountIconUrl("sites" in details ? details.sites : [], account.name);
   const managePage = accountManagePage("sites" in details ? details.sites : []);
@@ -230,7 +232,7 @@ export function AccountRow({
               disabled={!canWrite}
               onClick={(event) => {
                 event.stopPropagation();
-                void universitySignIn(account.accountId);
+                void signIn(account.accountId);
               }}
             >
               Sign in
@@ -244,11 +246,13 @@ export function AccountRow({
           />
           <ControlsMenu disabled={!canWrite || busy}>
             {university ? (
-              <MenuItem onClick={() => void universitySignIn(account.accountId)}>Sign in</MenuItem>
+              <MenuItem onClick={() => void signIn(account.accountId)}>Sign in</MenuItem>
             ) : signInAgain && details.kind === "website" ? (
-              <MenuItem onClick={() => void openSite(details.loginUrl ?? site)}>
-                Sign in again
-              </MenuItem>
+              signInAnyRow ? (
+                <MenuItem onClick={() => void signIn(account.accountId)}>Sign in again</MenuItem>
+              ) : (
+                <MenuItem disabled>Update Scient on this computer to sign in from here</MenuItem>
+              )
             ) : null}
             {details.kind === "website" ? (
               <MenuItem

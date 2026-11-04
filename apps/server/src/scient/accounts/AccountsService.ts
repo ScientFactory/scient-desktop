@@ -12,6 +12,7 @@ import type {
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
   AccountHandoff,
+  AccountSignInAttempt,
   PaperQueueSummary,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
@@ -93,6 +94,10 @@ export interface AccountsServiceShape {
     reveal?: Effect.Effect<void, AccountsError>,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeHandoff: (handoffId: string) => Effect.Effect<void>;
+  /** Sign-ins under way, by tab, in memory: their tabs are closed to agents meanwhile. */
+  readonly attempts: Effect.Effect<ReadonlyArray<AccountSignInAttempt>>;
+  readonly setAttempt: (attempt: AccountSignInAttempt) => Effect.Effect<void>;
+  readonly removeAttempt: (attemptId: string) => Effect.Effect<void>;
   /** The state of a project's papers, shown as a band and a card. */
   readonly setPaperQueue: (queue: PaperQueueSummary) => Effect.Effect<void>;
   readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;

@@ -186,6 +186,7 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
     return yield* arrived(NAVIGATED_DOWNLOAD_WAIT_MS);
   });
 
+  let kept = false;
   const run = Effect.gen(function* () {
     const tried = new Set<string>();
     let signedIn = false;
@@ -228,6 +229,8 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
           });
           if (result.outcome === "none" || result.outcome === "choose")
             return stopped("needs-sign-in", "sign-in", asks);
+          // A sign-in waiting at a second factor keeps this tab, for the person to finish there.
+          if (result.pending) kept = true;
           if (result.outcome !== "signed-in")
             return stopped(
               "needs-sign-in",
@@ -271,5 +274,9 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
     }
     return stopped("no-access", "unclear", "The page has no PDF.");
   });
-  return yield* run.pipe(Effect.ensuring(invoke("close", {}, tab).pipe(Effect.ignore)));
+  return yield* run.pipe(
+    Effect.ensuring(
+      Effect.suspend(() => (kept ? Effect.void : invoke("close", {}, tab).pipe(Effect.ignore))),
+    ),
+  );
 });

@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import { onUniversitySignIn } from "../universitySignIn.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import {
   AccountsService,
@@ -60,6 +61,16 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
   const session = yield* accounts.forSession(scope, profileIds(status));
   const tab = status.tabs?.find((item) => item.tabId === (tabId ?? status.tabId));
   if (!tab || !profileVisible(session)(tab.profileId)) return yield* profileUnavailable();
+  // What the user types while signing in is theirs: no agent reads or drives that tab, the one
+  // that started the sign-in included, and a university's own sign-in pages stay closed after.
+  if (
+    (yield* accounts.attempts).some((attempt) => attempt.tabId === tab.tabId) ||
+    (tab.url && onUniversitySignIn((yield* accounts.snapshot).accounts, tab.url))
+  )
+    return yield* new AccountsError({
+      reason: "denied",
+      message: "The user is signing in on this tab. Wait for scient_account_sign_in.",
+    });
   // Autofill fills every tab for the user; a tab holding a sign-in this agent may not use stays
   // closed to it while it shows that site (a page may change its address without clearing the
   // form), so the agent cannot read the filled password.

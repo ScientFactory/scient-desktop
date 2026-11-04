@@ -1,26 +1,13 @@
 import {
   AccountId,
   BrowserProfileId,
-  EnvironmentId,
-  ThreadId,
   defaultAccountControls,
   type AccountSummary,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as Stream from "effect/Stream";
-import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { foldStoredAccounts, withStoredAccountsFolded } from "./AccountPersistence.ts";
-import { AccountsService } from "./AccountsService.ts";
-import { fakeAccounts } from "./Accounts.testkit.ts";
-import {
-  followSignIn,
-  isSignInTab,
-  isUniversitySignInService,
-  startUniversitySignIn,
-  withSignInService,
-} from "./universitySignIn.ts";
+import { isSignInTab, isUniversitySignInService, withSignInService } from "./universitySignIn.ts";
 
 const ID = AccountId.make("acc_university1");
 const SIGN_IN = "https://login.microsoftonline.com";
@@ -43,123 +30,6 @@ const university = (sites: ReadonlyArray<string> = ["uni.example.edu"]): Account
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
-
-const blankPage = {
-  username: null,
-  password: null,
-  otp: null,
-  submit: null,
-  challenge: null,
-  signedIn: false,
-};
-const profilePage = (finalUrl: string) => ({
-  finalUrl,
-  title: "",
-  passwordField: false,
-  deniedText: false,
-});
-
-/** A person's tab that stays on the sign-in page for `looks`, then comes back. */
-const browser = (input: { readonly hiddenEndsAt: string; readonly closed?: boolean }) => {
-  const operations: Array<string> = [];
-  let looks = 0;
-  const broker = PreviewAutomationBroker.of({
-    connect: () => Effect.succeed(Stream.empty),
-    focusHost: () => Effect.void,
-    respond: () => Effect.void,
-    invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
-      Effect.sync(() => {
-        operations.push(request.operation);
-        const hidden = request.scope.threadId !== "thread-beside";
-        if (request.operation === "evaluate")
-          return (
-            hidden
-              ? profilePage(input.hiddenEndsAt)
-              : { ...blankPage, origin: SIGN_IN, password: "#password" }
-          ) as A;
-        if (request.operation === "status") {
-          looks += 1;
-          const url = looks > 1 ? "https://www.nature.com/" : `${SIGN_IN}/saml`;
-          return {
-            available: true,
-            visible: true,
-            tabId: "tab-person",
-            url,
-            title: null,
-            loading: false,
-            tabs: input.closed ? [] : [{ tabId: "tab-person", url, ownedByCaller: true }],
-            defaultProfileId: BrowserProfileId.make("default"),
-            profiles: [],
-          } as unknown as A;
-        }
-        if (request.operation === "open") return { tabId: "tab-hidden" } as A;
-        return [] as A;
-      }),
-  });
-  return { broker, operations };
-};
-
-const run = (
-  fake: ReturnType<typeof fakeAccounts>,
-  tabs: ReturnType<typeof browser>,
-  after: Effect.Effect<void>,
-) =>
-  followSignIn(
-    { accountId: ID, threadId: ThreadId.make("thread-beside") },
-    EnvironmentId.make("env-fixture"),
-    "tab-person",
-    after,
-  ).pipe(
-    Effect.provideService(AccountsService, fake.service),
-    Effect.provideService(PreviewAutomationBroker, tabs.broker),
-  );
-
-it.live("finishes a sign-in when the link comes back and the service still passes it", () =>
-  Effect.gen(function* () {
-    const fake = fakeAccounts({ accounts: [university()] });
-    const tabs = browser({ hiddenEndsAt: "https://www.nature.com/" });
-    let continued = false;
-    yield* run(
-      fake,
-      tabs,
-      Effect.sync(() => {
-        continued = true;
-      }),
-    );
-    expect(fake.saves.at(-1)?.details).toMatchObject({ sites: ["uni.example.edu", SIGN_IN] });
-    expect(fake.checks.at(-1)).toMatchObject({ accountId: ID, state: "signed-in" });
-    expect(fake.uses.at(-1)).toMatchObject({ signInOutcome: "signed-in", outcome: "ok" });
-    expect(continued).toBe(true);
-    expect(tabs.operations).toContain("close");
-  }),
-);
-
-it.live("doesn't call it signed in when the service stops the quiet second visit", () =>
-  Effect.gen(function* () {
-    const fake = fakeAccounts({ accounts: [university()] });
-    const tabs = browser({ hiddenEndsAt: `${SIGN_IN}/saml` });
-    let continued = false;
-    yield* run(
-      fake,
-      tabs,
-      Effect.sync(() => {
-        continued = true;
-      }),
-    );
-    expect(fake.checks.at(-1)).toMatchObject({ state: "signed-out" });
-    expect(fake.uses).toEqual([]);
-    expect(continued).toBe(false);
-  }),
-);
-
-it.live("ends quietly when the person closes the tab", () =>
-  Effect.gen(function* () {
-    const fake = fakeAccounts({ accounts: [university()] });
-    yield* run(fake, browser({ hiddenEndsAt: "", closed: true }), Effect.void);
-    expect(fake.checks).toEqual([]);
-    expect(fake.uses).toEqual([]);
-  }),
-);
 
 it("keeps each exact sign-in address, even under a covered domain, within the limit", () => {
   expect(withSignInService(["example.edu"], new Set(["https://idp.example.edu"]))).toEqual([
@@ -228,7 +98,7 @@ it("leaves unreadable saved data for the decoder to report", () => {
 it("knows a tab left on the university's sign-in, and never a course page or another profile", () => {
   const details = { sites: ["huji.ac.il", "https://idp.cc.huji.ac.il"], profileId: "default" };
   const at = (url: string | null, profileId = "default") =>
-    isSignInTab({ details }, { url, profileId });
+    isSignInTab({ details }, { url, profileId }, []);
   expect(at("https://idp.cc.huji.ac.il/simplesaml/login")).toBe(true);
   expect(at("https://login.openathens.net/saml/2/sso")).toBe(true);
   expect(at("https://my.openathens.net/auth?targetURL=%2Fapp")).toBe(true);
@@ -240,16 +110,29 @@ it("knows a tab left on the university's sign-in, and never a course page or ano
     isSignInTab(
       { details: portal },
       { url: "https://portal.example.edu/login", profileId: "default" },
+      [],
     ),
   ).toBe(true);
   expect(
     isSignInTab(
       { details: portal },
       { url: "https://portal.example.edu/courses/42", profileId: "default" },
+      [],
     ),
   ).toBe(false);
   expect(at("https://idp.cc.huji.ac.il/simplesaml/login", "work")).toBe(false);
   expect(at(null)).toBe(false);
+  // A tab in a sign-in under way belongs to that attempt's account, whatever it shows.
+  const tab = { tabId: "tab-1", url: "https://moodle.huji.ac.il/my/", profileId: "default" };
+  const attempt = (accountId: string) => [{ tabId: "tab-1", accountId: AccountId.make(accountId) }];
+  expect(isSignInTab({ accountId: ID, details }, tab, attempt(ID))).toBe(true);
+  expect(
+    isSignInTab(
+      { accountId: ID, details },
+      { ...tab, url: "https://idp.cc.huji.ac.il/simplesaml/login" },
+      attempt("acc_other_university"),
+    ),
+  ).toBe(false);
 });
 
 it("keeps OpenAthens out of scripts for a university that signs in there", () => {
@@ -273,116 +156,3 @@ it("keeps OpenAthens out of scripts for a university that signs in there", () =>
   expect(isUniversitySignInService([university()], "https://moodle.example.edu/my")).toBe(false);
   expect(isUniversitySignInService([], "https://login.example.org/")).toBe(false);
 });
-
-it.live("uses the tab an earlier press left on the university's page instead of a new one", () =>
-  Effect.gen(function* () {
-    const operations: Array<{ operation: string; tabId?: string; url?: string }> = [];
-    let statuses = 0;
-    const broker = PreviewAutomationBroker.of({
-      connect: () => Effect.succeed(Stream.empty),
-      focusHost: () => Effect.void,
-      respond: () => Effect.void,
-      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
-        Effect.sync(() => {
-          const input = request.input as { url?: string };
-          operations.push({
-            operation: request.operation,
-            ...(request.tabId ? { tabId: request.tabId } : {}),
-            ...(input.url ? { url: input.url } : {}),
-          });
-          if (request.operation === "status") {
-            statuses += 1;
-            // Then the person closes it, which ends the follow.
-            const tabs =
-              statuses === 1
-                ? [
-                    {
-                      tabId: "tab-course",
-                      url: "https://moodle.example.edu/my",
-                      profileId: "default",
-                    },
-                    {
-                      tabId: "tab-elsewhere",
-                      url: "https://idp.example.edu/login",
-                      profileId: "work",
-                    },
-                    {
-                      tabId: "tab-left",
-                      url: "https://idp.example.edu/login",
-                      profileId: "default",
-                    },
-                  ]
-                : [];
-            return { available: true, tabs } as unknown as A;
-          }
-          return { tabId: request.tabId ?? "tab-new" } as A;
-        }),
-    });
-    const fake = fakeAccounts({
-      accounts: [university(["example.edu", "https://idp.example.edu"])],
-    });
-    const result = yield* startUniversitySignIn(
-      { accountId: ID, threadId: ThreadId.make("thread-beside") },
-      EnvironmentId.make("env-fixture"),
-      Effect.void,
-    ).pipe(
-      Effect.provideService(AccountsService, fake.service),
-      Effect.provideService(PreviewAutomationBroker, broker),
-    );
-    expect(result).toEqual({ tabId: "tab-left" });
-    expect(operations).toContainEqual(
-      expect.objectContaining({ operation: "navigate", tabId: "tab-left" }),
-    );
-    expect(operations.some((item) => item.operation === "open" && item.url)).toBe(false);
-  }),
-);
-
-it.live("never takes over another university's sign-in in progress", () =>
-  Effect.gen(function* () {
-    const other = AccountId.make("acc_university2");
-    const second: AccountSummary = {
-      ...university(["example.edu", "https://idp.example.edu"]),
-      accountId: other,
-      name: "Second University",
-    };
-    const tabsFor: Record<string, ReadonlyArray<unknown>> = {};
-    let opened = 0;
-    const navigated: Array<string> = [];
-    const broker = PreviewAutomationBroker.of({
-      connect: () => Effect.succeed(Stream.empty),
-      focusHost: () => Effect.void,
-      respond: () => Effect.void,
-      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
-        Effect.sync(() => {
-          if (request.operation === "navigate" && request.tabId) navigated.push(request.tabId);
-          if (request.operation === "status")
-            return { available: true, tabs: tabsFor["current"] ?? [] } as unknown as A;
-          if (request.operation === "open") {
-            opened += 1;
-            return { tabId: request.tabId ?? `tab-${opened}` } as A;
-          }
-          return {} as A;
-        }),
-    });
-    const fake = fakeAccounts({
-      accounts: [university(["example.edu", "https://idp.example.edu"]), second],
-    });
-    const start = (accountId: AccountId) =>
-      startUniversitySignIn(
-        { accountId, threadId: ThreadId.make("thread-beside") },
-        EnvironmentId.make("env-fixture"),
-        Effect.void,
-      ).pipe(
-        Effect.provideService(AccountsService, fake.service),
-        Effect.provideService(PreviewAutomationBroker, broker),
-      );
-    // The first university's sign-in opens its tab, which then waits on its login page.
-    const first = yield* start(ID);
-    tabsFor["current"] = [
-      { tabId: first.tabId, url: "https://idp.example.edu/login", profileId: "default" },
-    ];
-    const next = yield* start(other);
-    expect(next.tabId).not.toBe(first.tabId);
-    expect(navigated).not.toContain(first.tabId);
-  }),
-);

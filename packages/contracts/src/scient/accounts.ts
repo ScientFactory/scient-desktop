@@ -505,6 +505,16 @@ export const AccountHandoff = Schema.Struct({
 });
 export type AccountHandoff = typeof AccountHandoff.Type;
 
+/** A sign-in under way in a tab: Scient typing, a person finishing, or waiting for a second factor. */
+export const AccountSignInAttempt = Schema.Struct({
+  attemptId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  accountId: AccountId,
+  state: Schema.Literals(["typing", "person", "pending", "draining"]),
+});
+export type AccountSignInAttempt = typeof AccountSignInAttempt.Type;
+
 export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
 
 /**
@@ -642,10 +652,13 @@ export type PaperQueueInput = typeof PaperQueueInput.Type;
 export const UniversitySearchInput = Schema.Struct({
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
 });
+/** The user's own sign-in to any website row, a university's included, in a tab beside `threadId`. */
 export const UniversitySignInInput = Schema.Struct({
   accountId: AccountId,
   /** The conversation it opens beside. */
   threadId: ThreadId,
+  /** A row made just for this sign-in goes again if it ends with nothing kept. */
+  discardIfUnfinished: Schema.optional(Schema.Literal(true)),
 });
 export type UniversitySignInInput = typeof UniversitySignInInput.Type;
 
@@ -742,8 +755,12 @@ export const AccountsSnapshot = Schema.Struct({
   features: Schema.optional(
     Schema.Struct({
       sessionsSeen: Schema.optional(Schema.Literal(true)),
+      /** `accounts.universities.signIn` signs in to any website row. */
+      signInAnyRow: Schema.optional(Schema.Literal(true)),
     }),
   ),
+  /** Sign-ins Scient is running, by tab; no values. Agents can't read these tabs meanwhile. */
+  attempts: Schema.optional(Schema.Array(AccountSignInAttempt)),
 });
 export type AccountsSnapshot = typeof AccountsSnapshot.Type;
 

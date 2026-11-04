@@ -21,49 +21,56 @@ import {
 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { layerMemory as sqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import * as Layer from "effect/Layer";
+import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { accountAgentOperations } from "./AccountAgentService.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
 import { AccountSessionFiles, makeSessionFiles } from "./sessionFiles.ts";
 
+const createThread = Effect.gen(function* () {
+  const threadId = ThreadId.make("thread-agent-fixture");
+  const providerInstanceId = ProviderInstanceId.make("codex");
+  const now = DateTime.makeUnsafe(0);
+  const projection = yield* ProjectionStoreV2;
+  yield* projection.apply({
+    id: EventId.make("event-agent-fixture"),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: threadId,
+      projectId: ProjectId.make("project-fixture"),
+      createdBy: "user",
+      creationSource: "web",
+      title: "Fixture",
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "fixture" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  return threadId;
+});
+
 it.effect(
   "authorizes before secret resolution, refuses hidden credentials, and returns only paths after a recorded private delivery",
   () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-agent-fixture");
+      const threadId = yield* createThread;
       const providerInstanceId = ProviderInstanceId.make("codex");
-      const now = DateTime.makeUnsafe(0);
-      const projection = yield* ProjectionStoreV2;
-      yield* projection.apply({
-        id: EventId.make("event-agent-fixture"),
-        type: "thread.created",
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: threadId,
-          projectId: ProjectId.make("project-fixture"),
-          createdBy: "user",
-          creationSource: "web",
-          title: "Fixture",
-          providerInstanceId,
-          modelSelection: { instanceId: providerInstanceId, model: "fixture" },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-      });
       const account: AccountSummary = {
         accountId: AccountId.make("acc_fixture1"),
         name: "Fixture",
@@ -131,4 +138,52 @@ it.effect(
         yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
       }
     }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
+);
+
+it.effect("exports no session for a site the user is signing in to", () =>
+  Effect.gen(function* () {
+    const threadId = yield* createThread;
+    const account: AccountSummary = {
+      accountId: AccountId.make("acc_signing_fixture"),
+      name: "Fixture",
+      details: { kind: "website", sites: ["example.com"] },
+      secrets: {},
+      controls: {
+        access: "allowed",
+        permission: "full",
+        visibility: "readable",
+        scope: { type: "all-projects" },
+      },
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const fake = fakeAccounts({ accounts: [account] });
+    yield* fake.service.setAttempt({
+      attemptId: "attempt-1",
+      threadId,
+      tabId: "tab-1",
+      accountId: account.accountId,
+      state: "person",
+    });
+    const refused = yield* accountAgentOperations
+      .scient_account_browser_session({ url: "https://www.example.com/settings" })
+      .pipe(
+        Effect.flip,
+        Effect.provideService(AccountsService, fake.service),
+        // Refused before the browser or any file is touched.
+        Effect.provideService(PreviewAutomationBroker, {} as PreviewAutomationBroker["Service"]),
+        Effect.provideService(AccountSessionFiles, {} as AccountSessionFiles["Service"]),
+        Effect.provideService(AgentInvocationContext, {
+          environmentId: EnvironmentId.make("env-fixture"),
+          threadId,
+          providerSessionId: "session-fixture",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["accounts", "preview"] as const),
+          issuedAt: 0,
+        }),
+      );
+    expect(refused).toMatchObject({ reason: "denied" });
+    expect(refused.message).toContain("signing in to this site");
+  }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
 );
