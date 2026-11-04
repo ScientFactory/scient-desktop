@@ -152,8 +152,8 @@ export const makeRemoteSessions = Effect.gen(function* () {
   const accounts = yield* AccountsService;
   const sessions = yield* Effect.serviceOption(SessionStore);
   const sessionRows = yield* Effect.serviceOption(AuthSessionRepository);
-  const qualifiable =
-    config.devUrl !== undefined || process.env.SCIENT_QUALIFY_SESSION_COPY === "1";
+  // A development server, as the reusable dev sign-in decides it; never a packaged one.
+  const qualifiable = config.devUrl !== undefined;
   const run = Effect.runPromiseWith(yield* Effect.context<never>());
   const locks = new Map<string, Semaphore.Semaphore>();
   const lockFor = (profileId: string) => {

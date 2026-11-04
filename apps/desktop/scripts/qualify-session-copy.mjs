@@ -30,7 +30,7 @@ profiles (scient-qualify-{a,b}-<uuid>) it deletes afterwards, failure or not:
 
   node apps/desktop/scripts/qualify-session-copy.mjs --port 9372 --environment <id>
 
-The remote server must be a development one, or run with SCIENT_QUALIFY_SESSION_COPY=1.`;
+The remote server must be a development one: started with --dev-url (or VITE_DEV_SERVER_URL).`;
 const portFlag = process.argv.indexOf("--port");
 const port = Number(portFlag === -1 ? Number.NaN : process.argv[portFlag + 1]);
 const environmentFlag = process.argv.indexOf("--environment");

@@ -204,7 +204,7 @@ or 2FA key goes. Decisions use revisions, never clocks:
   note asks for `scient_account_add` (attended) or to stop (unattended). A sign-out control there
   clears it.
 
-`accounts.sessions.qualify` (dev servers, or `SCIENT_QUALIFY_SESSION_COPY=1`) runs item 3's cases on
+`accounts.sessions.qualify` (development servers only, those started with a dev URL) runs item 3's cases on
 a remote's browser; `qualify-session-copy.mjs --environment <id>` calls it.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
