@@ -291,7 +291,7 @@ function fakeJarSession() {
     session: cookie.expires === undefined,
   });
   const send = async (method: string, params?: { cookies?: Array<Record<string, never>> }) => {
-    if (method === "Storage.getCookies")
+    if (method === "Network.getAllCookies")
       return {
         cookies: [...jar.values()].map((cookie) => ({
           ...cookie,
@@ -302,7 +302,7 @@ function fakeJarSession() {
           ],
         })),
       };
-    if (method === "Storage.setCookies") {
+    if (method === "Network.setCookies") {
       faults.beforeSet();
       const corrupt = faults.corruptNextSet;
       faults.corruptNextSet = false;

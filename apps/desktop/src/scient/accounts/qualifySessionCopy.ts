@@ -16,8 +16,8 @@ import { siteOf } from "./signedInSites.ts";
 
 /**
  * Dev-only check that CDP copies cookies between Electron sessions exactly, on this platform's
- * Electron. `scripts/qualify-session-copy.mjs` runs it; it writes only synthetic `qualify.test`
- * cookies into two throwaway partitions and clears them afterwards.
+ * Electron. `scripts/qualify-session-copy.mjs` runs it; it writes only synthetic `.test` cookies
+ * into two throwaway partitions and clears them afterwards.
  */
 const HOUR = 3600;
 const base = {
@@ -61,9 +61,18 @@ type Check = (jars: QualifyJars) => Promise<string | undefined>;
 const CASES: ReadonlyArray<readonly [string, Check]> = [
   [
     "isolation",
-    async ({ a, b }) => {
-      await setCookies(a, [domainCookie("isolated")]);
-      return named(await qualifyCookies(b), "isolated").length ? "B sees A's cookie" : undefined;
+    async ({ a, b, sessionA, sessionB }) => {
+      // A value no earlier run wrote, checked through Electron's own cookie API as well as CDP.
+      const value = crypto.randomUUID();
+      await setCookies(a, [domainCookie("isolated", { value })]);
+      const holds = async (session: Electron.Session) =>
+        (await session.cookies.get({ name: "isolated" })).some((cookie) => cookie.value === value);
+      if (!(await holds(sessionA))) return "the write did not land in A's own session";
+      if (named(await qualifyCookies(b), "isolated").length || (await holds(sessionB)))
+        return "B sees A's cookie";
+      return (await holds(Electron.session.defaultSession))
+        ? "the write landed in the app's default session"
+        : undefined;
     },
   ],
   [
@@ -99,7 +108,7 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
       const read = await qualifyCookies(b);
       if (!sameUnit(written, [...named(read, "__Host-x"), ...named(read, "__Secure-y")]))
         return "a prefixed cookie read back different";
-      await b("Storage.setCookies", {
+      await b("Network.setCookies", {
         cookies: [{ name: "__Secure-z", value: "synthetic", url: "http://a.qualify.test/" }],
       }).catch(() => undefined);
       return named(await qualifyCookies(b), "__Secure-z").length
@@ -279,7 +288,8 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
         },
       ).finally(foreign.stop);
       if (outcome !== "busy") return `the copy ended ${outcome}`;
-      const left = named(await store.readUnit(["race.test"]), "n");
+      // Read through Electron's own API, not the store under test.
+      const left = await sessionB.cookies.get({ name: "n", domain: "race.test" });
       return left.length === 1 && left[0]?.value === "from-the-site"
         ? undefined
         : "the site's newer cookie was not left in place";
@@ -294,15 +304,21 @@ const replacePlan = {
   siteOf: (host: string) => siteOf(host) ?? host,
 } as const;
 
-/** The read-back after the write sees a different value, so the check fails on purpose. */
+/** The first read after the copy's write sees a different value, so the check fails on purpose. */
 const tamperedReadBack = (store: CookieStore): CookieStore => {
-  let reads = 0;
+  let wrote = false;
+  let tampered = false;
   return {
     ...store,
+    set: async (cookies) => {
+      wrote = true;
+      await store.set(cookies);
+    },
     readUnit: async (unit) => {
-      reads += 1;
       const read = await store.readUnit(unit);
-      return reads === 2 ? read.map((cookie) => ({ ...cookie, value: "tampered" })) : read;
+      if (!wrote || tampered) return read;
+      tampered = true;
+      return read.map((cookie) => ({ ...cookie, value: "tampered" }));
     },
   };
 };
@@ -342,6 +358,23 @@ export async function qualifySessionCopy() {
     );
   } finally {
     await Promise.all([sessionA.clearStorageData(), sessionB.clearStorageData()]);
+    await clearDefaultSessionLeftovers().catch(() => undefined);
   }
   return results;
+}
+
+const SYNTHETIC_SITES = /(?:^|\.)(?:qualify|restore|foreign|skip|race|partition|probe)\.test$/;
+
+/**
+ * Builds before this fix wrote their synthetic cookies into the app's default session, since
+ * CDP's Storage domain acts there. Those reserved `.test` cookies are removed, partitioned ones too.
+ */
+async function clearDefaultSessionLeftovers() {
+  await withCookieDebugger(Electron.session.defaultSession, async (send) => {
+    const { cookies } = await readJar(send);
+    await deleteCookies(
+      send,
+      cookies.filter((cookie) => SYNTHETIC_SITES.test(cookie.domain.replace(/^\./, ""))),
+    );
+  });
 }

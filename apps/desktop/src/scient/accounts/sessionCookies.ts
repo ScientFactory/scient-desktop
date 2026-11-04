@@ -11,6 +11,8 @@ export type CdpSend = (method: string, params?: object) => Promise<unknown>;
 /**
  * Runs CDP cookie commands in a session through a blank page that runs no script and is never
  * shown. Electron's own cookie API can't name a partition key, so partitioned cookies need CDP.
+ * Only the Network domain acts on this page's session: Storage without a browser context acts on
+ * Electron's default session, whatever page sends it.
  */
 export async function withCookieDebugger<A>(
   session: Electron.Session,
@@ -34,14 +36,14 @@ const BATCH = 100;
 
 export async function setCookies(send: CdpSend, cookies: ReadonlyArray<SessionCookie>) {
   for (let start = 0; start < cookies.length; start += BATCH)
-    await send("Storage.setCookies", {
+    await send("Network.setCookies", {
       cookies: cookies.slice(start, start + BATCH).map(sessionCookieToCdpParam),
     });
 }
 
 /** Every cookie of the session's jar, partitioned ones included; values stay in the main process. */
 export async function readJar(send: CdpSend) {
-  const read = (await send("Storage.getCookies").catch(() => send("Network.getAllCookies"))) as {
+  const read = (await send("Network.getAllCookies")) as {
     readonly cookies: ReadonlyArray<CdpCookie>;
   };
   const cookies: SessionCookie[] = [];
