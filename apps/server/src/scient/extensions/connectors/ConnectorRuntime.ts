@@ -99,6 +99,7 @@ import {
   type ConnectorStateData,
   makeConnectorStateStore,
 } from "./ConnectorStateStore.ts";
+import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
@@ -801,7 +802,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   const credentialFor = Effect.fn("ConnectorRuntime.credentialFor")(function* (
     record: ConnectorRecord,
-    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
+    scope?: McpInvocationScope,
   ) {
     if (!isLive(record.connectorId)) {
       return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
@@ -912,7 +913,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     send: (
       headers: Readonly<Record<string, string>>,
     ) => Effect.Effect<Exit.Exit<Response, ConnectorUpstreamError>>,
-    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
+    scope?: McpInvocationScope,
   ) {
     const rejected = Effect.gen(function* () {
       const message = `GitHub refused Source Control's credential for ${auth.account}. Check the sign-in in Settings → Source Control.`;
@@ -965,7 +966,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       readonly signal: AbortSignal | undefined;
     },
     fetch: (url: string, init: RequestInit) => Promise<Response>,
-    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
+    scope?: McpInvocationScope,
   ) {
     const lifetime = lifetimeOf(record.connectorId);
     const signal =
