@@ -1,12 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AccountId,
   AuthSessionId,
   BrowserProfileId,
   EnvironmentId,
+  defaultAccountControls,
+  defaultBrowserProfileRecord,
   type AccountSessionsReceiveInput,
+  type AccountSummary,
+  type BrowserProfileRecord,
   type SessionCookie,
 } from "@t3tools/contracts";
 import { unitCookies } from "@t3tools/shared/scientSessionCookies";
+import { deliverOnce, type DeliveryDeps } from "@t3tools/shared/scientSessionDelivery";
 import { DateTime, Deferred, Effect, Fiber, Option, Queue, Redacted, Stream } from "effect";
 import { TestClock } from "effect/testing";
 
@@ -18,9 +24,11 @@ import { makeHarness } from "./Accounts.testkit.ts";
 import { AccountsService } from "./AccountsService.ts";
 import type { ProfileCookieJar } from "./profileCookieJar.ts";
 import { makeRemoteSessions } from "./remoteSessions.ts";
+import { issueJar, issueUnit } from "./sendLog.ts";
 
 const WORK = BrowserProfileId.make("profile-work");
 const MAC = EnvironmentId.make("macbook");
+const LAB = EnvironmentId.make("lab");
 const desktop = { sessionId: "session-desktop", subject: "desktop" };
 /** Far ahead, so every synthetic cookie is live whenever the test runs. */
 const NOW = 4_000_000_000;
@@ -572,5 +580,109 @@ it.effect("sweeps a server nobody has used without opening Accounts, a browser o
     expect(operations).toEqual([]);
     expect([...blobs.keys()]).toEqual([]);
     expect(opened).toEqual([]);
+  }),
+);
+
+it.effect("agrees with the desktop's sender on revisions: link, sign out, link again", () =>
+  Effect.gen(function* () {
+    const { remote, jars, accounts } = yield* setup();
+    const services = yield* Effect.context<never>();
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- deliverOnce is the desktop's Promise sender; its requests reach the receiver here.
+    const run = Effect.runPromiseWith(services);
+    const row: AccountSummary = {
+      accountId: AccountId.make("acc_githubwork"),
+      name: "github.com",
+      details: { kind: "website", sites: ["github.com"], profileId: WORK },
+      secrets: {},
+      controls: defaultAccountControls("website"),
+      status: "ready",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      updatedAt: "2026-11-01T00:00:00.000Z",
+    };
+    /** The desktop: its jar, send log, record and the key this computer issued it. */
+    const sender = {
+      jar: [cookie({ value: "synthetic-first" })],
+      log: issueUnit(undefined, ["github.com"], "copy"),
+      record: defaultBrowserProfileRecord(WORK),
+      key: keys.desktop as Redacted.Redacted<string> | undefined,
+      remote: undefined as BrowserProfileRecord | undefined,
+      batches: 0,
+    };
+    const deps: DeliveryDeps = {
+      source: MAC,
+      label: "MacBook",
+      remoteId: LAB,
+      remoteLabel: "Lab server",
+      profiles: () => [{ profileId: WORK, record: sender.record }],
+      desktopAccounts: () => [row],
+      signingIn: () => [],
+      revalidate: () => undefined,
+      bind: async () => {
+        const bound = await run(
+          remote.bind(desktop, { source: MAC, label: "MacBook", key: sender.key }),
+        );
+        sender.key = bound.key ?? sender.key;
+        return sender.key!;
+      },
+      sendLog: async () => sender.log,
+      resend: async () => void (sender.log = issueJar(sender.log)),
+      applied: (profileId, key) =>
+        run(
+          remote.applied(desktop, {
+            source: MAC,
+            key,
+            profileId: BrowserProfileId.make(profileId),
+          }),
+        ),
+      remoteRecord: () => sender.remote,
+      receive: (input) => {
+        sender.batches += 1;
+        return run(remote.receive(desktop, input));
+      },
+      withdraw: (profileId, revision, key) =>
+        run(
+          remote.withdraw(desktop, {
+            source: MAC,
+            key,
+            profileId: BrowserProfileId.make(profileId),
+            revision,
+          }),
+        ).then(() => undefined),
+      shared: async (_profileId, share) =>
+        void (sender.record = { ...sender.record, sharedWith: [share] }),
+      readSessions: async () => ({
+        units: sender.jar.length ? [{ sites: ["github.com"], cookies: sender.jar }] : [],
+      }),
+      now: () => "2026-11-04T10:14:00.000Z",
+    };
+    const deliver = Effect.fn("RemoteSessionsTest.deliver")(function* () {
+      sender.remote = (yield* accounts.snapshot).profiles.find((p) => p.profileId === WORK);
+      sender.batches = 0;
+      yield* Effect.promise(() => deliverOnce(deps));
+      return sender.record.sharedWith?.[0];
+    });
+    const values = () => jars.get(WORK)?.map(({ value }) => value);
+
+    // Linked: the whole jar goes, and the line says the head is applied.
+    expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
+    expect(values()).toEqual(["synthetic-first"]);
+    expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
+    expect(sender.batches).toBe(0);
+
+    // Signed out on the desktop: one deletion, at the log's next revision.
+    sender.jar = [];
+    sender.log = issueUnit(sender.log, ["github.com"], "delete");
+    expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
+    expect(values()).toEqual([]);
+
+    // Unlinked, signed in again, linked: a new key, and the new sign-in arrives in full.
+    yield* remote.withdraw(desktop, { source: MAC, key: sender.key!, all: true });
+    sender.key = undefined;
+    sender.record = defaultBrowserProfileRecord(WORK);
+    sender.jar = [cookie({ value: "synthetic-again" })];
+    sender.log = issueUnit(sender.log, ["github.com"], "copy");
+    expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
+    expect(values()).toEqual(["synthetic-again"]);
+    expect(Redacted.value(sender.key!)).not.toBe(Redacted.value(keys.desktop));
   }),
 );
