@@ -820,7 +820,6 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                   connectors: [],
                 },
               }),
-            // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
             resolve: () => Effect.succeed(undefined),
             touch: () => Effect.void,
             replaceSkillScope: () => Effect.void,

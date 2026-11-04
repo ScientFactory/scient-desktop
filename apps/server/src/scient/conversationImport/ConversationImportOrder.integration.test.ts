@@ -24,6 +24,7 @@ import {
   CONVERSATION_IMPORT_JOURNAL_FILE,
 } from "./ConversationImportJournal.ts";
 
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as Secrets from "../../auth/ServerSecretStore.ts";
 import * as Projections from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
@@ -54,7 +55,9 @@ const decodeImportIds = Schema.decodeEffect(ConversationImportIds);
 const encodeUnknownJournalJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const TestLayer = Layer.mergeAll(
-  Staging.layer({ sweepOnTimer: false }).pipe(Layer.provide(Secrets.layer)),
+  Staging.layer({ sweepOnTimer: false }).pipe(
+    Layer.provide(AssetSigner.layer.pipe(Layer.provide(Secrets.layer))),
+  ),
   ProjectionReplay.layer,
   Snapshot.layer.pipe(Layer.provide(LegacyImporter.layer)),
 ).pipe(Layer.provideMerge(nativeImportTestLayer()));

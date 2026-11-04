@@ -32,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import {
@@ -94,7 +95,10 @@ const FakeImporterLive = Layer.succeed(ConversationImporter, {
     }),
 });
 
-const TestLayer = Layer.mergeAll(ServerSecretStore.layer, FakeImporterLive).pipe(
+const TestLayer = Layer.mergeAll(
+  AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
+  FakeImporterLive,
+).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-import-staging-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );

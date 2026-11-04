@@ -721,7 +721,6 @@ describe("ProviderRegistry provider-native inventory", () => {
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         yield* harness.registry.refreshInstance(INSTANCE_ID);
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- An unreported listing is undefined, not void.
         yield* Ref.set(harness.listingReadRef, () => Effect.succeed(undefined));
         const reply = yield* harness.registry.refreshWorkspaceSnapshot({
           instanceId: INSTANCE_ID,

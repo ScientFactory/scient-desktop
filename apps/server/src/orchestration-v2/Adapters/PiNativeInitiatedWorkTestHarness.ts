@@ -243,7 +243,6 @@ export default function(pi) {
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getInstance: () => Effect.succeed(undefined),
             }),
           ),
@@ -418,7 +417,6 @@ export default function(pi) {
                 });
               }),
               resolve: Effect.fn("McpSessionRegistry.resolve")(function () {
-                // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                 return Effect.succeed(undefined);
               }),
               touch: Effect.fn("McpSessionRegistry.touch")(function () {

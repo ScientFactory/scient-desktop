@@ -609,7 +609,6 @@ describe("ProviderPluginManagement MCP sign-in", () => {
         assert.strictEqual(unknown.reason, "not-found");
 
         const gone = yield* makeGeneration({
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off -- The optional listing result requires undefined, not void.
           readMcpServer: () => Effect.succeed(undefined),
         });
         const goneError = yield* (yield* makeHarness({ actions: gone.actions })).management

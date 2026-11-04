@@ -145,7 +145,6 @@ const withInitiatedWork = <A, E, R>(
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getInstance: () => Effect.succeed(undefined),
             }),
           ),

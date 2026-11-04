@@ -1,6 +1,4 @@
 import * as NetService from "@t3tools/shared/Net";
-import { pinnedRuntimePaths } from "../cloud/pinnedRuntime.ts";
-import packageJson from "../../package.json" with { type: "json" };
 import { Command } from "effect/cli";
 import { updateCommand } from "./update.ts";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -18,12 +16,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
+import * as TestConsole from "effect/testing/TestConsole";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
-import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -522,5 +522,115 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
         expect(output).toContain("--base-dir");
         expect(output).not.toContain("Run t3");
       }),
+  );
+});
+
+// Without terminals, update skips its restart prompt whatever runs the test.
+const withoutTerminals = Effect.acquireRelease(
+  Effect.sync(() =>
+    [process.stdin, process.stdout].map((stream) => {
+      const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+      Object.defineProperty(stream, "isTTY", { configurable: true, value: false });
+      return { stream, descriptor };
+    }),
+  ),
+  (saved) =>
+    Effect.sync(() => {
+      for (const { stream, descriptor } of saved) {
+        if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+        else Object.defineProperty(stream, "isTTY", descriptor);
+      }
+    }),
+);
+
+it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
+  it.effect("names the version a service with a pending restart still runs", () =>
+    Effect.gen(function* () {
+      yield* withoutTerminals;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const version = packageJson.version;
+      const runtime = pinnedRuntimePaths(path, baseDir, version);
+      // SCIENT-FORK:START — Scient's pinned runtime keeps its entry inside an npm package.
+      yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
+      // SCIENT-FORK:END
+      yield* fs.writeFileString(runtime.entryPath, "");
+      yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+      const unitPath = path.join(baseDir, "t3code.service");
+      const logPath = path.join(baseDir, "boot-service.log");
+      // An earlier `t3 update` pointed the service at this version without restarting it.
+      const service = Layer.mock(BootService.BootService, {
+        status: Effect.succeed<BootService.BootServiceStatus>({
+          supported: true,
+          installed: true,
+          current: false,
+          installedVersion: version,
+          installedBaseDir: baseDir,
+          problems: ["restart-pending"],
+          unitPath,
+          logPath,
+        }),
+        // SCIENT-FORK:START — Scient's service plan names its Node runtime and launcher.
+        install: () =>
+          Effect.succeed({
+            nodePath: process.execPath,
+            launcherPath: path.join(baseDir, "runtime/service-launcher.mjs"),
+            baseDir,
+            unitPath,
+            logPath,
+          }),
+        // SCIENT-FORK:END
+      });
+      vi.spyOn(BootService, "layer").mockReturnValue(service);
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          input.args?.includes("--version") === true
+            ? unrelatedLsof
+                .run(input)
+                .pipe(Effect.map((result) => ({ ...result, stdout: `t3 v${version}\n` })))
+            : unrelatedLsof.run(input),
+      });
+
+      const output = yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: version,
+        allowDowngrade: false,
+        assumeYes: false,
+      }).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provide(
+          Layer.mergeAll(
+            service,
+            Layer.succeed(ProcessRunner.ProcessRunner, runner),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unexpected release lookup")),
+            ),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+
+      assert.include(
+        output,
+        `Background service still running the version before ${version}. Run \``,
+      );
+      // SCIENT-FORK:START — the restart hint names this installation and profile, not a bare `t3`.
+      assert.include(
+        output,
+        `service restart --base-dir ${baseDir}\` when you are ready to switch it to ${version}.`,
+      );
+      // SCIENT-FORK:END
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
   );
 });

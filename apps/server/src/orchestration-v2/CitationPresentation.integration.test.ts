@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ServerConfig } from "../config.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
+import * as AssetSigner from "../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CodexOrchestratorReplayHarness } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
@@ -481,7 +482,8 @@ it.live(
             );
           }).pipe(
             Effect.provide(
-              ServerSecretStore.layer.pipe(
+              AssetSigner.layer.pipe(
+                Layer.provideMerge(ServerSecretStore.layer),
                 Layer.provideMerge(nativeImportTestLayer({ persistence: "file" })),
               ),
             ),

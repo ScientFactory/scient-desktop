@@ -13,13 +13,19 @@ import {
 } from "./fileLinks.ts";
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
-// Explicit Markdown destinations may contain Unicode and filename punctuation.
-// Keep separators, controls and position/scheme colons out of each segment;
-// inline-code auto-linking still requires its separate, stricter path evidence.
+
+// SCIENT-FORK:START — explicit destinations accept any filename punctuation, not a fixed list.
+// Names may use any script and punctuation (`posts.$id.tsx`, `(group)/[id]/+page.svelte`,
+// `Résumé & results.md`) but no separators, controls or position/scheme colons. The final
+// segment is optional so a folder link may end in `/`. A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2})?$/u;
+
+// No `@` here: `me@example.com` is an address, not a file.
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[^\s/\\:@\p{Cc}]+(?: +[^\s/\\:@\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+// SCIENT-FORK:END
+
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
