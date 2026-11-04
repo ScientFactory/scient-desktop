@@ -92,7 +92,7 @@ import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventStore from "./EventStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
@@ -4543,7 +4543,7 @@ it.live(
           Effect.gen(function* () {
             const projections = yield* ProjectionStore.ProjectionStoreV2;
             assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
-            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            const maintenance = yield* ProjectionReplay.ProjectionReplay;
             reopenPhase = "reopen-rebuild";
             assert.isTrue((yield* maintenance.rebuild).valid);
             reopenPhase = "reopen-Git-and-projection-assertions";
@@ -4599,7 +4599,7 @@ it.live(
               ),
             ),
             Effect.provide(
-              ProjectionMaintenance.layer.pipe(
+              ProjectionReplay.layer.pipe(
                 Layer.provideMerge(
                   Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
                     Layer.provideMerge(databaseLayer),
@@ -4935,9 +4935,7 @@ it.live(
             const projections = yield* ProjectionStore.ProjectionStoreV2;
             assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
             yield* verifyQueries(finished.ranges);
-            assert.isTrue(
-              (yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid,
-            );
+            assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
             assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
             yield* verifyQueries(finished.ranges);
             const realStore = yield* CheckpointStore;
@@ -4975,7 +4973,7 @@ it.live(
             yield* verifyQueries(finished.ranges);
           }).pipe(
             Effect.provide(
-              ProjectionMaintenance.layer.pipe(
+              ProjectionReplay.layer.pipe(
                 Layer.provideMerge(
                   Layer.mergeAll(
                     ProjectionStore.layer,

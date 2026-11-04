@@ -1,7 +1,11 @@
 import { NodeId, ProviderThreadId, ProviderTurnId, RunAttemptId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { hasCurrentRunStop, type CurrentRunStopRecords } from "./RunStartDecisions.ts";
+import {
+  hasCurrentRunStop,
+  steerExecutionThread,
+  type CurrentRunStopRecords,
+} from "./RunStartDecisions.ts";
 
 const runId = RunId.make("synthetic-run");
 const attemptId = RunAttemptId.make("synthetic-attempt");
@@ -86,5 +90,45 @@ describe("current Stop identity", () => {
         runId,
       ),
     ).toBe(false);
+  });
+});
+
+describe("steer execution modes", () => {
+  type SteerInput = Parameters<typeof steerExecutionThread>[0];
+  // The composer switched to plan mode after the run started in default mode.
+  const thread = {
+    runtimeMode: "full-access",
+    interactionMode: "plan",
+  } as unknown as SteerInput["thread"];
+  const targetRun = {
+    runtimeMode: "full-access",
+    interactionMode: "default",
+  } as unknown as SteerInput["targetRun"];
+  const steer = (notice: Partial<SteerInput>) =>
+    steerExecutionThread({
+      thread,
+      targetRun,
+      runtimeMode: undefined,
+      interactionMode: undefined,
+      delegatedCompletion: undefined,
+      ...notice,
+    });
+
+  it("runs a user steer under the composer's modes", () => {
+    const { executionThread, executionModesChanged } = steer({});
+    expect(executionThread.interactionMode).toBe("plan");
+    expect(executionModesChanged).toBe(true);
+  });
+
+  it("keeps the run's modes for a delegated task question, so it never restarts the turn", () => {
+    const { executionThread, executionModesChanged } = steer({
+      notification: {
+        source: { kind: "delegated_task", taskIds: [NodeId.make("task:question")] },
+        outcome: "updated",
+        summary: "Delegated task has a question",
+      },
+    });
+    expect(executionThread.interactionMode).toBe("default");
+    expect(executionModesChanged).toBe(false);
   });
 });

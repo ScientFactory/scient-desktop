@@ -339,6 +339,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./scientThreadLinks": {
+      "types": "./src/scientThreadLinks.ts",
+      "import": "./src/scientThreadLinks.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

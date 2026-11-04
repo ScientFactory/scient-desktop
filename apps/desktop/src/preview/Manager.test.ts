@@ -702,7 +702,7 @@ describe("PreviewManager", () => {
     ["linux", false, true],
     ["win32", false, true],
   ] as const)(
-    "handles normal and hard refresh through webview input on %s",
+    "handles normal and hard refresh on only the platform refresh chord on %s",
     ([platform, meta, control]) =>
       withManager(
         (manager) =>
@@ -736,6 +736,9 @@ describe("PreviewManager", () => {
               { ...input, type: "keyUp" },
               { ...input, alt: true },
               { ...input, meta: false, control: false },
+              // The other platform's chord reaches the page, as Ctrl+R does in a macOS terminal.
+              { ...input, meta: control, control: meta },
+              { ...input, meta: true, control: true },
             ])
               beforeInput({ preventDefault } as never, ignored as never);
             yield* Effect.yieldNow;

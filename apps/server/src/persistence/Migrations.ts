@@ -104,6 +104,8 @@ import Migration0080 from "./Migrations/080_ProjectionProjectsPinArchive.ts";
 import Migration0081 from "./Migrations/081_RepairBooleanSettledOverride.ts";
 // T3's migration 78 lands at the next free ID; Scient already recorded 078-081.
 import Migration0082 from "./Migrations/082_DropOrchestrationEventCorrelationIndex.ts";
+// T3's migration 79 lands at the next free ID; Scient already recorded 079-082.
+import Migration0083 from "./Migrations/083_DelegatedRecoveryIndexes.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -210,6 +212,8 @@ export const migrationEntries = [
   [81, "RepairBooleanSettledOverride", Migration0081],
   // T3's migration 78 follows Scient's immutable migration sequence.
   [82, "DropOrchestrationEventCorrelationIndex", Migration0082],
+  // T3's migration 79 follows Scient's immutable migration sequence.
+  [83, "DelegatedRecoveryIndexes", Migration0083],
   // SCIENT-FORK:END
 ] as const;
 

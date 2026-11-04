@@ -2,7 +2,10 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
-import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "../../ProjectionMaintenance.ts";
+import {
+  ProjectionReplay,
+  layer as projectionReplayLayer,
+} from "../../testkit/ProjectionReplay.ts";
 import { fork, remove, run, seed } from "./stressHarness.ts";
 import { EventId, MessageId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -73,8 +76,8 @@ it.live(
             assert.deepEqual(after.messages, level.messages);
           }
         }
-        const verification = yield* ProjectionMaintenanceV2.use((m) => m.rebuild).pipe(
-          Effect.provide(maintenanceLayer),
+        const verification = yield* ProjectionReplay.use((m) => m.rebuild).pipe(
+          Effect.provide(projectionReplayLayer),
         );
         assert.isTrue(verification.valid);
         assert.deepEqual(

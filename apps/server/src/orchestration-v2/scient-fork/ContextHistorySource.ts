@@ -191,12 +191,14 @@ export const recordContextHistory = Effect.fn("ContextHistory.record")(function*
     return { ...handoff, historySource: source };
   }
   const id = ContextHandoffId.make(`legacy-event:${event.id}`);
+  // The body is copied, never referenced: event pruning deletes the event it came from.
+  // The stored event text is preferred because it is the lossless original.
   yield* sql`
     INSERT OR IGNORE INTO scient_handoff_legacy_sources (source_id, event_id, payload_json)
     VALUES (${id},
       (SELECT event_id FROM orchestration_events WHERE event_id = ${event.id}),
-      CASE WHEN EXISTS (SELECT 1 FROM orchestration_events WHERE event_id = ${event.id})
-        THEN NULL ELSE ${encodeHandoff(handoff)} END)
+      COALESCE((SELECT payload_json FROM orchestration_events WHERE event_id = ${event.id}),
+        ${encodeHandoff(handoff)}))
   `;
   if (handoff.history === undefined)
     return {

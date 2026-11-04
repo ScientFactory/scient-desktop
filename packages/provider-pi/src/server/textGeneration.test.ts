@@ -143,6 +143,11 @@ it.effect("selects the decoded model and thinking level, then parses assistant t
     assert.equal(spawns[0]?.args?.includes("--no-session"), true);
     for (const arg of ["--no-context-files", "--no-extensions", "--no-skills", "--no-tools"])
       assert.equal(spawns[0]?.args?.includes(arg), true);
+    // The process is stopped as soon as it answers, so Pi's startup refresh must stay off.
+    assert.deepEqual(
+      spawns[0]?.args?.filter((arg) => arg === "--offline"),
+      ["--offline"],
+    );
     assert.equal(client.closeCalls, 1);
   });
 });
