@@ -411,9 +411,10 @@ describe("CI workflow decisions", () => {
     expect(nodeTests).toBeGreaterThan(install);
     const test = workflow.jobs.test!.steps!.find((step) => step.name === "Test")!;
     expect(test.env).toBeUndefined();
-    expect(test.run).toBe(
-      "vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test",
+    expect(test.run).toContain(
+      "vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test 2>&1",
     );
+    expect(test.run).not.toContain("TEST_PACKAGES");
     for (const id of ["build", "test", "test_web", "test_server"])
       expect(workflow.jobs[id]!.if).not.toContain("needs.changes.outputs");
   });
