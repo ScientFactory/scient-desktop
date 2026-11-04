@@ -308,7 +308,7 @@ it.effect(
         accountId: AccountId.make("acc_signing_fixture"),
       };
       // Typing, a person finishing, a code waiting: every state of an attempt is closed.
-      for (const state of ["typing", "person", "pending", "draining"] as const) {
+      for (const state of ["typing", "person", "pending"] as const) {
         yield* service.setAttempt({ ...attempt, state });
         expect(yield* refused).toEqual(
           reads.map(() => "The user is signing in on this tab. Wait for scient_account_sign_in."),

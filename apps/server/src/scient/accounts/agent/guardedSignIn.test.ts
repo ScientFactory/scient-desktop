@@ -514,10 +514,7 @@ it.effect("a university sign-in counts once a check reaches the journal, then ti
   Effect.gen(function* () {
     const rows = connected();
     const visit = universityVisit(rows, "https://www.nature.com/");
-    // The person typed on the university's page: its capture may still come.
-    const running = yield* visit.run.pipe(Effect.forkChild);
-    yield* TestClock.adjust("3 seconds");
-    expect((yield* Fiber.join(running)).outcome).toBe("signed-in");
+    expect((yield* visit.run).outcome).toBe("signed-in");
     expect(rows[0]!.signIn?.state).toBe("signed-in");
     // The page that asked for the password is learned; the tab it handed back to closes.
     expect(visit.seen.saved).toEqual([
@@ -561,11 +558,13 @@ const typedVisit = (
   pages: ReadonlyArray<object>,
   typed: Readonly<Record<number, string>>,
   caller: SignInCaller = { kind: "person" },
+  typedOn = "https://example.com",
 ) => {
   const rows = [row("typed", { secrets: {} })];
   const fake = fakeAccounts({ accounts: rows });
   const kept: string[] = [];
   const removed: string[] = [];
+  let attemptId = "";
   let look = 0;
   const service = AccountsService.of({
     ...fake.service,
@@ -579,13 +578,17 @@ const typedVisit = (
       }),
     recordUse: () => Effect.void,
     remove: (accountId) => Effect.sync(() => void removed.push(accountId)),
+    setAttempt: (attempt) =>
+      Effect.sync(() => {
+        attemptId = attempt.attemptId;
+      }).pipe(Effect.andThen(fake.service.setAttempt(attempt))),
   });
   const send = (password: string) =>
     keepTyped({
-      attemptId: [...fake.attempts.values()][0]!.attemptId,
+      attemptId,
       threadId: scope.threadId,
       tabId: "tab-fixture",
-      origin: "https://example.com",
+      origin: typedOn,
       path: "/login",
       step: "password",
       username: "",
@@ -625,45 +628,51 @@ const typedVisit = (
   return { run, kept, removed, send, attempts: fake.attempts };
 };
 
-it.effect("keeps the password a proven sign-in accepted, the right one after a wrong one", () =>
+it.effect("keeps the one password typed on a sign-in page that then hands back", () =>
   Effect.gen(function* () {
-    const visit = typedVisit([signInPage(), signInPage(), signInPage(), signedInPage], {
-      1: "wrong-password",
-      3: "right-password",
-    });
+    // An identity provider's page takes the password, then hands back to the signed-in site.
+    const visit = typedVisit(
+      [
+        signInPage("https://login.example.com"),
+        { ...signedInPage, origin: "https://www.example.com" },
+      ],
+      { 1: "right-password" },
+      { kind: "person" },
+      "https://login.example.com",
+    );
     expect((yield* visit.run).outcome).toBe("signed-in");
     expect(visit.kept).toEqual(["right-password"]);
     expect(visit.attempts.size).toBe(0);
   }),
 );
 
-it.effect("keeps a password whose capture arrives after the page moved on", () =>
+it.effect("keeps nothing when it can't tell which password worked", () =>
   Effect.gen(function* () {
-    const visit = typedVisit([signInPage(), signedInPage], {});
-    const running = yield* visit.run.pipe(Effect.forkChild);
-    yield* TestClock.adjust("3 seconds");
-    expect((yield* Fiber.join(running)).outcome).toBe("signed-in");
-    // Still open for a late capture, then gone.
-    expect([...visit.attempts.values()]).toMatchObject([{ state: "draining" }]);
-    expect(yield* visit.send("late-password")).toEqual({ kept: true });
-    expect(visit.kept).toEqual(["late-password"]);
-    yield* TestClock.adjust("10 seconds");
-    expect(visit.attempts.size).toBe(0);
-  }),
-);
-
-it.effect("keeps nothing without proof, or when the site's own page never moved on", () =>
-  Effect.gen(function* () {
-    // A wrong password, then a public page: no sign-in was seen.
-    const unproven = typedVisit([signInPage(), publicPage], { 1: "wrong-password" });
-    expect((yield* unproven.run).outcome).toBe("needs-user");
-    // A wrong password, then another way in: the password page never moved on.
+    // Two passwords: the second may be right, but nothing proves it.
+    const twice = typedVisit([signInPage(), signInPage(), signInPage(), signedInPage], {
+      1: "wrong-password",
+      3: "right-password",
+    });
+    expect((yield* twice.run).outcome).toBe("signed-in");
+    // A wrong password, then another way in, with the form never seen again.
     const elsewhere = typedVisit(
-      [signInPage(), signInPage(), signInPage("https://sso.example.org"), signedInPage],
+      [signInPage(), signInPage("https://sso.example.org"), signedInPage],
       { 1: "wrong-password" },
     );
     expect((yield* elsewhere.run).outcome).toBe("signed-in");
-    expect([...unproven.kept, ...elsewhere.kept]).toEqual([]);
+    // A wrong password, then a public page: no sign-in was proven.
+    const unproven = typedVisit([signInPage(), publicPage], { 1: "wrong-password" });
+    expect((yield* unproven.run).outcome).toBe("needs-user");
+    expect([...twice.kept, ...elsewhere.kept, ...unproven.kept]).toEqual([]);
+  }),
+);
+
+it.effect("never keeps a capture that arrives after the sign-in was proven", () =>
+  Effect.gen(function* () {
+    const visit = typedVisit([signInPage(), signedInPage], {});
+    expect((yield* visit.run).outcome).toBe("signed-in");
+    expect(yield* visit.send("late-password")).toEqual({ kept: false });
+    expect(visit.kept).toEqual([]);
   }),
 );
 

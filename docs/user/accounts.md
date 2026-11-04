@@ -123,7 +123,8 @@ earlier step is carried to the password step.
 
 A row's **Sign in again**, and **Sign in with the browser** in Add an account, open the site's own
 sign-in beside your work. Scient types what it may and you finish the rest. What you type there is
-kept once the site lets you in, and only the password it accepted; a password kept in Keychain,
+kept once the site lets you in, when it was the one password you typed there; if you typed
+several, nothing is kept and you type it again next time; a password kept in Keychain,
 1Password or another linked store stays there. A tab streamed from a remote server says what you
 type isn't kept. An agent can ask you to sign in the same way, in a card in its conversation, and
 learns only the account's name. While Scient runs a sign-in, no agent can read or drive its tab or

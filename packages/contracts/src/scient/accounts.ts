@@ -515,7 +515,7 @@ export const AccountSignInAttempt = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
   accountId: AccountId,
-  state: Schema.Literals(["typing", "person", "pending", "draining"]),
+  state: Schema.Literals(["typing", "person", "pending"]),
 });
 export type AccountSignInAttempt = typeof AccountSignInAttempt.Type;
 
