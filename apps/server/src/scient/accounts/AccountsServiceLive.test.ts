@@ -1305,6 +1305,8 @@ describe("the send log other computers follow", () => {
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
       const log = (profileId = WORK) => service.profileSendLog(profileId);
+      for (const profileId of [WORK, DEFAULT_BROWSER_PROFILE_ID])
+        yield* service.profileShared(profileId, shared("lab", 0));
       const github = (yield* service.save(row(["github.com"]))).accountId;
       expect((yield* log()).head).toBe(0);
       // A look that sees the session working is not an action.
@@ -1343,6 +1345,7 @@ describe("the send log other computers follow", () => {
   it.effect("takes a revision for a sign-in action seen in a profile, none for an import", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
+      yield* service.profileShared(WORK, shared("lab", 0));
       yield* service.sessionsSeen({
         profileId: WORK,
         sessions: [{ site: "overleaf.com", how: "imported", from: "Chrome · Person" }],
@@ -1363,12 +1366,23 @@ describe("the send log other computers follow", () => {
     Effect.gen(function* () {
       const storage = memoryStore();
       const first = yield* makeHarness({ storage });
+      yield* first.service.profileShared(WORK, shared("lab", 0));
       const github = (yield* first.service.save(row(["github.com"]))).accountId;
       yield* first.service.profileSignedOut(WORK, "github.com");
       yield* first.service.remove(github);
       expect((yield* first.service.profileSendLog(WORK)).units).toHaveLength(1);
       const again = yield* makeHarness({ storage });
       expect(yield* again.service.profileResend(WORK)).toBe(2);
+    }),
+  );
+
+  it.effect("keeps no entries while no other computer follows the profile", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      yield* service.profileSignedOut(WORK, "github.com");
+      expect(yield* service.profileResend(WORK)).toBe(2);
+      // The revisions move, so a computer that links later is filled or reconciled whole.
+      expect(yield* service.profileSendLog(WORK)).toEqual({ head: 2, jar: 2, units: [] });
     }),
   );
 

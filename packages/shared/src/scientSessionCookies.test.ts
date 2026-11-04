@@ -477,6 +477,36 @@ describe("sharing with other computers", () => {
     });
   });
 
+  it("sends everything at the first link after a time nobody followed the log", () => {
+    // What the desktop keeps while no computer follows the profile: revisions, no entries.
+    const log = { head: 8, jar: 6, units: [] };
+    // A computer this desktop forgot still holds github and an old gitlab copy.
+    expect(
+      plan({
+        log,
+        applied: applied([
+          { sites: ["github.com"], revision: 2 },
+          { sites: ["gitlab.com"], revision: 3 },
+        ]),
+        jar: [["github.com"], ["example.test"]],
+        reconcile: true,
+      }),
+    ).toEqual({
+      kind: "units",
+      mode: "replace",
+      head: 8,
+      units: [
+        { sites: ["github.com"], revision: 8, kind: "copy" },
+        { sites: ["example.test"], revision: 8, kind: "copy" },
+        { sites: ["gitlab.com"], revision: 8, kind: "delete" },
+      ],
+    });
+    // A computer that never received anything is filled whole.
+    expect(
+      plan({ log, applied: { bound: false, units: [] }, jar: [["github.com"]] }),
+    ).toMatchObject({ mode: "fill", units: [{ sites: ["github.com"], revision: 8 }] });
+  });
+
   it("sends only revisions newer than what the computer applied, and never replays an old one", () => {
     const log = {
       head: 9,

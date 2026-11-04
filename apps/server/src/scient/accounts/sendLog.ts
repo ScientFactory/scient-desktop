@@ -91,6 +91,13 @@ const profileOf = (summary: AccountSummary) =>
   summary.details.kind === "website" ? summary.details.profileId : undefined;
 
 /**
+ * A profile no other computer follows keeps no unit entries: a computer that links later is
+ * filled whole, or reconciled whole if it already held copies. Head, jar and withdrawal stay.
+ */
+const unfollowed = (profile: BrowserProfileRecord) =>
+  !profile.sharedWith?.length && (profile.send?.units.length ?? 0) > 0;
+
+/**
  * Revisions written in the commit that records the action: a newer sign-in action in a profile
  * copies its unit; a profile turning restricted withdraws, and turning shareable resends the jar.
  */
@@ -98,13 +105,11 @@ export function withSendLog<S extends State>(before: S, next: S): S {
   const changed = new Map<BrowserProfileId, BrowserProfileRecord>();
   const record = (profileId: BrowserProfileId) =>
     changed.get(profileId) ?? effectiveProfile(next.profiles, profileId);
+  const previousRows = new Map(before.accounts.map(({ summary }) => [summary.accountId, summary]));
   for (const { summary } of next.accounts) {
     const profileId = profileOf(summary);
     if (!profileId || summary.details.kind !== "website") continue;
-    const previous = before.accounts.find(
-      (row) => row.summary.accountId === summary.accountId,
-    )?.summary;
-    if (!isNewerAction(previous, summary)) continue;
+    if (!isNewerAction(previousRows.get(summary.accountId), summary)) continue;
     const current = record(profileId);
     changed.set(profileId, {
       ...current,
@@ -121,13 +126,21 @@ export function withSendLog<S extends State>(before: S, next: S): S {
       send: is ? issueJar(current.send) : issueWithdrawal(current.send),
     });
   }
-  if (changed.size === 0) return next;
+  const profiles =
+    changed.size === 0
+      ? next.profiles
+      : [
+          ...next.profiles.filter((profile) => !changed.has(profile.profileId)),
+          ...changed.values(),
+        ];
+  if (changed.size === 0 && !profiles.some(unfollowed)) return next;
   return {
     ...next,
-    profiles: [
-      ...next.profiles.filter((profile) => !changed.has(profile.profileId)),
-      ...changed.values(),
-    ],
+    profiles: profiles.map((profile) =>
+      unfollowed(profile) && profile.send
+        ? { ...profile, send: { ...profile.send, units: [] } }
+        : profile,
+    ),
   };
 }
 
