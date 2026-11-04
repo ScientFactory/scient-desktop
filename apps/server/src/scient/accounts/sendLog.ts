@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { shareable, unitSites } from "@t3tools/shared/scientSessionCookies";
 
-import { effectiveProfile, isGoogleSessionRow } from "./AccountDecisions.ts";
+import { effectiveProfile } from "./AccountDecisions.ts";
 import { siteOf } from "./profileCookieJar.ts";
 
 /** Copies beyond this fall back to a whole-jar revision; deletions are never dropped unapplied. */
@@ -16,16 +16,14 @@ const COPIES_LIMIT = 5_000;
 const EMPTY: ProfileSendLog = { head: 0, units: [] };
 
 /**
- * The one seam for item 4's `AccountSignIn.by`: whether a row now records a newer real action.
- * Until `by: "action"` lands, an action is a `signed-in` that a finished attempt wrote (it stamps
- * `lastUsedAt` with the same time), or Google showing an account the row had no status for.
+ * Whether a row now records a newer real sign-in: `by: "action"`, signed in, at a later time than
+ * before. Looks (`by: "look"`, imports, Checks, copies into Main) never make a revision.
  */
 const isNewerAction = (before: AccountSummary | undefined, after: AccountSummary) => {
   const signIn = after.signIn;
-  if (signIn?.state !== "signed-in" || signIn.at === before?.signIn?.at) return false;
-  return (
-    after.lastUsedAt === signIn.at || (isGoogleSessionRow(after) && before?.signIn === undefined)
-  );
+  if (signIn?.by !== "action" || signIn.state !== "signed-in") return false;
+  const previous = before?.signIn?.at;
+  return previous === undefined || Date.parse(signIn.at) > Date.parse(previous);
 };
 
 const unitKey = (sites: ReadonlyArray<string>) => [...unitSites(sites, siteOf)].sort().join(" ");

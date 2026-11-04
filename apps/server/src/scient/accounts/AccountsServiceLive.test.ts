@@ -1306,6 +1306,25 @@ describe("the send log other computers follow", () => {
     }),
   );
 
+  it.effect("takes a revision for a sign-in action seen in a profile, none for an import", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      yield* service.sessionsSeen({
+        profileId: WORK,
+        sessions: [{ site: "overleaf.com", how: "imported", from: "Chrome · Person" }],
+      });
+      expect((yield* service.profileSendLog(WORK)).head).toBe(0);
+      yield* TestClock.adjust("1 minute");
+      yield* service.sessionsSeen({
+        profileId: WORK,
+        sessions: [{ site: "overleaf.com", how: "signed-in" }],
+      });
+      expect((yield* service.profileSendLog(WORK)).units).toEqual([
+        { sites: ["overleaf.com"], revision: 1, kind: "copy" },
+      ]);
+    }),
+  );
+
   it.effect("keeps a revision when its row is deleted, and across restarts", () =>
     Effect.gen(function* () {
       const storage = memoryStore();
