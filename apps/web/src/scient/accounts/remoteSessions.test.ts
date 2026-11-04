@@ -366,7 +366,11 @@ it("keeps the key when an unlink can't reach the computer, and forgets it once w
     mocks.withdrawAnswers = false;
     expect(await withdrawCopies(LAB)).toBe("offline");
     mocks.withdrawAnswers = true;
+    vi.useFakeTimers();
     expect(await withdrawCopies(LAB)).toBe("withdrawn");
+    // An answer before the 5 s limit leaves no timer behind.
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
     // Both stop the deletions waiting; only the confirmed one drops the key.
     expect(mocks.unshared).toEqual([
       { environmentId: MAC, input: { environmentId: LAB } },

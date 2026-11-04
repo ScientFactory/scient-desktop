@@ -698,10 +698,11 @@ export async function withdrawCopies(environmentId: EnvironmentId) {
         () => "offline" as const,
       )
     : Promise.resolve("none" as const);
-  const timeout = new Promise<"offline">((resolve) =>
-    setTimeout(() => resolve("offline"), WITHDRAW_LIMIT_MS),
-  );
-  const outcome = await Promise.race([withdrawn, timeout]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"offline">((resolve) => {
+    timer = setTimeout(() => resolve("offline"), WITHDRAW_LIMIT_MS);
+  });
+  const outcome = await Promise.race([withdrawn, timeout]).finally(() => clearTimeout(timer));
   // Delivery stops either way, and no deletion waits for this computer any more. The key goes
   // only after a confirmed withdrawal; kept, a later link proves this desktop and reconciles.
   await call(appAtomRegistry, accountsState.profilesUnshared, primaryId, {
