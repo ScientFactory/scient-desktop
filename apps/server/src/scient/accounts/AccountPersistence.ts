@@ -166,6 +166,24 @@ const foldSignInFields = (summary: Record<string, unknown>) => {
   return signIn ? { ...rest, ...verified, signIn } : { ...rest, ...verified };
 };
 
+const ORIGIN_PREFIXES = [
+  ["Imported from", "import"],
+  ["Copied from", "copy"],
+] as const;
+
+/** Imported and copied rows once said so only at the start of their detail; now in `from`. */
+const foldSignInOrigin = (summary: Record<string, unknown>) => {
+  const signIn = summary["signIn"] as
+    | { state?: unknown; detail?: unknown; from?: unknown }
+    | undefined;
+  if (signIn?.state !== "unknown" || signIn.from !== undefined) return summary;
+  const { detail } = signIn;
+  const from = ORIGIN_PREFIXES.find(
+    ([prefix]) => typeof detail === "string" && detail.startsWith(prefix),
+  )?.[1];
+  return from ? { ...summary, signIn: { ...signIn, from } } : summary;
+};
+
 /** Older stored shapes, read as today's before decoding. */
 export const foldStoredAccounts = (state: unknown): unknown => {
   if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
@@ -175,7 +193,10 @@ export const foldStoredAccounts = (state: unknown): unknown => {
     accounts: state.accounts.map((account) => {
       const summary = account?.summary;
       if (typeof summary !== "object" || summary === null) return account;
-      return { ...account, summary: foldSignInFields(foldLibraryDetails(summary)) };
+      return {
+        ...account,
+        summary: foldSignInOrigin(foldSignInFields(foldLibraryDetails(summary))),
+      };
     }),
   };
 };

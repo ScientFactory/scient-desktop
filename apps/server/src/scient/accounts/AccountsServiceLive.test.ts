@@ -392,6 +392,40 @@ describe("AccountsService and Main", () => {
     }),
   );
 
+  it.effect("reads rows stored before `from` as imported or copied, keeping the rest", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { service, vault, blobs } = yield* makeHarness({ storage });
+      yield* service.sessionsSeen({
+        profileId: BrowserProfileId.make("profile-work"),
+        sessions: [{ site: "github.com", how: "imported", from: "Chrome · Person" }],
+      });
+      const work = yield* service.save(row("profile-work", ["overleaf.com"]));
+      yield* service.mainFilled({ accountId: work.accountId, profileName: "Work" });
+      // The state as the earlier build stored it: the origin only in the detail's first words.
+      const name = "accounts-state";
+      const stored = JSON.parse(
+        new TextDecoder().decode(Redacted.value(yield* vault.decrypt(name, blobs.get(name)!))),
+      ) as { accounts: Array<{ summary: { signIn?: Record<string, unknown> } }> };
+      for (const { summary } of stored.accounts) delete summary.signIn?.["from"];
+      blobs.set(
+        name,
+        yield* vault.encrypt(name, Redacted.make(new TextEncoder().encode(JSON.stringify(stored)))),
+      );
+      const restarted = yield* makeHarness({ storage });
+      expect(
+        (yield* restarted.service.snapshot).accounts.flatMap(({ details, signIn }) =>
+          signIn && details.kind === "website"
+            ? [[details.sites, signIn.state, signIn.by, signIn.detail, signIn.from]]
+            : [],
+        ),
+      ).toEqual([
+        [["github.com"], "unknown", "look", "Imported from Chrome · Person", "import"],
+        [["overleaf.com"], "unknown", "look", "Copied from Work", "copy"],
+      ]);
+    }),
+  );
+
   it.effect("records the back-fill once per profile, and an empty one as done", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
