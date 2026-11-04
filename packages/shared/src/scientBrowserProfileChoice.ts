@@ -1,3 +1,5 @@
+import { DEFAULT_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+
 import { anySiteMatches } from "./scientSiteMatch.ts";
 
 /** What the picker reads; structurally the Accounts contract types. */
@@ -75,8 +77,28 @@ export function siteIdentities(
   return page ? signInsFor(profileSignIns(accounts), page) : [];
 }
 
+/**
+ * Every website row naming a profile, whatever its state: a pairing keeps a site while its
+ * profile has a row for it, imported, copied or signed out alike.
+ */
+export function profileRows(
+  accounts: ReadonlyArray<{
+    readonly details: {
+      readonly kind: string;
+      readonly profileId?: string | undefined;
+      readonly sites?: ReadonlyArray<string>;
+    };
+  }>,
+): ReadonlyArray<ProfileSignIn> {
+  return accounts.flatMap(({ details }) =>
+    details.kind === "website" && details.profileId && details.sites
+      ? [{ profileId: details.profileId, sites: details.sites }]
+      : [],
+  );
+}
+
 /** Why a tab opened in its profile, for the profile switcher to say. */
-export type ProfilePickReason = "site" | "conversation" | "project" | "signed-in" | "default";
+export type ProfilePickReason = "site" | "conversation" | "project" | "main" | "default";
 
 export interface ProfilePick {
   readonly profileId: string;
@@ -94,17 +116,16 @@ export function pageSite(url: string | undefined) {
 }
 
 /**
- * The profile a new tab opens in. This conversation's choice for the site wins. Otherwise the
- * conversation's profile, else the project's, is kept unless another profile is signed in to the
- * page and it is not; then Main (the default) if it is signed in, else the oldest identity.
- * `profiles` are the eligible ones.
+ * The profile a new tab opens in: this conversation's choice for the site; else the conversation's,
+ * then the project's profile while it has a row for the site, Main when it has none; else the
+ * default. Nothing is probed first. `profiles` are the eligible ones; `rows` are `profileRows`.
  */
 export function pickBrowserProfile(input: {
   readonly url: string | undefined;
   readonly threadId: string;
   readonly projectId: string | undefined;
   readonly profiles: ReadonlyArray<string>;
-  readonly signIns: ReadonlyArray<ProfileSignIn>;
+  readonly rows: ReadonlyArray<ProfileSignIn>;
   readonly choices: ProfileChoiceState | undefined;
   readonly defaultProfileId: string;
 }): ProfilePick {
@@ -118,22 +139,19 @@ export function pickBrowserProfile(input: {
     : eligible(project)
       ? { profileId: project, reason: "project" }
       : undefined;
-  const fallback = paired ?? { profileId: input.defaultProfileId, reason: "default" };
+  const fallback: ProfilePick = { profileId: input.defaultProfileId, reason: "default" };
   const page = pageSite(input.url);
-  if (!page) return fallback;
-  const signIns = signInsFor(input.signIns, page);
+  if (!page) return paired ?? fallback;
+  const rows = input.rows.filter((row) => anySiteMatches(row.sites, page));
   // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
   const sameService = (host: string) =>
-    host === page.hostname ||
-    signIns.some((signIn) => anySiteMatches(signIn.sites, `https://${host}`));
+    host === page.hostname || rows.some((row) => anySiteMatches(row.sites, `https://${host}`));
   const switched = Object.entries(thread?.sites ?? {})
     .filter(([host, choice]) => sameService(host) && eligible(choice.profileId))
     .sort(([, a], [, b]) => b.at.localeCompare(a.at))[0]?.[1].profileId;
   if (switched !== undefined) return { profileId: switched, reason: "site" };
-  const signedIn = [...new Set(signIns.map((signIn) => signIn.profileId))].filter(eligible);
-  if (signedIn.length === 0 || (paired && signedIn.includes(paired.profileId))) return fallback;
-  return {
-    profileId: signedIn.includes(input.defaultProfileId) ? input.defaultProfileId : signedIn[0]!,
-    reason: "signed-in",
-  };
+  if (!paired || rows.some((row) => row.profileId === paired.profileId)) return paired ?? fallback;
+  return eligible(DEFAULT_BROWSER_PROFILE_ID)
+    ? { profileId: DEFAULT_BROWSER_PROFILE_ID, reason: "main" }
+    : fallback;
 }

@@ -2,7 +2,7 @@ import { INCOGNITO_BROWSER_PROFILE_ID, type ScopedThreadRef } from "@t3tools/con
 import {
   pageSite,
   pickBrowserProfile,
-  profileSignIns,
+  profileRows,
   siteIdentities,
   type ProfilePick,
 } from "@t3tools/shared/scientBrowserProfileChoice";
@@ -47,8 +47,8 @@ function pickReason({ reason }: ProfilePick, url: string) {
       return "this conversation";
     case "project":
       return "this project";
-    case "signed-in":
-      return site ? `signed in to ${site}` : undefined;
+    case "main":
+      return "has your sign-ins";
     case "default":
       return "default";
   }
@@ -98,7 +98,7 @@ export function ProfileSwitcher({
         threadId: threadRef.threadId,
         projectId,
         profiles: profiles.map((profile) => profile.id),
-        signIns: profileSignIns(data.accounts),
+        rows: profileRows(data.accounts),
         choices: data.profileChoices,
         defaultProfileId,
       })

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   pickBrowserProfile,
+  profileRows,
   profileSignIns,
   siteIdentities,
 } from "./scientBrowserProfileChoice.ts";
@@ -15,10 +16,10 @@ const base = {
   url: "https://portal.huji.ac.il/courses",
   threadId: "thread-a",
   projectId: "project-a",
-  profiles: ["main", "yaacov", "work", "huji"],
-  signIns: [],
+  profiles: ["default", "yaacov", "work", "huji"],
+  rows: [],
   choices: undefined,
-  defaultProfileId: "main",
+  defaultProfileId: "default",
 };
 const choices = (
   thread?: { profileId: string; sites?: Record<string, { profileId: string; at: string }> },
@@ -29,58 +30,67 @@ const choices = (
 });
 
 describe("pickBrowserProfile", () => {
-  const huji = (profileId: string, createdAt = "2026-10-01T00:00:00Z") => ({
-    profileId,
-    sites: ["huji.ac.il"],
-    createdAt,
-  });
+  const huji = (profileId: string) => ({ profileId, sites: ["huji.ac.il"] });
 
-  it("keeps the conversation's, then the project's profile, else the default", () => {
-    expect(
-      pickBrowserProfile({ ...base, choices: choices({ profileId: "yaacov" }, "work") }),
-    ).toEqual({
-      profileId: "yaacov",
-      reason: "conversation",
-    });
-    // A new conversation uses its project's profile, with nothing written for it.
-    expect(pickBrowserProfile({ ...base, choices: choices(undefined, "work") })).toEqual({
-      profileId: "work",
-      reason: "project",
-    });
-    expect(pickBrowserProfile({ ...base, url: "http://example.com" })).toEqual({
-      profileId: "main",
-      reason: "default",
-    });
-  });
-
-  it("keeps a pairing unless another profile is signed in to the page and it is not", () => {
-    const signIns = [huji("huji")];
-    expect(
-      pickBrowserProfile({ ...base, signIns, choices: choices({ profileId: "yaacov" }) }),
-    ).toEqual({
-      profileId: "huji",
-      reason: "signed-in",
-    });
-    // A pairing that is signed in holds against the oldest identity.
+  it("keeps the conversation's, then the project's profile while it has a row for the site", () => {
     expect(
       pickBrowserProfile({
         ...base,
-        signIns: [huji("work"), huji("huji", "2026-09-01T00:00:00Z")],
+        rows: [huji("yaacov"), huji("work")],
+        choices: choices({ profileId: "yaacov" }, "work"),
+      }),
+    ).toEqual({ profileId: "yaacov", reason: "conversation" });
+    // A new conversation uses its project's profile, with nothing written for it.
+    expect(
+      pickBrowserProfile({ ...base, rows: [huji("work")], choices: choices(undefined, "work") }),
+    ).toEqual({ profileId: "work", reason: "project" });
+    // A page with no site to check keeps the pairing.
+    expect(
+      pickBrowserProfile({
+        ...base,
+        url: "http://example.com",
         choices: choices(undefined, "work"),
       }),
     ).toEqual({ profileId: "work", reason: "project" });
   });
 
-  it("prefers Main among the signed-in profiles, then the oldest identity", () => {
-    const signIns = [huji("work", "2026-10-02T00:00:00Z"), huji("huji", "2026-10-01T00:00:00Z")];
-    expect(pickBrowserProfile({ ...base, signIns })).toEqual({
-      profileId: "huji",
-      reason: "signed-in",
+  it("sends a paired profile without a row for the site to Main, whoever else is signed in", () => {
+    expect(
+      pickBrowserProfile({
+        ...base,
+        rows: [huji("huji")],
+        choices: choices({ profileId: "yaacov" }),
+      }),
+    ).toEqual({ profileId: "default", reason: "main" });
+    // Without Main among the eligible profiles, the default.
+    expect(
+      pickBrowserProfile({
+        ...base,
+        profiles: ["yaacov", "work"],
+        defaultProfileId: "work",
+        choices: choices({ profileId: "yaacov" }),
+      }),
+    ).toEqual({ profileId: "work", reason: "default" });
+  });
+
+  it("opens an unpaired tab in the default, even where one profile alone has a row", () => {
+    expect(pickBrowserProfile({ ...base, rows: [huji("huji")] })).toEqual({
+      profileId: "default",
+      reason: "default",
     });
-    expect(pickBrowserProfile({ ...base, signIns: [...signIns, huji("main")] })).toEqual({
-      profileId: "main",
-      reason: "signed-in",
-    });
+  });
+
+  it("counts a row in any state: imported, copied or signed out", () => {
+    const rows = profileRows(
+      (["unknown", "signed-out", "password-rejected"] as const).map((state) => ({
+        details: { kind: "website", profileId: "work", sites: ["huji.ac.il"] },
+        signIn: { state },
+      })),
+    );
+    expect(rows).toHaveLength(3);
+    expect(
+      pickBrowserProfile({ ...base, rows: rows.slice(1, 2), choices: choices(undefined, "work") }),
+    ).toEqual({ profileId: "work", reason: "project" });
   });
 
   it("lets this conversation's choice for the site, or one sign-in's other site, win", () => {
@@ -93,9 +103,9 @@ describe("pickBrowserProfile", () => {
       pickBrowserProfile({
         ...base,
         url: "https://docs.google.com/",
-        signIns: google,
+        rows: google,
         choices: choices({
-          profileId: "main",
+          profileId: "default",
           sites: { "mail.google.com": { profileId: "yaacov", at } },
         }),
       }),
@@ -114,64 +124,49 @@ describe("pickBrowserProfile", () => {
       },
     };
     expect(pickBrowserProfile({ ...base, choices: elsewhere })).toEqual({
-      profileId: "main",
+      profileId: "default",
       reason: "default",
     });
   });
 
-  it("ignores signed-out and unavailable profiles", () => {
+  it("skips a paired profile that isn't available", () => {
     expect(
       pickBrowserProfile({
         ...base,
-        profiles: ["main", "yaacov"],
-        signIns: [huji("huji"), { ...huji("yaacov"), signedOut: true }],
+        profiles: ["default", "work"],
+        rows: [huji("work")],
         choices: choices({ profileId: "yaacov" }, "work"),
       }),
-    ).toEqual({ profileId: "yaacov", reason: "conversation" });
+    ).toEqual({ profileId: "work", reason: "project" });
   });
 
   describe("finding 16, Overleaf", () => {
-    const pick = (accounts: ReadonlyArray<(typeof F16_ROWS)[number]>) =>
+    const pick = (paired: string | undefined) =>
       pickBrowserProfile({
         url: "https://www.overleaf.com/project",
         threadId: "thread-new",
         projectId: undefined,
         profiles: ["default", ...F16_RECORDS.map((record) => record.profileId)],
-        signIns: profileSignIns(accounts),
-        choices: undefined,
+        rows: profileRows(F16_ROWS),
+        choices: paired
+          ? { projects: {}, threads: { "thread-new": { profileId: paired, sites: {} } } }
+          : undefined,
         defaultProfileId: "default",
       });
-    // What `accounts.mainFilled` writes: Main's row for the site, not yet seen working.
-    const copied = {
-      accountId: "acc_f16overleafmain",
-      details: {
-        kind: "website",
-        sites: ["overleaf.com"],
-        username: F16_WORK_USERNAME,
-        profileId: "default",
-        origin: "browser-session",
-      },
-      secrets: {},
-      signIn: { state: "unknown", at: "2026-11-04T09:00:00.000Z", from: "copy" },
-      createdAt: "2026-11-04T09:00:00.000Z",
-    };
 
-    it("opens Work before a copy, and still Work once Main holds an unchecked copy", () => {
-      expect(pick(F16_ROWS)).toEqual({ profileId: "profile-work", reason: "signed-in" });
-      expect(pick([...F16_ROWS, copied])).toEqual({
-        profileId: "profile-work",
-        reason: "signed-in",
-      });
+    it("keeps a conversation paired with Work on Overleaf, where Work has its rows", () => {
+      expect(pick("profile-work")).toEqual({ profileId: "profile-work", reason: "conversation" });
+      expect(
+        F16_ROWS.some(
+          (row) =>
+            row.details.profileId === "profile-work" && row.details.username === F16_WORK_USERNAME,
+        ),
+      ).toBe(true);
     });
 
-    it("opens Main, as the same person, once a look sees Main signed in", () => {
-      const seen = { ...copied, signIn: { state: "signed-in", at: "2026-11-04T09:05:00.000Z" } };
-      expect(pick([...F16_ROWS, seen])).toEqual({ profileId: "default", reason: "signed-in" });
-      expect(seen.details.username).toBe(
-        F16_ROWS.find(
-          (row) => row.signIn?.state === "signed-in" && row.details.profileId === "profile-work",
-        )?.details.username,
-      );
+    it("opens Main for a paired profile with no Overleaf row, and Main without a pairing", () => {
+      expect(pick("profile-digitalowl")).toEqual({ profileId: "default", reason: "main" });
+      expect(pick(undefined)).toEqual({ profileId: "default", reason: "default" });
     });
   });
 });

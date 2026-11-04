@@ -12,6 +12,7 @@ import {
   type AccountSaveInput,
   type AccountsSnapshot,
   type AccountSummary,
+  type BrowserProfileChoices,
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
 import { Context, Effect, Layer, Option, Redacted, Stream } from "effect";
@@ -151,6 +152,7 @@ export function fakeAccounts(
   options: {
     accounts?: ReadonlyArray<AccountSummary>;
     profiles?: ReadonlyArray<BrowserProfileRecord>;
+    profileChoices?: BrowserProfileChoices;
     agentAccess?: boolean;
     denied?: boolean;
     values?: Readonly<Record<string, string>>;
@@ -273,6 +275,7 @@ export function fakeAccounts(
         agentAccess: options.agentAccess ?? true,
         accounts,
         profiles: options.profiles ?? [],
+        ...(options.profileChoices ? { profileChoices: options.profileChoices } : {}),
       }),
     authorize: (_scope, target, action) =>
       Effect.sync(() => {

@@ -15,7 +15,7 @@ import {
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import { pickBrowserProfile, profileRows } from "@t3tools/shared/scientBrowserProfileChoice";
 import { onUniversitySignIn } from "../universitySignIn.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import {
@@ -180,7 +180,8 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
         )
       : undefined;
     // Without a named profile, the same order as the user's own tabs: their switch for this site
-    // here, the profile signed in to the site, this conversation's, the project's, the default.
+    // here, this conversation's or the project's profile while it has a row for the site, else
+    // Main, then the default.
     const profileId =
       existing?.profileId ??
       profile?.id ??
@@ -197,8 +198,8 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
                 ? [item.id]
                 : [];
             }),
-            // Only sign-ins the agent may use steer the pick.
-            signIns: profileSignIns(
+            // Only rows the agent may use keep a pairing.
+            rows: profileRows(
               known.accounts.filter(
                 (account) =>
                   authorizationDecision(known.agentAccess, account.controls, scope).decision !==
