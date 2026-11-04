@@ -200,7 +200,9 @@ describe("decideUnit", () => {
 });
 
 describe("applyUnit", () => {
-  const key = (c: Pick<SessionCookie, "name" | "domain" | "path">) => cookieSlot(c);
+  // A jar holds one cookie per slot and partition.
+  const key = (c: Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">) =>
+    JSON.stringify([cookieSlot(c), c.partitionKey ?? null]);
   /** An in-memory jar whose writes can be broken on purpose. */
   const jar = (initial: ReadonlyArray<SessionCookie>) => {
     const cookies = new Map(initial.map((c) => [key(c), c]));
@@ -345,6 +347,50 @@ describe("applyUnit", () => {
     expect(target.cookies.get(key(site))).toEqual(site);
     // The rest of the copy is undone too: the unit is the site's, not half of each.
     expect([...target.cookies.values()]).toEqual([site]);
+  });
+
+  describe("a partitioned slot a site wrote during the copy", () => {
+    const partitionKey = { topLevelSite: "https://top.test", hasCrossSiteAncestor: false };
+    const copy = cookie({
+      name: "chip",
+      value: "from-work",
+      sameSite: "no_restriction",
+      partitionKey,
+    });
+    const site = { ...copy, value: "from-the-site" };
+    // What the site's write looks like to the watcher: Electron's event names no partition.
+    const { partitionKey: _, ...seen } = site;
+    const race = (order: "site-first" | "copy-first") => {
+      const target = jar([]);
+      const changed = new Map<string, SessionCookie>();
+      const store: CookieStore = {
+        ...target.store,
+        set: async (written) => {
+          const first = changed.size === 0;
+          if (first && order === "site-first") target.cookies.set(key(site), site);
+          await target.store.set(written);
+          if (first && order === "copy-first") target.cookies.set(key(site), site);
+          if (first) changed.set(cookieSlot(seen), seen);
+        },
+      };
+      return {
+        target,
+        run: () => applyUnit(store, { ...plan, source: [copy], foreign: () => changed }),
+      };
+    };
+
+    it("clears only the copy's value after a navigation wrote first, and writes no stand-in", async () => {
+      const { target, run } = race("site-first");
+      expect(await run()).toBe("busy");
+      // The site's partitioned value was overwritten and can't be rebuilt exactly; nothing stands in.
+      expect([...target.cookies.values()]).toEqual([]);
+    });
+
+    it("leaves the site's value when it wrote after the copy", async () => {
+      const { target, run } = race("copy-first");
+      expect(await run()).toBe("busy");
+      expect([...target.cookies.values()]).toEqual([site]);
+    });
   });
 });
 

@@ -13,7 +13,8 @@ window.desktopBridge.accounts.qualifySessionCopy() there, and prints one line pe
   ...
   PASS 12 skip
   PASS 13 navigation first
-  13 passed, 0 failed
+  PASS 14 partitioned navigation first
+  14 passed, 0 failed
 
 A failing case reads, for example:
 

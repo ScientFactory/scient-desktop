@@ -280,13 +280,15 @@ function fakeJarSession() {
   const cookies = Object.assign(new NodeEvents.EventEmitter(), {
     flushStore: vi.fn(async () => undefined),
   });
-  const slot = (cookie: Pick<SessionCookie, "name" | "domain" | "path">) =>
-    JSON.stringify([cookie.name, cookie.domain, cookie.path]);
+  // One cookie per slot and partition, as in a real jar.
+  const slot = (cookie: Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">) =>
+    JSON.stringify([cookie.name, cookie.domain, cookie.path, cookie.partitionKey ?? null]);
   const put = (cookie: SessionCookie, own = false) => {
     jar.set(slot(cookie), cookie);
     if (!own) cookies.emit("changed", {}, electronCookie(cookie), "inserted", false);
   };
-  const electronCookie = (cookie: SessionCookie) => ({
+  // Electron's change event, like its cookie API, names no partition.
+  const electronCookie = ({ partitionKey: _, ...cookie }: SessionCookie) => ({
     ...cookie,
     session: cookie.expires === undefined,
   });
@@ -427,9 +429,9 @@ describe("fillMain", () => {
         vi.setSystemTime(1_010_000);
         f.main().put(jarCookie({ name: "page", value: "site" }));
         expect((yield* replace(1_005_000))?.units[0]?.outcome).toBe("conflict");
-        f.main().jar.delete(JSON.stringify(["page", ".github.com", "/"]));
+        f.main().jar.delete(JSON.stringify(["page", ".github.com", "/", null]));
         expect((yield* replace(1_020_000))?.units[0]?.outcome).toBe("copied");
-        expect(f.main().jar.get(JSON.stringify(["session", ".github.com", "/"]))?.value).toBe(
+        expect(f.main().jar.get(JSON.stringify(["session", ".github.com", "/", null]))?.value).toBe(
           "new",
         );
       }),
@@ -464,6 +466,26 @@ describe("fillMain", () => {
       expect(result?.units[0]?.outcome).toBe("busy");
       expect([...main.jar.values()].map((cookie) => cookie.value)).toEqual(["from-the-site"]);
     }),
+  );
+
+  it.effect(
+    "never writes an unpartitioned stand-in for a partitioned cookie a navigation wrote first",
+    () =>
+      Effect.gen(function* () {
+        const f = fillFixture();
+        const partitionKey = { topLevelSite: "https://top.test", hasCrossSiteAncestor: false };
+        const chip = jarCookie({ name: "chip", sameSite: "no_restriction", partitionKey });
+        f.profile("work").put({ ...chip, value: "from-work" });
+        const main = f.main();
+        main.faults.beforeSet = () => {
+          main.faults.beforeSet = () => {};
+          main.put({ ...chip, value: "from-the-site" });
+        };
+        const result = yield* f.copy({ from: "work", sourceControls: allowed });
+        expect(result?.units[0]?.outcome).toBe("busy");
+        // The copy's value is gone, and no unpartitioned cookie took the slot's place.
+        expect([...main.jar.values()]).toEqual([]);
+      }),
   );
 
   it.effect("refuses a unit whose restore failed for the rest of the run", () =>

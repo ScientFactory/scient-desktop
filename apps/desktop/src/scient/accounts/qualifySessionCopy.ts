@@ -1,6 +1,11 @@
-// @effect-diagnostics globalDate:off cryptoRandomUUID:off -- Plain async Electron work; expiries follow the wall clock CDP uses.
+// @effect-diagnostics globalDate:off globalTimers:off cryptoRandomUUID:off -- Plain async Electron work; expiries follow the wall clock CDP uses.
 import type { DesktopQualifyCase, SessionCookie } from "@t3tools/contracts";
-import { applyUnit, sameUnit, type CookieStore } from "@t3tools/shared/scientSessionCookies";
+import {
+  applyUnit,
+  sameUnit,
+  sessionCookieToCdpParam,
+  type CookieStore,
+} from "@t3tools/shared/scientSessionCookies";
 import * as Electron from "electron";
 
 import {
@@ -295,6 +300,52 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
         : "the site's newer cookie was not left in place";
     },
   ],
+  [
+    "partitioned navigation first",
+    async ({ b, sessionB }) => {
+      const store = jarStore(sessionB, b);
+      const partitionKey = { topLevelSite: PARTITION, hasCrossSiteAncestor: false };
+      const chip = domainCookie("chip", {
+        domain: "pace.test",
+        hostOnly: true,
+        sameSite: "no_restriction",
+        partitionKey,
+      });
+      let seen = false;
+      const foreign = watchForeignInserts(sessionB);
+      const outcome = await applyUnit(
+        {
+          ...store,
+          set: async (cookies) => {
+            if (!seen) {
+              seen = true;
+              // The site sets the same partitioned cookie just before the copy writes it.
+              await siteWrites(sessionB, () =>
+                b("Network.setCookies", {
+                  cookies: [sessionCookieToCdpParam({ ...chip, value: "from-the-site" })],
+                }),
+              );
+            }
+            await store.set(cookies);
+          },
+        },
+        {
+          ...replacePlan,
+          unit: ["pace.test"],
+          source: [{ ...chip, value: "copied" }],
+          foreign: () => foreign.cookies,
+        },
+      ).finally(foreign.stop);
+      if (outcome !== "busy") return `the copy ended ${outcome}`;
+      // Read with partition keys, not through the event the copy watched.
+      const left = (await readJar(b)).cookies.filter((cookie) => cookie.name === "chip");
+      if (left.some((cookie) => !cookie.partitionKey))
+        return "an unpartitioned stand-in was written";
+      return left.some((cookie) => cookie.value === "copied")
+        ? "the copy's value was left in the site's slot"
+        : undefined;
+    },
+  ],
 ];
 
 const replacePlan = {
@@ -322,6 +373,22 @@ const tamperedReadBack = (store: CookieStore): CookieStore => {
     },
   };
 };
+
+/** A write the site makes through CDP, resolved once the session reports it, or after 2 s. */
+const siteWrites = (session: Electron.Session, write: () => Promise<unknown>) =>
+  new Promise<void>((resolve, reject) => {
+    const done = () => {
+      clearTimeout(timer);
+      session.cookies.off("changed", seen);
+      resolve();
+    };
+    const seen = (_event: unknown, cookie: Electron.Cookie, _cause: unknown, removed: boolean) => {
+      if (!removed && cookie.name === "chip") done();
+    };
+    const timer = setTimeout(done, 2000);
+    session.cookies.on("changed", seen);
+    write().catch(reject);
+  });
 
 /** A cookie the site sets itself, resolved once the session reports it. */
 const pageWrites = (session: Electron.Session, details: Electron.CookiesSetDetails) =>
@@ -363,7 +430,7 @@ export async function qualifySessionCopy() {
   return results;
 }
 
-const SYNTHETIC_SITES = /(?:^|\.)(?:qualify|restore|foreign|skip|race|partition|probe)\.test$/;
+const SYNTHETIC_SITES = /(?:^|\.)(?:qualify|restore|foreign|skip|race|pace|partition|probe)\.test$/;
 
 /**
  * Builds before this fix wrote their synthetic cookies into the app's default session, since
