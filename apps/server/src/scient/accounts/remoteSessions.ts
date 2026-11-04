@@ -60,7 +60,7 @@ const SENDERS_PER_PROFILE = 4;
 const ACCESS_ORDER = ["off", "ask", "allowed"] as const;
 
 /** The strictest of the controls a profile's senders set; undefined when none set any. */
-export const strictestControls = (received: ReadonlyArray<ProfileReceived>) => {
+const strictestControls = (received: ReadonlyArray<ProfileReceived>) => {
   const sent = received.flatMap(({ controls }) => (controls ? [controls] : []));
   if (sent.length === 0) return undefined;
   return {
