@@ -162,6 +162,10 @@ export function withdrawnRows(
   };
 }
 
+/** Main's fill runs with nobody watching: a failure leaves this trace, and no values. */
+const warn = (what: string, cause: unknown) =>
+  console.warn(`[accounts] ${what}`, cause instanceof Error ? cause.message : cause);
+
 const RETRIES = 2;
 const RETRY_GAP_MS = 10 * 60 * 1000;
 const IN_FLIGHT_LIMIT = 200;
@@ -179,7 +183,8 @@ export function mainFillTrigger(deps: {
     rows: ReadonlyArray<AccountSummary>,
     from: string,
   ) => Promise<void>;
-  readonly later: (run: () => Promise<void>, ms: number) => void;
+  /** Runs `run` after `ms`; the function it returns cancels that. */
+  readonly later: (run: () => Promise<void>, ms: number) => () => void;
   readonly eligible?: (profileId: string) => boolean;
   /** Trigger 3, run once the environment's first snapshot arrives. */
   readonly backfill?: (snapshot: AccountsSnapshot) => Promise<void>;
@@ -188,6 +193,8 @@ export function mainFillTrigger(deps: {
 }) {
   let previous: AccountsSnapshot | undefined;
   let backfill: Promise<void> | undefined;
+  let stopped = false;
+  const retries = new Set<() => void>();
   /** In-flight and retrying copies, by row and revision; the oldest goes first past the limit. */
   const pending = new Map<string, number>();
   const keyOf = (row: AccountSummary) =>
@@ -205,41 +212,61 @@ export function mainFillTrigger(deps: {
         replaceAllowedSince: replaceAllowedSince(snapshot.accounts, row),
         skipSites: [],
       })
-      .catch(() => null);
+      .catch((cause: unknown) => {
+        warn("Couldn't copy a sign-in into Main", cause);
+        return null;
+      });
     const outcome = result?.units[0]?.outcome;
     // A page writing the site meanwhile (`busy`) is retried like a failed copy.
     if (result && outcome !== "failed" && outcome !== "busy") {
       pending.delete(key);
-      await deps.record(result, [row], profileId).catch(() => undefined);
+      await deps
+        .record(result, [row], profileId)
+        .catch((cause: unknown) => warn("Couldn't record a copy into Main", cause));
       return;
     }
     const attempts = pending.get(key);
-    if (attempts === undefined || attempts >= RETRIES) {
+    if (stopped || attempts === undefined || attempts >= RETRIES) {
       pending.delete(key);
       return;
     }
     pending.set(key, attempts + 1);
-    deps.later(async () => {
+    const cancel = deps.later(async () => {
+      retries.delete(cancel);
       const now = deps.current();
       const same = now?.accounts.find((candidate) => candidate.accountId === row.accountId);
       if (now && same && keyOf(same) === key) await copy(same, now);
       else pending.delete(key);
     }, RETRY_GAP_MS);
+    retries.add(cancel);
   };
   return {
     /** A reconnect makes the next snapshot a baseline again. */
     reset: () => {
       previous = undefined;
     },
+    /** No retry runs after this. */
+    stop: () => {
+      stopped = true;
+      for (const cancel of retries) cancel();
+      retries.clear();
+    },
     /** Resolves once this snapshot's copies are done. */
     seen: (snapshot: AccountsSnapshot) => {
       const events = previous ? signInEvents(previous, snapshot, deps.eligible) : [];
       const restricted = newlyRestricted(previous, snapshot, deps.eligible);
       previous = snapshot;
-      backfill ??= deps.backfill?.(snapshot).catch(() => undefined);
+      backfill ??= deps
+        .backfill?.(snapshot)
+        .catch((cause: unknown) => warn("Couldn't fill Main from every profile", cause));
       const copies: Array<Promise<void>> = backfill ? [backfill] : [];
       for (const profileId of restricted)
-        copies.push(deps.withdraw?.(profileId).catch(() => undefined) ?? Promise.resolve());
+        copies.push(
+          deps
+            .withdraw?.(profileId)
+            .catch((cause: unknown) => warn("Couldn't take a profile's copies back", cause)) ??
+            Promise.resolve(),
+        );
       for (const row of events) {
         const key = keyOf(row);
         if (pending.has(key)) continue;
@@ -266,7 +293,10 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
     fillMain,
     current: read,
     record: (result, rows, from) => recordCopies(registry, environmentId, result, rows, from),
-    later: (run, ms) => void setTimeout(() => void run(), ms),
+    later: (run, ms) => {
+      const timer = setTimeout(() => void run(), ms);
+      return () => clearTimeout(timer);
+    },
     backfill: async (snapshot) =>
       backfillMain(snapshot, {
         profiles: resolveBrowserProfiles((await resolveBrowserDefaults()).profiles),
@@ -289,7 +319,10 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
     withdraw: async (profileId) => {
       const result = await window.desktopBridge?.accounts
         ?.withdrawFromMain?.({ from: profileId, environmentId })
-        .catch(() => null);
+        .catch((cause: unknown) => {
+          warn("Couldn't take a profile's copies back", cause);
+          return null;
+        });
       const snapshot = read();
       if (!result?.units.length || !snapshot) return;
       const { remove, signedOut } = withdrawnRows(snapshot.accounts, result.units);
@@ -299,7 +332,7 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
         await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
     },
   });
-  return registry.subscribe(
+  const unsubscribe = registry.subscribe(
     atom,
     (result) => {
       if (AsyncResult.isSuccess(result)) void trigger.seen(result.value);
@@ -307,12 +340,19 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
     },
     { immediate: true },
   );
+  return () => {
+    unsubscribe();
+    trigger.stop();
+  };
 }
 
 const readSnapshot = async (environmentId: EnvironmentId) => {
   const read = await accountsState.readSnapshot
     .run(appAtomRegistry, { environmentId, input: {} })
-    .catch(() => null);
+    .catch((cause: unknown) => {
+      warn("Couldn't read Accounts to fill Main", cause);
+      return null;
+    });
   return read?._tag === "Success" ? read.value : undefined;
 };
 
@@ -349,7 +389,10 @@ async function fillFromProfile(
     mode: "fill",
     skipSites: mainSignOuts(snapshot),
   };
-  const result = await fillMain(input).catch(() => null);
+  const result = await fillMain(input).catch((cause: unknown) => {
+    warn("Couldn't fill Main from a profile", cause);
+    return null;
+  });
   if (!result) return false;
   await recordCopies(registry, environmentId, result, rows, profileId);
   return true;
@@ -363,7 +406,7 @@ const resendImported = async (environmentId: EnvironmentId, profileId: string) =
       environmentId,
       input: { profileId: BrowserProfileId.make(profileId), why: "import" },
     })
-    .catch(() => undefined);
+    .catch((cause: unknown) => warn("Couldn't mark an import to send again", cause));
 };
 
 /** Trigger 1, an import or Refresh into another profile: then its sign-ins fill Main. */

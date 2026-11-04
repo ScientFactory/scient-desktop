@@ -72,6 +72,7 @@ const copied = (outcome: DesktopFillMainResult["units"][number]["outcome"]) => (
 function setup(result: DesktopFillMainResult | null = copied("copied")) {
   const fills: Array<Record<string, unknown>> = [];
   const timers: Array<() => Promise<void>> = [];
+  let cancelled = 0;
   let current: AccountsSnapshot | undefined;
   const recorded: unknown[] = [];
   const withdrawn: string[] = [];
@@ -83,7 +84,13 @@ function setup(result: DesktopFillMainResult | null = copied("copied")) {
     },
     current: () => current,
     record: async (_result, accounts) => void recorded.push(...accounts),
-    later: (run) => void timers.push(run),
+    later: (run) => {
+      timers.push(run);
+      return () => {
+        cancelled += 1;
+        timers.splice(timers.indexOf(run), 1);
+      };
+    },
     eligible: (profileId) => profileId === "work" || profileId === "home",
     withdraw: async (profileId) => void withdrawn.push(profileId),
   });
@@ -97,6 +104,8 @@ function setup(result: DesktopFillMainResult | null = copied("copied")) {
       await trigger.seen(next);
     },
     reset: trigger.reset,
+    stop: trigger.stop,
+    cancelled: () => cancelled,
   };
 }
 
@@ -200,6 +209,15 @@ describe("trigger 2: a sign-in seen in another profile", () => {
     await restoreFailed.seen(snapshot([]));
     await restoreFailed.seen(snapshot([row("work", ["github.com"], signedIn(AT))]));
     expect(restoreFailed.timers).toHaveLength(0);
+  });
+
+  it("cancels its waiting retries when it stops", async () => {
+    const t = setup(copied("failed"));
+    await t.seen(snapshot([]));
+    await t.seen(snapshot([row("work", ["github.com"], signedIn(AT))]));
+    expect(t.timers).toHaveLength(1);
+    t.stop();
+    expect([t.cancelled(), t.timers.length]).toEqual([1, 0]);
   });
 
   it("keeps at most 200 copies in flight or waiting", async () => {
@@ -413,7 +431,7 @@ describe("trigger 3: the one-time back-fill", () => {
       fillMain: async () => null,
       current: () => undefined,
       record: async () => undefined,
-      later: () => undefined,
+      later: () => () => undefined,
       backfill: async () => void (runs += 1),
     });
     expect(runs).toBe(0);
