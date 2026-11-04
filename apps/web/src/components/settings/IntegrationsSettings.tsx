@@ -223,6 +223,8 @@ export async function importBrowserCookiesIntoTarget(
     readonly profileName?: string;
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
     readonly keepSites?: ReadonlyArray<string>;
+    /** False when the caller fills Main itself, once the import's rows exist. */
+    readonly fillMain?: boolean;
     // SCIENT-FORK:END
   },
   // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
@@ -309,7 +311,7 @@ export async function importBrowserCookiesIntoTarget(
       targetName = input.target.name;
     }
     // The import stands even when Main can't be filled now; a later sign-in or Refresh does it.
-    if (result.imported > 0)
+    if (result.imported > 0 && input.fillMain !== false)
       await fillMainFromProfile(environmentId, input.target.profileId).catch(() => undefined);
     return {
       kind: "imported",

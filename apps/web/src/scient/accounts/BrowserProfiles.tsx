@@ -362,7 +362,7 @@ export function BrowserImportDialog({
       profileId: string | undefined;
     }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
-    const sessionsFrom: Array<{ profileId: string; from: string }> = [];
+    const sessionsFrom: Array<{ profileId: string; from: string; filled: boolean }> = [];
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
@@ -380,6 +380,7 @@ export function BrowserImportDialog({
                 sourceProfileDirectory: profile.directory,
                 target: { kind: "new", profileId },
                 profileName: profile.name,
+                fillMain: false,
               },
             );
             if (outcome.kind === "blocked") {
@@ -398,7 +399,11 @@ export function BrowserImportDialog({
           }
           done.add(key);
           if (profileId !== undefined)
-            sessionsFrom.push({ profileId, from: `${source.name} · ${profile.name}` });
+            sessionsFrom.push({
+              profileId,
+              from: `${source.name} · ${profile.name}`,
+              filled: !isImported(source, profile),
+            });
           if (passwords && readPasswords && profile.passwordCount !== undefined)
             passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
@@ -418,8 +423,8 @@ export function BrowserImportDialog({
         } else passwordTotals.failed = true;
       }
       // After the passwords: a site with a saved password is one whose session gets a row.
-      for (const { profileId, from } of sessionsFrom)
-        await recordImportedSessions(environmentId, profileId, from);
+      for (const { profileId, from, filled } of sessionsFrom)
+        await recordImportedSessions(environmentId, profileId, from, { fillMain: filled });
       if (passwordTotals.failed)
         toastManager.add({ type: "error", title: "Could not import saved passwords" });
       else if (passwordTotals.imported || passwordTotals.skipped)
@@ -786,6 +791,7 @@ export function BrowserProfiles({
     const renames: Array<{ id: string; from: string; to: string }> = [];
     let failed = false;
     for (const { id, record } of targets) {
+      let refreshed = false;
       const linked = record.source;
       const source = sources.find((source) => source.id === linked?.browser);
       const profile = source?.profiles.find((profile) =>
@@ -805,8 +811,10 @@ export function BrowserProfiles({
           sourceProfileDirectory: profile.directory,
           target: { kind: "existing", profileId: id, name: linked.profileName },
           keepSites: sitesToKeep(snapshot.accounts, id),
+          fillMain: false,
         });
         if (result.kind === "blocked") failed = true;
+        else refreshed = true;
       }
       const metadata = sourceRecord(id, source.id, profile, linked.importedAt);
       if (Option.isSome(metadata)) await updateRecord(metadata.value);
@@ -826,7 +834,9 @@ export function BrowserProfiles({
           : null;
         if (!result?.ok) failed = true;
       }
-      await recordImportedSessions(environmentId, id, `${source.name} · ${profile.name}`);
+      await recordImportedSessions(environmentId, id, `${source.name} · ${profile.name}`, {
+        fillMain: refreshed,
+      });
     }
     await followSourceNames(renames);
     if (failed) profileError();

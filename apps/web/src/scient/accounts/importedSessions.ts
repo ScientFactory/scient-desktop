@@ -70,12 +70,21 @@ export function importedSessionSites(
   return [...sites];
 }
 
-/** After an import or Refresh into a profile, its sessions become that profile's rows. */
+/**
+ * After an import or Refresh into a profile, its sessions become that profile's rows; then
+ * `fillMain` fills Main once from it, so each copy finds its row.
+ */
 export async function recordImportedSessions(
   environmentId: EnvironmentId,
   profileId: string,
   from: string,
+  options: { readonly fillMain: boolean },
 ) {
+  await recordRows(environmentId, profileId, from).catch(() => undefined);
+  if (options.fillMain) await fillMainFromProfile(environmentId, profileId).catch(() => undefined);
+}
+
+async function recordRows(environmentId: EnvironmentId, profileId: string, from: string) {
   const cookies = await window.desktopBridge?.accounts
     ?.cookieMetadata?.(profileId, environmentId)
     .catch(() => null);
@@ -86,16 +95,11 @@ export async function recordImportedSessions(
   if (read?._tag !== "Success" || !read.value.features?.sessionsSeen) return;
   const sites = importedSessionSites(cookies, read.value.accounts, Date.now());
   if (sites.length === 0) return;
-  const seen = await accountsState.sessionsSeen
-    .run(appAtomRegistry, {
-      environmentId,
-      input: {
-        profileId,
-        sessions: sites.map((site) => ({ site, how: "imported" as const, from })),
-      },
-    })
-    .catch(() => null);
-  // The import filled Main before these rows existed; filling again gives Main's copies their rows.
-  if (seen?._tag === "Success" && seen.value.created.length > 0)
-    await fillMainFromProfile(environmentId, profileId).catch(() => undefined);
+  await accountsState.sessionsSeen.run(appAtomRegistry, {
+    environmentId,
+    input: {
+      profileId,
+      sessions: sites.map((site) => ({ site, how: "imported" as const, from })),
+    },
+  });
 }

@@ -1,7 +1,34 @@
-import { AccountId, defaultAccountControls, type AccountSummary } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import {
+  AccountId,
+  EnvironmentId,
+  defaultAccountControls,
+  type AccountSummary,
+} from "@t3tools/contracts";
+import { expect, it, vi } from "vite-plus/test";
 
-import { importedSessionSites } from "./importedSessions";
+const calls = vi.hoisted(() => [] as string[]);
+vi.mock("./accountsState", () => ({
+  accountsState: {
+    readSnapshot: {
+      run: async () => ({
+        _tag: "Success",
+        value: { accounts: [], features: { sessionsSeen: true } },
+      }),
+    },
+    sessionsSeen: {
+      run: async (_registry: unknown, { input }: { input: { sessions: unknown[] } }) => {
+        calls.push(`rows:${input.sessions.length}`);
+        return { _tag: "Success", value: { created: [] } };
+      },
+    },
+  },
+}));
+vi.mock("./mainFill", () => ({
+  fillMainFromProfile: async (_environmentId: string, profileId: string) =>
+    void calls.push(`fill:${profileId}`),
+}));
+
+const { importedSessionSites, recordImportedSessions } = await import("./importedSessions");
 
 const now = Date.parse("2026-11-04T00:00:00.000Z");
 const row = (sites: string[], patch: Partial<AccountSummary> = {}): AccountSummary => ({
@@ -69,4 +96,23 @@ it("leaves out Google, sign-in services and a university's sign-in, and caps eac
       now,
     ),
   ).toHaveLength(200);
+});
+
+it("makes an import's rows, then fills Main from it once", async () => {
+  vi.stubGlobal("window", {
+    desktopBridge: {
+      accounts: { cookieMetadata: async () => [session("github.com"), session("overleaf.com")] },
+    },
+  });
+  try {
+    const environmentId = EnvironmentId.make("synthetic");
+    await recordImportedSessions(environmentId, "work", "Chrome · Work", { fillMain: true });
+    expect(calls).toEqual(["rows:2", "fill:work"]);
+    // A profile imported before brought nothing new this time: no fill.
+    calls.length = 0;
+    await recordImportedSessions(environmentId, "work", "Chrome · Work", { fillMain: false });
+    expect(calls).toEqual(["rows:2"]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

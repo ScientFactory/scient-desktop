@@ -128,3 +128,21 @@ it("adds a profile marked as made in Scient, and leaves the new-tab default alon
     { environmentId, input: { profileId: id, madeInScient: expect.any(String) } },
   ]);
 });
+
+it("leaves the fill to Accounts' import, which makes the rows first", async () => {
+  state.profiles = [];
+  state.filledFrom = [];
+  const bridge = {
+    importBrowserCookies: async () => ({ imported: 2, skipped: 0, skippedDomains: [] }),
+    clearCookies: async () => undefined,
+    clearCache: async () => undefined,
+  };
+  const source = { id: "chrome" as const, name: "Chrome", profiles: [] };
+  await importBrowserCookiesIntoTarget(bridge, source, EnvironmentId.make("synthetic"), {
+    sourceProfileDirectory: "Default",
+    target: { kind: "new", profileId: "profile-accounts" },
+    profileName: "Personal",
+    fillMain: false,
+  });
+  expect(state.filledFrom).toEqual([]);
+});
