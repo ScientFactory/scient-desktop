@@ -203,7 +203,9 @@ or 2FA key goes. Decisions use revisions, never clocks:
   Under that lock it applies the sent controls (a project limit is
   Off), checks them and the university (`travels`) against its own rows, refuses a revision not
   newer than applied (`stale`) and a unit with an open tab (`busy`), then runs item 3's `applyUnit`
-  through `ServerBrowser.profileCookies` (a context lease in `ServerBrowserContexts`; CDP Network
+  through `ServerBrowser.profileCookies` (a context lease in `ServerBrowserContexts`, which tabs
+  wait for and go before the next one; a cookie operation past 30 s is aborted by closing its
+  helper page, its unit restored and reported busy, and the lease released; CDP Network
   commands on a helper page of the profile's own context). Only applied units are recorded in
   `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit. A
   remote drops a sender, and its copies, when the session it last proved its key over is revoked

@@ -87,6 +87,8 @@ export class ServerBrowserContexts {
     string,
     { readonly done: Promise<void>; wanted: boolean; stopping: boolean }
   >();
+  /** Tabs waiting for a hold to end; they go before the next hold, so none waits forever. */
+  private readonly waitingTabs = new Map<string, Set<Promise<unknown>>>();
   // SCIENT-FORK:END
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
@@ -150,8 +152,16 @@ export class ServerBrowserContexts {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
     const key = JSON.stringify([profileId, isolationKey ?? null]);
     // SCIENT-FORK:START — Scient Accounts: a tab waits for a cookie copy into its profile.
-    if (!leased && this.leases.has(key))
-      return this.leaseReleased(key).then(() => this.contextFor(profileId, isolationKey));
+    if (!leased && this.leases.has(key)) {
+      const waiting = this.leaseReleased(key).then(() => this.contextFor(profileId, isolationKey));
+      const tabs = this.waitingTabs.get(key) ?? new Set();
+      this.waitingTabs.set(key, tabs.add(waiting));
+      void waiting.finally(() => {
+        tabs.delete(waiting);
+        if (tabs.size === 0 && this.waitingTabs.get(key) === tabs) this.waitingTabs.delete(key);
+      });
+      return waiting;
+    }
     // SCIENT-FORK:END
     const cached = this.contexts.get(key);
     if (cached) return cached;
@@ -254,13 +264,20 @@ export class ServerBrowserContexts {
   // SCIENT-FORK:START — Scient Accounts: a profile's context, held for one cookie copy.
   /**
    * Holds a persistent profile's context: tabs and clears wait for `release`, never alongside it.
-   * One waiting 10 s sets `stopping`, and the copy stops at its next unit. A context the hold
-   * opened closes on release unless a tab asked for it meanwhile.
+   * One waiting 10 s sets `stopping`, and the copy stops at its next unit; a stalled cookie
+   * operation is aborted at its own deadline. Tabs waiting go before the next hold. A context the
+   * hold opened closes on release unless a tab asked for it meanwhile.
    */
   async lease(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) throw new Error("Incognito keeps no cookies.");
     const key = JSON.stringify([profileId, null]);
-    for (let held = this.leases.get(key); held; held = this.leases.get(key)) await held.done;
+    for (;;) {
+      const held = this.leases.get(key);
+      const tabs = this.waitingTabs.get(key);
+      if (held) await held.done;
+      else if (tabs?.size) await Promise.allSettled(tabs);
+      else break;
+    }
     const done = Promise.withResolvers<void>();
     const lease = { done: done.promise, wanted: false, stopping: false };
     this.leases.set(key, lease);

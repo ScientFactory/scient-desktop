@@ -362,6 +362,25 @@ describe("ServerBrowserContexts lease", () => {
     await pool.close();
   });
 
+  it("lets a tab that waited go before the next hold", async () => {
+    launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    const first = await pool.lease("work");
+    const order: string[] = [];
+    const tab = pool.contextFor("work").then(() => order.push("tab"));
+    const next = pool.lease("work").then((lease) => {
+      order.push("next hold");
+      return lease;
+    });
+    await settle();
+    expect(order).toEqual([]);
+    await first.release();
+    await tab;
+    await (await next).release();
+    expect(order).toEqual(["tab", "next hold"]);
+    await pool.close();
+  });
+
   it("closes a context the hold opened when no tab needs it, and never one a tab opened", async () => {
     const opened = makeContext();
     launches.persistent.mockResolvedValueOnce(opened as unknown as BrowserContext);

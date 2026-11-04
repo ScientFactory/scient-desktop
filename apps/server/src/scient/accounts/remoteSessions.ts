@@ -434,14 +434,17 @@ export const makeRemoteSessions = Effect.gen(function* () {
         const outcomes = new Map<(typeof pending)[number], SessionReceiveOutcome>();
         if (pending.length)
           yield* withJar(input.profileId, async (jar) => {
-            for (const unit of pending)
-              outcomes.set(
-                unit,
-                // A tab waited too long for this profile: the rest goes with the next delivery.
-                jar.stopping()
-                  ? "busy"
-                  : await receiveUnit(jar, unit, input.mode).catch(() => "failed"),
+            for (const unit of pending) {
+              // A tab waited too long, or an operation stalled: the rest goes next time.
+              if (jar.stopping() || jar.stalled()) {
+                outcomes.set(unit, "busy");
+                continue;
+              }
+              const outcome = await receiveUnit(jar, unit, input.mode).catch(
+                (): SessionReceiveOutcome => "failed",
               );
+              outcomes.set(unit, jar.stalled() && outcome !== "restore-failed" ? "busy" : outcome);
+            }
           });
         const result = input.units.map((unit, index) => {
           const early = decided[index];
