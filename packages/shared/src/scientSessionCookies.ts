@@ -1,4 +1,12 @@
-import type { SessionCookie } from "@t3tools/contracts";
+import {
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type AccountSessionsApplied,
+  type AccountSummary,
+  type BrowserProfileRecord,
+  type ProfileSendLog,
+  type SentProfileControls,
+  type SessionCookie,
+} from "@t3tools/contracts";
 
 /** The registrable site of a host, such as `huji.ac.il` for `idp.cc.huji.ac.il`. */
 export type SiteOf = (host: string) => string;
@@ -270,6 +278,8 @@ export function decideUnit(input: {
   readonly target: ReadonlyArray<SessionCookie>;
   readonly mode: "fill" | "fill-or-replace";
   readonly replaceAllowed: boolean;
+  /** A computer that mirrors the desktop's profile replaces its Google jar whole too. */
+  readonly replaceGoogle?: boolean;
   readonly nowSeconds: number;
   readonly siteOf: SiteOf;
 }): UnitDecision {
@@ -280,7 +290,7 @@ export function decideUnit(input: {
   if (sameUnit(source.live, target.live)) return "same";
   return input.mode === "fill-or-replace" &&
     input.replaceAllowed &&
-    !unitSites(input.unit, input.siteOf).has(GOOGLE)
+    (input.replaceGoogle === true || !unitSites(input.unit, input.siteOf).has(GOOGLE))
     ? "copy"
     : "conflict";
 }
@@ -323,6 +333,7 @@ export async function applyUnit(
     readonly source: ReadonlyArray<SessionCookie>;
     readonly mode: "fill" | "fill-or-replace";
     readonly replaceAllowed: boolean;
+    readonly replaceGoogle?: boolean;
     readonly nowSeconds: number;
     readonly siteOf: SiteOf;
     readonly foreign?: () => ReadonlyMap<string, SessionCookie>;
@@ -414,4 +425,123 @@ export async function applyUnit(
   } catch {
     return "restore-failed";
   }
+}
+
+type ProfileControls = Pick<BrowserProfileRecord, "access" | "scope" | "scriptSignIn">;
+
+/** A profile whose sign-ins go to other computers: Allowed or Ask for all projects, scripts on. */
+export const shareable = (profileId: string, record: ProfileControls) =>
+  profileId !== INCOGNITO_BROWSER_PROFILE_ID &&
+  record.access !== "off" &&
+  record.scope.type === "all-projects" &&
+  record.scriptSignIn;
+
+/** The controls another computer shows for a profile: a project limit there becomes Off. */
+export const remoteControls = (record: ProfileControls): SentProfileControls => ({
+  access: record.scope.type === "all-projects" ? record.access : "off",
+  scope: { type: "all-projects" },
+  scriptSignIn: record.scriptSignIn,
+});
+
+const OPENATHENS = "openathens.net";
+
+/** Every site of the university rows, their learned sign-in addresses included. */
+export const universitySites = (accounts: ReadonlyArray<AccountSummary>) =>
+  accounts.flatMap(({ details }) =>
+    details.kind === "website" && details.institution ? details.sites : [],
+  );
+
+/**
+ * The university's sign-in never goes to another computer: OpenAthens, and any unit sharing a
+ * registrable site with a university row. That computer signs in to the university itself.
+ */
+export const travels = (
+  unit: ReadonlyArray<string>,
+  university: ReadonlyArray<string>,
+  siteOf: SiteOf,
+) => {
+  const sites = unitSites(unit, siteOf);
+  if (sites.has(OPENATHENS)) return false;
+  return ![...unitSites(university, siteOf)].some((site) => sites.has(site));
+};
+
+export interface PlannedUnit {
+  readonly sites: ReadonlyArray<string>;
+  readonly revision: number;
+  readonly kind: "copy" | "delete";
+}
+
+export type DeliveryPlan =
+  | { readonly kind: "controls" }
+  | { readonly kind: "withdraw"; readonly revision: number }
+  | {
+      readonly kind: "units";
+      readonly mode: "fill" | "replace";
+      readonly units: ReadonlyArray<PlannedUnit>;
+      /** The highest revision the remote holds once these units apply. */
+      readonly head: number;
+    };
+
+const overlaps = (a: ReadonlyArray<string>, b: ReadonlyArray<string>, siteOf: SiteOf) => {
+  const sites = unitSites(a, siteOf);
+  return [...unitSites(b, siteOf)].some((site) => sites.has(site));
+};
+
+/**
+ * What one profile still owes another computer, from durable state only: the desktop's send log,
+ * the units its jar holds now (names), and what the remote applied from this desktop. A unit gone
+ * from the jar is never deleted for its absence; only a delete revision removes it.
+ */
+export function planDelivery(input: {
+  readonly log: ProfileSendLog | undefined;
+  readonly applied: AccountSessionsApplied;
+  readonly jar: ReadonlyArray<ReadonlyArray<string>>;
+  readonly shareable: boolean;
+  readonly travels: (unit: ReadonlyArray<string>) => boolean;
+  readonly siteOf: SiteOf;
+}): DeliveryPlan {
+  const { log, applied, siteOf } = input;
+  const head = log?.head ?? 0;
+  if (!input.shareable)
+    return applied.bound &&
+      log?.withdrawn !== undefined &&
+      log.withdrawn > (applied.withdrawn ?? -1)
+      ? { kind: "withdraw", revision: log.withdrawn }
+      : { kind: "controls" };
+  const jar = input.jar.filter((unit) => input.travels(unit));
+  if (!applied.bound)
+    return {
+      kind: "units",
+      mode: "fill",
+      units: jar.map((sites) => ({ sites, revision: head, kind: "copy" as const })),
+      head,
+    };
+  const entries = (log?.units ?? []).filter(({ sites }) => input.travels(sites));
+  const floor = applied.withdrawn ?? -1;
+  const units: PlannedUnit[] = [];
+  const components = mergeUnits(
+    [...entries.map(({ sites }) => sites), ...(log?.jar === undefined ? [] : jar)],
+    siteOf,
+  );
+  for (const sites of components) {
+    if (!input.travels(sites)) continue;
+    const inJar = jar.some((unit) => overlaps(unit, sites, siteOf));
+    const entry = entries
+      .filter((candidate) => overlaps(candidate.sites, sites, siteOf))
+      .reduce<PlannedUnit | undefined>(
+        (newest, candidate) =>
+          newest === undefined || candidate.revision > newest.revision ? candidate : newest,
+        undefined,
+      );
+    const jarRevision = log?.jar !== undefined && inJar ? log.jar : -1;
+    const revision = Math.max(entry?.revision ?? -1, jarRevision);
+    const kind = entry && entry.revision >= jarRevision ? entry.kind : "copy";
+    const held = applied.units.filter((unit) => overlaps(unit.sites, sites, siteOf));
+    const appliedRevision = held.length ? Math.min(...held.map((unit) => unit.revision)) : -1;
+    if (revision <= Math.max(appliedRevision, floor)) continue;
+    // Nothing to copy: the jar no longer has the unit.
+    if (kind === "copy" && !inJar) continue;
+    units.push({ sites, revision, kind });
+  }
+  return { kind: "units", mode: "replace", units, head };
 }

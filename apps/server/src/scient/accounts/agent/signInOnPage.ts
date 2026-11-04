@@ -12,6 +12,19 @@ import { AccountsService, type AccountSessionScope } from "../AccountsService.ts
 import { previewInvoker } from "./broker.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 
+const siteOfPage = (url: string) => URL.parse(url)?.hostname.replace(/^www\./, "") ?? url;
+
+/** The sign-in copied from the desktop no longer works here, and no row of this computer's fits. */
+export const refusedCopyNote = (
+  input: { readonly requestedUrl: string; readonly copiedFrom: string },
+  unattended: boolean,
+) => {
+  const site = siteOfPage(input.requestedUrl);
+  return unattended
+    ? `${site} refused the sign-in copied from ${input.copiedFrom}, and nobody is here to sign in on this computer. Stop and say so; the user sees it in Accounts.`
+    : `${site} refused the sign-in copied from ${input.copiedFrom}. Call scient_account_add with kind website and site ${site}: the user signs in once on this computer in a card, and it stays here.`;
+};
+
 /**
  * Signs in on a login page with the saved sign-in for this page or the page the agent asked for,
  * so an agent never chains list, find and sign-in. Only Allowed accounts: an Ask account waits for

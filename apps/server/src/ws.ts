@@ -4005,6 +4005,7 @@ export const layerWsRpc = (
         WsAccountsRpcGroup.toLayer(
           makeAccountsRpcHandlers({
             accounts,
+            caller: { sessionId: currentSessionId, subject: currentSession.subject },
             observeRpcEffect,
             observeRpcStream,
             check: accountUserRuns.check,

@@ -39,9 +39,23 @@ import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
-import { RemoteSessions } from "./remoteSessions.ts";
+import { RemoteSessions, type AccountsCallerSession } from "./remoteSessions.ts";
 
 const isAccountsError = Schema.is(AccountsError);
+
+/** Another computer's copies need the socket's own session. */
+const withCaller = <A>(
+  caller: AccountsCallerSession | undefined,
+  use: (
+    remote: RemoteSessions["Service"],
+    caller: AccountsCallerSession,
+  ) => Effect.Effect<A, AccountsError>,
+) =>
+  caller === undefined
+    ? Effect.fail(
+        new AccountsError({ reason: "denied", message: "This connection can't send sign-ins." }),
+      )
+    : withRemoteSessions((remote) => use(remote, caller));
 
 /** The server-lifetime receiver; older test harnesses and servers without a browser have none. */
 const withRemoteSessions = <A>(
@@ -62,6 +76,7 @@ const withRemoteSessions = <A>(
 
 export const makeAccountsRpcHandlers = ({
   accounts,
+  caller,
   observeRpcEffect,
   observeRpcStream,
   check,
@@ -71,6 +86,8 @@ export const makeAccountsRpcHandlers = ({
   plainKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
+  /** The socket's authenticated session; another computer's copies are bound to it. */
+  readonly caller?: AccountsCallerSession;
   readonly check: (
     input: AccountsCheckInput,
   ) => Effect.Effect<{ checked: number; alreadyRunning?: boolean }, AccountsError>;
@@ -280,10 +297,60 @@ export const makeAccountsRpcHandlers = ({
         accounts.mainFilled(input).pipe(Effect.as({})),
         attributes,
       ),
-    [WS_METHODS.accountsMainSignedOut]: (input) =>
+    [WS_METHODS.accountsProfileSignedOut]: (input) =>
       observeRpcEffect(
-        WS_METHODS.accountsMainSignedOut,
-        accounts.mainSignedOut(input.site).pipe(Effect.as({})),
+        WS_METHODS.accountsProfileSignedOut,
+        accounts
+          .profileSignedOut(input.profileId, input.site)
+          .pipe(Effect.map((revision) => ({ revision }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileResend]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileResend,
+        accounts.profileResend(input.profileId).pipe(Effect.map((revision) => ({ revision }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileSendLog]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileSendLog,
+        accounts.profileSendLog(input.profileId),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileShared]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileShared,
+        accounts.profileShared(input.profileId, input.share).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsReceive]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsReceive,
+        withCaller(caller, (remote, session) => remote.receive(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsApplied]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsApplied,
+        withCaller(caller, (remote, session) => remote.applied(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsWithdraw]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsWithdraw,
+        withCaller(caller, (remote, session) => remote.withdraw(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsList]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsList,
+        withRemoteSessions((remote) => remote.list(input.profileId)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsSignOutLocal]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsSignOutLocal,
+        withRemoteSessions((remote) => remote.signOutLocal(input.profileId, input.site)),
         attributes,
       ),
     [WS_METHODS.accountsMainBackfilled]: (input) =>
@@ -516,7 +583,11 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         removeProfile: unavailable,
         chooseProfile: unavailable,
         mainFilled: unavailable,
-        mainSignedOut: unavailable,
+        profileSignedOut: unavailable,
+        profileResend: unavailable,
+        profileSendLog: unavailable,
+        profileShared: unavailable,
+        updateReceived: unavailable,
         mainBackfilled: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),

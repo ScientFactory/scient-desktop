@@ -140,6 +140,15 @@ fails, Scient keeps the password and reports the failed store. A 1Password vault
 write is hidden from the choices until you reconnect 1Password; no setup step is needed.
 Removing an account leaves its external keychain and 1Password copies in place.
 
+Every other computer you connect, such as a lab server over SSH or your WSL backend, gets the
+sign-ins of your browser profiles here: Main to Main, Work to Work. Only profiles agents may use in
+every project with scripts go; a profile that is Off or limited to projects doesn't, and copies it
+already sent leave. Passwords and 2FA keys never go. Each computer's line under Other computers
+says what it has. When a site refuses a copy there, the line says it needs you: sign in once on
+that computer and the sign-in stays there. Signing out on that computer stays there until you next
+sign in to the site here. On another computer, a program running as you can read the sign-ins
+Scient keeps there.
+
 CAPTCHAs, push approvals and passkeys need you. A Google sign-in copied from Chrome can stop
 working while you keep using Chrome, so sign in to Google once inside Scient: press Sign in next to "Signed out of Google" on the
 profile, or Gmail on an empty browser tab, which always opens the selected profile. Hidden values

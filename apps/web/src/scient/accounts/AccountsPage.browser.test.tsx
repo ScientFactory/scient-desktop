@@ -17,6 +17,7 @@ import { render } from "../../../test/render";
 import { AccountRow, SignInGroupRow } from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, ProfileDetail } from "./BrowserProfiles";
+import { notSentLine, remoteLine } from "./RemoteComputers";
 
 const state = vi.hoisted(() => ({
   open: vi.fn(),
@@ -24,6 +25,8 @@ const state = vi.hoisted(() => ({
   settings: {} as Partial<ClientSettings>,
   calls: [] as unknown[],
   features: { signInAnyRow: true } as { signInAnyRow?: true },
+  primary: "synthetic" as string | null,
+  results: {} as Record<string, unknown>,
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -32,6 +35,11 @@ vi.mock("~/hooks/useSettings", async (original) => ({
     return select ? select(settings) : settings;
   },
   useClientSettingsHydrated: () => true,
+}));
+vi.mock("~/state/environments", async (original) => ({
+  ...(await original<typeof import("~/state/environments")>()),
+  usePrimaryEnvironmentId: () => state.primary,
+  useEnvironment: () => ({ label: "Lab server" }),
 }));
 vi.mock("~/browser/openFileInPreview", () => ({ openUrlInPreview: state.open }));
 vi.mock("~/localApi", () => ({
@@ -54,9 +62,9 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("./useAccounts", () => ({
   useAccounts: () => ({ data: { features: state.features }, canWrite: true }),
-  useAccountCommand: () => async (input: unknown) => {
+  useAccountCommand: (command: { label: string }) => async (input: unknown) => {
     state.calls.push(["record", input]);
-    return { ok: true, value: {} };
+    return { ok: true, value: state.results[command.label] ?? {} };
   },
   usePasswordStorePermission: () => true,
 }));
@@ -285,7 +293,7 @@ it("records a sign-out on Main before its cookies go", async () => {
   await page.getByRole("button", { name: "Sign out" }).click();
   await vi.waitFor(() => expect(state.calls).toHaveLength(2));
   expect(state.calls).toEqual([
-    ["record", { site: "github.com" }],
+    ["record", { profileId: "default", site: "github.com" }],
     ["remove", "github.com"],
   ]);
 });
@@ -334,4 +342,119 @@ it("says which profile a site uses when Main's copy doesn't work, and offers Mai
       }),
     ),
   );
+});
+
+it("says what each other computer holds of this desktop's sign-ins, first state that matches", () => {
+  const now = new Date("2026-11-04T10:15:00.000Z");
+  const at = "2026-11-04T10:14:00.000Z";
+  const share = (overrides = {}) => ({
+    environmentId: EnvironmentId.make("lab"),
+    label: "Lab server",
+    sentAt: at,
+    seenAt: at,
+    applied: 3,
+    waiting: 0,
+    needsYou: [] as string[],
+    ...overrides,
+  });
+  const line = (overrides: Partial<Parameters<typeof remoteLine>[0]> = {}) =>
+    remoteLine(
+      {
+        label: "Lab server",
+        phase: "connected",
+        sending: false,
+        refused: undefined,
+        remote: { features: { sessionsReceive: true } },
+        shared: [share()],
+        universities: [],
+        ...overrides,
+      },
+      now,
+    ).text;
+  const time = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  expect(line({ sending: true })).toBe("Lab server · sending your sign-ins…");
+  expect(line()).toBe(`Lab server · has your sign-ins from ${time}`);
+  expect(line({ phase: "offline" })).toBe(
+    `Lab server · offline since ${time} · has your sign-ins from ${time}`,
+  );
+  expect(line({ remote: { features: {} } })).toBe(
+    "Lab server · can't receive sign-ins: update Scient there",
+  );
+  expect(line({ refused: "relay" })).toBe(
+    "Lab server · doesn't get sign-ins: connected through a relay",
+  );
+  expect(line({ refused: "unencrypted" })).toBe(
+    "Lab server · doesn't get sign-ins: connected without encryption",
+  );
+  expect(line({ shared: [] })).toBe("Lab server · gets your sign-ins when it connects");
+  expect(
+    line({
+      shared: [share({ needsYou: ["github.com"], kept: 3, waiting: 2 })],
+      universities: ["HUJI"],
+    }),
+  ).toBe(
+    `Lab server · has your sign-ins from ${time} · github.com needs you there · 3 kept its own · 2 waiting · HUJI isn't connected there`,
+  );
+  const record = (overrides = {}) => ({ ...defaultBrowserProfileRecord("work"), ...overrides });
+  expect(
+    notSentLine([
+      { id: "default", name: "Main", record: record() },
+      { id: "work", name: "Work", record: record({ scope: { type: "projects", projectIds: [] } }) },
+      { id: "old", name: "Old", record: record({ access: "off" }) },
+    ]),
+  ).toBe("Not sent to other computers: Work (limited to projects here), Old (off for agents).");
+});
+
+it("on another computer, shows received controls as set on the desktop and signs out there only", async () => {
+  state.settings = { browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }] };
+  state.calls = [];
+  state.primary = "desktop";
+  state.results = { "accounts:sessionsList": { sites: [{ site: "github.com", cookies: 2 }] } };
+  using _desktop = fixture();
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: { accounts: { signedInSites: async () => [], signOutSite: async () => true } },
+  });
+  const received = {
+    ...defaultBrowserProfileRecord("work"),
+    received: [
+      {
+        source: EnvironmentId.make("macbook"),
+        sessionId: "session-desktop",
+        label: "MacBook",
+        sentAt: "2026-11-04T10:14:00.000Z",
+        units: [],
+      },
+    ],
+  };
+  try {
+    await using _screen = await render(
+      <BrowserProfiles
+        environmentId={EnvironmentId.make("lab")}
+        snapshot={{ profiles: [received], accounts: [] } as unknown as AccountsSnapshot}
+        canWrite
+        onImport={() => undefined}
+      />,
+    );
+    await expect.element(page.getByText("Set on MacBook")).toBeVisible();
+    // Main is this computer's own; Work's controls are set on the desktop.
+    await expect.element(page.getByRole("button", { name: "Allowed" }).nth(0)).toBeEnabled();
+    await expect.element(page.getByRole("button", { name: "Allowed" }).nth(1)).toBeDisabled();
+    await page.getByRole("button", { name: "Signed-in sites for Work" }).click();
+    await expect.element(page.getByText("github.com")).toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          "Signs out on Lab server. MacBook's next sign-in to this site copies it again.",
+        ),
+      )
+      .toBeVisible();
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await vi.waitFor(() =>
+      expect(state.calls).toContainEqual(["record", { profileId: "work", site: "github.com" }]),
+    );
+  } finally {
+    state.primary = "synthetic";
+    state.results = {};
+  }
 });

@@ -30,9 +30,13 @@ import type {
   AccountStoresStatus,
   AccountSummary,
   AccountTarget,
+  BrowserProfileRecord,
+  ProfileReceived,
+  ProfileSendLog,
+  ProfileSharedWith,
+  SentProfileControls,
   AccountUseAction,
   BrowserProfileId,
-  BrowserProfileRecord,
   BrowserProfileRecordUpdateInput,
   KeychainCandidatesResult,
   OnePasswordConnectInput,
@@ -129,8 +133,35 @@ export interface AccountsServiceShape {
     readonly accountId: AccountId;
     readonly profileName: string;
   }) => Effect.Effect<void, AccountsError>;
-  /** Records Accounts' Sign out on Main, so imports and back-fills never copy the site back. */
-  readonly mainSignedOut: (site: string) => Effect.Effect<void, AccountsError>;
+  /**
+   * Records Accounts' Sign out in a profile as a delete revision for other computers; Main also
+   * keeps the site, so imports and back-fills never copy it back.
+   */
+  readonly profileSignedOut: (
+    profileId: BrowserProfileId,
+    site: string,
+  ) => Effect.Effect<number, AccountsError>;
+  /** A whole-jar revision: after an import or refresh into the profile, or Send again. */
+  readonly profileResend: (profileId: BrowserProfileId) => Effect.Effect<number, AccountsError>;
+  readonly profileSendLog: (
+    profileId: BrowserProfileId,
+  ) => Effect.Effect<ProfileSendLog, AccountsError>;
+  /** What another computer applied of the profile; entries all of them applied are dropped. */
+  readonly profileShared: (
+    profileId: BrowserProfileId,
+    share: ProfileSharedWith,
+  ) => Effect.Effect<void, AccountsError>;
+  /**
+   * On a remote: changes a profile's received copies, and the controls a sender sets, in one
+   * locked commit. Returns the record as it was before the change.
+   */
+  readonly updateReceived: (
+    profileId: BrowserProfileId,
+    change: (record: BrowserProfileRecord) => {
+      readonly received: ReadonlyArray<ProfileReceived>;
+      readonly controls?: SentProfileControls;
+    },
+  ) => Effect.Effect<BrowserProfileRecord, AccountsError>;
   /** Records the profiles the one-time back-fill copied into Main; an empty list marks it done. */
   readonly mainBackfilled: (
     profileIds: ReadonlyArray<BrowserProfileId>,

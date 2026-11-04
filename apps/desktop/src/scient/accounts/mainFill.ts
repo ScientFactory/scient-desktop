@@ -19,6 +19,7 @@ import {
   mergeUnits,
   readJar,
   setCookies,
+  shareable,
   unitCookies,
   unitSites,
   type CdpSend,
@@ -228,5 +229,52 @@ export const signOutMainSite = Effect.fn("DesktopAccounts.signOutMainSite")(func
       () => true,
       () => false,
     ),
+  );
+});
+
+export const ReadSessionsInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  controls: Schema.Struct({
+    access: AccountAccess,
+    scope: GrantScope,
+    allowedProjects: Schema.optional(Schema.Array(ProjectId)),
+    scriptSignIn: Schema.Boolean,
+  }),
+  units: Schema.optional(Units),
+  join: Schema.optional(Units),
+});
+
+/**
+ * A shareable profile's live sign-ins in the primary environment's jar, each unit whole, for other
+ * computers. It takes the Main lock, so it never reads a unit a copy into Main is half-way through.
+ */
+export const readSessions = Effect.fn("DesktopAccounts.readSessions")(function* (
+  input: typeof ReadSessionsInput.Type,
+) {
+  if (!shareable(input.profileId, input.controls)) return null;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(PRIMARY_LOCAL_ENVIRONMENT_ID, input.profileId);
+  const session = yield* manager
+    .getBrowserSession(scope.scope, scope.persistent, scope.namespace)
+    .pipe(Effect.option);
+  if (session._tag === "None" || !scope.persistent) return null;
+  return yield* Effect.promise(() =>
+    underMainLock(PRIMARY_LOCAL_ENVIRONMENT_ID, () =>
+      withCookieDebugger(session.value, async (send) => {
+        const nowSeconds = Date.now() / 1000;
+        const live = (await readJar(send)).cookies.filter(
+          (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
+        );
+        const planned = input.units
+          ? mergeUnits(input.units, site)
+          : jarUnits(live, site, input.join);
+        return {
+          units: planned.flatMap((unit) => {
+            const cookies = unitCookies(unit, live, site);
+            return cookies.length ? [{ sites: [...unit], cookies }] : [];
+          }),
+        };
+      }),
+    ).catch(() => null),
   );
 });

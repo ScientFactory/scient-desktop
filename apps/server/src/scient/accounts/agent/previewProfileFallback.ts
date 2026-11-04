@@ -4,6 +4,7 @@ import {
   type PreviewAutomationOpenInput,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -21,7 +22,8 @@ import { findProfiles } from "./findProfiles.ts";
 import { classifyProfilePage, isAutomaticSignInPage } from "./profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./profileDetection.ts";
 import { profileOpenDecision } from "./profileOpenDecision.ts";
-import { signInOnPage } from "./signInOnPage.ts";
+import { refusedCopyNote, signInOnPage } from "./signInOnPage.ts";
+import { markNeedsYou } from "../remoteSessions.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(ProfileDetection);
@@ -103,10 +105,20 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
     const raw = yield* invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId);
     const page = yield* decodeDetection(raw);
     const result = classifyProfilePage(url, page);
-    const profileId =
-      status.tabs?.find((tab) => tab.tabId === tabId)?.profileId ?? options.profileId;
+    const tabProfile = status.tabs?.find((tab) => tab.tabId === tabId)?.profileId;
+    const profileId = tabProfile ?? options.profileId;
     if (result === "opens" && page.signOutLink && profileId !== undefined)
       yield* pageSignedIn(profileId, page).pipe(Effect.ignore, Effect.forkDetach);
+    // On a computer that received this profile's sign-ins: a refused copy needs the user here.
+    const copiedFrom =
+      tabProfile && (result === "sign-in" || page.signOutLink)
+        ? yield* markNeedsYou(
+            tabProfile,
+            url,
+            result === "sign-in" ? "refused" : "signed-in",
+            DateTime.formatIso(yield* DateTime.now),
+          )
+        : undefined;
     const decision = profileOpenDecision(result, {
       operation: options.operation,
       explicitProfile: options.input?.profileId !== undefined,
@@ -128,9 +140,17 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       }).pipe(Effect.provideService(AgentInvocationContext, invocation));
       return signedIn && { ...(signedIn.status ?? status), accountsNote: signedIn.note };
     });
+    const refusedCopy =
+      result === "sign-in" && copiedFrom
+        ? {
+            ...status,
+            accountsNote: refusedCopyNote({ requestedUrl: url, copiedFrom }, scope.unattended),
+          }
+        : undefined;
     if (decision.action === "note")
       return (
-        (yield* signInHere) ?? {
+        (yield* signInHere) ??
+        refusedCopy ?? {
           ...status,
           accountsNote: `This page shows ${decision.problem} in ${profileName}. Call scient_account_find_profile with this URL to find a profile that can open it.`,
         }
@@ -165,7 +185,8 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
     const best = found.profiles.find((profile) => profile.profileId === found.best);
     if (!best)
       return (
-        (yield* signInHere) ?? {
+        (yield* signInHere) ??
+        refusedCopy ?? {
           ...status,
           accountsNote:
             "This page needs another account; no allowed browser profile can open it. Ask the user to sign in or to allow a profile in Settings → Accounts & secrets.",

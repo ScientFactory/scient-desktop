@@ -298,3 +298,62 @@ it.effect("a page that opens in the profile it fell back to marks that profile's
     yield* Fiber.join(yield* marked);
   }).pipe(Effect.scoped),
 );
+
+it.effect(
+  "marks a refused copy from the desktop as needing the user here, and tells the agent",
+  () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const work = BrowserProfileId.make("work");
+      yield* service.updateReceived(work, () => ({
+        received: [
+          {
+            source: EnvironmentId.make("macbook"),
+            sessionId: "session-desktop",
+            label: "MacBook",
+            sentAt: "2026-11-04T10:14:00.000Z",
+            units: [{ sites: ["github.com"], revision: 1, outcome: "copied" }],
+          },
+        ],
+      }));
+      const needsYou = Effect.map(
+        service.snapshot,
+        ({ profiles }) =>
+          profiles.find((profile) => profile.profileId === work)?.received?.[0]?.units[0]?.needsYou,
+      );
+      const url = "https://github.com/settings/profile";
+      const open = (fake: ReturnType<typeof browser>, unattended: boolean) => {
+        fake.urls.set("tab-work", url);
+        return previewProfileFallback({ ...scope, unattended }, fake.status(), {
+          operation: "open",
+          requestedUrl: url,
+          targetsExistingTab: false,
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(fake.layer, invocation, Layer.succeed(AccountsService, service)),
+          ),
+        );
+      };
+      const attended = yield* open(
+        browser(() => false),
+        false,
+      );
+      expect(attended.accountsNote).toBe(
+        "github.com refused the sign-in copied from MacBook. Call scient_account_add with kind website and site github.com: the user signs in once on this computer in a card, and it stays here.",
+      );
+      expect(yield* needsYou).toBeDefined();
+      const unattended = yield* open(
+        browser(() => false),
+        true,
+      );
+      expect(unattended.accountsNote).toBe(
+        "github.com refused the sign-in copied from MacBook, and nobody is here to sign in on this computer. Stop and say so; the user sees it in Accounts.",
+      );
+      // A page on the site that shows a sign-out control: the copy works again.
+      yield* open(
+        browser(() => true, { signOutLink: true }),
+        false,
+      );
+      expect(yield* needsYou).toBeUndefined();
+    }).pipe(Effect.scoped),
+);

@@ -136,6 +136,9 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+// SCIENT-FORK:START — Scient Accounts: removing a computer deletes the sign-ins copied there.
+import { copiesStayToast, withdrawCopies } from "~/scient/accounts/remoteSessions";
+// SCIENT-FORK:END
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -573,6 +576,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     const environmentId = environment.environmentId;
     setRemovingSavedEnvironmentId(environmentId);
     setSavedBackendError(null);
+    // SCIENT-FORK:START — Scient Accounts: the sign-ins copied there go first, if it answers in 5 s.
+    const copies = await withdrawCopies(environmentId);
+    if (copies === "offline") toastManager.add(copiesStayToast(environment.label));
+    // SCIENT-FORK:END
     const result = await removeEnvironment(environmentId);
     setRemovingSavedEnvironmentId(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

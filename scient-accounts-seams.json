@@ -115,6 +115,11 @@
       "purpose": "Reuse browser import transactions and link to Accounts while preserving the older-server profile panel."
     },
     {
+      "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the sign-ins copied there go first, if it answers in 5 s.",
+      "purpose": "Removing a computer first deletes the sign-ins this desktop copied there, waiting at most 5 s."
+    },
+    {
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "Scient Accounts: approvals belong to the active thread.",
       "purpose": "Show account approvals above the active thread composer."

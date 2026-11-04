@@ -39,7 +39,22 @@ import {
   AccountMainBackfilledInput,
   AccountsQualifyCase,
   AccountMainFilledInput,
-  AccountMainSignedOutInput,
+  AccountProfileResendInput,
+  AccountProfileRevision,
+  AccountProfileSendLogInput,
+  AccountProfileSharedInput,
+  AccountProfileSignedOutInput,
+  AccountSessionsApplied,
+  AccountSessionsAppliedInput,
+  AccountSessionsList,
+  AccountSessionsListInput,
+  AccountSessionsReceiveInput,
+  AccountSessionsReceiveResult,
+  AccountSessionsSignOutLocalInput,
+  AccountSessionsSignOutLocalResult,
+  AccountSessionsWithdrawInput,
+  AccountSessionsWithdrawResult,
+  ProfileSendLog,
   AccountSignInSeenInput,
   AccountSessionsSeenInput,
   AccountKeepTypedInput,
@@ -94,9 +109,17 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileRemove: "accounts.profiles.remove",
   accountsProfileChoose: "accounts.profiles.choose",
   accountsMainFilled: "accounts.main.filled",
-  accountsMainSignedOut: "accounts.main.signedOut",
   accountsMainBackfilled: "accounts.main.backfilled",
   accountsSessionsQualify: "accounts.sessions.qualify",
+  accountsSessionsReceive: "accounts.sessions.receive",
+  accountsSessionsApplied: "accounts.sessions.applied",
+  accountsSessionsWithdraw: "accounts.sessions.withdraw",
+  accountsSessionsList: "accounts.sessions.list",
+  accountsSessionsSignOutLocal: "accounts.sessions.signOutLocal",
+  accountsProfileSendLog: "accounts.profiles.sendLog",
+  accountsProfileResend: "accounts.profiles.resend",
+  accountsProfileSignedOut: "accounts.profiles.signedOut",
+  accountsProfileShared: "accounts.profiles.shared",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -350,11 +373,6 @@ export const WsAccountsMainFilledRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
   error: AccountsRpcError,
 });
 
-export const WsAccountsMainSignedOutRpc = Rpc.make(
-  SCIENT_ACCOUNT_WS_METHODS.accountsMainSignedOut,
-  { payload: AccountMainSignedOutInput, success: Empty, error: AccountsRpcError },
-);
-
 export const WsAccountsMainBackfilledRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsMainBackfilled,
   { payload: AccountMainBackfilledInput, success: Empty, error: AccountsRpcError },
@@ -376,4 +394,62 @@ export const WsAccountsKeepTypedRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.account
 export const WsAccountsSessionsQualifyRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsSessionsQualify,
   { payload: Empty, success: Schema.Array(AccountsQualifyCase), error: AccountsRpcError },
+);
+
+const accountRpc = <
+  const Tag extends string,
+  Payload extends Schema.Top,
+  Success extends Schema.Top,
+>(
+  tag: Tag,
+  payload: Payload,
+  success: Success,
+) => Rpc.make(tag, { payload, success, error: AccountsRpcError });
+
+/** On a remote: one batch of a desktop's sign-ins, from the session that sends as `source`. */
+export const WsAccountsSessionsReceiveRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsReceive,
+  AccountSessionsReceiveInput,
+  AccountSessionsReceiveResult,
+);
+export const WsAccountsSessionsAppliedRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsApplied,
+  AccountSessionsAppliedInput,
+  AccountSessionsApplied,
+);
+export const WsAccountsSessionsWithdrawRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsWithdraw,
+  AccountSessionsWithdrawInput,
+  AccountSessionsWithdrawResult,
+);
+export const WsAccountsSessionsListRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsList,
+  AccountSessionsListInput,
+  AccountSessionsList,
+);
+export const WsAccountsSessionsSignOutLocalRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsSignOutLocal,
+  AccountSessionsSignOutLocalInput,
+  AccountSessionsSignOutLocalResult,
+);
+/** On the desktop: the send log of one profile, names and numbers only. */
+export const WsAccountsProfileSendLogRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileSendLog,
+  AccountProfileSendLogInput,
+  ProfileSendLog,
+);
+export const WsAccountsProfileResendRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileResend,
+  AccountProfileResendInput,
+  AccountProfileRevision,
+);
+export const WsAccountsProfileSignedOutRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileSignedOut,
+  AccountProfileSignedOutInput,
+  AccountProfileRevision,
+);
+export const WsAccountsProfileSharedRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileShared,
+  AccountProfileSharedInput,
+  Empty,
 );

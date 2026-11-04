@@ -165,9 +165,47 @@ unrestricted profile recording a newer `signed-in` with `by: "action"` (`watchMa
 Accounts snapshot stream; a look never copies), and
 the one-time back-fill per environment and profile (`backfilled` on Main's record), whose first run
 in the primary environment makes Main the new-tab default. `accounts.mainFilled` gives Main its row
-as `unknown`, "Copied from …"; `accounts.mainSignedOut` keeps Accounts' Sign out on Main in
+as `unknown`, "Copied from …"; `accounts.profiles.signedOut` keeps Accounts' Sign out on Main in
 `signedOutSites`, which imports and the back-fill skip, cleared only by a sign-in action in Main.
 `scripts/qualify-session-copy.mjs` qualifies the CDP executor on each platform in a dev app.
+
+### The same profiles on every computer
+
+The desktop copies each shareable profile's sign-ins (persistent, Allowed or Ask for all projects,
+scripts on) into the same profile on every other computer it is connected to, one way. No password
+or 2FA key goes. Decisions use revisions, never clocks:
+
+- **Send log.** Each desktop profile record keeps `send`: one counter, and the newest revision per
+  unit, written in the commit that records the action (`sendLog.ts`, from `commit`): a newer sign-in
+  action (`isNewerAction`, the one seam for item 4's `by: "action"`), Main's copy (`mainFilled`),
+  Accounts' Sign out (`accounts.profiles.signedOut`, a delete), an import or Send again
+  (`accounts.profiles.resend`, the whole jar), and a profile turning restricted (`withdrawn`) or
+  shareable again (the jar). A full log falls back to a jar revision. Entries every computer in
+  `sharedWith` applied are dropped. Clients see only `send.head`.
+- **Delivery** (`apps/web/src/scient/accounts/remoteSessions.ts`) runs on the desktop, serially per
+  remote, from durable state: `accounts.profiles.sendLog`, the jar through the bridge's
+  `readSessions` (under item 3's Main lock), and the remote's `accounts.sessions.applied`. The pure
+  `planDelivery` fills a remote that never received, withdraws a restricted profile, and otherwise
+  sends units whose revision is newer than the remote applied. A unit gone from the jar is never
+  deleted for its absence. Batches hold at most 100 units and 1,000 cookies, values `Redacted`.
+  Before each batch the route (`allowedRoute`: SSH tunnel end, TLS, a Tailscale name, loopback, or
+  this desktop's WSL backend at its topology's address; never a relay), the catalog entry, the
+  settings permission and `features.sessionsReceive` are checked again; a change stops the run.
+- **Receiver** (`apps/server/src/scient/accounts/remoteSessions.ts`): the sender (`source`) is bound
+  to the authenticated session that first sent; another session takes over only once that one is
+  revoked or expired. Under a lock per profile it applies the sent controls (a project limit is
+  Off), checks them and the university (`travels`) against its own rows, refuses a revision not
+  newer than applied (`stale`) and a unit with an open tab (`busy`), then runs item 3's `applyUnit`
+  through `ServerBrowser.profileCookies` (a context lease in `ServerBrowserContexts`; CDP Network
+  commands on a helper page of the profile's own context). Only applied units are recorded in
+  `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit; a
+  remote that finds the sender's session revoked deletes its copies at start and on any receive.
+- **Needs you.** A page on a received unit that asks to sign in marks it `needsYou`, and the agent's
+  note asks for `scient_account_add` (attended) or to stop (unattended). A sign-out control there
+  clears it.
+
+`accounts.sessions.qualify` (dev servers, or `SCIENT_QUALIFY_SESSION_COPY=1`) runs item 3's cases on
+a remote's browser; `qualify-session-copy.mjs --environment <id>` calls it.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
 session may use, and `preview_open` refuses an Off profile (or asks for an Ask one), including the

@@ -23,6 +23,7 @@ vi.mock("./googleSessions", () => ({ watchGoogleSessions: watcher("google") }));
 vi.mock("./keepSignedIn", () => ({ watchKeepSignedIn: watcher("keep") }));
 vi.mock("./mainFill", () => ({ watchMainFill: watcher("main") }));
 vi.mock("./signInKeeps", () => ({ watchSignInKeeps: watcher("typed") }));
+vi.mock("./remoteSessions", () => ({ watchRemoteSessions: watcher("deliver") }));
 vi.mock("./qualifyRemoteSessions", () => ({ offerRemoteQualification: () => undefined }));
 
 const { startAccountWatchers } = await import("./accountWatchers");
@@ -42,10 +43,13 @@ it("reads only the desktop's own jars: nothing starts for another computer", () 
     "main:desktop",
     "typed:desktop",
     "typed:lab-server",
+    "deliver:lab-server",
   ]);
-  // Only typing for a sign-in that computer runs goes to it; nothing reads a jar named after it.
+  // That computer gets typing for its own sign-ins and this desktop's sign-ins; no watcher reads a
+  // jar named after it.
   expect(state.started.filter((started) => started.endsWith(":lab-server"))).toEqual([
     "typed:lab-server",
+    "deliver:lab-server",
   ]);
 
   stop();

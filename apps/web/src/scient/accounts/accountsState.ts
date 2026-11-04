@@ -198,9 +198,43 @@ export const accountsState = {
     tag: WS_METHODS.accountsMainFilled,
     ...lane,
   }),
-  mainSignedOut: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "accounts:mainSignedOut",
-    tag: WS_METHODS.accountsMainSignedOut,
+  profileSignedOut: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileSignedOut",
+    tag: WS_METHODS.accountsProfileSignedOut,
+    ...lane,
+  }),
+  profileResend: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileResend",
+    tag: WS_METHODS.accountsProfileResend,
+    ...lane,
+  }),
+  profileSendLog: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileSendLog",
+    tag: WS_METHODS.accountsProfileSendLog,
+  }),
+  profileShared: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileShared",
+    tag: WS_METHODS.accountsProfileShared,
+  }),
+  sessionsReceive: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsReceive",
+    tag: WS_METHODS.accountsSessionsReceive,
+  }),
+  sessionsApplied: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsApplied",
+    tag: WS_METHODS.accountsSessionsApplied,
+  }),
+  sessionsWithdraw: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsWithdraw",
+    tag: WS_METHODS.accountsSessionsWithdraw,
+  }),
+  sessionsList: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsList",
+    tag: WS_METHODS.accountsSessionsList,
+  }),
+  sessionsSignOutLocal: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsSignOutLocal",
+    tag: WS_METHODS.accountsSessionsSignOutLocal,
     ...lane,
   }),
   mainBackfilled: createEnvironmentRpcCommand(connectionAtomRuntime, {

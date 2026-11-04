@@ -3,6 +3,8 @@ import {
   AccountsError,
   AccountsSnapshot,
   BrowserProfileId,
+  DEFAULT_BROWSER_PROFILE_ID,
+  EnvironmentId,
   ProjectId,
   ThreadId,
   defaultAccountControls,
@@ -412,12 +414,12 @@ describe("AccountsService and Main", () => {
       );
       const cleared = (run: Effect.Effect<void, AccountsError>, site = "github.com") =>
         Effect.gen(function* () {
-          yield* service.mainSignedOut(site);
+          yield* service.profileSignedOut(DEFAULT_BROWSER_PROFILE_ID, site);
           expect(yield* signedOut).toEqual([site]);
           yield* run;
           expect(yield* signedOut).toBeUndefined();
         });
-      yield* service.mainSignedOut("github.com");
+      yield* service.profileSignedOut(DEFAULT_BROWSER_PROFILE_ID, "github.com");
       // Looks never clear it: a row appearing, a Check, a copy.
       yield* service.save(row("default", ["github.com"]));
       const main = (yield* service.save(row("default", ["github.com"], "person"))).accountId;
@@ -446,7 +448,7 @@ describe("AccountsService and Main", () => {
         ),
         "google.com",
       );
-      yield* service.mainSignedOut("github.com");
+      yield* service.profileSignedOut(DEFAULT_BROWSER_PROFILE_ID, "github.com");
       // A sign-in in another profile leaves Main's record alone.
       const other = (yield* service.save(row("profile-work", ["github.com"], "other"))).accountId;
       yield* service.recordUse({
@@ -1247,3 +1249,101 @@ it.effect(
       expect(yield* service.handoffCancelled(entry.handoffId)).toBe(false);
     }),
 );
+
+describe("the send log other computers follow", () => {
+  const WORK = BrowserProfileId.make("profile-work");
+  const row = (sites: string[], profileId = WORK) => ({
+    name: sites[0]!,
+    details: { kind: "website" as const, sites, profileId },
+    secrets: {},
+  });
+  const shared = (environmentId: string, applied: number) => ({
+    environmentId: EnvironmentId.make(environmentId),
+    label: environmentId,
+    applied,
+    waiting: 0,
+    needsYou: [],
+  });
+
+  it.effect("writes each action's revision in its own commit, and none for a look", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const log = (profileId = WORK) => service.profileSendLog(profileId);
+      const github = (yield* service.save(row(["github.com"]))).accountId;
+      expect((yield* log()).head).toBe(0);
+      // A look that sees the session working is not an action.
+      yield* service.recordCheck(github, { state: "signed-in" });
+      expect((yield* log()).head).toBe(0);
+      yield* TestClock.adjust("1 minute");
+      yield* service.recordUse({
+        target: { type: "account", accountId: github },
+        action: "sign-in",
+        outcome: "ok",
+        signInOutcome: "signed-in",
+      });
+      yield* Effect.yieldNow;
+      yield* service.snapshot;
+      expect(yield* log()).toEqual({
+        head: 1,
+        units: [{ sites: ["github.com"], revision: 1, kind: "copy" }],
+      });
+      expect(yield* service.profileSignedOut(WORK, "github.com")).toBe(2);
+      expect(yield* service.profileResend(WORK)).toBe(3);
+      expect(yield* log()).toEqual({
+        head: 3,
+        jar: 3,
+        units: [{ sites: ["github.com"], revision: 2, kind: "delete" }],
+      });
+      yield* service.mainFilled({ accountId: github, profileName: "Work" });
+      expect((yield* log(DEFAULT_BROWSER_PROFILE_ID)).units).toEqual([
+        { sites: ["github.com"], revision: 1, kind: "copy" },
+      ]);
+      // Clients see only the head.
+      const record = (yield* service.snapshot).profiles.find((p) => p.profileId === WORK);
+      expect(record?.send).toEqual({ head: 3, units: [] });
+    }),
+  );
+
+  it.effect("keeps a revision when its row is deleted, and across restarts", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const first = yield* makeHarness({ storage });
+      const github = (yield* first.service.save(row(["github.com"]))).accountId;
+      yield* first.service.profileSignedOut(WORK, "github.com");
+      yield* first.service.remove(github);
+      expect((yield* first.service.profileSendLog(WORK)).units).toHaveLength(1);
+      const again = yield* makeHarness({ storage });
+      expect(yield* again.service.profileResend(WORK)).toBe(2);
+    }),
+  );
+
+  it.effect("keeps a deletion until every computer it goes to applied it", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      yield* service.profileShared(WORK, shared("laptop", 0));
+      yield* service.profileSignedOut(WORK, "github.com");
+      yield* service.profileShared(WORK, shared("lab", 1));
+      expect((yield* service.profileSendLog(WORK)).units).toHaveLength(1);
+      yield* service.profileShared(WORK, shared("laptop", 1));
+      expect((yield* service.profileSendLog(WORK)).units).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "withdraws a profile that turns restricted, and resends its jar when shared again",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const target = { type: "profile" as const, profileId: WORK };
+        yield* service.setControls({ target, access: "off" });
+        expect(yield* service.profileSendLog(WORK)).toEqual({ head: 1, withdrawn: 1, units: [] });
+        yield* service.setControls({ target, access: "ask" });
+        expect(yield* service.profileSendLog(WORK)).toEqual({
+          head: 2,
+          withdrawn: 1,
+          jar: 2,
+          units: [],
+        });
+      }),
+  );
+});

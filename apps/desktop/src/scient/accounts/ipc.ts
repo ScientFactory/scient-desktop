@@ -22,7 +22,14 @@ import { discoverSourceProfiles } from "./sourceProfiles.ts";
 import { makeSiteIcons } from "./siteIcons.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { groupSignedInSites } from "./signedInSites.ts";
-import { FillMainInput, fillMain, removeSiteCookies, signOutMainSite } from "./mainFill.ts";
+import {
+  FillMainInput,
+  ReadSessionsInput,
+  fillMain,
+  readSessions,
+  removeSiteCookies,
+  signOutMainSite,
+} from "./mainFill.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
@@ -264,6 +271,17 @@ export const fillMainHandler = Effect.fn("DesktopAccounts.fillMainHandler")(func
   return yield* fillMain(input.value);
 });
 
+const decodeReadSessions = Schema.decodeUnknownOption(ReadSessionsInput);
+const readSessionsHandler = Effect.fn("DesktopAccounts.readSessionsHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const input = decodeReadSessions(raw);
+  if (Option.isNone(input)) return null;
+  return yield* readSessions(input.value);
+});
+
 const decodeSignOutMain = Schema.decodeUnknownOption(
   Schema.Struct({ site: SignOut.fields.site, environmentId: Schema.optional(EnvironmentId) }),
 );
@@ -337,6 +355,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.QUIET_VISIT, handler: visitQuietly });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL_MAIN, handler: fillMainHandler });
+  yield* ipc.handle({ channel: Channels.READ_SESSIONS, handler: readSessionsHandler });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_MAIN_SITE, handler: signOutMainHandler });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });

@@ -19,6 +19,7 @@ import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readPrimaryEnvironmentId } from "~/state/environments";
 
 import { accountsState } from "./accountsState";
 
@@ -302,10 +303,22 @@ async function fillFromProfile(
   return true;
 }
 
+/** An import into a profile of this desktop: its whole jar goes to other computers again. */
+const resendImported = async (environmentId: EnvironmentId, profileId: string) => {
+  if (environmentId !== readPrimaryEnvironmentId()) return;
+  await accountsState.profileResend
+    .run(appAtomRegistry, {
+      environmentId,
+      input: { profileId: BrowserProfileId.make(profileId), why: "import" },
+    })
+    .catch(() => undefined);
+};
+
 /** Trigger 1, an import or Refresh into another profile: then its sign-ins fill Main. */
 export async function fillMainFromProfile(environmentId: EnvironmentId, profileId: string) {
   const snapshot = await readSnapshot(environmentId);
   if (snapshot) await fillFromProfile(appAtomRegistry, environmentId, snapshot, profileId);
+  await resendImported(environmentId, profileId);
 }
 
 /** Imported profiles first, by when they were imported, then the rest in list order. */
@@ -364,10 +377,12 @@ export async function importIntoMain(
   // Without Main's sign-out record, an import could bring back a site the user left.
   const snapshot = await readSnapshot(environmentId);
   if (!fillMain || !snapshot) return null;
-  return fillMain({
+  const filled = await fillMain({
     environmentId,
     from: { importSourceId, sourceProfileDirectory },
     mode: "fill",
     skipSites: mainSignOuts(snapshot),
   });
+  if (filled) await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  return filled;
 }

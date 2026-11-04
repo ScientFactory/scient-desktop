@@ -12,7 +12,7 @@ import type { BrowserContext } from "playwright-core";
 import { getDomain } from "tldts";
 
 /** The registrable site of a host, such as `huji.ac.il` for `idp.cc.huji.ac.il`. */
-const siteOf = (host: string) => {
+export const siteOf = (host: string) => {
   const bare = host.replace(/^\./, "").toLowerCase();
   return getDomain(bare, { allowPrivateDomains: true }) ?? bare;
 };

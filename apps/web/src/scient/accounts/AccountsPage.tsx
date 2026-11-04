@@ -91,6 +91,7 @@ import {
 import { UniversityIcon } from "./University";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { BrowserImportDialog, BrowserProfiles, useImportingPasswords } from "./BrowserProfiles";
+import { RemoteComputers } from "./RemoteComputers";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
 import { ProfilePicture } from "./ProfilePicture";
@@ -1064,6 +1065,7 @@ function AccountsContent({
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
+      <RemoteComputers environmentId={environmentId} snapshot={snapshot} canWrite={canWrite} />
       <PasswordStores
         environmentId={environmentId}
         snapshot={snapshot}

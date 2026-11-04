@@ -1,5 +1,5 @@
 import { clickableAccountRow } from "./clickableAccountRow";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import {
@@ -139,31 +139,45 @@ function SignedInSitesDialog({
   const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Another computer's sign-ins live in its own browser, not in this desktop's partitions.
+  const remote = environmentId !== usePrimaryEnvironmentId();
+  const remoteLabel = useEnvironment(environmentId)?.label ?? "this computer";
+  const sender = profile.record.received?.[0]?.label;
+  const listRemote = useAccountCommand(accountsState.sessionsList, environmentId);
+  const signOutRemote = useAccountCommand(accountsState.sessionsSignOutLocal, environmentId);
+  const recordSignOut = useAccountCommand(accountsState.profileSignedOut, environmentId);
+  const read = () =>
+    remote
+      ? listRemote({ profileId: BrowserProfileId.make(profile.id) }).then((listed) =>
+          listed.ok ? listed.value.sites.map(({ site }) => ({ domain: site })) : [],
+        )
+      : window.desktopBridge?.accounts?.signedInSites(profile.id, environmentId);
   const load = useEffectEvent(() =>
-    window.desktopBridge?.accounts
-      ?.signedInSites(profile.id, environmentId)
-      .then(setSites)
+    read()
+      ?.then(setSites)
       .catch(() => setSites([])),
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the desktop when the view opens.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the computer that holds them when the view opens.
   useEffect(() => {
     void load();
   }, []);
-  const recordSignOut = useAccountCommand(accountsState.mainSignedOut, environmentId);
   const signOut = async (site: string) => {
     setBusy(site);
     const accounts = window.desktopBridge?.accounts;
-    // Main's sign-out is recorded first, so no import or back-fill brings the site back.
-    const done =
-      profile.id === DEFAULT_BROWSER_PROFILE_ID
-        ? (await recordSignOut({ site })).ok &&
-          (await accounts?.signOutMainSite?.(site, environmentId).catch(() => false))
-        : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false);
+    const profileId = BrowserProfileId.make(profile.id);
+    // Recorded first: other computers then delete the site too, and Main never gets it back.
+    const done = remote
+      ? (await signOutRemote({ profileId, site })).ok
+      : (await recordSignOut({ profileId, site })).ok &&
+        (profile.id === DEFAULT_BROWSER_PROFILE_ID
+          ? await accounts?.signOutMainSite?.(site, environmentId).catch(() => false)
+          : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false));
     if (!done) profileError();
     else window.dispatchEvent(new Event("scient-accounts-session-changed"));
     await load();
     setBusy(null);
   };
+  const canSignOut = remote || window.desktopBridge?.accounts?.signOutSite !== undefined;
   const shown = (sites ?? []).filter((site) => site.domain.includes(query.trim().toLowerCase()));
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -201,7 +215,7 @@ function SignedInSitesDialog({
                   className="group flex items-center justify-between gap-3 border-b px-3 py-1.5 text-sm last:border-b-0"
                 >
                   <span className="truncate">{site.domain}</span>
-                  {window.desktopBridge?.accounts?.signOutSite ? (
+                  {canSignOut ? (
                     <span className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
                       <Button
                         size="xs"
@@ -221,6 +235,11 @@ function SignedInSitesDialog({
                 </div>
               ) : null}
             </div>
+            {remote && sender ? (
+              <p className="text-sm text-muted-foreground">
+                Signs out on {remoteLabel}. {sender}'s next sign-in to this site copies it again.
+              </p>
+            ) : null}
           </div>
         </DialogPanel>
       </DialogPopup>
@@ -970,15 +989,21 @@ export function BrowserProfiles({
           }
           control={
             <div className="flex items-center gap-2">
+              {profile.record.received?.[0] ? (
+                <span className="text-xs text-muted-foreground">
+                  Set on {profile.record.received[0].label}
+                </span>
+              ) : null}
               <AccessChip
                 environmentId={environmentId}
                 target={{ type: "profile", profileId: profile.id }}
                 access={profile.record.access}
-                disabled={disabled}
+                disabled={disabled || profile.record.received !== undefined}
               />
               <ControlsMenu disabled={disabled}>
                 <MenuCheckboxItem
                   variant="switch"
+                  disabled={profile.record.received !== undefined}
                   checked={profile.record.scriptSignIn}
                   onCheckedChange={(scriptSignIn) =>
                     void setControls({
@@ -1009,11 +1034,13 @@ export function BrowserProfiles({
                     Match to browser profile…
                   </MenuItem>
                 )}
-                <ScopeSubmenu
-                  environmentId={environmentId}
-                  target={{ type: "profile", profileId: profile.id }}
-                  scope={profile.record.scope}
-                />
+                {profile.record.received ? null : (
+                  <ScopeSubmenu
+                    environmentId={environmentId}
+                    target={{ type: "profile", profileId: profile.id }}
+                    scope={profile.record.scope}
+                  />
+                )}
                 <MenuItem
                   disabled={settings.browserDefaultProfileId === profile.id}
                   onClick={() =>

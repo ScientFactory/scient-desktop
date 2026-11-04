@@ -1,0 +1,536 @@
+// @effect-diagnostics globalDate:off -- Delivery times are UI labels; decisions use revisions.
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthSettingsWriteScope,
+  BrowserProfileId,
+  defaultBrowserProfileRecord,
+  resolveBrowserProfiles,
+  type AccountSessionsApplied,
+  type AccountSessionsReceiveInput,
+  type AccountSessionsReceiveResult,
+  type AccountsSnapshot,
+  type BrowserProfileRecord,
+  type DesktopAccountsBridge,
+  type DesktopEnvironmentBootstrap,
+  type EnvironmentId,
+  type ProfileSendLog,
+  type ProfileSharedWith,
+  type SessionCookie,
+} from "@t3tools/contracts";
+import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import {
+  planDelivery,
+  remoteControls,
+  shareable,
+  travels,
+  universitySites,
+  type PlannedUnit,
+} from "@t3tools/shared/scientSessionCookies";
+import * as Redacted from "effect/Redacted";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { getDomain } from "tldts";
+
+import { readDesktopSecondaryBootstraps } from "~/connection/desktopLocal";
+import { getClientSettings } from "~/hooks/useSettings";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readEnvironment, readPrimaryEnvironmentId } from "~/state/environments";
+import { environmentPresentations } from "~/state/presentation";
+import { environmentSession, readEnvironmentScope, readPreparedConnection } from "~/state/session";
+
+import { accountsState } from "./accountsState";
+
+type ReadSessions = NonNullable<DesktopAccountsBridge["readSessions"]>;
+
+/** The registrable site of a host, as the desktop and the remote both group cookies. */
+const siteOf = (host: string) => {
+  const bare = host.replace(/^\./, "").toLowerCase();
+  return getDomain(bare, { allowPrivateDomains: true }) ?? bare;
+};
+
+export type RouteRefusal = "relay" | "unencrypted";
+
+/**
+ * Sign-ins go only over the environment's own socket on a route that is encrypted or stays on
+ * this computer: an SSH tunnel's local end, TLS, a Tailscale name, loopback, or this desktop's WSL.
+ */
+export function allowedRoute(
+  connection: Pick<PreparedConnection, "environmentId" | "socketUrl" | "target">,
+  localBackends: ReadonlyArray<Pick<DesktopEnvironmentBootstrap, "id" | "httpBaseUrl">>,
+): RouteRefusal | undefined {
+  const url = URL.parse(connection.socketUrl);
+  if (!url) return "unencrypted";
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  switch (connection.target._tag) {
+    case "RelayConnectionTarget":
+      return "relay";
+    case "PrimaryConnectionTarget":
+      return "unencrypted";
+    case "SshConnectionTarget":
+      return url.protocol === "ws:" && isLocalLoopbackHost(host) ? undefined : "unencrypted";
+    case "BearerConnectionTarget": {
+      const local = localBackends.find((backend) => backend.id === connection.environmentId);
+      if (local) {
+        const backend = local.httpBaseUrl ? URL.parse(local.httpBaseUrl) : null;
+        return backend && backend.hostname === url.hostname && backend.port === url.port
+          ? undefined
+          : "unencrypted";
+      }
+      if (url.protocol === "wss:") return undefined;
+      return url.protocol === "ws:" && (isLocalLoopbackHost(host) || isTailnetHost(host))
+        ? undefined
+        : "unencrypted";
+    }
+  }
+}
+
+/** One persistent profile on the desktop, as delivery sees it. */
+export interface DeliveryProfile {
+  readonly profileId: string;
+  readonly record: BrowserProfileRecord;
+}
+
+export interface DeliveryDeps {
+  /** This desktop's primary environment, and its name on the remote. */
+  readonly source: EnvironmentId;
+  readonly label: string;
+  readonly remoteId: EnvironmentId;
+  readonly remoteLabel: string;
+  /** Persistent profiles with their desktop records. */
+  readonly profiles: () => ReadonlyArray<DeliveryProfile>;
+  /** Desktop rows, for the university's units that never travel. */
+  readonly desktopAccounts: () => AccountsSnapshot["accounts"];
+  /** Undefined while the route, destination, permission and feature still hold as planned. */
+  readonly revalidate: () => string | undefined;
+  readonly sendLog: (profileId: string) => Promise<ProfileSendLog>;
+  readonly applied: (profileId: string) => Promise<AccountSessionsApplied>;
+  readonly remoteRecord: (profileId: string) => BrowserProfileRecord | undefined;
+  readonly receive: (input: AccountSessionsReceiveInput) => Promise<AccountSessionsReceiveResult>;
+  readonly withdraw: (profileId: string, revision: number) => Promise<void>;
+  readonly shared: (profileId: string, share: ProfileSharedWith) => Promise<void>;
+  readonly readSessions: ReadSessions;
+  readonly now: () => string;
+}
+
+/** Stops a run: every await checks it, so nothing more is sent once it is set. */
+export class DeliveryStopped extends Error {}
+
+const BATCH_UNITS = 100;
+const BATCH_COOKIES = 1_000;
+const WAITING = new Set(["busy", "failed", "restore-failed"]);
+
+const sameControls = (record: BrowserProfileRecord | undefined, desktop: BrowserProfileRecord) => {
+  const sent = remoteControls(desktop);
+  return (
+    record !== undefined &&
+    record.access === sent.access &&
+    record.scope.type === "all-projects" &&
+    record.scriptSignIn === sent.scriptSignIn
+  );
+};
+
+const multiSiteRows = (accounts: AccountsSnapshot["accounts"], profileId: string) =>
+  accounts.flatMap(({ details }) =>
+    details.kind === "website" && details.profileId === profileId && details.sites.length > 1
+      ? [details.sites]
+      : [],
+  );
+
+/**
+ * One delivery to one remote, from durable state only: each persistent profile's send log, its
+ * jar now, and what the remote applied. Revalidates before every batch.
+ */
+export async function deliverOnce(deps: DeliveryDeps) {
+  const check = () => {
+    const stopped = deps.revalidate();
+    if (stopped !== undefined) throw new DeliveryStopped(stopped);
+  };
+  const university = universitySites(deps.desktopAccounts());
+  for (const { profileId } of deps.profiles()) {
+    check();
+    // A fresh desktop record each time: a profile restricted meanwhile switches to the withdrawal.
+    const record =
+      deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
+      defaultBrowserProfileRecord(profileId);
+    const isShareable = shareable(profileId, record);
+    const [log, applied] = await Promise.all([deps.sendLog(profileId), deps.applied(profileId)]);
+    check();
+    const controls = remoteControls(record);
+    const own = { access: record.access, scope: record.scope, scriptSignIn: record.scriptSignIn };
+    const join = multiSiteRows(deps.desktopAccounts(), profileId);
+    const jar = isShareable
+      ? ((await deps.readSessions({ profileId, controls: own, join }))?.units ?? [])
+      : [];
+    check();
+    const plan = planDelivery({
+      log,
+      applied,
+      jar: jar.map(({ sites }) => sites),
+      shareable: isShareable,
+      travels: (unit) => travels(unit, university, siteOf),
+      siteOf,
+    });
+    if (plan.kind === "withdraw") await deps.withdraw(profileId, plan.revision);
+    const batch = (units: AccountSessionsReceiveInput["units"], mode: "fill" | "replace") =>
+      deps.receive({
+        source: deps.source,
+        label: deps.label,
+        profileId,
+        controls,
+        mode,
+        units,
+        sentAt: deps.now(),
+      });
+    // Controls go for every persistent profile; a restricted one sends nothing else.
+    if (plan.kind !== "units" || plan.units.length === 0) {
+      if (!applied.bound || !sameControls(deps.remoteRecord(profileId), record))
+        await batch([], plan.kind === "units" ? plan.mode : "replace");
+      if (plan.kind === "units") await recordShare(deps, profileId, plan, []);
+      continue;
+    }
+    const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
+    for (const group of batches(plan.units)) {
+      check();
+      const copies = group.filter((unit) => unit.kind === "copy");
+      const read = copies.length
+        ? ((
+            await deps.readSessions({
+              profileId,
+              controls: own,
+              units: copies.map((unit) => unit.sites),
+            })
+          )?.units ?? [])
+        : [];
+      check();
+      const ready: Array<{ planned: PlannedUnit; unit: SentUnit }> = [];
+      for (const planned of group) {
+        const { sites, revision } = planned;
+        if (planned.kind === "delete") {
+          ready.push({ planned, unit: { sites, revision, kind: "delete" } });
+          continue;
+        }
+        const cookies = cookiesOf(read, planned);
+        // Gone from the jar since planning: nothing to copy, and no deletion by absence.
+        if (cookies.length === 0) continue;
+        if (cookies.length > BATCH_COOKIES) outcomes.push({ unit: planned, outcome: "failed" });
+        else
+          ready.push({ planned, unit: { sites, revision, kind: "copy", cookies: sent(cookies) } });
+      }
+      for (const part of byCookies(ready)) {
+        check();
+        const result = await batch(
+          part.map(({ unit }) => unit),
+          plan.mode,
+        );
+        part.forEach(({ planned }, index) =>
+          outcomes.push({ unit: planned, outcome: result.units[index]?.outcome ?? "failed" }),
+        );
+      }
+    }
+    await recordShare(deps, profileId, plan, outcomes);
+  }
+}
+
+type SentUnit = AccountSessionsReceiveInput["units"][number];
+
+const cookiesOf = (
+  read: ReadonlyArray<{
+    readonly sites: ReadonlyArray<string>;
+    readonly cookies: ReadonlyArray<SessionCookie>;
+  }>,
+  unit: PlannedUnit,
+) => {
+  const sites = new Set(unit.sites.map((site) => siteOf(URL.parse(site)?.hostname ?? site)));
+  return read
+    .filter((entry) =>
+      entry.sites.some((site) => sites.has(siteOf(URL.parse(site)?.hostname ?? site))),
+    )
+    .flatMap((entry) => entry.cookies);
+};
+
+const sent = (cookies: ReadonlyArray<SessionCookie>) =>
+  cookies.map(({ value, ...rest }) => ({ ...rest, value: Redacted.make(value) }));
+
+function* batches(units: ReadonlyArray<PlannedUnit>) {
+  for (let start = 0; start < units.length; start += BATCH_UNITS)
+    yield units.slice(start, start + BATCH_UNITS);
+}
+
+/** Never splits a unit: a batch closes before the unit that would pass 1,000 cookies. */
+function* byCookies<A extends { readonly unit: SentUnit }>(entries: ReadonlyArray<A>) {
+  let part: A[] = [];
+  let count = 0;
+  for (const entry of entries) {
+    const size = entry.unit.cookies?.length ?? 0;
+    if (part.length && count + size > BATCH_COOKIES) {
+      yield part;
+      part = [];
+      count = 0;
+    }
+    part.push(entry);
+    count += size;
+  }
+  if (part.length) yield part;
+}
+
+/** The remote's line on the desktop; `applied` is the revision below which nothing waits. */
+async function recordShare(
+  deps: DeliveryDeps,
+  profileId: string,
+  plan: Extract<ReturnType<typeof planDelivery>, { kind: "units" }>,
+  outcomes: ReadonlyArray<{ unit: PlannedUnit; outcome: string }>,
+) {
+  const waiting = outcomes.filter(({ outcome }) => WAITING.has(outcome));
+  const after = await deps.applied(profileId).catch(() => undefined);
+  const at = deps.now();
+  await deps.shared(profileId, {
+    environmentId: deps.remoteId,
+    label: deps.remoteLabel,
+    sentAt: at,
+    seenAt: at,
+    applied: waiting.length
+      ? Math.max(0, Math.min(...waiting.map(({ unit }) => unit.revision)) - 1)
+      : plan.head,
+    waiting: waiting.length,
+    kept: after?.units.filter((unit) => unit.outcome === "kept").length ?? 0,
+    needsYou: [
+      ...new Set(
+        (after?.units ?? []).flatMap((unit) =>
+          unit.needsYou ? unit.sites.map((site) => siteOf(URL.parse(site)?.hostname ?? site)) : [],
+        ),
+      ),
+    ].slice(0, 50),
+  });
+}
+
+const recordOf = (snapshot: AccountsSnapshot | undefined, profileId: string) =>
+  snapshot?.profiles.find((record) => record.profileId === profileId) ??
+  defaultBrowserProfileRecord(profileId);
+
+const value = <A>(result: AsyncResult.AsyncResult<A, unknown>) =>
+  AsyncResult.isSuccess(result) ? result.value : undefined;
+
+const call = async <I, A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  command: AtomCommand<{ readonly environmentId: EnvironmentId; readonly input: I }, A, E>,
+  environmentId: EnvironmentId,
+  input: I,
+): Promise<A> => {
+  const result = await command.run(registry, { environmentId, input });
+  if (result._tag !== "Success") throw new Error("The request failed.");
+  return result.value;
+};
+
+/** Remotes being sent sign-ins now, for "sending your sign-ins…". */
+export const sendingRemotesAtom = Atom.make(
+  new Set<EnvironmentId>() as ReadonlySet<EnvironmentId>,
+).pipe(Atom.keepAlive);
+
+/** Where delivery to a remote stands: what would stop it, or the identity it plans with. */
+function routeOf(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
+  const presentation = registry.get(environmentPresentations.presentationAtom(environmentId));
+  if (!presentation?.entry.enabled) return { stopped: "removed" } as const;
+  if (presentation.connection.phase !== "connected") return { stopped: "offline" } as const;
+  const connection = readPreparedConnection(environmentId);
+  if (!connection) return { stopped: "offline" } as const;
+  const refused = allowedRoute(connection, readDesktopSecondaryBootstraps());
+  if (refused) return { stopped: refused } as const;
+  if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope))
+    return { stopped: "permission" } as const;
+  const remote = value(registry.get(accountsState.snapshot({ environmentId, input: {} })));
+  if (!remote?.features?.sessionsReceive) return { stopped: "no-feature" } as const;
+  const target = connection.target;
+  return {
+    identity: JSON.stringify([
+      target._tag,
+      "connectionId" in target ? target.connectionId : null,
+      connection.socketUrl,
+    ]),
+    label: presentation.entry.target.label,
+  } as const;
+}
+
+const persistentProfiles = () =>
+  resolveBrowserProfiles(getClientSettings().browserProfiles).filter(
+    (profile) => profile.kind === "persistent",
+  );
+
+/**
+ * Delivers this desktop's sign-ins to one remote, serially: a nudge while a run goes sets "run
+ * again". Each run recomputes from durable state, so a missed nudge only delays delivery. A route,
+ * destination or permission change interrupts the run; it sends nothing more.
+ */
+export function watchRemoteSessions(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  primaryId: EnvironmentId,
+) {
+  const readSessions = window.desktopBridge?.accounts?.readSessions;
+  if (!readSessions) return () => undefined;
+  const desktopAtom = accountsState.snapshot({ environmentId: primaryId, input: {} });
+  const remoteAtom = accountsState.snapshot({ environmentId, input: {} });
+  let stopped = false;
+  let running: { readonly identity: string; cancelled: boolean } | undefined;
+  let again = false;
+  let lastKey: string | undefined;
+
+  const setSending = (sending: boolean) => {
+    const current = new Set(registry.get(sendingRemotesAtom));
+    if (sending) current.add(environmentId);
+    else current.delete(environmentId);
+    registry.set(sendingRemotesAtom, current);
+  };
+
+  const run = async (): Promise<void> => {
+    if (running) {
+      again = true;
+      return;
+    }
+    again = false;
+    const route = routeOf(registry, environmentId);
+    if (stopped || "stopped" in route) return;
+    const token = { identity: route.identity, cancelled: false };
+    running = token;
+    setSending(true);
+    const desktop = () => value(registry.get(desktopAtom));
+    await deliverOnce({
+      source: primaryId,
+      label: readEnvironment(primaryId)?.serverConfig?.environment.label ?? "this computer",
+      remoteId: environmentId,
+      remoteLabel: route.label,
+      profiles: () =>
+        persistentProfiles().map(({ id }) => ({
+          profileId: id,
+          record: recordOf(desktop(), id),
+        })),
+      desktopAccounts: () => desktop()?.accounts ?? [],
+      revalidate: () => {
+        if (token.cancelled || stopped) return "cancelled";
+        const now = routeOf(registry, environmentId);
+        return "stopped" in now
+          ? now.stopped
+          : now.identity === token.identity
+            ? undefined
+            : "route";
+      },
+      sendLog: (profileId) =>
+        call(registry, accountsState.profileSendLog, primaryId, {
+          profileId: BrowserProfileId.make(profileId),
+        }),
+      applied: (profileId) =>
+        call(registry, accountsState.sessionsApplied, environmentId, {
+          source: primaryId,
+          profileId: BrowserProfileId.make(profileId),
+        }),
+      remoteRecord: (profileId) =>
+        value(registry.get(remoteAtom))?.profiles.find((record) => record.profileId === profileId),
+      receive: (input) => call(registry, accountsState.sessionsReceive, environmentId, input),
+      withdraw: (profileId, revision) =>
+        call(registry, accountsState.sessionsWithdraw, environmentId, {
+          source: primaryId,
+          profileId: BrowserProfileId.make(profileId),
+          revision,
+        }).then(() => undefined),
+      shared: (profileId, share) =>
+        call(registry, accountsState.profileShared, primaryId, {
+          profileId: BrowserProfileId.make(profileId),
+          share,
+        }).then(() => undefined),
+      readSessions,
+      now: () => new Date().toISOString(),
+    }).catch(() => undefined);
+    running = undefined;
+    setSending(false);
+    if (again && !stopped) return run();
+  };
+
+  /** What a run depends on; a change nudges, and a route change interrupts the running one. */
+  const nudge = () => {
+    const route = routeOf(registry, environmentId);
+    if (running && ("stopped" in route || route.identity !== running.identity))
+      running.cancelled = true;
+    if ("stopped" in route) {
+      lastKey = undefined;
+      return;
+    }
+    const desktop = value(registry.get(desktopAtom));
+    const remote = value(registry.get(remoteAtom));
+    const key = JSON.stringify([
+      route.identity,
+      persistentProfiles().map(({ id }) => {
+        const record = recordOf(desktop, id);
+        return [id, record.send?.head ?? 0, record.access, record.scope, record.scriptSignIn];
+      }),
+      (remote?.profiles ?? []).map((record) =>
+        record.received
+          ?.filter((entry) => entry.source === primaryId)
+          .map((entry) => [
+            entry.withdrawn,
+            entry.units.map((unit) => [unit.revision, unit.outcome, unit.needsYou]),
+          ]),
+      ),
+    ]);
+    if (key === lastKey) return;
+    lastKey = key;
+    void run();
+  };
+
+  const stops = [
+    registry.subscribe(desktopAtom, nudge),
+    registry.subscribe(remoteAtom, nudge),
+    registry.subscribe(environmentPresentations.presentationAtom(environmentId), nudge),
+    registry.subscribe(environmentSession.sessionStateAtom(environmentId), nudge),
+  ];
+  nudge();
+  return () => {
+    stopped = true;
+    if (running) running.cancelled = true;
+    for (const stop of stops) stop();
+  };
+}
+
+/** Send again: every shareable profile's whole jar goes to every remote with the next delivery. */
+export async function sendAgain(registry: AtomRegistry.AtomRegistry, primaryId: EnvironmentId) {
+  const desktop = value(
+    registry.get(accountsState.snapshot({ environmentId: primaryId, input: {} })),
+  );
+  for (const { id } of persistentProfiles())
+    if (shareable(id, recordOf(desktop, id)))
+      await call(registry, accountsState.profileResend, primaryId, {
+        profileId: BrowserProfileId.make(id),
+        why: "send-again",
+      });
+}
+
+const WITHDRAW_LIMIT_MS = 5_000;
+
+/**
+ * Before a remote is removed: its copies of this desktop's sign-ins are deleted there, if it
+ * answers within 5 s. Removal never waits longer; an offline remote keeps them until it finds
+ * this desktop's access revoked.
+ */
+export async function withdrawCopies(environmentId: EnvironmentId) {
+  const primaryId = readPrimaryEnvironmentId();
+  if (!primaryId || primaryId === environmentId || !window.desktopBridge?.accounts?.readSessions)
+    return "none" as const;
+  const withdrawn = call(appAtomRegistry, accountsState.sessionsWithdraw, environmentId, {
+    source: primaryId,
+    all: true,
+  }).then(
+    () => "withdrawn" as const,
+    () => "offline" as const,
+  );
+  const timeout = new Promise<"offline">((resolve) =>
+    setTimeout(() => resolve("offline"), WITHDRAW_LIMIT_MS),
+  );
+  const outcome = await Promise.race([withdrawn, timeout]);
+  if (outcome === "offline" && readEnvironment(environmentId)) return "offline" as const;
+  return outcome;
+}
+
+/** After removing a computer that didn't answer: its copies stay until this desktop's access goes. */
+export const copiesStayToast = (label: string) => ({
+  type: "info" as const,
+  title: `${label} is offline`,
+  description: `The sign-ins copied there stay until you remove this computer's access on ${label}.`,
+});

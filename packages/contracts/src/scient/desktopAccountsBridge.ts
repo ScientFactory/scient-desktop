@@ -1,4 +1,5 @@
 import type { BrowserImportSourceId } from "../browserImport.ts";
+import type { SessionCookie } from "./accounts.ts";
 import type { GrantScope } from "./secrets.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
@@ -111,6 +112,30 @@ export interface DesktopFillMainInput {
   readonly skipSites: ReadonlyArray<string>;
 }
 
+/** A shareable profile's sign-ins in the desktop's own jar, for other computers. */
+export interface DesktopReadSessionsInput {
+  readonly profileId: string;
+  /** Only a persistent profile Allowed or Ask for all projects, with scripts on, is read. */
+  readonly controls: {
+    readonly access: "off" | "ask" | "allowed";
+    readonly scope: GrantScope;
+    readonly allowedProjects?: ReadonlyArray<string>;
+    readonly scriptSignIn: boolean;
+  };
+  /** Absent: the whole jar, one unit per registrable site. */
+  readonly units?: ReadonlyArray<ReadonlyArray<string>>;
+  /** For a whole jar: multi-site sign-ins whose sites are one unit. */
+  readonly join?: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+/** Each unit's live cookies; the values reach only the app window that asked. */
+export interface DesktopReadSessionsResult {
+  readonly units: ReadonlyArray<{
+    readonly sites: ReadonlyArray<string>;
+    readonly cookies: ReadonlyArray<SessionCookie>;
+  }>;
+}
+
 /** One case of the dev-only session-copy qualification. */
 export interface DesktopQualifyCase {
   readonly case: number;
@@ -171,6 +196,10 @@ export interface DesktopAccountsBridge {
   readonly fillMain?: (input: DesktopFillMainInput) => Promise<DesktopFillMainResult | null>;
   /** Accounts' Sign out on Main, under the same lock as every copy into it. */
   readonly signOutMainSite?: (site: string, environmentId?: string) => Promise<boolean>;
+  /** Reads the primary environment's jar under the Main lock; null when refused. */
+  readonly readSessions?: (
+    input: DesktopReadSessionsInput,
+  ) => Promise<DesktopReadSessionsResult | null>;
   /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
   readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

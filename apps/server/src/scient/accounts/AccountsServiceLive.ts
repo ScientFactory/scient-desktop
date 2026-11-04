@@ -21,6 +21,7 @@ import {
   type AccountsSnapshot,
   type AccountSummary,
   type AccountTarget,
+  type BrowserProfileId,
   type BrowserProfileRecord,
   type AccountValueSource,
   type AccountWriteStore,
@@ -49,6 +50,7 @@ import {
 } from "./AccountsService.ts";
 import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
 import { mainRowFor, withMainSignOutsCleared, withSignedOutSite } from "./mainRecord.ts";
+import { issueJar, issueUnit, withSendLog, withShared } from "./sendLog.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
   AccountPersistence,
@@ -213,7 +215,10 @@ export const layer = Layer.effect(
       return {
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
-        profiles: state.profiles,
+        // Clients see only the head of each send log; the entries come from profileSendLog.
+        profiles: state.profiles.map((profile) =>
+          profile.send ? { ...profile, send: { head: profile.send.head, units: [] } } : profile,
+        ),
         ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
         ...(state.codeSources ? { codeSources: state.codeSources } : {}),
         ...(state.keyLinks ? { keyLinks: state.keyLinks } : {}),
@@ -230,7 +235,12 @@ export const layer = Layer.effect(
         recentActivity,
         customModelKeys,
         managedElsewhere,
-        features: { sessionsSeen: true, signInAnyRow: true, keepTyped: true },
+        features: {
+          sessionsSeen: true,
+          signInAnyRow: true,
+          keepTyped: true,
+          sessionsReceive: true,
+        },
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
@@ -264,8 +274,8 @@ export const layer = Layer.effect(
       proposed: AccountsState,
       usageOnly = false,
     ) {
-      // Every path that records a sign-in in Main passes here, in the same locked write.
-      const next = withMainSignOutsCleared(state, proposed);
+      // Every path that records a sign-in passes here, in the same locked write.
+      const next = withSendLog(state, withMainSignOutsCleared(state, proposed));
       // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
       if (!usageOnly) bindingRevision++;
       if (batch) {
@@ -316,6 +326,34 @@ export const layer = Layer.effect(
       target.type === "account"
         ? findAccount(target.accountId)?.summary.controls
         : effectiveProfile(state.profiles, target.profileId);
+    const withProfile = (
+      profileId: BrowserProfileId,
+      change: (record: BrowserProfileRecord) => BrowserProfileRecord,
+      profiles = state.profiles,
+    ) => {
+      const record = change(effectiveProfile(profiles, profileId));
+      return {
+        record,
+        state: {
+          ...state,
+          profiles: [...profiles.filter((profile) => profile.profileId !== profileId), record],
+        },
+      };
+    };
+    /** A revision for the profile, committed on its own inside the caller's lock. */
+    const issue = Effect.fn("AccountsService.issue")(function* (
+      profileId: BrowserProfileId,
+      change: (log: BrowserProfileRecord["send"]) => NonNullable<BrowserProfileRecord["send"]>,
+      profiles = state.profiles,
+    ) {
+      const next = withProfile(
+        profileId,
+        (record) => ({ ...record, send: change(record.send) }),
+        profiles,
+      );
+      yield* commit(next.state, true);
+      return next.record.send?.head ?? 0;
+    });
     const replaceAccount = (next: StoredAccount) => ({
       ...state,
       accounts: [
@@ -963,6 +1001,9 @@ export const layer = Layer.effect(
               const row = findAccount(created);
               if (row)
                 yield* commit(replaceAccount({ ...row, summary: { ...row.summary, signIn } }));
+              yield* issue(DEFAULT_BROWSER_PROFILE_ID, (log) =>
+                issueUnit(log, details.sites, "copy"),
+              );
               return;
             }
             const main = existing.summary;
@@ -988,6 +1029,9 @@ export const layer = Layer.effect(
                 },
               }),
             );
+            yield* issue(DEFAULT_BROWSER_PROFILE_ID, (log) =>
+              issueUnit(log, details.sites, "copy"),
+            );
           }),
         ),
       ),
@@ -1011,10 +1055,31 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      mainSignedOut: Effect.fn("AccountsService.mainSignedOut")((site) =>
+      profileSignedOut: Effect.fn("AccountsService.profileSignedOut")((profileId, site) =>
+        locked(
+          issue(
+            profileId,
+            (log) => issueUnit(log, [site], "delete"),
+            profileId === DEFAULT_BROWSER_PROFILE_ID
+              ? withSignedOutSite(state.profiles, site)
+              : state.profiles,
+          ),
+        ),
+      ),
+      profileResend: Effect.fn("AccountsService.profileResend")((profileId) =>
+        locked(issue(profileId, issueJar)),
+      ),
+      profileSendLog: Effect.fn("AccountsService.profileSendLog")((profileId) =>
+        locked(
+          Effect.sync(
+            () => effectiveProfile(state.profiles, profileId).send ?? { head: 0, units: [] },
+          ),
+        ),
+      ),
+      profileShared: Effect.fn("AccountsService.profileShared")((profileId, share) =>
         locked(
           Effect.suspend(() =>
-            commit({ ...state, profiles: withSignedOutSite(state.profiles, site) }),
+            commit(withProfile(profileId, (record) => withShared(record, share)).state, true),
           ),
         ),
       ),
@@ -1130,6 +1195,28 @@ export const layer = Layer.effect(
               keptTyped: "kept",
             });
             return "kept" as const;
+          }),
+        ),
+      ),
+      updateReceived: Effect.fn("AccountsService.updateReceived")((profileId, change) =>
+        locked(
+          Effect.gen(function* () {
+            const before = effectiveProfile(state.profiles, profileId);
+            const { received, controls } = change(before);
+            const same =
+              received === before.received || (!before.received && received.length === 0);
+            if (controls === undefined && same) return before;
+            const next = withProfile(profileId, (record) => {
+              const { received: _, ...rest } = record;
+              return {
+                ...rest,
+                ...controls,
+                ...(controls ? { allowedProjects: [] } : {}),
+                ...(received.length ? { received } : {}),
+              };
+            });
+            yield* commit(next.state, controls === undefined);
+            return before;
           }),
         ),
       ),

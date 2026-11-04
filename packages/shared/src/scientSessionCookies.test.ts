@@ -8,7 +8,11 @@ import {
   type CookieStore,
   jarUnits,
   mergeUnits,
+  planDelivery,
+  remoteControls,
   sameUnit,
+  shareable,
+  travels,
   sessionCookieFromCdp,
   sessionCookieFromImported,
   sessionCookieToCdpParam,
@@ -409,5 +413,137 @@ describe("mergeUnits", () => {
     expect(jarUnits(jar, siteOf, [first, second])).toEqual([
       ["uni.test", "proxya.test", "proxyb.test"],
     ]);
+  });
+});
+
+describe("sharing with other computers", () => {
+  const allowed = {
+    access: "allowed",
+    scope: { type: "all-projects" },
+    scriptSignIn: true,
+  } as const;
+
+  it("shares persistent profiles Allowed or Ask for all projects with scripts on", () => {
+    expect(shareable("work", allowed)).toBe(true);
+    expect(shareable("work", { ...allowed, access: "ask" })).toBe(true);
+    expect(shareable("incognito", allowed)).toBe(false);
+    expect(shareable("work", { ...allowed, access: "off" })).toBe(false);
+    expect(shareable("work", { ...allowed, scriptSignIn: false })).toBe(false);
+    const limited = { ...allowed, scope: { type: "projects", projectIds: [] } } as const;
+    expect(shareable("work", limited)).toBe(false);
+    expect(remoteControls(limited)).toEqual({ ...allowed, access: "off" });
+  });
+
+  it("keeps the university's sign-in and OpenAthens on this computer", () => {
+    const university = ["https://idp.huji.ac.il/login", "huji.ac.il"];
+    expect(travels(["github.com"], university, siteOf)).toBe(true);
+    expect(travels(["cc.huji.ac.il"], university, siteOf)).toBe(false);
+    expect(travels(["login.openathens.net"], [], siteOf)).toBe(false);
+  });
+
+  const applied = (
+    units: Array<{ sites: string[]; revision: number }> = [],
+    withdrawn?: number,
+  ) => ({
+    bound: true,
+    ...(withdrawn === undefined ? {} : { withdrawn }),
+    units: units.map((unit) => ({ ...unit, outcome: "copied" as const })),
+  });
+  const plan = (input: Partial<Parameters<typeof planDelivery>[0]>) =>
+    planDelivery({
+      log: { head: 0, units: [] },
+      applied: applied(),
+      jar: [],
+      shareable: true,
+      travels: () => true,
+      siteOf,
+      ...input,
+    });
+
+  it("fills a computer that never received from this desktop with the whole jar", () => {
+    expect(
+      plan({
+        log: { head: 7, units: [{ sites: ["github.com"], revision: 3, kind: "copy" }] },
+        applied: { bound: false, units: [] },
+        jar: [["github.com"], ["example.test"]],
+      }),
+    ).toEqual({
+      kind: "units",
+      mode: "fill",
+      head: 7,
+      units: [
+        { sites: ["github.com"], revision: 7, kind: "copy" },
+        { sites: ["example.test"], revision: 7, kind: "copy" },
+      ],
+    });
+  });
+
+  it("sends only revisions newer than what the computer applied, and never replays an old one", () => {
+    const log = {
+      head: 9,
+      units: [
+        { sites: ["github.com"], revision: 4, kind: "copy" as const },
+        { sites: ["example.test"], revision: 9, kind: "copy" as const },
+      ],
+    };
+    const result = plan({
+      log,
+      applied: applied([
+        { sites: ["github.com"], revision: 4 },
+        { sites: ["example.test"], revision: 5 },
+      ]),
+      jar: [["github.com"], ["example.test"]],
+    });
+    expect(result).toMatchObject({
+      mode: "replace",
+      units: [{ sites: ["example.test"], revision: 9, kind: "copy" }],
+    });
+  });
+
+  it("lets a sign-out issued after a copy win, and never deletes a unit for its absence", () => {
+    const result = plan({
+      log: {
+        head: 6,
+        units: [
+          { sites: ["github.com"], revision: 6, kind: "delete" },
+          { sites: ["gone.test"], revision: 5, kind: "copy" },
+        ],
+      },
+      applied: applied([{ sites: ["github.com"], revision: 5 }]),
+      jar: [["github.com"]],
+    });
+    expect(result).toMatchObject({
+      units: [{ sites: ["github.com"], revision: 6, kind: "delete" }],
+    });
+  });
+
+  it("resends the whole jar when the log fell back to it", () => {
+    const result = plan({
+      log: { head: 12, jar: 12, units: [] },
+      applied: applied([{ sites: ["github.com"], revision: 3 }]),
+      jar: [["github.com"], ["example.test"]],
+    });
+    expect(result).toMatchObject({
+      units: [
+        { sites: ["github.com"], revision: 12, kind: "copy" },
+        { sites: ["example.test"], revision: 12, kind: "copy" },
+      ],
+    });
+  });
+
+  it("withdraws a profile that became restricted, once, and otherwise sends controls only", () => {
+    const log = { head: 8, withdrawn: 8, units: [] };
+    expect(plan({ log, shareable: false })).toEqual({ kind: "withdraw", revision: 8 });
+    expect(plan({ log, shareable: false, applied: applied([], 8) })).toEqual({ kind: "controls" });
+    expect(plan({ log: { head: 2, units: [] }, shareable: false })).toEqual({ kind: "controls" });
+  });
+
+  it("drops units that don't travel", () => {
+    const result = plan({
+      log: { head: 3, units: [{ sites: ["huji.ac.il"], revision: 3, kind: "copy" }] },
+      jar: [["huji.ac.il"]],
+      travels: (unit) => !unit.includes("huji.ac.il"),
+    });
+    expect(result).toMatchObject({ units: [] });
   });
 });
