@@ -619,6 +619,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`a21d788752695764028e6d26ba924f3963e05806` is recorded in
+[the 2026-11-05 a21d788752 receipt](docs/internals/t3-upstream-sync-20261105-a21d788752.md).
+Literal merge `de156f96e8b0e9a55a7231bd39f7e4cdf3d097aa` has owned base
+`013cea61f19372e8e336ef80fad8e0ec73b23790` and the frozen official target as parents, retaining
+the 156 official commits after `7c22e24e3f`. Packages now typecheck with `effect-tsgo tsrs`, asset
+signing moves behind T3's `AssetSigner` with Scient's document and import URLs on the same key,
+agents ask for secrets through the card, Claude tool calls can render MCP Apps outside Scient's own
+server, and T3's merge of Scient's Pi stop-order fix retires Scient's copy. No migrations. Release
+remains separate.
+
+The previous committed alignment through
 `7c22e24e3fa1a3bb3a95f27aea000067f198fe7f` is recorded in
 [the 2026-11-04 7c22e24e3f receipt](docs/internals/t3-upstream-sync-20261104-7c22e24e3f.md).
 Literal merge `6d16ce63d44f32164b9157b43537d319c792e812` has owned base
@@ -630,7 +641,7 @@ gains Group Policy templates under Scient's key, and forks after an undo drop un
 Scient's frozen path too. One migration (83) and one Scient-track migration (28). Release remains
 separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `61c3794c32b0eeebfac09add43e403618c65d2d7` is recorded in
 [the 2026-11-03 61c3794c32 receipt](docs/internals/t3-upstream-sync-20261103-61c3794c32.md).
 Literal merge `b5e8c858ddac7cb973dcbb58f46ff6d1e8110c9e` has owned base
