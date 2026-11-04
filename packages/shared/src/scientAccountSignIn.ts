@@ -7,10 +7,6 @@ const RETRY_PAUSE_MS = 15 * 60 * 1000;
 /** A look that finds the same state again is written this often, to date it without constant writes. */
 const LOOK_WRITE_MS = 60 * 60 * 1000;
 
-/** How an imported or copied session row's `unknown` detail begins. */
-export const IMPORTED_FROM = "Imported from";
-export const COPIED_FROM = "Copied from";
-
 type SignInFields = Pick<AccountSummary, "signIn"> & Partial<Pick<AccountSummary, "secrets">>;
 
 /** What a sign-in attempt leaves besides `signed-in`. A look can also find a limit or `needs-you`. */

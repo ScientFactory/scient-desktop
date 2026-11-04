@@ -668,7 +668,7 @@ describe("account status", () => {
     // An imported or copied session was never seen working; anything else unknown wasn't read.
     expect(
       accountStatusLabel(
-        { details: session(), signIn: { state: "unknown", at, detail: "Copied from Work" } },
+        { details: session(), signIn: { state: "unknown", at, from: "copy" } },
         relative,
       ),
     ).toBe("Copied");

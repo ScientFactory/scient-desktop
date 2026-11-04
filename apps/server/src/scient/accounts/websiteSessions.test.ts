@@ -102,10 +102,10 @@ it("treats a site's protected cookie as its session once seen, ignoring leftover
 
 it("leaves imported and copied rows alone: they never said the session was there", () => {
   const observed = new Set<string>();
-  const rows = ["Imported from Chrome · Yaacov", "Copied from Work"].map((detail, index) => ({
+  const rows = (["import", "copy"] as const).map((from, index) => ({
     ...account,
     accountId: AccountId.make(`acc_synthetic0${index + 2}`),
-    signIn: { state: "unknown" as const, at: "1970-01-01T00:00:00.000Z", detail },
+    signIn: { state: "unknown" as const, at: "1970-01-01T00:00:00.000Z", from },
   }));
   const ended = (cookies: Parameters<typeof endedWebsiteSessions>[1][number]["cookies"]) =>
     endedWebsiteSessions(

@@ -236,6 +236,7 @@ it("keeps a session row in Browser sign-ins once it is named, and says what it i
         at: "2026-11-04T00:00:00.000Z",
         detail: "Imported from Chrome · Person",
         by: "look",
+        from: "import",
       },
     }),
     // What a Check leaves once the page names who is signed in.

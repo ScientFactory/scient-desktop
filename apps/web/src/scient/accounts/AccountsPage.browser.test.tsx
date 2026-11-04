@@ -317,7 +317,7 @@ it("says which profile a site uses when Main's copy doesn't work, and offers Mai
       environmentId={EnvironmentId.make("synthetic")}
       accounts={[
         signIn("default", sites, {
-          signIn: { state: "unknown", at: "2026-11-04T00:00:00.000Z", detail: "Copied from Work" },
+          signIn: { state: "unknown", at: "2026-11-04T00:00:00.000Z", from: "copy" },
         }),
         signIn("work", sites, { signIn: { state: "signed-in", at: "2026-11-03T00:00:00.000Z" } }),
       ]}

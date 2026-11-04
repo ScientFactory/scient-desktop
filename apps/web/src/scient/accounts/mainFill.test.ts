@@ -115,7 +115,13 @@ describe("trigger 2: a sign-in seen in another profile", () => {
       },
     });
     const imported = row("work", ["gitlab.com"], {
-      signIn: { state: "unknown", at: AT, detail: "Imported from Chrome · Person", by: "look" },
+      signIn: {
+        state: "unknown",
+        at: AT,
+        detail: "Imported from Chrome · Person",
+        by: "look",
+        from: "import",
+      },
     });
     await t.seen(snapshot([executor, imported]));
     const recording = row("work", ["overleaf.com"], signedIn(AT));
@@ -248,7 +254,13 @@ describe("trigger 1: after an import into another profile", () => {
         profileId: BrowserProfileId.make("work"),
         origin: "browser-session",
       },
-      signIn: { state: "unknown", at: AT, detail: "Imported from Chrome · Person", by: "look" },
+      signIn: {
+        state: "unknown",
+        at: AT,
+        detail: "Imported from Chrome · Person",
+        by: "look",
+        from: "import",
+      },
     });
     state.snapshot = snapshot(
       [session, imported],

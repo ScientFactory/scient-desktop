@@ -226,7 +226,7 @@ it.effect("a sign-in copied into Main at import is marked when a Main page shows
           (row) => row.details.kind === "website" && row.details.profileId === "default",
         ),
       );
-    expect((yield* main())?.signIn).toMatchObject({ state: "unknown", detail: "Copied from Work" });
+    expect((yield* main())?.signIn).toMatchObject({ state: "unknown", from: "copy" });
     const marked = service.changes.pipe(
       Stream.filter(({ accounts }) =>
         accounts.some(

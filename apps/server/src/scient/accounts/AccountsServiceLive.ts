@@ -82,7 +82,6 @@ import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 import { parseTotp } from "./signIn/totp.ts";
-import { COPIED_FROM, IMPORTED_FROM } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 
 const missing = () => fail("not-found", "The account no longer exists.");
@@ -1010,8 +1009,9 @@ export const layer = Layer.effect(
             const signIn = {
               state: "unknown" as const,
               at: yield* now,
-              detail: `${COPIED_FROM} ${profileName}`,
+              detail: `Copied from ${profileName}`,
               by: "look" as const,
+              from: "copy" as const,
             };
             const existing = mainRowFor(state.accounts, source.summary);
             if (!existing) {
@@ -1193,8 +1193,9 @@ export const layer = Layer.effect(
                     ? {
                         state: "unknown" as const,
                         at,
-                        detail: `${IMPORTED_FROM} ${from ?? "another browser"}`,
+                        detail: `Imported from ${from ?? "another browser"}`,
                         by: "look" as const,
+                        from: "import" as const,
                       }
                     : { state: "signed-in" as const, at, by: "action" as const };
                 yield* commit(replaceAccount({ ...saved, summary: { ...saved.summary, signIn } }));

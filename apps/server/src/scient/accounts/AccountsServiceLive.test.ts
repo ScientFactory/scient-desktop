@@ -380,14 +380,14 @@ describe("AccountsService and Main", () => {
           accountId === saved.accountId,
           details.kind === "website" ? details.sites : [],
           signIn?.state,
-          signIn?.detail,
+          signIn?.from,
           Object.keys(secrets),
           details.kind === "website" ? details.origin : undefined,
         ]),
       ).toEqual([
         // A saved password stays fillable; a copy with nothing to type is the session.
-        [true, ["overleaf.com"], "unknown", "Copied from Work", ["password"], undefined],
-        [false, ["github.com"], "unknown", "Copied from Work", [], "browser-session"],
+        [true, ["overleaf.com"], "unknown", "copy", ["password"], undefined],
+        [false, ["github.com"], "unknown", "copy", [], "browser-session"],
       ]);
     }),
   );
@@ -541,7 +541,7 @@ describe("AccountsService and Main", () => {
             account.details.kind === "website" ? account.details.sites : [],
             account.signIn?.state,
             account.signIn?.by,
-            account.signIn?.detail,
+            account.signIn?.from,
           ]),
       );
       const imported = yield* service.sessionsSeen({
@@ -559,8 +559,8 @@ describe("AccountsService and Main", () => {
       });
       expect(again.created).toEqual([]);
       expect(yield* sessions).toEqual([
-        [["github.com"], "unknown", "look", "Imported from Chrome · Person"],
-        [["huji.ac.il"], "unknown", "look", "Imported from Chrome · Person"],
+        [["github.com"], "unknown", "look", "import"],
+        [["huji.ac.il"], "unknown", "look", "import"],
       ]);
       // A sign-in seen there confirms the row; a later import never takes it back to unknown.
       yield* service.sessionsSeen({

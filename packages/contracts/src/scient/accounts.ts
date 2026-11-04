@@ -300,6 +300,11 @@ export const AccountSignIn = Schema.Struct({
    * `look`: Scient only looked (Check, an agent's page, a quiet visit, an import). Absent on old rows.
    */
   by: Schema.optional(Schema.Literals(["action", "look"])),
+  /**
+   * An `unknown` row made from another browser's import, or copied into Main from another profile,
+   * not yet seen on the site. Any later look or attempt replaces it.
+   */
+  from: Schema.optional(Schema.Literals(["import", "copy"])),
 });
 export type AccountSignIn = typeof AccountSignIn.Type;
 

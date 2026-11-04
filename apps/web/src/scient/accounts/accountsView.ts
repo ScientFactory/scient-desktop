@@ -31,7 +31,7 @@ import {
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
-import { COPIED_FROM, IMPORTED_FROM, matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
+import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
 
@@ -855,9 +855,9 @@ export function accountStatusLabel(
     case "limited":
       return "Site is limiting access";
     case "unknown":
-      return signIn.detail?.startsWith(IMPORTED_FROM)
+      return signIn.from === "import"
         ? "Imported"
-        : signIn.detail?.startsWith(COPIED_FROM)
+        : signIn.from === "copy"
           ? "Copied"
           : // An action that said nothing yet about the site, such as a changed password.
             signIn.by === "action" && signIn.detail

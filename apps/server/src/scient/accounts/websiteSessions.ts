@@ -4,7 +4,6 @@ import {
   type AccountId,
   type AccountSummary,
 } from "@t3tools/contracts";
-import { COPIED_FROM, IMPORTED_FROM } from "@t3tools/shared/scientAccountSignIn";
 import { signedInMomentsAgo } from "./AccountDecisions.ts";
 
 /**
@@ -23,8 +22,7 @@ export function endedWebsiteSessions(
   return accounts.flatMap((account) => {
     if (account.details.kind !== "website") return [];
     // Imported and copied rows are no evidence of a session, so its cookies leaving say nothing.
-    const detail = account.signIn?.detail;
-    if (detail?.startsWith(IMPORTED_FROM) || detail?.startsWith(COPIED_FROM)) return [];
+    if (account.signIn?.from !== undefined) return [];
     // Without a named profile, sign-ins and "Open site" use the user's default profile.
     const { sites, profileId = defaultProfileId } = account.details;
     const hosts = sites.flatMap((site) => {

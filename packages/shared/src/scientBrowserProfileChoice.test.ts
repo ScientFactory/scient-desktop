@@ -152,7 +152,7 @@ describe("pickBrowserProfile", () => {
         origin: "browser-session",
       },
       secrets: {},
-      signIn: { state: "unknown", at: "2026-11-04T09:00:00.000Z", detail: "Copied from Work" },
+      signIn: { state: "unknown", at: "2026-11-04T09:00:00.000Z", from: "copy" },
       createdAt: "2026-11-04T09:00:00.000Z",
     };
 
@@ -223,8 +223,8 @@ describe("profileSignIns", () => {
         site({ secrets: password }),
         site({ secrets: password, signIn: { state: "signed-in" } }),
         site({ signIn: { state: "signed-out" } }),
-        site({ signIn: { state: "unknown", detail: "Imported from Chrome · Yaacov" } }),
-        site({ signIn: { state: "unknown", detail: "Copied from Work" } }),
+        site({ signIn: { state: "unknown", from: "import" } }),
+        site({ signIn: { state: "unknown", from: "copy" } }),
       ]),
     ).toHaveLength(2);
   });
