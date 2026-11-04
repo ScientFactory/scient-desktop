@@ -389,6 +389,16 @@ describe("OverleafStateStore", () => {
             "OverleafConnectionExistsError",
           );
 
+          // A newer release's record with an unfinished sync is that release's to settle.
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              file,
+              JSON.stringify({ ...document, schemaVersion: 3, stagingPaths: ["paper/main.tex"] }),
+            ),
+          );
+          expect(yield* Effect.flip(store.quarantineConnection("connection-1"))).toMatchObject({
+            condition: "unfinished",
+          });
           yield* Effect.promise(() =>
             NodeFSP.writeFile(file, JSON.stringify({ ...document, schemaVersion: 3 })),
           );

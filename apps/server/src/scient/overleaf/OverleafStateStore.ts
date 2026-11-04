@@ -107,13 +107,15 @@ export class OverleafConnectionUnavailableError extends Schema.TaggedError<Overl
   "OverleafConnectionUnavailableError",
   {
     connectionId: Schema.String,
-    condition: Schema.Literals(["missing", "corrupt", "unsupported", "valid"]),
+    condition: Schema.Literals(["missing", "corrupt", "unsupported", "valid", "unfinished"]),
   },
 ) {
   override get message(): string {
     return this.condition === "valid"
       ? "A readable Overleaf connection is never quarantined."
-      : `The Overleaf connection is ${this.condition}.`;
+      : this.condition === "unfinished"
+        ? "A newer release's Overleaf connection has an unfinished sync; that release must settle it."
+        : `The Overleaf connection is ${this.condition}.`;
   }
 }
 
@@ -237,7 +239,11 @@ export class OverleafStateStore extends Context.Service<
       | OverleafTransitionRejectedError
       | OverleafRecordInvalidError
     >;
-    /** Moves an unreadable document aside, bytes intact; returns its quarantine name. */
+    /**
+     * Moves an unreadable document aside, bytes intact; returns its quarantine name. A newer
+     * release's document stays unless it plainly records no unfinished sync: once aside, it
+     * no longer holds bulk checkout changes back from that sync's staged files.
+     */
     readonly quarantineConnection: (
       connectionId: string,
     ) => Effect.Effect<string, WriteError | OverleafConnectionUnavailableError>;
@@ -660,6 +666,27 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
             connectionId,
             condition: current._tag === "ready" ? "valid" : "missing",
           });
+        if (current._tag === "unsupported") {
+          // Read as this release's fields; a newer shape that renamed them counts as unfinished.
+          const settled = yield* io("read", async () => {
+            const value = JSON.parse(
+              await NodeFSP.readFile(connectionFile(connectionId), "utf8"),
+            ) as {
+              readonly activeApply?: unknown;
+              readonly stagingPaths?: unknown;
+            };
+            return (
+              value.activeApply === null &&
+              Array.isArray(value.stagingPaths) &&
+              value.stagingPaths.length === 0
+            );
+          });
+          if (!settled)
+            return yield* new OverleafConnectionUnavailableError({
+              connectionId,
+              condition: "unfinished",
+            });
+        }
         const now = yield* Clock.currentTimeMillis;
         return yield* io("quarantine", async () => {
           const name = `${connectionId}.${now}.${NodeCrypto.randomUUID()}.json`;

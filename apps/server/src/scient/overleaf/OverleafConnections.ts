@@ -1088,22 +1088,28 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
   /**
    * An unreadable record blocks linking and every bulk checkout change, because it
    * might describe an unfinished sync. Moving it aside, bytes intact, is the user's
-   * call; the store refuses to move a record that has since become readable.
+   * call. A damaged record can't be settled by any release, so it can always go; a
+   * newer release's record with an unfinished sync is held for that release to settle.
    */
   const setAsideUnreadable = Effect.fn("OverleafConnections.setAsideUnreadable")(function* () {
     let setAside = 0;
+    let held = 0;
     for (const id of yield* store.listConnections) {
       const read = yield* store.readConnection(id);
       if (read._tag === "ready" || read._tag === "missing") continue;
-      const moved = yield* store
-        .quarantineConnection(id)
-        .pipe(
-          Effect.as(true),
-          Effect.catchTags({ OverleafConnectionUnavailableError: () => Effect.succeed(false) }),
-        );
-      if (moved) setAside += 1;
+      const outcome = yield* store.quarantineConnection(id).pipe(
+        Effect.as("moved" as const),
+        Effect.catchTags({
+          OverleafConnectionUnavailableError: (error) =>
+            Effect.succeed(
+              error.condition === "unfinished" ? ("held" as const) : ("gone" as const),
+            ),
+        }),
+      );
+      if (outcome === "moved") setAside += 1;
+      else if (outcome === "held") held += 1;
     }
-    return setAside;
+    return { setAside, held };
   });
 
   return {

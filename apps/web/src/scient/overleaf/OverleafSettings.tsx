@@ -254,6 +254,7 @@ function OverleafUnreadableRecords(props: {
   const { environmentId, workspaceRoots, count } = props;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [held, setHeld] = useState(0);
   const [firstRoot] = workspaceRoots;
   if (firstRoot === undefined) return null;
   const setAside = () => {
@@ -261,7 +262,8 @@ function OverleafUnreadableRecords(props: {
     setError(null);
     void settleOverleafOperation(
       async () => {
-        await setAsideUnreadableOverleafRecords(environmentId, firstRoot);
+        const result = await setAsideUnreadableOverleafRecords(environmentId, firstRoot);
+        setHeld(result.held);
         await Promise.all(
           workspaceRoots.map((root) => loadOverleafWorkspace(environmentId, root, { force: true })),
         );
@@ -280,14 +282,22 @@ function OverleafUnreadableRecords(props: {
         project files in bulk, for example when switching branches.
       </p>
       <p className="text-xs text-muted-foreground">
-        Setting aside moves the record to a recovery folder. Nothing on Overleaf or in your folders
-        changes. A link made by a newer version of Scient has to be linked again.
+        Setting aside moves the record to a recovery folder, and nothing on Overleaf changes. If
+        that link's last sync stopped part-way, Scient no longer guards the files it was changing. A
+        link made by a newer version of Scient with an unfinished sync is kept; finish it there.
       </p>
       <div>
         <Button size="xs" variant="outline" disabled={busy} onClick={setAside}>
           Set aside
         </Button>
       </div>
+      {held > 0 ? (
+        <p className="text-xs text-foreground" role="status">
+          {held === 1
+            ? "One link was kept: a newer version of Scient made it, and its sync didn't finish. Open that version to finish it."
+            : `${held} links were kept: a newer version of Scient made them, and their syncs didn't finish. Open that version to finish them.`}
+        </p>
+      ) : null}
       {error ? (
         <p className="text-xs text-destructive" role="alert">
           {error}

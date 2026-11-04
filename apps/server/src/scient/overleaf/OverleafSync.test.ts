@@ -1085,7 +1085,10 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           }),
         ).toMatchObject({ _tag: "refused", reason: "records-unreadable" });
         expect(yield* w.service.unreadableRecords(w.at(w.main))).toBe(1);
-        expect(yield* w.service.setAsideUnreadable(w.at(w.main))).toBe(1);
+        expect(yield* w.service.setAsideUnreadable(w.at(w.main))).toEqual({
+          setAside: 1,
+          held: 0,
+        });
         expect(yield* w.service.unreadableRecords(w.at(w.main))).toBe(0);
         expect(
           (yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(w.stateRoot, "quarantine"))))

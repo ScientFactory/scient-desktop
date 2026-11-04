@@ -237,8 +237,14 @@ export const ScientOverleafConnectionList = Schema.Struct({
 });
 export type ScientOverleafConnectionList = typeof ScientOverleafConnectionList.Type;
 
-/** How many unreadable link records were moved aside, bytes intact. */
-export const ScientOverleafSetAsideResult = Schema.Struct({ setAside: Schema.Number });
+/**
+ * Unreadable link records moved aside, bytes intact, and those held back: a newer
+ * release's record with an unfinished sync, which only that release can settle.
+ */
+export const ScientOverleafSetAsideResult = Schema.Struct({
+  setAside: Schema.Number,
+  held: Schema.Number,
+});
 export type ScientOverleafSetAsideResult = typeof ScientOverleafSetAsideResult.Type;
 
 /** Connect, relink or disconnect: done, or a fixed reason it did nothing. */
