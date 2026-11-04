@@ -203,8 +203,10 @@ or 2FA key goes. Decisions use revisions, never clocks:
   newer than applied (`stale`) and a unit with an open tab (`busy`), then runs item 3's `applyUnit`
   through `ServerBrowser.profileCookies` (a context lease in `ServerBrowserContexts`; CDP Network
   commands on a helper page of the profile's own context). Only applied units are recorded in
-  `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit; a
-  remote that finds the sender's session revoked deletes its copies at start and on any receive.
+  `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit. A
+  remote drops a sender, and its copies, when the session it last proved its key over is revoked
+  (it watches session removals) or after `SENDER_KEEP_DAYS` (30) days without it, checked at start
+  and daily. Only units still holding exactly the sender's copy are deleted.
 - **Needs you.** A page on a received unit that asks to sign in marks it `needsYou`, and the agent's
   note asks for `scient_account_add` (attended) or to stop (unattended). A sign-out control there
   clears it.

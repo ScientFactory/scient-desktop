@@ -6,7 +6,7 @@ import {
   type BrowserProfileRecord,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { shareable } from "@t3tools/shared/scientSessionCookies";
+import { SENDER_KEEP_DAYS, shareable } from "@t3tools/shared/scientSessionCookies";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useState } from "react";
@@ -68,7 +68,7 @@ export function remoteLine(input: RemoteLineInput, now = new Date()) {
         : connected && sentAt
           ? `has your sign-ins from ${when(sentAt, now)}`
           : !connected && sentAt
-            ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}`
+            ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`
             : "gets your sign-ins when it connects";
   const needsYou = [...new Set(input.shared.flatMap(({ needsYou }) => needsYou))];
   const kept = input.shared.reduce((total, { kept }) => total + (kept ?? 0), 0);

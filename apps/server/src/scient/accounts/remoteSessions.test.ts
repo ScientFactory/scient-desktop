@@ -1,14 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AuthSessionId,
   BrowserProfileId,
   EnvironmentId,
   type AccountSessionsReceiveInput,
   type SessionCookie,
 } from "@t3tools/contracts";
 import { unitCookies } from "@t3tools/shared/scientSessionCookies";
-import { DateTime, Effect, Redacted } from "effect";
+import { DateTime, Deferred, Effect, Fiber, Option, Queue, Redacted, Stream } from "effect";
+import { TestClock } from "effect/testing";
 
-import { SessionStore } from "../../auth/SessionStore.ts";
+import { SessionStore, type SessionCredentialChange } from "../../auth/SessionStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
@@ -69,28 +71,37 @@ function browserFixture() {
   return { jars, tabs, hooks, browser };
 }
 
-const setup = Effect.fn("RemoteSessionsTest.setup")(function* (
-  options: { active?: string[]; revoked?: string[] } = {},
-) {
+const setup = Effect.fn("RemoteSessionsTest.setup")(function* () {
   const { service } = yield* makeHarness();
   const fixture = browserFixture();
-  const active = new Set(options.active ?? [desktop.sessionId]);
-  const revoked = new Set(options.revoked ?? []);
+  const revoked = new Set<string>();
+  const changes = yield* Queue.unbounded<SessionCredentialChange>();
+  const looked = yield* Deferred.make<void>();
+  /** Resolved by the next session lookup, which a sweep makes while it holds the lock. */
+  const lookups = { next: yield* Deferred.make<void>() };
   const remote = yield* makeRemoteSessions.pipe(
     Effect.provideService(AccountsService, service),
     Effect.provideService(ServerBrowser, fixture.browser),
     Effect.provideService(ServerConfig, { devUrl: undefined } as ServerConfig["Service"]),
     Effect.provideService(SessionStore, {
-      listActive: () => Effect.succeed([...active].map((sessionId) => ({ sessionId }))),
+      streamChanges: Stream.fromQueue(changes),
     } as unknown as SessionStore["Service"]),
     Effect.provideService(AuthSessionRepository, {
       getById: ({ sessionId }: { sessionId: string }) =>
-        Effect.succeedSome({ revokedAt: revoked.has(sessionId) ? DateTime.nowUnsafe() : null }),
+        // A sweep that finds a revoked session holds the lock until it is done.
+        Deferred.succeed(lookups.next, undefined).pipe(
+          Effect.andThen(
+            revoked.has(sessionId) ? Deferred.succeed(looked, undefined) : Effect.void,
+          ),
+          Effect.as(
+            Option.some({ revokedAt: revoked.has(sessionId) ? DateTime.nowUnsafe() : null }),
+          ),
+        ),
     } as unknown as AuthSessionRepository["Service"]),
   );
   const { key } = yield* remote.bind(desktop, { source: MAC, label: "MacBook" });
   keys.desktop = key!;
-  return { ...fixture, active, revoked, remote, accounts: service };
+  return { ...fixture, revoked, changes, looked, lookups, remote, accounts: service };
 });
 
 /** The key this computer issued the desktop when the test began. */
@@ -213,11 +224,9 @@ describe("receiving a desktop's sign-ins", () => {
     "refuses another authorized peer as the sender, even once the desktop's session expired",
     () =>
       Effect.gen(function* () {
-        const { remote, active, accounts } = yield* setup();
+        const { remote, accounts } = yield* setup();
         yield* remote.receive(desktop, batch([copy(1)]));
         const other = { sessionId: "session-other", subject: "desktop" };
-        active.add(other.sessionId);
-        active.delete(desktop.sessionId);
         const takeover = yield* remote
           .bind(other, { source: MAC, label: "MacBook" })
           .pipe(Effect.flip);
@@ -300,9 +309,8 @@ describe("receiving a desktop's sign-ins", () => {
 
   it.effect("withdraws only cookies still holding this sender's copy", () =>
     Effect.gen(function* () {
-      const { remote, jars, revoked, active } = yield* setup();
+      const { remote, jars, revoked } = yield* setup();
       const pc = { sessionId: "session-pc", subject: "desktop" };
-      active.add(pc.sessionId);
       const PC = EnvironmentId.make("pc");
       const pcKey = (yield* remote.bind(pc, { source: PC, label: "PC" })).key!;
       // A copies github.com; B, another desktop, replaces it with its own session.
@@ -330,6 +338,44 @@ describe("receiving a desktop's sign-ins", () => {
         yield* remote.withdraw(desktop, { source: MAC, key: keys.desktop, all: true }),
       ).toEqual({ deleted: 0 });
       expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-signed-in-here"]);
+    }),
+  );
+
+  it.effect("drops a revoked sender's copies on an idle computer as soon as it is revoked", () =>
+    Effect.gen(function* () {
+      const { remote, jars, revoked, changes, looked, lookups, accounts } = yield* setup();
+      yield* remote.receive(desktop, batch([copy(1)]));
+      lookups.next = yield* Deferred.make<void>();
+      const watching = yield* Effect.forkChild(remote.watch);
+      // The start-up sweep ran and found nothing to drop.
+      yield* Deferred.await(lookups.next);
+      yield* remote.list(WORK);
+      expect(jars.get(WORK)).toHaveLength(1);
+      // The desktop is offline; its access is revoked here, and nothing else happens.
+      revoked.add(desktop.sessionId);
+      yield* Queue.offer(changes, {
+        type: "clientRemoved",
+        sessionId: AuthSessionId.make(desktop.sessionId),
+      });
+      yield* Deferred.await(looked);
+      yield* remote.list(WORK);
+      expect(jars.get(WORK)).toEqual([]);
+      expect(yield* accounts.remoteSenders).toEqual([]);
+      yield* Fiber.interrupt(watching);
+    }),
+  );
+
+  it.effect("drops a sender's copies after 30 days without it, not before", () =>
+    Effect.gen(function* () {
+      const { remote, jars, accounts } = yield* setup();
+      yield* remote.receive(desktop, batch([copy(1)]));
+      yield* TestClock.adjust("29 days");
+      yield* remote.sweep();
+      expect(jars.get(WORK)).toHaveLength(1);
+      yield* TestClock.adjust("2 days");
+      yield* remote.sweep();
+      expect(jars.get(WORK)).toEqual([]);
+      expect(yield* accounts.remoteSenders).toEqual([]);
     }),
   );
 

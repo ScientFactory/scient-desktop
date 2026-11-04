@@ -16,6 +16,7 @@ import {
   type SessionReceiveOutcome,
 } from "@t3tools/contracts";
 import {
+  SENDER_KEEP_DAYS,
   applyUnit,
   shareable,
   unitCookies,
@@ -28,14 +29,18 @@ import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
+import { SessionStore } from "../../auth/SessionStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
 import { AccountsService } from "./AccountsService.ts";
@@ -181,8 +186,10 @@ export class RemoteSessions extends Context.Service<
       profileId: BrowserProfileId,
       site: string,
     ) => Effect.Effect<{ readonly signedOut: boolean }, AccountsError>;
-    /** Forgets every sender whose session was revoked here, with its copies. */
+    /** Forgets every sender revoked here or silent past the keep limit, with its copies. */
     readonly sweep: () => Effect.Effect<void>;
+    /** The server's lifelong sweeps: at start, daily, and on every removed session. */
+    readonly watch: Effect.Effect<void>;
     /** Dev servers only: item 3's cases on this computer's browser, in throwaway profiles. */
     readonly qualify: () => Effect.Effect<ReadonlyArray<AccountsQualifyCase>, AccountsError>;
   }
@@ -198,12 +205,14 @@ const keyMatches = (key: Redacted.Redacted<string>, keyHash: string) => {
 
 /** How often a sender proving its key again is written down. */
 const SEEN_WRITE_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const makeRemoteSessions = Effect.gen(function* () {
   const browser = yield* ServerBrowser;
   const config = yield* ServerConfig;
   const accounts = yield* AccountsService;
   const sessionRows = yield* Effect.serviceOption(AuthSessionRepository);
+  const sessions = yield* Effect.serviceOption(SessionStore);
   // A development server, as the reusable dev sign-in decides it; never a packaged one.
   const qualifiable = config.devUrl !== undefined;
   const run = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -292,9 +301,15 @@ export const makeRemoteSessions = Effect.gen(function* () {
           Effect.orElseSucceed(() => false),
         );
 
+  /** Revoked here, or silent past the keep limit: the sender and its copies go. */
   const sweepSenders = Effect.gen(function* () {
+    const at = Date.parse(yield* now);
     for (const sender of yield* accounts.remoteSenders)
-      if (yield* revoked(sender.sessionId)) yield* forget(sender.source);
+      if (
+        at - Date.parse(sender.seenAt) > SENDER_KEEP_DAYS * DAY_MS ||
+        (yield* revoked(sender.sessionId))
+      )
+        yield* forget(sender.source);
   });
 
   /** The sender proves its key; a new session proving it renews the sender on that session. */
@@ -365,6 +380,23 @@ export const makeRemoteSessions = Effect.gen(function* () {
   const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
     yield* exclusive(sweepSenders);
   }, Effect.ignore);
+
+  /**
+   * Runs for the server's life: a sweep at start and then daily, and one whenever a session that
+   * a sender last proved its key over is removed, so an idle computer drops a revoked one's copies.
+   */
+  const watch = Effect.all(
+    [
+      sweep().pipe(Effect.repeat(Schedule.spaced(Duration.days(1)))),
+      Option.isNone(sessions)
+        ? Effect.never
+        : sessions.value.streamChanges.pipe(
+            Stream.filter((change) => change.type === "clientRemoved"),
+            Stream.runForEach(() => sweep()),
+          ),
+    ],
+    { concurrency: "unbounded", discard: true },
+  ).pipe(Effect.asVoid);
 
   const receive = Effect.fn("RemoteSessions.receive")(function* (
     caller: AccountsCallerSession,
@@ -554,6 +586,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     list,
     signOutLocal,
     sweep,
+    watch,
     qualify,
   });
 });

@@ -375,7 +375,7 @@ it("says what each other computer holds of this desktop's sign-ins, first state 
   expect(line({ sending: true })).toBe("Lab server · sending your sign-ins…");
   expect(line()).toBe(`Lab server · has your sign-ins from ${time}`);
   expect(line({ phase: "offline" })).toBe(
-    `Lab server · offline since ${time} · has your sign-ins from ${time}`,
+    `Lab server · offline since ${time} · has your sign-ins from ${time}, kept 30 days without this computer`,
   );
   expect(line({ remote: { features: {} } })).toBe(
     "Lab server · can't receive sign-ins: update Scient there",

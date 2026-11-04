@@ -146,8 +146,9 @@ every project with scripts go; a profile that is Off or limited to projects does
 already sent leave. Passwords and 2FA keys never go. Each computer's line under Other computers
 says what it has. When a site refuses a copy there, the line says it needs you: sign in once on
 that computer and the sign-in stays there. Signing out on that computer stays there until you next
-sign in to the site here. On another computer, a program running as you can read the sign-ins
-Scient keeps there.
+sign in to the site here. Copies leave a computer when you remove this computer's access there, or
+after 30 days without this computer connecting. On another computer, a program running as you can
+read the sign-ins Scient keeps there.
 
 CAPTCHAs, push approvals and passkeys need you. A Google sign-in copied from Chrome can stop
 working while you keep using Chrome, so sign in to Google once inside Scient: press Sign in next to "Signed out of Google" on the

@@ -443,6 +443,9 @@ export const remoteControls = (record: ProfileControls): SentProfileControls => 
   scriptSignIn: record.scriptSignIn,
 });
 
+/** A computer drops a desktop's copies after this many days without that desktop proving its key. */
+export const SENDER_KEEP_DAYS = 30;
+
 const OPENATHENS = "openathens.net";
 
 /** Every site of the university rows, their learned sign-in addresses included. */
