@@ -738,6 +738,12 @@ export const AccountsSnapshot = Schema.Struct({
       }),
     ),
   ),
+  /** What this server can do that an older one can't, so a newer client offers only that. */
+  features: Schema.optional(
+    Schema.Struct({
+      sessionsSeen: Schema.optional(Schema.Literal(true)),
+    }),
+  ),
 });
 export type AccountsSnapshot = typeof AccountsSnapshot.Type;
 
@@ -922,6 +928,25 @@ export const AccountMatchSignInResult = Schema.Struct({
   accountId: Schema.optional(AccountId),
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
+
+/** A session in a browser profile: brought by an import, or a sign-in seen happening there. */
+export const AccountSessionSeen = Schema.Struct({
+  /** The registrable site, such as `github.com`. */
+  site: AccountSite,
+  how: Schema.Literals(["imported", "signed-in"]),
+  /** Where an import came from, such as "Chrome · Yaacov". */
+  from: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+});
+export type AccountSessionSeen = typeof AccountSessionSeen.Type;
+
+export const AccountSessionsSeenInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  sessions: Schema.Array(AccountSessionSeen).check(Schema.isMaxLength(200)),
+});
+export type AccountSessionsSeenInput = typeof AccountSessionsSeenInput.Type;
+
+/** The rows made for sessions that had none. */
+export const AccountSessionsSeenResult = Schema.Struct({ created: Schema.Array(AccountId) });
 
 /** How a sign-in with this saved password on the user's own tab ended. */
 export const AccountSignInSeenInput = Schema.Struct({

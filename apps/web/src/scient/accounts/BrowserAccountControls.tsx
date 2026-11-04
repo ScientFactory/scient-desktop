@@ -170,6 +170,7 @@ function DesktopBrowserAccountControls({
     profileId,
     url,
     accounts: data?.accounts ?? [],
+    sessionsSeen: data?.features?.sessionsSeen === true,
     enabled: canWrite && pending === null,
   });
   useUniversityBrowsing({

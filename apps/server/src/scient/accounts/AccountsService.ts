@@ -7,6 +7,7 @@ import type {
   AccountSignIn,
   AccountCodeSources,
   AccountGoogleSessions,
+  AccountSessionsSeenInput,
   AccountKeyLink,
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
@@ -129,6 +130,14 @@ export interface AccountsServiceShape {
   readonly mainBackfilled: (
     profileIds: ReadonlyArray<BrowserProfileId>,
   ) => Effect.Effect<void, AccountsError>;
+  /**
+   * Sessions in a profile, each on that profile's passwordless session row for its site: an import
+   * makes one only where there is none, saying "Imported from …"; a sign-in seen there is an action
+   * on it, or makes it. Saved passwords are separate rows and never take a session.
+   */
+  readonly sessionsSeen: (
+    input: AccountSessionsSeenInput,
+  ) => Effect.Effect<{ readonly created: ReadonlyArray<AccountId> }, AccountsError>;
   /** Keeps one row per Google address in a profile, with the state Google reports. */
   readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
   /** Without an account, the variable keeps its value and stops following one. */

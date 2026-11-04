@@ -7,7 +7,7 @@ import {
   ThreadId,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, Stream } from "effect";
 
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
@@ -25,7 +25,7 @@ const profiles = [
 ];
 
 /** A browser whose pages open only for the URLs `opens` accepts; everything else asks to sign in. */
-function browser(opens: (url: string) => boolean) {
+function browser(opens: (url: string) => boolean, shown: Record<string, unknown> = {}) {
   const urls = new Map<string, string>([["tab-work", ""]]);
   const calls: Array<{ operation: string; input: Record<string, unknown> }> = [];
   const status = (tabId = "tab-work"): PreviewAutomationStatus => ({
@@ -54,7 +54,7 @@ function browser(opens: (url: string) => boolean) {
           const url = urls.get(tabId)!;
           return (
             opens(url)
-              ? { finalUrl: url, title: "Docs", passwordField: false, deniedText: false }
+              ? { finalUrl: url, title: "Docs", passwordField: false, deniedText: false, ...shown }
               : {
                   finalUrl: "https://accounts.google.com/signin",
                   title: "Sign in",
@@ -157,5 +157,50 @@ it.effect("checks the site's identities first, oldest first, before other profil
       ),
     );
     expect(found.profiles.map(({ profileId }) => profileId)).toEqual(["work"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a page showing a sign-out control signs in that profile's rows, and makes none", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const saved = (profileId: string) =>
+      service.save({
+        name: "GitHub",
+        details: {
+          kind: "website",
+          sites: ["github.com"],
+          profileId: BrowserProfileId.make(profileId),
+        },
+        secrets: {},
+      });
+    const work = (yield* saved("work")).accountId;
+    const home = (yield* saved("home")).accountId;
+    const signedIn = service.changes.pipe(
+      Stream.filter(({ accounts }) =>
+        accounts.some((row) => row.accountId === work && row.signIn?.state === "signed-in"),
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.forkChild,
+    );
+    const fake = browser(() => true, { signOutLink: true, identity: "octo" });
+    const url = "https://github.com/settings/profile";
+    fake.urls.set("tab-work", url);
+    yield* previewProfileFallback(scope, fake.status(), {
+      operation: "open",
+      requestedUrl: url,
+      targetsExistingTab: false,
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(fake.layer, invocation, Layer.succeed(AccountsService, service)),
+      ),
+    );
+    yield* Fiber.join(yield* signedIn);
+    const rows = (yield* service.snapshot).accounts;
+    expect(rows).toHaveLength(2);
+    const row = (accountId: string) => rows.find((account) => account.accountId === accountId);
+    expect(row(work)?.signIn).toMatchObject({ state: "signed-in", by: "look" });
+    expect(row(work)?.details).toMatchObject({ username: "octo" });
+    expect(row(home)?.signIn).toBeUndefined();
   }).pipe(Effect.scoped),
 );

@@ -511,6 +511,73 @@ describe("AccountsService and Main", () => {
     }),
   );
 
+  it.effect("keeps one session row per site in a profile, from imports and sign-ins seen", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const work = BrowserProfileId.make("profile-work");
+      // A saved password and a university on the same sites never take a session.
+      yield* service.save({
+        ...website(),
+        details: { ...website().details, sites: ["github.com"], profileId: work },
+      });
+      yield* service.save({
+        ...row("profile-work", ["huji.ac.il"]),
+        details: {
+          ...row("profile-work", ["huji.ac.il"]).details,
+          institution: { name: "HUJI", entityId: "https://idp.huji.ac.il", domain: "huji.ac.il" },
+        },
+      });
+      const sessions = Effect.map(service.snapshot, ({ accounts }) =>
+        accounts
+          .filter(
+            (account) =>
+              account.details.kind === "website" && account.details.origin === "browser-session",
+          )
+          .map((account) => [
+            account.details.kind === "website" ? account.details.sites : [],
+            account.signIn?.state,
+            account.signIn?.by,
+            account.signIn?.detail,
+          ]),
+      );
+      const imported = yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [
+          { site: "github.com", how: "imported", from: "Chrome · Person" },
+          { site: "huji.ac.il", how: "imported", from: "Chrome · Person" },
+          { site: "google.com", how: "imported", from: "Chrome · Person" },
+        ],
+      });
+      expect(imported.created).toHaveLength(2);
+      const again = yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [{ site: "github.com", how: "imported", from: "Chrome · Other" }],
+      });
+      expect(again.created).toEqual([]);
+      expect(yield* sessions).toEqual([
+        [["github.com"], "unknown", "look", "Imported from Chrome · Person"],
+        [["huji.ac.il"], "unknown", "look", "Imported from Chrome · Person"],
+      ]);
+      // A sign-in seen there confirms the row; a later import never takes it back to unknown.
+      yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [{ site: "github.com", how: "signed-in" }],
+      });
+      yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [{ site: "github.com", how: "imported", from: "Chrome · Person" }],
+      });
+      expect(yield* sessions).toContainEqual([["github.com"], "signed-in", "action", undefined]);
+      // In another profile, a sign-in seen makes its own row.
+      const home = yield* service.sessionsSeen({
+        profileId: BrowserProfileId.make("profile-home"),
+        sessions: [{ site: "github.com", how: "signed-in" }],
+      });
+      expect(home.created).toHaveLength(1);
+      expect(yield* sessions).toHaveLength(3);
+    }),
+  );
+
   it.effect("names a session row from the page, and never a row with a password", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();

@@ -4,6 +4,7 @@ import {
   GOOGLE_SITE,
   ACCOUNT_SECRET_FIELDS,
   DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
   AccountId,
   AccountSaveInput,
   AccountMatchSignInInput,
@@ -76,7 +77,8 @@ import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 import { parseTotp } from "./signIn/totp.ts";
-import { COPIED_FROM } from "@t3tools/shared/scientAccountSignIn";
+import { COPIED_FROM, IMPORTED_FROM } from "@t3tools/shared/scientAccountSignIn";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 
 const missing = () => fail("not-found", "The account no longer exists.");
 
@@ -225,6 +227,7 @@ export const layer = Layer.effect(
         recentActivity,
         customModelKeys,
         managedElsewhere,
+        features: { sessionsSeen: true },
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
@@ -984,6 +987,71 @@ export const layer = Layer.effect(
         locked(
           Effect.suspend(() =>
             commit({ ...state, profiles: withSignedOutSite(state.profiles, site) }),
+          ),
+        ),
+      ),
+      sessionsSeen: Effect.fn("AccountsService.sessionsSeen")((input) =>
+        locked(
+          batched(
+            Effect.gen(function* () {
+              const created: Array<AccountId> = [];
+              if (input.profileId === INCOGNITO_BROWSER_PROFILE_ID) return { created };
+              const sessionRow = (site: string) =>
+                state.accounts.find(
+                  ({ summary }) =>
+                    summary.details.kind === "website" &&
+                    summary.details.profileId === input.profileId &&
+                    summary.secrets.password === undefined &&
+                    !universityDetails(summary.details) &&
+                    !isGoogleSessionRow(summary) &&
+                    siteMatches(summary.details.sites, `https://${site}`),
+                );
+              for (const { site, how, from } of input.sessions) {
+                // Google's sessions are its own rows, one per address (`googleSessionsSeen`).
+                if (site === GOOGLE_SITE || site.endsWith(`.${GOOGLE_SITE}`)) continue;
+                const at = yield* now;
+                const row = sessionRow(site);
+                if (row) {
+                  if (how === "imported") continue;
+                  yield* commit(
+                    replaceAccount({
+                      ...row,
+                      summary: withSignIn(
+                        row.summary,
+                        { state: "signed-in", at },
+                        yield* Clock.currentTimeMillis,
+                        "attempt",
+                      ),
+                    }),
+                  );
+                  continue;
+                }
+                const { accountId } = yield* save({
+                  name: site,
+                  details: {
+                    kind: "website",
+                    sites: [site],
+                    profileId: input.profileId,
+                    origin: "browser-session",
+                  },
+                  secrets: {},
+                });
+                const saved = findAccount(accountId);
+                if (!saved) continue;
+                const signIn =
+                  how === "imported"
+                    ? {
+                        state: "unknown" as const,
+                        at,
+                        detail: `${IMPORTED_FROM} ${from ?? "another browser"}`,
+                        by: "look" as const,
+                      }
+                    : { state: "signed-in" as const, at, by: "action" as const };
+                yield* commit(replaceAccount({ ...saved, summary: { ...saved.summary, signIn } }));
+                created.push(accountId);
+              }
+              return { created };
+            }),
           ),
         ),
       ),

@@ -6,10 +6,14 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { requireThreadMcpCapability } from "../../../mcp/McpInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { scientInvocationForMcp } from "../../../mcp/ScientMcpInvocation.ts";
+import { isGoogleSessionRow } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
+import { isUniversitySignInService } from "../universitySignIn.ts";
 import { withAccountUse } from "./accountUse.ts";
 import { previewInvoker } from "./broker.ts";
 import { findProfiles } from "./findProfiles.ts";
@@ -46,6 +50,36 @@ const otherGoogleAccounts = Effect.fn("AccountsAgent.otherGoogleAccounts")(funct
     .slice(0, 3);
 });
 
+/**
+ * A page an agent opened shows a sign-out control: that profile's rows for the site are signed in,
+ * as a look. It names who from the page's tag, and makes no rows, so browsing never grows Accounts.
+ */
+const pageSignedIn = Effect.fn("AccountsAgent.pageSignedIn")(function* (
+  profileId: BrowserProfileId,
+  page: ProfileDetection,
+) {
+  const accounts = yield* AccountsService;
+  const { accounts: rows } = yield* accounts.snapshot;
+  if (isUniversitySignInService(rows, page.finalUrl)) return;
+  const matching = rows.filter(
+    (row) =>
+      row.details.kind === "website" &&
+      row.details.profileId === profileId &&
+      !universityDetails(row.details) &&
+      !isGoogleSessionRow(row) &&
+      anySiteMatches(row.details.sites, page.finalUrl),
+  );
+  yield* Effect.forEach(
+    matching,
+    (row) =>
+      accounts.recordCheck(row.accountId, {
+        state: "signed-in",
+        ...(page.identity ? { username: page.identity } : {}),
+      }),
+    { discard: true },
+  );
+});
+
 export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFallback")(function* (
   scope: AccountSessionScope,
   status: PreviewAutomationStatus,
@@ -68,14 +102,16 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
     const raw = yield* invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId);
     const page = yield* decodeDetection(raw);
     const result = classifyProfilePage(url, page);
+    const profileId =
+      status.tabs?.find((tab) => tab.tabId === tabId)?.profileId ?? options.profileId;
+    if (result === "opens" && page.signOutLink && profileId !== undefined)
+      yield* pageSignedIn(profileId, page).pipe(Effect.ignore, Effect.forkDetach);
     const decision = profileOpenDecision(result, {
       operation: options.operation,
       explicitProfile: options.input?.profileId !== undefined,
       targetsExistingTab: options.targetsExistingTab,
     });
     if (decision.action === "nothing") return status;
-    const profileId =
-      status.tabs?.find((tab) => tab.tabId === tabId)?.profileId ?? options.profileId;
     const profileName =
       status.profiles?.find((profile) => profile.id === profileId)?.name ??
       profileId ??

@@ -212,6 +212,7 @@ export function fakeAccounts(
     mainSignedOut: () => unsupported,
     mainBackfilled: () => unsupported,
     googleSessionsSeen: () => unsupported,
+    sessionsSeen: () => unsupported,
     setCodeSources: () => unsupported,
     setKeyLink: () => Effect.void,
     respondApproval: () => unsupported,
