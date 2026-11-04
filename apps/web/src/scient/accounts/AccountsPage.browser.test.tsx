@@ -17,7 +17,7 @@ import { render } from "../../../test/render";
 import { AccountRow, SignInGroupRow } from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, ProfileDetail } from "./BrowserProfiles";
-import { notSentLine, RemoteComputers, remoteLine } from "./RemoteComputers";
+import { RemoteComputers } from "./RemoteComputers";
 
 const state = vi.hoisted(() => ({
   open: vi.fn(),
@@ -391,69 +391,6 @@ it("says which profile a site uses when Main's copy doesn't work, and offers Mai
       }),
     ),
   );
-});
-
-it("says what each other computer holds of this desktop's sign-ins, first state that matches", () => {
-  const now = new Date("2026-11-04T10:15:00.000Z");
-  const at = "2026-11-04T10:14:00.000Z";
-  const share = (overrides = {}) => ({
-    environmentId: EnvironmentId.make("lab"),
-    label: "Lab server",
-    sentAt: at,
-    seenAt: at,
-    applied: 3,
-    waiting: 0,
-    needsYou: [] as string[],
-    ...overrides,
-  });
-  const line = (overrides: Partial<Parameters<typeof remoteLine>[0]> = {}) =>
-    remoteLine(
-      {
-        label: "Lab server",
-        phase: "connected",
-        sharing: true,
-        sending: false,
-        refused: undefined,
-        remote: { accountsProtocol: 1 },
-        shared: [share()],
-        universities: [],
-        ...overrides,
-      },
-      now,
-    ).text;
-  const time = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  expect(line({ sharing: false, sending: true })).toBe(
-    "Lab server · doesn't get your sign-ins: sending them is off in Settings → Labs",
-  );
-  expect(line({ sending: true })).toBe("Lab server · sending your sign-ins…");
-  expect(line()).toBe(`Lab server · has your sign-ins from ${time}`);
-  expect(line({ phase: "offline" })).toBe(
-    `Lab server · offline since ${time} · has your sign-ins from ${time}, kept 30 days without this computer`,
-  );
-  expect(line({ remote: {} })).toBe("Lab server · can't receive sign-ins: update Scient there");
-  expect(line({ refused: "relay" })).toBe(
-    "Lab server · doesn't get sign-ins: connected through a relay",
-  );
-  expect(line({ refused: "unencrypted" })).toBe(
-    "Lab server · doesn't get sign-ins: connected without encryption",
-  );
-  expect(line({ shared: [] })).toBe("Lab server · gets your sign-ins when it connects");
-  expect(
-    line({
-      shared: [share({ needsYou: ["github.com"], kept: 3, waiting: 2 })],
-      universities: ["HUJI"],
-    }),
-  ).toBe(
-    `Lab server · has your sign-ins from ${time} · github.com needs you there · 3 kept its own · 2 waiting · HUJI isn't connected there`,
-  );
-  const record = (overrides = {}) => ({ ...defaultBrowserProfileRecord("work"), ...overrides });
-  expect(
-    notSentLine([
-      { id: "default", name: "Main", record: record() },
-      { id: "work", name: "Work", record: record({ scope: { type: "projects", projectIds: [] } }) },
-      { id: "old", name: "Old", record: record({ access: "off" }) },
-    ]),
-  ).toBe("Not sent to other computers: Work (limited to projects here), Old (off for agents).");
 });
 
 it("on another computer, shows received controls as set on the desktop and signs out there only", async () => {

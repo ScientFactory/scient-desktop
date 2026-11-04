@@ -5,10 +5,9 @@ import {
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   type AccountsSnapshot,
-  type BrowserProfileRecord,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { SENDER_KEEP_DAYS, shareable } from "@t3tools/shared/scientSessionCookies";
+import { SENDER_KEEP_DAYS } from "@t3tools/shared/scientSessionCookies";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useState } from "react";
@@ -23,11 +22,17 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
 
 import {
+  notSent,
+  remoteView,
+  type NotSentReason,
+  type RemoteState,
+  type RemoteView,
+} from "./remoteComputersView";
+import {
   allowedRoute,
   deliveryFailuresAtom,
   sendAgain,
   sendingRemotesAtom,
-  type DeliveryFailure,
 } from "./remoteSessions";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
@@ -45,83 +50,45 @@ function when(iso: string, now = new Date()) {
   return `${at.toLocaleDateString()} ${time}`;
 }
 
-export interface RemoteLineInput {
-  readonly label: string;
-  readonly phase: string;
-  /** Settings → Labs lets this desktop send sign-ins at all. */
-  readonly sharing: boolean;
-  readonly sending: boolean;
-  /** The last delivery that failed, until one succeeds. */
-  readonly failure?: DeliveryFailure | undefined;
-  readonly refused: "relay" | "unencrypted" | undefined;
-  /** The remote's snapshot while connected. */
-  readonly remote: Pick<AccountsSnapshot, "accountsProtocol"> | undefined;
-  /** This desktop's records of what the remote applied, one per profile. */
-  readonly shared: ReadonlyArray<NonNullable<BrowserProfileRecord["sharedWith"]>[number]>;
-  /** University rows here whose institution the remote has no row for. */
-  readonly universities: ReadonlyArray<string>;
+function stateText(state: RemoteState, now: Date) {
+  switch (state.kind) {
+    case "sharing-off":
+      return "doesn't get your sign-ins: sending them is off in Settings → Labs";
+    case "sending":
+      return "sending your sign-ins…";
+    case "failed":
+      return `couldn't send your sign-ins at ${when(state.failure.at, now)}: ${state.failure.reason === "refused" ? "it refused this computer" : "the request failed"}`;
+    case "refused":
+      return `doesn't get sign-ins: ${state.route === "relay" ? "connected through a relay" : "connected without encryption"}`;
+    case "outdated":
+      return "can't receive sign-ins: update Scient there";
+    case "delivered":
+      return `has your sign-ins from ${when(state.sentAt, now)}`;
+    case "offline":
+      return `offline${state.seenAt ? ` since ${when(state.seenAt, now)}` : ""} · has your sign-ins from ${when(state.sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`;
+    case "on-connect":
+      return "gets your sign-ins when it connects";
+  }
 }
 
-/** The first matching state, then the suffixes that apply. */
-export function remoteLine(input: RemoteLineInput, now = new Date()) {
-  const sentAt = input.shared
-    .flatMap(({ sentAt }) => (sentAt ? [sentAt] : []))
-    .sort()
-    .at(-1);
-  const seenAt = input.shared
-    .flatMap(({ seenAt }) => (seenAt ? [seenAt] : []))
-    .sort()
-    .at(-1);
-  const connected = input.phase === "connected";
-  const state = !input.sharing
-    ? "doesn't get your sign-ins: sending them is off in Settings → Labs"
-    : input.sending
-      ? "sending your sign-ins…"
-      : input.failure
-        ? `couldn't send your sign-ins at ${when(input.failure.at, now)}: ${input.failure.reason === "refused" ? "it refused this computer" : "the request failed"}`
-        : input.refused
-          ? `doesn't get sign-ins: ${input.refused === "relay" ? "connected through a relay" : "connected without encryption"}`
-          : connected && input.remote && (input.remote.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL
-            ? "can't receive sign-ins: update Scient there"
-            : connected && sentAt
-              ? `has your sign-ins from ${when(sentAt, now)}`
-              : !connected && sentAt
-                ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`
-                : "gets your sign-ins when it connects";
-  const needsYou = [...new Set(input.shared.flatMap(({ needsYou }) => needsYou))];
-  const kept = input.shared.reduce((total, { kept }) => total + (kept ?? 0), 0);
-  const waiting = input.shared.reduce((total, { waiting }) => total + waiting, 0);
-  const suffixes = [
+function remoteText(label: string, view: RemoteView, now = new Date()) {
+  const { needsYou } = view;
+  return [
+    `${label} · ${stateText(view.state, now)}`,
     ...(needsYou.length
       ? [`${needsYou.join(", ")} ${needsYou.length > 1 ? "need" : "needs"} you there`]
       : []),
-    ...(kept ? [`${kept} kept its own`] : []),
-    ...(waiting ? [`${waiting} waiting`] : []),
-    ...input.universities.map((name) => `${name} isn't connected there`),
-  ];
-  return { text: [`${input.label} · ${state}`, ...suffixes].join(" · "), needsYou, waiting };
+    ...(view.kept ? [`${view.kept} kept its own`] : []),
+    ...(view.waiting ? [`${view.waiting} waiting`] : []),
+    ...view.universities.map((name) => `${name} isn't connected there`),
+  ].join(" · ");
 }
 
-const NOT_SENT_REASONS = (record: BrowserProfileRecord) =>
-  record.access === "off"
-    ? "off for agents"
-    : record.scope.type !== "all-projects"
-      ? "limited to projects here"
-      : "kept from scripts";
-
-/** Persistent profiles that don't go to other computers, with why. */
-export function notSentLine(
-  profiles: ReadonlyArray<{
-    readonly id: string;
-    readonly name: string;
-    readonly record: BrowserProfileRecord;
-  }>,
-) {
-  const held = profiles.filter(({ id, record }) => !shareable(id, record));
-  return held.length
-    ? `Not sent to other computers: ${held.map(({ name, record }) => `${name} (${NOT_SENT_REASONS(record)})`).join(", ")}.`
-    : undefined;
-}
+const NOT_SENT_TEXT: Record<NotSentReason, string> = {
+  off: "off for agents",
+  projects: "limited to projects here",
+  scripts: "kept from scripts",
+};
 
 const institutionsOf = (snapshot: Pick<AccountsSnapshot, "accounts"> | undefined) =>
   (snapshot?.accounts ?? []).flatMap(({ details }) =>
@@ -152,8 +119,7 @@ function RemoteComputerRow({
   const universities = institutionsOf(desktop).filter(
     (name) => remote !== undefined && !institutionsOf(remote).includes(name),
   );
-  const line = remoteLine({
-    label,
+  const line = remoteView({
     phase,
     sharing,
     sending,
@@ -199,11 +165,11 @@ function RemoteComputerRow({
       title={
         line.waiting ? (
           <Tooltip>
-            <TooltipTrigger render={<span />}>{line.text}</TooltipTrigger>
+            <TooltipTrigger render={<span />}>{remoteText(label, line)}</TooltipTrigger>
             <TooltipPopup>Busy or failed; they go with the next delivery.</TooltipPopup>
           </Tooltip>
         ) : (
-          line.text
+          remoteText(label, line)
         )
       }
       control={
@@ -291,7 +257,10 @@ export function RemoteComputers({
         snapshot.profiles.find((record) => record.profileId === profile.id) ??
         defaultBrowserProfileRecord(profile.id),
     }));
-  const notSent = notSentLine(profiles);
+  const held = notSent(profiles);
+  const notSentText = held.length
+    ? `Not sent to other computers: ${held.map(({ name, reason }) => `${name} (${NOT_SENT_TEXT[reason]})`).join(", ")}.`
+    : undefined;
   return (
     <SettingsSection
       id="accounts-other-computers"
@@ -323,7 +292,7 @@ export function RemoteComputers({
           desktop={snapshot}
         />
       ))}
-      {notSent && settings.signInSharingEnabled ? <SettingsRow title={notSent} /> : null}
+      {notSentText && settings.signInSharingEnabled ? <SettingsRow title={notSentText} /> : null}
     </SettingsSection>
   );
 }
