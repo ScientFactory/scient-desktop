@@ -19,10 +19,7 @@ import * as Layer from "effect/Layer";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
-import {
-  contextHistoryCandidate,
-  type ContextHistoryCandidate,
-} from "./scient-fork/ContextHistoryCandidates.ts";
+import type { ContextHistoryCandidate } from "./scient-fork/ContextHistoryCandidates.ts";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
@@ -43,9 +40,15 @@ it.layer(layerTest)("ContextHandoffService resource contract", (it) => {
           coveredRunOrdinals: { from: 1, to: 1 },
           strategy: "full_thread_summary",
           items: [
-            contextHistoryCandidate(
-              importedItem({ role: "user", id: "metadata", text: "Retained", ordinal: 0 }),
-            ),
+            {
+              sourceOnly: true,
+              id: TurnItemId.make("turn-item:metadata"),
+              threadId: ThreadId.make("thread:legacy-context"),
+              runId: null,
+              nodeId: null,
+              type: "user_message",
+              partialSnapshot: false,
+            } satisfies ContextHistoryCandidate,
           ],
           createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
         })

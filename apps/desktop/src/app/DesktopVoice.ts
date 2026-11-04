@@ -65,7 +65,7 @@ class VoiceHostProbeError extends Schema.TaggedError<VoiceHostProbeError>()("Voi
   operation: Schema.Literals(["runtime", "model", "storage"]),
 }) {}
 
-function toVoiceRequestError(
+export function toVoiceRequestError(
   cause: unknown,
   operation: "download" | "remove" = "download",
 ): VoiceRequestError {
@@ -86,13 +86,6 @@ function toVoiceRequestError(
         ? "Offline voice setup failed. Please try again."
         : "The offline voice model could not be removed. Please try again.",
   });
-}
-
-export function toVoiceModelRequestError(
-  cause: unknown,
-  operation: "download" | "remove",
-): VoiceRequestError {
-  return toVoiceRequestError(cause, operation);
 }
 
 export interface DesktopVoiceService {

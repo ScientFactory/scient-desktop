@@ -277,8 +277,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemResolveFileLink]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemSubscribeFileChanges]: AuthFilesystemReadScope,
   [WS_METHODS.analysisInspectRuntimes]: AuthOrchestrationReadScope,
-  [WS_METHODS.analysisConfigureRuntime]: AuthOrchestrationOperateScope,
-  [WS_METHODS.analysisVerifyRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.analysisStartRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.analysisCancelRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.analysisListRuns]: AuthOrchestrationReadScope,

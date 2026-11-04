@@ -75,7 +75,3 @@ export class VoiceTranscriptionError extends Error {
 export function isVoiceTranscriptionError(value: unknown): value is VoiceTranscriptionError {
   return value instanceof VoiceTranscriptionError;
 }
-
-export function voiceTranscriptionFailureAllowsFallback(value: unknown): boolean {
-  return isVoiceTranscriptionError(value) && value.fallbackAllowed;
-}

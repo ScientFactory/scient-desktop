@@ -1,10 +1,5 @@
 import { validateCuratedAddress } from "./extensionsView";
-import {
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-  type DiscoverEntry,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
   audienceReaches,
@@ -13,7 +8,6 @@ import {
   providerServerDisplayName,
   audienceSupport,
   collectProviderExtensionGroups,
-  preferCuratedStoreEntries,
   providerExtensionAudience,
   worksWithCardAgents,
 } from "./extensionsView";
@@ -62,12 +56,6 @@ describe("extension audiences", () => {
     expect(groups[0]?.plugins).toHaveLength(1);
     expect(groups[0]?.mcpServers).toEqual([]);
     expect(audienceReaches(providerExtensionAudience(claude, plugin), codex)).toBe(false);
-  });
-  it("prefers explicit curated aliases without hiding unrelated store entries", () => {
-    const curated = [{ agentStores: { codex: "notion" } }] as DiscoverEntry[];
-    expect(preferCuratedStoreEntries([{ name: "notion" }, { name: "gmail" }], curated)).toEqual([
-      { name: "gmail" },
-    ]);
   });
 });
 

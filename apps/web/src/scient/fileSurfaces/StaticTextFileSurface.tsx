@@ -5,7 +5,7 @@ import { FILE_LINK_REVEAL_UNSAFE_CSS } from "~/components/files/fileSurfaceChrom
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { useState } from "react";
 import type { ScopedThreadRef, FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";

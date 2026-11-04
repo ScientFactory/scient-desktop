@@ -19,17 +19,6 @@ export interface VoiceWavClip {
   readonly durationMs: number;
 }
 
-/** Root-mean-square amplitude of a frame, in the `[0, 1]` range for `[-1, 1]` input. */
-export function computeRms(frame: Float32Array): number {
-  if (frame.length === 0) return 0;
-  let sumOfSquares = 0;
-  for (let i = 0; i < frame.length; i += 1) {
-    const sample = frame[i]!;
-    sumOfSquares += sample * sample;
-  }
-  return Math.sqrt(sumOfSquares / frame.length);
-}
-
 /**
  * Encode accumulated mono frames into a 24 kHz 16-bit PCM WAV clip.
  *

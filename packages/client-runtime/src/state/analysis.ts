@@ -93,7 +93,6 @@ export function createAnalysisEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const runScheduler = createAtomCommandScheduler();
-  const runtimeScheduler = createAtomCommandScheduler();
   const cleanupScheduler = createAtomCommandScheduler();
   const promotionScheduler = createAtomCommandScheduler();
   return {
@@ -134,26 +133,6 @@ export function createAnalysisEnvironmentAtoms<R, E>(
             ),
           ),
         ),
-    }),
-    configureRuntime: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:analysis:configure-runtime",
-      tag: WS_METHODS.analysisConfigureRuntime,
-      scheduler: runtimeScheduler,
-      concurrency: {
-        mode: "latest",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.cwd, input.runtimeKind]),
-      },
-    }),
-    verifyRuntime: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:analysis:verify-runtime",
-      tag: WS_METHODS.analysisVerifyRuntime,
-      scheduler: runtimeScheduler,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.cwd, input.runtimeId]),
-      },
     }),
     startRun: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:analysis:start-run",

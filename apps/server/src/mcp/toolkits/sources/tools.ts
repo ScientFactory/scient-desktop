@@ -13,7 +13,7 @@ import {
 import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
@@ -35,24 +35,15 @@ const ScientSourceAgentAttachment = Schema.Struct({
 export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesToolError>()(
   "ScientSourcesToolError",
   {
-    code: Schema.Literals([
-      "capability-unavailable",
-      "project-required",
-      "project-changed",
-      "not-found",
-      "operation-failed",
-    ]),
+    code: Schema.Literals(["project-required", "project-changed", "not-found", "operation-failed"]),
     message: NonEmptyString,
   },
 ) {}
 
-const sourceOperation = (id: string, write: boolean): OperationMetadata => ({
+const sourceOperation = (id: string, write: boolean): OperationDefinition => ({
   id,
-  family: "sources",
   scope: "workspace",
   requiredCapabilities: write ? ["sources:read", "sources:write"] : ["sources:read"],
-  approval: write ? "explicit-user-request-guidance" : "session-grant",
-  documentation: "docs/user/sources.md",
 });
 
 export const ScientSourceAgentSummary = Schema.Struct({

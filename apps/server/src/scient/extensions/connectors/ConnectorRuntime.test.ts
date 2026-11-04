@@ -35,6 +35,9 @@ import { type ProjectRow, ProjectStoreV2 } from "../../../orchestration-v2/Proje
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { AccountsService } from "../../accounts/AccountsService.ts";
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
+import { noKeychain } from "../../accounts/Accounts.testkit.ts";
+import * as AccountsConnectorCredentials from "../../accounts/AccountsConnectorCredentials.ts";
+import { AccountVault, makeAccountVault } from "../../accounts/AccountVault.ts";
 import { ConnectorRuntime } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
@@ -492,7 +495,19 @@ const existingProject = (projectId: ProjectId): ProjectRow => ({
 });
 const EXISTING_PROJECTS = [PROJECT, OTHER_PROJECT].map(existingProject);
 
-const testLayer = ConnectorCredentialStore.layer.pipe(
+const testVault = Layer.effect(
+  AccountVault,
+  Effect.gen(function* () {
+    return yield* makeAccountVault(
+      yield* ServerSecretStore.ServerSecretStore,
+      (yield* ServerConfig.ServerConfig).stateDir,
+      noKeychain,
+    );
+  }),
+);
+
+const testLayer = AccountsConnectorCredentials.layer.pipe(
+  Layer.provideMerge(testVault),
   Layer.provideMerge(PluginConnectorEligibility.layer),
   Layer.provideMerge(
     Layer.mock(ProjectStoreV2)({

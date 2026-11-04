@@ -11,7 +11,7 @@ export interface ParsedSkillDocument {
   readonly instructions: string;
 }
 
-export class SkillDocumentError extends Error {
+class SkillDocumentError extends Error {
   override readonly name = "SkillDocumentError";
 }
 

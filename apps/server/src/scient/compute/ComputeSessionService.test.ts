@@ -1653,16 +1653,14 @@ const analyticsFixture = () => {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
   });
-  return { events, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, service, setConsent };
 };
 
 describe("interactive capture analytics", () => {
@@ -1884,7 +1882,7 @@ describe("interactive capture analytics", () => {
   )("$caseTitle", ({ mode }) =>
     Effect.gen(function* () {
       const f = analyticsFixture();
-      if (mode === "off") yield* f.service.setConsent("off");
+      if (mode === "off") yield* f.setConsent("off");
       const test = yield* harness({
         analytics:
           mode === "broken"
@@ -1932,15 +1930,13 @@ describe("compute outcome analytics", () => {
           }),
         status: Effect.sync(() => status),
         collectionEpoch: Effect.sync(() => epoch),
-        setConsent: (consent) =>
-          Effect.sync(() => {
-            status = { available: true, consent };
-            epoch += 1;
-            return status;
-          }),
         flush: Effect.void,
-        deleteData: Effect.succeed(true),
       });
+      const setConsent = (consent: AnalyticsStatus["consent"]) =>
+        Effect.sync(() => {
+          status = { available: true, consent };
+          epoch += 1;
+        });
       const test = yield* harness({ analytics });
       yield* test.use(
         Effect.gen(function* () {
@@ -1950,8 +1946,8 @@ describe("compute outcome analytics", () => {
           yield* waitForExecution(ComputeExecutionId.make("active-before-consent"), "running");
           yield* submit("hold", "queued-cancel");
           yield* submit("print(1)", "queued-complete");
-          yield* analytics.setConsent("off");
-          yield* analytics.setConsent("product");
+          yield* setConsent("off");
+          yield* setConsent("product");
           yield* service.cancelExecution({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,

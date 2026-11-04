@@ -323,20 +323,7 @@
 }
 
 @container scient-pdf-reader (max-width: 239px) {
-  .scient-pdf-action-fit,
-  .scient-pdf-action-search,
-  .scient-pdf-searchbar > svg,
-  .scient-pdf-find-count {
-    display: none;
-  }
-
-  .scient-pdf-searchbar {
-    padding-inline: 8px;
-  }
-}
-
-@container scient-pdf-reader (max-width: 199px) {
-  .scient-pdf-search-secondary {
+  .scient-pdf-action-search {
     display: none;
   }
 }

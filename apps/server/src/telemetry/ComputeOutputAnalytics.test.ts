@@ -15,16 +15,14 @@ const fixture = () => {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
   });
-  return { events, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, service, setConsent };
 };
 
 describe("interactive output analytics", () => {
@@ -78,14 +76,14 @@ describe("interactive output analytics", () => {
     const f = fixture();
     return Effect.gen(function* () {
       const observe = yield* makeComputeOutputAnalytics;
-      yield* f.service.setConsent("off");
+      yield* f.setConsent("off");
       yield* observe({ key: "old", phase: "started", startedAt: 100 });
-      yield* f.service.setConsent("product");
+      yield* f.setConsent("product");
       yield* observe({ key: "old", phase: "output", retained: true });
       yield* observe({ key: "old", phase: "finished" });
       yield* observe({ key: "reset", phase: "started", startedAt: 100 });
-      yield* f.service.setConsent("off");
-      yield* f.service.setConsent("product");
+      yield* f.setConsent("off");
+      yield* f.setConsent("product");
       yield* observe({ key: "reset", phase: "output", retained: true });
       yield* observe({ key: "reset", phase: "finished" });
       expect(f.events.map((event) => event.name)).toEqual(["scient.operation.started"]);

@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import { resolveMarkdownFileLinkTarget } from "@t3tools/shared/markdownLinks";
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownFileLinkRelativeCopyPath, resolveMarkdownFileLinkMeta } from "./markdown-links";
+import { resolveMarkdownFileLinkMeta } from "./markdown-links";
 
 describe("resolveMarkdownFileLinkTarget", () => {
   // regression: ce96ad0b61 UI fixes
@@ -138,12 +138,9 @@ describe("resolveMarkdownFileLinkTarget", () => {
   });
 });
 
-describe("markdownFileLinkRelativeCopyPath", () => {
-  const relativeCopyPath = (href: string, cwd: string) => {
-    const meta = resolveMarkdownFileLinkMeta(href, cwd);
-    if (!meta) throw new Error(`unresolved link ${href}`);
-    return markdownFileLinkRelativeCopyPath(meta);
-  };
+describe("workspace-relative file link paths", () => {
+  const relativeCopyPath = (href: string, cwd: string) =>
+    resolveMarkdownFileLinkMeta(href, cwd)?.workspaceRelativePath;
 
   // regression: efacdaf575 chore(upstream): align T3 through 35be904f2f with Scient native Codex policy
   it("copies workspace root links as the root directory", () => {

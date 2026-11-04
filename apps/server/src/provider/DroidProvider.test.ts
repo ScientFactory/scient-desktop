@@ -13,7 +13,6 @@ import type { DroidAcpRuntime, DroidAcpRuntimeFactory } from "./acp/DroidAcpSupp
 
 import {
   buildInitialDroidProviderSnapshot,
-  checkDroidProviderStatus,
   checkDroidProviderStatusWithCapabilities,
   isDroidAuthenticationRequiredError,
 } from "./DroidProvider.ts";
@@ -228,12 +227,12 @@ describe("buildInitialDroidProviderSnapshot", () => {
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkDroidProviderStatus", (it) => {
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
-      const snapshot = yield* checkDroidProviderStatus(
+      const snapshot = (yield* checkDroidProviderStatusWithCapabilities(
         decodeDroidSettings({
           enabled: true,
           binaryPath: "/definitely/not/installed/droid-binary",
         }),
-      );
+      )).snapshot;
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(false);
       expect(snapshot.status).toBe("error");
@@ -256,9 +255,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkDroidProvid
           );
           yield* fs.chmod(droidPath, 0o755);
 
-          return yield* checkDroidProviderStatus(
+          return (yield* checkDroidProviderStatusWithCapabilities(
             decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
-          );
+          )).snapshot;
         }),
       );
 
@@ -291,9 +290,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkDroidProvid
             ].join("\n"),
           );
           yield* fs.chmod(droidPath, 0o755);
-          return yield* checkDroidProviderStatus(
+          return (yield* checkDroidProviderStatusWithCapabilities(
             decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
-          );
+          )).snapshot;
         }),
       );
       expect(exited.status).toBe("error");
@@ -351,9 +350,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkDroidProvid
           );
           yield* fs.chmod(droidPath, 0o755);
 
-          return yield* checkDroidProviderStatus(
+          return (yield* checkDroidProviderStatusWithCapabilities(
             decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
-          );
+          )).snapshot;
         }),
       );
 

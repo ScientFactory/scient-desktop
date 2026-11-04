@@ -163,12 +163,6 @@ export const ScientInternalCommands = [
     runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
     detail: Schema.String,
   }),
-  Schema.Struct({
-    type: Schema.Literal("legacy-queue.reorder"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    queueItemIds: Schema.Array(TrimmedNonEmptyString),
-  }),
   /** Migration admission creates held work and never executes a provider. */
   Schema.Struct({
     type: Schema.Literal("legacy-queue.import"),

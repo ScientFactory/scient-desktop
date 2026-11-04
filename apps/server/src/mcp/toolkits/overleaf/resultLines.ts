@@ -1,5 +1,5 @@
 /**
- * The sentences an Overleaf result says (pr-c-design.md section 4.1), from the
+ * The sentences an Overleaf result says, from the
  * same views the app reads. Never Git's text, a commit or the token: only
  * counts, manuscript paths and fixed categories.
  */
@@ -253,7 +253,7 @@ const publicationLines = (
 };
 
 /**
- * Why a review could not be built (pr-c-design.md section 4.4): a clause about that
+ * Why a review could not be built: a clause about that
  * review only. The caller says whose review it was; nothing here describes what an
  * earlier attempt of the same sync did.
  */

@@ -7,7 +7,7 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
-import { uploadWorkspaceMarkdownImage } from "./WorkspaceMarkdownFiles.ts";
+import { uploadWorkspaceMarkdownImage } from "../assets/WorkspaceImageFiles.ts";
 
 export const scientMarkdownHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,

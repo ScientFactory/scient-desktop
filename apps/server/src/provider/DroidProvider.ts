@@ -620,17 +620,6 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
   );
 });
 
-export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(function* (
-  droidSettings: DroidSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
-> {
-  return (yield* checkDroidProviderStatusWithCapabilities(droidSettings, environment)).snapshot;
-});
-
 export const enrichDroidSnapshot = (input: {
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;

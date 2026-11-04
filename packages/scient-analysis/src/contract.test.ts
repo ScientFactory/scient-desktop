@@ -3,47 +3,11 @@ import { ExecutionRunId } from "@scientfactory/execution";
 import {
   AnalysisRuntimeId,
   AnalysisSourceRevision,
-  createSimulatedAnalysisAdapter,
   summarizeAnalysisRun,
   type AnalysisRunSnapshot,
 } from "./index.ts";
 
-describe("analysis runtime adapter", () => {
-  it("prepares a runtime-neutral file execution command", async () => {
-    const profile = {
-      id: AnalysisRuntimeId.make("simulator"),
-      kind: "simulator",
-      label: "Simulator",
-      availability: "available",
-      source: "custom",
-      executablePath: "/tmp/simulator",
-      version: "1",
-      detail: null,
-      capabilities: ["run-file", "stream-output", "cancel-process-tree"] as const,
-      inspectedAt: "2026-08-12T00:00:00.000Z",
-      verification: null,
-    } as const;
-    const adapter = createSimulatedAnalysisAdapter({ profile, command: ["sim", "--run"] });
-
-    await expect(
-      adapter.inspect({
-        inspectedAt: "2026-08-12T00:00:00.000Z",
-        platform: "linux",
-        environment: {},
-      }),
-    ).resolves.toEqual(profile);
-    expect(
-      adapter.prepare({
-        runId: "run-1" as never,
-        projectId: "project-1",
-        runtime: profile,
-        source: { cwd: "/project", relativePath: "analysis.m", revision: "sha256:1" as never },
-        absoluteSourcePath: "/project/analysis.m",
-        artifactStagingDirectory: "/state/analysis/run-1/artifact-staging",
-      }),
-    ).toEqual({ executable: "sim", args: ["--run"], cwd: "/project", environment: {} });
-  });
-
+describe("analysis run summary", () => {
   it("keeps full runtime provenance canonical without repeating toolbox inventories in summaries", () => {
     const run = {
       contractVersion: 1,

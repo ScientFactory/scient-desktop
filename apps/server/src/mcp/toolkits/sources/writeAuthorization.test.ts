@@ -20,6 +20,7 @@ import {
   workspaceResolverForTest,
   workspaceScopeForTest,
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import { dispatchScientOperation } from "../../../scient/operations/AgentOperationDispatcher.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   addScientSourceForInvocation,
@@ -219,80 +220,107 @@ describe("Scient Sources MCP write authorization", () => {
       });
 
       const note = yield* provideContext(
-        updateScientSourceNoteForInvocation({
-          sourceId: "source_pending",
-          expectedRevision: 1,
-          note: "should not write",
-        }),
+        dispatchScientOperation(
+          "sources.note.update",
+          updateScientSourceNoteForInvocation({
+            sourceId: "source_pending",
+            expectedRevision: 1,
+            note: "should not write",
+          }),
+        ),
         context,
       ).pipe(Effect.result);
       expect(note._tag).toBe("Failure");
-      if (note._tag === "Failure") expect(note.failure.code).toBe("capability-unavailable");
+      if (note._tag === "Failure") expect(note.failure._tag).toBe("AgentOperationUnavailable");
 
       const removed = yield* provideContext(
-        removeScientSourceForInvocation({ sourceId: "source_pending", expectedRevision: 1 }),
+        dispatchScientOperation(
+          "sources.remove",
+          removeScientSourceForInvocation({ sourceId: "source_pending", expectedRevision: 1 }),
+        ),
         context,
       ).pipe(Effect.result);
       expect(removed._tag).toBe("Failure");
-      if (removed._tag === "Failure") expect(removed.failure.code).toBe("capability-unavailable");
+      if (removed._tag === "Failure")
+        expect(removed.failure._tag).toBe("AgentOperationUnavailable");
 
       const reviewed = yield* provideContext(
-        reviewScientSourceForInvocation({
-          sourceId: "source_pending",
-          expectedRevision: 1,
-          action: "reject",
-        }),
+        dispatchScientOperation(
+          "sources.review",
+          reviewScientSourceForInvocation({
+            sourceId: "source_pending",
+            expectedRevision: 1,
+            action: "reject",
+          }),
+        ),
         context,
       ).pipe(Effect.result);
       expect(reviewed._tag).toBe("Failure");
-      if (reviewed._tag === "Failure") expect(reviewed.failure.code).toBe("capability-unavailable");
+      if (reviewed._tag === "Failure")
+        expect(reviewed.failure._tag).toBe("AgentOperationUnavailable");
 
       const added = yield* provideContext(
-        addScientSourceForInvocation({
-          type: "article",
-          title: "Should not write",
-          creators: [
-            { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
-          ],
-          issuedRaw: "2026",
-          issuedYear: 2026,
-          identifiers: [{ scheme: "doi", value: "10.1000/readonly" }],
-          abstract: null,
-          containerTitle: null,
-          publisher: null,
-          volume: null,
-          issue: null,
-          pages: null,
-          language: null,
-          url: null,
-          tags: [],
-        }),
+        dispatchScientOperation(
+          "sources.add",
+          addScientSourceForInvocation({
+            type: "article",
+            title: "Should not write",
+            creators: [
+              {
+                creatorType: "author",
+                givenName: "Ada",
+                familyName: "Lovelace",
+                literalName: null,
+              },
+            ],
+            issuedRaw: "2026",
+            issuedYear: 2026,
+            identifiers: [{ scheme: "doi", value: "10.1000/readonly" }],
+            abstract: null,
+            containerTitle: null,
+            publisher: null,
+            volume: null,
+            issue: null,
+            pages: null,
+            language: null,
+            url: null,
+            tags: [],
+          }),
+        ),
         context,
       ).pipe(Effect.result);
       expect(added._tag).toBe("Failure");
-      if (added._tag === "Failure") expect(added.failure.code).toBe("capability-unavailable");
+      if (added._tag === "Failure") expect(added.failure._tag).toBe("AgentOperationUnavailable");
 
       const attached = yield* provideContext(
-        attachScientSourcePdfForInvocation({
-          sourceId: "source_pending",
-          expectedRevision: 1,
-          pdfRelativePath: "paper.pdf",
-        }),
+        dispatchScientOperation(
+          "sources.pdf.attach",
+          attachScientSourcePdfForInvocation({
+            sourceId: "source_pending",
+            expectedRevision: 1,
+            pdfRelativePath: "paper.pdf",
+          }),
+        ),
         context,
       ).pipe(Effect.result);
       expect(attached._tag).toBe("Failure");
-      if (attached._tag === "Failure") expect(attached.failure.code).toBe("capability-unavailable");
+      if (attached._tag === "Failure")
+        expect(attached.failure._tag).toBe("AgentOperationUnavailable");
 
       const detached = yield* provideContext(
-        detachScientSourcePdfForInvocation({
-          sourceId: "source_pending",
-          attachmentId: "pdf_pending",
-          expectedRevision: 1,
-        }),
+        dispatchScientOperation(
+          "sources.pdf.detach",
+          detachScientSourcePdfForInvocation({
+            sourceId: "source_pending",
+            attachmentId: "pdf_pending",
+            expectedRevision: 1,
+          }),
+        ),
         context,
       ).pipe(Effect.result);
       expect(detached._tag).toBe("Failure");
-      if (detached._tag === "Failure") expect(detached.failure.code).toBe("capability-unavailable");
+      if (detached._tag === "Failure")
+        expect(detached.failure._tag).toBe("AgentOperationUnavailable");
     }),
   );
 

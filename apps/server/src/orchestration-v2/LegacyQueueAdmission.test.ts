@@ -430,148 +430,114 @@ it.effect(
     }).pipe(Effect.provide(recoveryLayer)),
 );
 
-it.effect(
-  "uses V2 queue authority for compatibility admission, Send and versioned extraction",
-  () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const service = yield* makeLegacyQueueCompatibility;
-      const threadId = ThreadId.make("compat-native-queue");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("compat-native-create"),
-        threadId,
-        projectId: ProjectId.make("receipt-project"),
-        title: "Compatibility",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const enqueue = (queueItemId: string) =>
-        service.execute({
-          method: "enqueue",
-          payload: {
-            threadId,
-            queueItemId,
-            text: queueItemId,
-            attachments: [],
-            modelSelection,
-            selectedScientSkillNames: ["analysis"],
-          },
-        });
-      yield* enqueue("qitem_first");
-      yield* enqueue("qitem_second");
-      yield* enqueue("qitem_first");
-      const snapshot = yield* service.execute({ method: "list", payload: { threadId } });
-      assert.equal(snapshot.nativeQueue, true);
-      assert.deepEqual(
-        snapshot.items.map((item) => item.queueItemId),
-        ["qitem_first", "qitem_second"],
-      );
-      assert.equal((yield* readQueue(threadId)).items.length, 0);
-      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
-      const reorder = {
-        method: "reorder" as const,
-        payload: {
-          threadId,
-          queueItemIds: ["qitem_second", "qitem_first"],
-        },
-      };
-      const reordered = yield* service.execute(reorder);
-      assert.deepEqual(
-        reordered.items.map((item) => item.queueItemId),
-        reorder.payload.queueItemIds,
-      );
-      const repeatedOrder = yield* service.execute(reorder);
-      assert.deepEqual(repeatedOrder.items, reordered.items);
-      const invalid = yield* service
-        .execute({
-          method: "reorder",
-          payload: {
-            threadId,
-            queueItemIds: ["qitem_first", "unknown"],
-          },
-        })
-        .pipe(Effect.exit);
-      assert.equal(invalid._tag, "Failure");
-      const unchanged = yield* service.execute({ method: "list", payload: { threadId } });
-      assert.equal(unchanged.revision, repeatedOrder.revision);
-      assert.deepEqual(unchanged.items, reordered.items);
-      yield* service.execute({
-        method: "reorder",
-        payload: {
-          threadId,
-          queueItemIds: ["qitem_first", "qitem_second"],
-        },
-      });
+it.effect("uses V2 queue authority for compatibility Send and versioned extraction", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const service = yield* makeLegacyQueueCompatibility;
+    const threadId = ThreadId.make("compat-native-queue");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("compat-native-create"),
+      threadId,
+      projectId: ProjectId.make("receipt-project"),
+      title: "Compatibility",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const savedItem = (queueItemId: string) => ({
+      queueItemId,
+      threadId,
+      text: queueItemId,
+      attachments: [],
+      modelSelection,
+      selectedScientSkillNames: ["analysis"],
+      state: "waiting" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    yield* writeQueue(threadId, {
+      ...(yield* readQueue(threadId)),
+      migrated: true,
+      items: [savedItem("qitem_first"), savedItem("qitem_second")],
+    });
+    assert.equal(yield* cutOverLegacyQueue(threadId), 2);
+    const snapshot = yield* service.execute({ method: "list", payload: { threadId } });
+    assert.equal(snapshot.nativeQueue, true);
+    assert.deepEqual(
+      snapshot.items.map((item) => item.queueItemId),
+      ["qitem_first", "qitem_second"],
+    );
+    assert.equal((yield* readQueue(threadId)).items.length, 0);
+    assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
 
-      const stale = yield* Effect.exit(
-        service.execute({
-          method: "control",
-          payload: {
-            threadId,
-            action: "extract",
-            queueItemId: "qitem_second",
-            editToken: "stale-editor",
-            expectedUpdatedAt: "2020-01-01T00:00:00.000Z",
-          },
-        }),
-      );
-      assert.equal(stale._tag, "Failure");
-      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.status, "queued");
-
-      yield* service.execute({
+    const stale = yield* Effect.exit(
+      service.execute({
         method: "control",
-        payload: { threadId, action: "send", queueItemId: "qitem_first" },
-      });
-      const started = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(started.runs[0]?.status, "starting");
-      assert.equal(started.runs[1]?.status, "queued");
-      // Send on one message resumes the rest of the queue after it.
-      assert.equal(started.runs[1]?.queueHeld, false);
-      const busy = yield* Effect.exit(
-        service.execute({
-          method: "control",
-          payload: { threadId, action: "send", queueItemId: "qitem_second" },
-        }),
-      );
-      assert.equal(busy._tag, "Failure");
-      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.status, "queued");
-
-      const extract = {
-        method: "control" as const,
         payload: {
           threadId,
-          action: "extract" as const,
+          action: "extract",
           queueItemId: "qitem_second",
-          editToken: "current-editor",
-          expectedUpdatedAt: snapshot.items[1]!.updatedAt,
+          editToken: "stale-editor",
+          expectedUpdatedAt: "2020-01-01T00:00:00.000Z",
         },
-      };
-      yield* service.execute(extract);
-      yield* service.execute(extract);
-      const final = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(final.runs[1]?.status, "cancelled");
-      assert.equal(
-        final.messages.find((message) => message.id === final.runs[1]?.userMessageId)?.text,
-        "qitem_second",
-      );
-      assert.equal((yield* readQueue(threadId)).items.length, 0);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(legacyImporterLayer, threadManagementLayer).pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
-              Layer.provideMerge(NodeServices.layer),
-            ),
+      }),
+    );
+    assert.equal(stale._tag, "Failure");
+    assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.status, "queued");
+
+    yield* service.execute({
+      method: "control",
+      payload: { threadId, action: "send", queueItemId: "qitem_first" },
+    });
+    const started = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(started.runs[0]?.status, "starting");
+    assert.equal(started.runs[1]?.status, "queued");
+    // Send on one message resumes the rest of the queue after it.
+    assert.equal(started.runs[1]?.queueHeld, false);
+    const busy = yield* Effect.exit(
+      service.execute({
+        method: "control",
+        payload: { threadId, action: "send", queueItemId: "qitem_second" },
+      }),
+    );
+    assert.equal(busy._tag, "Failure");
+    assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.status, "queued");
+
+    const extract = {
+      method: "control" as const,
+      payload: {
+        threadId,
+        action: "extract" as const,
+        queueItemId: "qitem_second",
+        editToken: "current-editor",
+        expectedUpdatedAt: snapshot.items[1]!.updatedAt,
+      },
+    };
+    yield* service.execute(extract);
+    yield* service.execute(extract);
+    const final = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(final.runs[1]?.status, "cancelled");
+    assert.equal(
+      final.messages.find((message) => message.id === final.runs[1]?.userMessageId)?.text,
+      "qitem_second",
+    );
+    assert.equal((yield* readQueue(threadId)).items.length, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(legacyImporterLayer, threadManagementLayer).pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(testLayer, SqlitePersistenceMemory).pipe(
+            Layer.provideMerge(NodeServices.layer),
           ),
         ),
       ),
     ),
+  ),
 );
 
 it.effect(

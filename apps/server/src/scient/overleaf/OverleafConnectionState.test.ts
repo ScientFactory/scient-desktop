@@ -559,7 +559,7 @@ describe("overleafRequiredPins", () => {
           "attempt/1/candidate",
           "attempt/1/parent",
         ]);
-        for (const pin of pins.slice(0, 4)) yield* repos.setRef({ repo, ...pin });
+        yield* repos.setRefs({ repo, refs: pins.slice(0, 4) });
         const found = yield* Effect.forEach(pins, (pin) => repos.readRef({ repo, name: pin.name }));
         expect(found).toEqual([tree, commit, tree, commit, null]);
         // An accepted attempt keeps its commits for Undo; one settled otherwise does not.

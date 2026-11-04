@@ -94,6 +94,12 @@ import { scientSkillDeliveryForProvider } from "../scient/skills/ScientSkillSess
 // SCIENT-FORK:START Scient Extensions connector delivery
 import * as ConnectorSessionDelivery from "../scient/extensions/ConnectorSessionDelivery.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — awareness names only the tools the session's list can show.
+import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
+import { scientAwarenessManifest } from "../provider/ScientAwareness.ts";
+import { threadWorkspaceVerified } from "../scient/operations/AgentWorkspaceScope.ts";
+import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
+// SCIENT-FORK:END
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -463,6 +469,19 @@ export const layerWithOptions = (
         );
       // SCIENT-FORK:END
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      // SCIENT-FORK:START — awareness names only the tools the session's list can show.
+      const workspaceResolver = yield* Effect.serviceOption(WorkspaceBindingResolver);
+      const awarenessManifest = (
+        config: Pick<McpProviderSessionConfig, "threadId" | "environmentId">,
+        grants: ReadonlySet<string>,
+      ) =>
+        Option.isNone(workspaceResolver)
+          ? Effect.succeed(grants)
+          : threadWorkspaceVerified(config.threadId, config.environmentId).pipe(
+              Effect.provideService(WorkspaceBindingResolver, workspaceResolver.value),
+              Effect.map((verified) => scientAwarenessManifest(grants, verified)),
+            );
+      // SCIENT-FORK:END
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
@@ -755,8 +774,7 @@ export const layerWithOptions = (
             if (browserToolsAvailable) capabilities.add("preview");
             if (deviceToolsAvailable) capabilities.add("device");
             // SCIENT-FORK:START Scient Extensions connector delivery
-            // Capability grants owned by other Scient features (Secrets: secrets:list,
-            // secrets:use) are appended here, before connector delivery is planned.
+            // Other Scient grants are appended here, before connector delivery is planned.
             // SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.
             capabilities.add("accounts");
             // SCIENT-FORK:END
@@ -873,6 +891,14 @@ export const layerWithOptions = (
                     ),
                   );
                 // SCIENT-FORK:END
+                // SCIENT-FORK:START — a project verified or lost since issuance updates the text.
+                const manifest = yield* awarenessManifest(existing, capabilities);
+                if (
+                  manifest.size !== existing.capabilities.size ||
+                  [...manifest].some((capability) => !existing.capabilities.has(capability))
+                )
+                  yield* mcpSessions.set({ ...existing, capabilities: manifest });
+                // SCIENT-FORK:END
                 return { mcpCredentialId: existing.providerSessionId, issued: false };
               }
               dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -919,6 +945,10 @@ export const layerWithOptions = (
               // Adapters amend this runtime's receipts.
               yield* mcpSessions.set({
                 ...credential.config,
+                capabilities: yield* awarenessManifest(
+                  credential.config,
+                  credential.config.capabilities,
+                ),
                 ...(pluginKeyPolicies.length ? { pluginKeyPolicies } : {}),
                 ...(pluginKeyStdioServers.length ? { pluginKeyStdioServers } : {}),
                 ...(pluginHttp.connectors.length

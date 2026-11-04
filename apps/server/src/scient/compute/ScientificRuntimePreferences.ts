@@ -105,19 +105,6 @@ export function makeScientificRuntimePreferences(
         current.scientificComputing.languages[ComputeLanguageId.make(kind)]?.selections ?? {};
       return selections[scientificComputingSelectionKey(hostKey, projectId)] ?? null;
     }),
-    writeRuntimeExecutablePath: (kind: string, executablePath: string | null) =>
-      settings
-        .updateSettings({
-          scientificComputing: {
-            languages: {
-              [ComputeLanguageId.make(kind)]:
-                hostKey === null
-                  ? { executable: executablePath ?? "" }
-                  : { executable: "", selections: { [hostKey]: executablePath ?? "" } },
-            },
-          },
-        })
-        .pipe(Effect.asVoid),
     /** Moves an unscoped choice, written before selections were per machine, into this machine's. */
     migrate: Effect.fn("ScientificRuntimePreferences.migrate")(function* () {
       if (hostKey === null) return;

@@ -78,53 +78,6 @@ export const ScientThreadQueueListRequest = Schema.Struct({
 });
 export type ScientThreadQueueListRequest = typeof ScientThreadQueueListRequest.Type;
 
-export const ScientThreadQueueEnqueueRequest = Schema.Struct({
-  context: ScientThreadQueueItem.fields.context,
-  composerSnapshot: ScientThreadQueueItem.fields.composerSnapshot,
-  selectedScientSkillNames: ScientThreadQueueItem.fields.selectedScientSkillNames,
-  threadId: ThreadId,
-  queueItemId: ScientThreadQueueItemId,
-  modelSelection: ScientThreadQueueItem.fields.modelSelection,
-  runtimeMode: ScientThreadQueueItem.fields.runtimeMode,
-  interactionMode: ScientThreadQueueItem.fields.interactionMode,
-  text: ScientThreadQueueItem.fields.text,
-  attachments: Schema.Array(UploadChatAttachment).check(
-    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
-  ),
-});
-export type ScientThreadQueueEnqueueRequest = typeof ScientThreadQueueEnqueueRequest.Type;
-
-export const ScientThreadQueueUpdateRequest = Schema.Struct({
-  context: ScientThreadQueueItem.fields.context,
-  composerSnapshot: ScientThreadQueueItem.fields.composerSnapshot,
-  selectedScientSkillNames: ScientThreadQueueItem.fields.selectedScientSkillNames,
-  threadId: ThreadId,
-  editToken: Schema.String,
-  queueItemId: ScientThreadQueueItemId,
-  modelSelection: ScientThreadQueueItem.fields.modelSelection,
-  runtimeMode: ScientThreadQueueItem.fields.runtimeMode,
-  interactionMode: ScientThreadQueueItem.fields.interactionMode,
-  text: ScientThreadQueueItem.fields.text,
-  attachments: Schema.Array(UploadChatAttachment).check(
-    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
-  ),
-});
-export type ScientThreadQueueUpdateRequest = typeof ScientThreadQueueUpdateRequest.Type;
-
-export const ScientThreadQueueRemoveRequest = Schema.Struct({
-  threadId: ThreadId,
-  queueItemId: ScientThreadQueueItemId,
-});
-export type ScientThreadQueueRemoveRequest = typeof ScientThreadQueueRemoveRequest.Type;
-
-export const ScientThreadQueueReorderRequest = Schema.Struct({
-  threadId: ThreadId,
-  queueItemIds: Schema.Array(ScientThreadQueueItemId).check(
-    Schema.isMaxLength(SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD),
-  ),
-});
-export type ScientThreadQueueReorderRequest = typeof ScientThreadQueueReorderRequest.Type;
-
 export const ScientThreadQueueControlRequest = Schema.Struct({
   threadId: ThreadId,
   action: Schema.Literals(["edit", "extract", "resume", "steer", "stash", "send"]),

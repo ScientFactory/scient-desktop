@@ -179,7 +179,7 @@ export interface OverleafReview {
   readonly collisions: ReadonlyArray<string>;
   /**
    * Every new file in the folder, whether this review sends it, and why it is
-   * left out by default (pr-c-design section 5). The app and the agent tools
+   * left out by default. The app and the agent tools
    * confirm this selection as it is unless someone changes it.
    */
   readonly additions: ReadonlyArray<OverleafAddition & { readonly selected: boolean }>;

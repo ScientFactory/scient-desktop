@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   extractMissingLatexInputs,
   missingLatexPackageInputs,
-  missingLatexPackages,
   packageNameForMissingInput,
 } from "./latexMissingPackages.ts";
 
@@ -91,7 +90,7 @@ describe("packageNameForMissingInput", () => {
   });
 });
 
-describe("missingLatexPackages", () => {
+describe("missingLatexPackageInputs", () => {
   it("answers only what a repository could supply, once each", () => {
     const transcript = [
       MATHTOOLS_TRANSCRIPT,
@@ -100,7 +99,10 @@ describe("missingLatexPackages", () => {
       "! LaTeX Error: File `revtex4-2.cls' not found.",
     ].join("\n");
 
-    expect(missingLatexPackages(transcript)).toEqual(["mathtools", "revtex4-2"]);
+    expect(missingLatexPackageInputs(transcript).map((m) => m.packageName)).toEqual([
+      "mathtools",
+      "revtex4-2",
+    ]);
   });
 
   it("keeps the file each package was asked for, extension and all", () => {

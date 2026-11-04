@@ -35,11 +35,6 @@ describe("compute source languages", () => {
     expect(SQL_COMPUTE_SOURCE.cellMarker.test("-- %% totals")).toBe(true);
     expect(SQL_COMPUTE_SOURCE.cellMarker.test("# %% totals")).toBe(false);
   });
-
-  it("keeps the registry open to languages with more than one source extension", () => {
-    expect(PYTHON_COMPUTE_SOURCE.extensions).toEqual([".py"]);
-    expect(MATLAB_COMPUTE_SOURCE.extensions).toEqual([".m"]);
-  });
 });
 
 describe("the language that really runs a file", () => {

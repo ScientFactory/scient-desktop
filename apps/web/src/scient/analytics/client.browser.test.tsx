@@ -31,8 +31,6 @@ vi.mock("../../state/session", () => ({
 vi.mock("@t3tools/client-runtime/state/scient-analytics", () => ({
   getEnvironmentScientAnalyticsStatus: () => transport.status(),
   recordEnvironmentScientAnalyticsEvent: (input: unknown) => transport.record(input),
-  deleteEnvironmentScientAnalyticsData: vi.fn(),
-  updateEnvironmentScientAnalyticsPreference: vi.fn(),
 }));
 import { useScientAnalyticsView } from "./client";
 

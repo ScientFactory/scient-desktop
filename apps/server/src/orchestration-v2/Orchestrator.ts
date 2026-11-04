@@ -198,7 +198,6 @@ import {
   heldQueueProviderThread,
   legacyQueueImportRefusal,
   planHeldQueueAdmission,
-  planLegacyQueueReorder,
 } from "./legacy/HeldQueueAdmission.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -657,7 +656,6 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "provider-work.admit":
     case "message.dispatch":
     case "legacy-queue.import":
-    case "legacy-queue.reorder":
     case "notification.delivery.accept":
     case "prepared-run.release":
     case "prepared-run.progress":
@@ -14681,42 +14679,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-run.reorder":
         yield* dispatchQueuedRunReorder(command, events);
         break;
-      case "legacy-queue.reorder": {
-        // SCIENT-FORK:START — the compatibility request reorders only legacy entries.
-        const projection = yield* loadProjectionForCommand(command, ["runs", "messages"]);
-        const moved = planLegacyQueueReorder({ command, projection });
-        if (moved === undefined)
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "The queue changed. Refresh before reordering it.",
-          });
-        const now = yield* DateTime.now;
-        for (const run of moved)
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "run.updated",
-            threadId: command.threadId,
-            runId: run.id,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: now,
-            payload: run,
-          });
-        if (moved.length === 0)
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "thread.metadata-updated",
-            threadId: command.threadId,
-            occurredAt: now,
-            payload: projection.thread,
-          });
-        break;
-        // SCIENT-FORK:END
-      }
       case "queued-run.cancel":
         yield* dispatchQueuedRunCancel(command, events);
         break;

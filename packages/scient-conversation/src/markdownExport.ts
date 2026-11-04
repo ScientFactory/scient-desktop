@@ -36,7 +36,7 @@ function encodePackagePath(path: string): string {
 }
 
 /** Resolves `scient-asset:` destinations for the chosen packaging. */
-export function resolveAssetLinks(
+function resolveAssetLinks(
   markdown: string,
   bundle: ConversationDocumentBundle,
   packaging: ConversationMarkdownPackaging,

@@ -190,7 +190,6 @@ export function makeScientRouteServices<
   const provideScientRouteServices = <A, E, R>(self: Layer.Layer<A, E, R>) =>
     self.pipe(
       Layer.provide(BrowserHistory.layer.pipe(Layer.provide(PersistenceLayerLive))),
-      Layer.provide(AnalysisServiceLive),
       Layer.provide(ConversationExportServiceLive),
       Layer.provide(ConversationImportStagingLive),
       Layer.provide(WordFileExportLive),

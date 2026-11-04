@@ -33,7 +33,6 @@ import {
   makeDroidAcpRuntime,
   requestedDroidEffortFromSelection,
   resolveAdvertisedDroidAuthMethodId,
-  resolveDroidAuthMethodId,
   resolveDroidCliBinaryPath,
 } from "./DroidAcpSupport.ts";
 
@@ -263,8 +262,6 @@ describe("auth resolution", () => {
     expect(hasDroidApiKeyEnvironment({ FACTORY_API_KEY: "k" })).toBe(true);
     expect(hasDroidApiKeyEnvironment({ FACTORY_API_KEY: "  " })).toBe(false);
     expect(hasDroidApiKeyEnvironment({})).toBe(false);
-    expect(resolveDroidAuthMethodId({ FACTORY_API_KEY: "k" })).toBe("factory-api-key");
-    expect(resolveDroidAuthMethodId({})).toBe("device-pairing");
   });
 
   it("resolves against the advertised list and degrades honestly", () => {

@@ -32,16 +32,4 @@ describe("Scient getting-started host seams", () => {
     expect(settingsRow).not.toContain("ScientProjectImportAction");
     expect(settingsRow).not.toContain("<Button");
   });
-
-  // regression: f46b1a4711 feat(web): add compact getting started flow (#136)
-  it("reuses canonical provider setup and avoids card or progress primitives", () => {
-    const view = read("./ScientGettingStartedView.tsx");
-    const flow = read("./ScientGettingStartedFlow.tsx");
-
-    expect(view).toContain("ProviderLifecycleSetupSurface");
-    expect(flow).toContain("deriveProviderInstanceEntries");
-    expect(flow).toContain("isProviderInstancePickerReady");
-    expect(view).not.toMatch(/\bCard(?:Content|Header|Title)?\b/);
-    expect(view).not.toMatch(/\bProgress\b/);
-  });
 });

@@ -61,6 +61,7 @@ import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { layerProviderRuntimeTestServices } from "./ProviderRuntimeTestServices.ts";
+import type { WorkspaceBindingResolver } from "../../scient/projectScope/WorkspaceBindingResolver.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 
@@ -482,6 +483,8 @@ function makeTestLayer(input: {
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   /** Optional Scient Extensions services the manager reads with `serviceOption`. */
   readonly extensionsLayer?: Layer.Layer<ConnectorRuntime | ExtensionDeliveryReceipts>;
+  /** The workspace check awareness follows; without one every grant is described. */
+  readonly workspaceResolverLayer?: Layer.Layer<WorkspaceBindingResolver>;
   /** Provider snapshots returned by the registry (native MCP servers, etc.). */
   readonly providers?: ReadonlyArray<ServerProvider>;
 }) {
@@ -580,6 +583,7 @@ function makeTestLayer(input: {
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.extensionsLayer === undefined ? [] : [input.extensionsLayer]),
+          ...(input.workspaceResolverLayer === undefined ? [] : [input.workspaceResolverLayer]),
         ),
       ),
     ),

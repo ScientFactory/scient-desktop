@@ -27,6 +27,10 @@
       "types": "./src/server/contextError.ts",
       "import": "./src/server/contextError.ts"
     },
+    "./server/model": {
+      "types": "./src/server/model.ts",
+      "import": "./src/server/model.ts"
+    },
     "./server/modelSelection": {
       "types": "./src/server/modelSelection.ts",
       "import": "./src/server/modelSelection.ts"

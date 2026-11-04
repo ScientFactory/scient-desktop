@@ -46,7 +46,7 @@ import {
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 // SCIENT-FORK:START Scient ACP application bridge
-import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
+import { scientAntigravityBridge } from "./ScientAcpApplicationBridge.ts";
 // SCIENT-FORK:END Scient ACP application bridge
 import {
   AcpProviderCapabilitiesV2,
@@ -231,11 +231,10 @@ export function makeAntigravityAcpAdapterFlavor(
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
-    // SCIENT-FORK:START Scient native-delivery observation mount
-    // Runtimes before 1.4.5 have no private system-prompt or rules channel,
-    // so only native-delivery observations are bridged here.
-    application: scientAcpProviderBridge,
-    // SCIENT-FORK:END Scient native-delivery observation mount
+    // SCIENT-FORK:START Scient prompt and native-delivery observation mount
+    // Scient's awareness rides the first prompt, as upstream's orchestration text does.
+    application: scientAntigravityBridge,
+    // SCIENT-FORK:END Scient prompt and native-delivery observation mount
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,

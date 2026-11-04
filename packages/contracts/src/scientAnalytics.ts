@@ -18,11 +18,6 @@ export const ScientAnalyticsStatus = Schema.Struct({
 });
 export type ScientAnalyticsStatus = typeof ScientAnalyticsStatus.Type;
 
-export const ScientAnalyticsPreferenceUpdate = Schema.Struct({
-  consent: ScientAnalyticsConsent,
-});
-export type ScientAnalyticsPreferenceUpdate = typeof ScientAnalyticsPreferenceUpdate.Type;
-
 /** Any event name, as in T3; the server checks only an event's shape and size. */
 export const ScientAnalyticsUiEventName = Schema.String.check(
   Schema.isPattern(/^[a-z][a-z0-9_.-]{0,79}$/),
@@ -41,8 +36,3 @@ export type ScientAnalyticsUiEvent = typeof ScientAnalyticsUiEvent.Type;
 
 export const ScientAnalyticsRecordResult = Schema.Struct({ accepted: Schema.Boolean });
 export type ScientAnalyticsRecordResult = typeof ScientAnalyticsRecordResult.Type;
-
-export const ScientAnalyticsDeletionResult = Schema.Struct({
-  deleted: Schema.Boolean,
-});
-export type ScientAnalyticsDeletionResult = typeof ScientAnalyticsDeletionResult.Type;

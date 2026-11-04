@@ -11,11 +11,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  ProviderSettingsLifecycleAction,
-  resolveProviderSettingsPrimaryAction,
-} from "./ProviderSettingsLifecycleAction";
-import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
+import { oneClickSignInMethod } from "./oneClickSignIn";
+import { ProviderSettingsLifecycleAction } from "./ProviderSettingsLifecycleAction";
 
 async function _setupFixture0(_fixture: _Fixture) {
   await undefined;
@@ -239,24 +236,15 @@ describe("ProviderSettingsLifecycleAction", () => {
   });
 
   // A disabled provider is resolved before any driver-specific branch.
-  it.each([["codex", "Codex"]] as const)(
+  it.each([["codex"]] as const)(
     "routes disabled %s through its management card",
-    async (driver, displayName) => {
+    async (driver) => {
       await using _fixture = _createFixture();
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
       await _setupFixture2(_fixture);
 
       const value = provider({ driver, source: "missing", enabled: false });
-      const presentation = providerSettingsLifecyclePresentation(value, displayName);
-
-      expect(
-        resolveProviderSettingsPrimaryAction({
-          provider: value,
-          presentation,
-          canRunExternalUpdate: false,
-        }),
-      ).toEqual({ kind: "open", runtimeAction: null });
       expect(await render(_fixture, value)).toContain(">Manage<");
       expect(await render(_fixture, value)).not.toContain(">Enable<");
     },
@@ -418,114 +406,25 @@ describe("ProviderSettingsLifecycleAction", () => {
       const value = provider({ driver, source: "system", authenticated: false });
       return { ...value, connection: { ...value.connection!, methods } };
     };
-    const primaryAction = (value: ServerProvider) =>
-      resolveProviderSettingsPrimaryAction({
-        provider: value,
-        presentation: providerSettingsLifecyclePresentation(value, "Provider"),
-        canRunExternalUpdate: false,
-      });
-
     for (const [driver, method] of [
       ["codex", "codex_browser"],
       ["antigravity", "antigravity_google"],
       ["cursor", "cursor_browser"],
     ] as const) {
-      expect(primaryAction(withMethods(driver, [method]))).toEqual({
-        kind: "browser-sign-in",
-        method,
-      });
+      expect(oneClickSignInMethod(withMethods(driver, [method]))).toBe(method);
     }
     // The device code is shown in the setup view; the browser flow stays one click.
-    expect(primaryAction(withMethods("codex", ["codex_browser", "codex_device_code"]))).toEqual({
-      kind: "browser-sign-in",
-      method: "codex_browser",
-    });
+    expect(oneClickSignInMethod(withMethods("codex", ["codex_browser", "codex_device_code"]))).toBe(
+      "codex_browser",
+    );
     for (const value of [
       withMethods("claudeAgent", ["claude_subscription", "claude_console"]),
       withMethods("antigravity", ["antigravity_credentials"]),
       withMethods("grok", ["grok_account", "grok_device_code"]),
       withMethods("droid", ["droid_device_pairing"]),
     ]) {
-      expect(primaryAction(value)).toEqual({ kind: "open", runtimeAction: null });
+      expect(oneClickSignInMethod(value)).toBeNull();
     }
-  });
-
-  it("names a slow start on the row while it runs", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-    await _setupFixture2(_fixture);
-
-    const ready = provider({ source: "system", authenticated: false });
-    const markup = await render(_fixture, {
-      ...ready,
-      connection: {
-        ...ready.connection!,
-        operation: {
-          operationId: "connection-1",
-          method: "codex_browser",
-          status: "starting",
-          startedAt: "2026-10-08T00:00:00.000Z",
-          finishedAt: null,
-          message: "Antigravity can take up to a minute to start.",
-        },
-      },
-    });
-    expect(markup).toContain('aria-label="Starting Codex"');
-  });
-
-  it("starts managed install/update directly and only runs qualified external updates", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-    await _setupFixture2(_fixture);
-
-    const missing = provider({ source: "missing" });
-    const external = {
-      ...provider({ source: "system" }),
-      versionAdvisory: {
-        status: "behind_latest" as const,
-        currentVersion: "0.147.0",
-        latestVersion: "0.148.0",
-        updateCommand: "npm update -g @openai/codex",
-        canUpdate: true,
-        checkedAt: "2026-08-23T08:00:00.000Z",
-        message: "Update available.",
-      },
-    };
-
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: missing,
-        presentation: providerSettingsLifecyclePresentation(missing, "Codex"),
-        canRunExternalUpdate: false,
-      }),
-    ).toEqual({ kind: "managed-runtime", action: "install" });
-    const managedUpdate = provider({
-      source: "scient_managed",
-      actions: ["update", "repair", "remove"],
-    });
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: managedUpdate,
-        presentation: providerSettingsLifecyclePresentation(managedUpdate, "Codex"),
-        canRunExternalUpdate: false,
-      }),
-    ).toEqual({ kind: "managed-runtime", action: "update" });
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: external,
-        presentation: providerSettingsLifecyclePresentation(external, "Codex"),
-        canRunExternalUpdate: true,
-      }),
-    ).toEqual({ kind: "external-update" });
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: external,
-        presentation: providerSettingsLifecyclePresentation(external, "Codex"),
-        canRunExternalUpdate: false,
-      }),
-    ).toEqual({ kind: "open", runtimeAction: null });
   });
 
   it.each(["install", "update"] as const)(

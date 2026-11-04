@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { VoiceTranscriptionError, voiceTranscriptionFailureAllowsFallback } from "./errors.ts";
+import { VoiceTranscriptionError } from "./errors.ts";
 
 describe("VoiceTranscriptionError", () => {
   it("carries the classification and uses safeMessage as the message", () => {
@@ -32,27 +32,5 @@ describe("VoiceTranscriptionError", () => {
     });
     expect(error.retryAfterMs).toBeUndefined();
     expect(error.cause).toBeUndefined();
-  });
-
-  it("reports fallback eligibility only for fallback-allowed errors", () => {
-    expect(
-      voiceTranscriptionFailureAllowsFallback(
-        new VoiceTranscriptionError({
-          kind: "network",
-          fallbackAllowed: true,
-          safeMessage: "Network.",
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      voiceTranscriptionFailureAllowsFallback(
-        new VoiceTranscriptionError({
-          kind: "invalid-audio",
-          fallbackAllowed: false,
-          safeMessage: "Bad audio.",
-        }),
-      ),
-    ).toBe(false);
-    expect(voiceTranscriptionFailureAllowsFallback(new Error("plain"))).toBe(false);
   });
 });

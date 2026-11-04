@@ -24,19 +24,16 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { WorkspaceBindingResolver } from "../../projectScope/WorkspaceBindingResolver.ts";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../../mcp/ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../../mcp/ScientOperationTool.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
 import { ProfileResult } from "./profileClassification.ts";
 
 const ResultFiles = Schema.Struct({ paths: Schema.Array(Schema.String), usage: Schema.String });
-const accountOperation = (id: string): OperationMetadata => ({
+const accountOperation = (id: string): OperationDefinition => ({
   id: `accounts.${id}`,
-  family: "accounts",
   scope: "thread",
   requiredCapabilities: ["accounts"],
-  approval: "session-grant",
-  documentation: "docs/internals/scient-accounts.md",
 });
 const metadata = <T extends Tool.Any>(tool: T, id: string, title: string, readOnly = false) =>
   tool
@@ -289,7 +286,7 @@ const paperGet = metadata(
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "Get one paper's PDF by DOI or link and save it in the project: a free legal copy, or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
+      "The first step for any paper: get its PDF by DOI or link and save it in the project, from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),

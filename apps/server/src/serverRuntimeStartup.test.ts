@@ -472,8 +472,6 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" as const }),
           collectionEpoch: Effect.succeed(0),
-          setConsent: () => Effect.succeed({ available: false, consent: "off" as const }),
-          deleteData: Effect.succeed(false),
         }),
         Effect.provide(
           Layer.mergeAll(

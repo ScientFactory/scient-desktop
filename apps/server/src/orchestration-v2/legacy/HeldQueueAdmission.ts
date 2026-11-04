@@ -15,7 +15,6 @@ import {
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
 
 /** Why a held legacy entry cannot be admitted, or undefined when it can. Its source stays intact. */
 export function legacyQueueImportRefusal(input: {
@@ -163,38 +162,6 @@ export function heldQueueAdmissionEvents(input: {
     { ...common, type: "node.updated", payload: plan.node },
     { ...common, type: "message.updated", payload: plan.message },
   ];
-}
-
-/** Reorder only legacy-owned queue entries; other native work keeps its position.
- * Returns the runs whose position changes, or undefined when the queue changed under the request. */
-export function planLegacyQueueReorder(input: {
-  readonly command: Extract<OrchestrationV2InternalCommand, { type: "legacy-queue.reorder" }>;
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">;
-}): ReadonlyArray<OrchestrationV2Run> | undefined {
-  const { command, projection } = input;
-  const queued = queuedRunsInDeliveryOrder(projection);
-  const owned = queued.filter((run) => run.legacyQueue !== undefined);
-  const requested = new Set(command.queueItemIds);
-  if (
-    projection.thread.deletedAt !== null ||
-    projection.thread.archivedAt !== null ||
-    requested.size !== owned.length ||
-    requested.size !== command.queueItemIds.length ||
-    owned.some((run) => !requested.has(run.legacyQueue!.queueItemId))
-  )
-    return undefined;
-  const ordered = command.queueItemIds.map((id) =>
-    owned.find((run) => run.legacyQueue!.queueItemId === id)!,
-  );
-  let next = 0;
-  const moved: Array<OrchestrationV2Run> = [];
-  for (const [index, original] of queued.entries()) {
-    // Other native work keeps its position; the compatibility request owns only legacy entries.
-    const run = original.legacyQueue === undefined ? original : ordered[next++]!;
-    if (run.queuePosition === index + 1) continue;
-    moved.push({ ...run, queuePosition: index + 1 });
-  }
-  return moved;
 }
 
 /** The provider-thread record a held entry's placeholder identity materializes on delivery. */

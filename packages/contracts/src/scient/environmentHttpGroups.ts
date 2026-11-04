@@ -93,20 +93,14 @@ import {
   ScientMarkdownImageUploadResult,
 } from "../scientMarkdown.ts";
 import {
-  ScientAnalyticsDeletionResult,
-  ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
   ScientAnalyticsStatus,
   ScientAnalyticsUiEvent,
 } from "../scientAnalytics.ts";
 import {
-  ScientThreadQueueEnqueueRequest,
   ScientThreadQueueListRequest,
   ScientThreadQueueControlRequest,
-  ScientThreadQueueRemoveRequest,
-  ScientThreadQueueReorderRequest,
   ScientThreadQueueSnapshot,
-  ScientThreadQueueUpdateRequest,
 } from "../scientThreadQueue.ts";
 import {
   ScientPandocToolStatus,
@@ -175,8 +169,6 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_latex_toolchain_failed",
   "scient_latex_install_failed",
   "scient_markdown_operation_failed",
-  "scient_analytics_consent_update_failed",
-  "scient_analytics_deletion_failed",
   "scient_thread_queue_operation_failed",
   "scient_conversation_export_failed",
   "scient_conversation_import_failed",
@@ -562,25 +554,10 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
-      HttpApiEndpoint.post("preferences", "/api/scient/analytics/preferences", {
-        headers: OptionalBearerHeaders,
-        payload: ScientAnalyticsPreferenceUpdate,
-        success: ScientAnalyticsStatus,
-        error: EnvironmentHttpCommonError,
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
       HttpApiEndpoint.post("record", "/api/scient/analytics/events", {
         headers: OptionalBearerHeaders,
         payload: ScientAnalyticsUiEvent,
         success: ScientAnalyticsRecordResult,
-        error: EnvironmentHttpCommonError,
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("deleteData", "/api/scient/analytics/delete", {
-        headers: OptionalBearerHeaders,
-        success: ScientAnalyticsDeletionResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
@@ -594,38 +571,6 @@ export function makeScientEnvironmentHttpGroups({
       HttpApiEndpoint.post("list", "/api/scient/thread-queue/v2/list", {
         headers: OptionalBearerHeaders,
         payload: ScientThreadQueueListRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/v2/enqueue", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueEnqueueRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("update", "/api/scient/thread-queue/v2/update", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueUpdateRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("remove", "/api/scient/thread-queue/v2/remove", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueRemoveRequest,
-        success: ScientThreadQueueSnapshot,
-        error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/v2/reorder", {
-        headers: OptionalBearerHeaders,
-        payload: ScientThreadQueueReorderRequest,
         success: ScientThreadQueueSnapshot,
         error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
       }).middleware(EnvironmentAuthenticatedAuth),

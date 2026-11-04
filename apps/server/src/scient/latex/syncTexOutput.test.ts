@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   parseSyncTexForwardLocation,
   parseSyncTexForwardLocations,
-  parseSyncTexInverseLocation,
   parseSyncTexInverseLocations,
   parseSyncTexRecords,
 } from "./syncTexOutput.ts";
@@ -107,25 +106,25 @@ SyncTeX result end`),
 
   it("reads inverse source positions and normalizes an absent column", () => {
     expect(
-      parseSyncTexInverseLocation(`SyncTeX result begin
+      parseSyncTexInverseLocations(`SyncTeX result begin
 Input:chapters/results.tex
 Line:108
 Column:-1
 SyncTeX result end`),
-    ).toEqual({ input: "chapters/results.tex", line: 108, column: null });
+    ).toEqual([{ input: "chapters/results.tex", line: 108, column: null }]);
+    expect(parseSyncTexInverseLocations("SyncTeX result begin\nInput:main.tex\nLine:0\n")).toEqual(
+      [],
+    );
     expect(
-      parseSyncTexInverseLocation("SyncTeX result begin\nInput:main.tex\nLine:0\n"),
-    ).toBeNull();
-    expect(
-      parseSyncTexInverseLocation(
+      parseSyncTexInverseLocations(
         "SyncTeX result begin\nInput:main.tex\nLine:108\nColumn:0\nSyncTeX result end",
       ),
-    ).toEqual({ input: "main.tex", line: 108, column: null });
+    ).toEqual([{ input: "main.tex", line: 108, column: null }]);
     expect(
-      parseSyncTexInverseLocation(
+      parseSyncTexInverseLocations(
         "SyncTeX result begin\nInput:main.tex\nLine:108.5\nColumn:2\nSyncTeX result end",
       ),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
   it("keeps inverse candidates in helper order instead of overwriting the first match", () => {
@@ -147,10 +146,5 @@ SyncTeX result end`;
       { input: "hebrew.tex", line: 51, column: null },
       { input: "hebrew.tex", line: 52, column: null },
     ]);
-    expect(parseSyncTexInverseLocation(output)).toEqual({
-      input: "hebrew.tex",
-      line: 51,
-      column: null,
-    });
   });
 });

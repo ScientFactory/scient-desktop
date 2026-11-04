@@ -12,11 +12,12 @@ describe("Scient tool projection", () => {
     expect(scientToolProjectionForProvider("opencode")).toBe(CANONICAL_SCIENT_TOOL_PROJECTION);
   });
 
-  it("uses Claude's exact qualified MCP names", () => {
+  it("uses Claude's exact qualified MCP names and its deferred tool loading", () => {
     expect(scientToolProjectionForProvider("claudeAgent")).toBe(CLAUDE_SCIENT_TOOL_PROJECTION);
     expect(CLAUDE_SCIENT_TOOL_PROJECTION).toMatchObject({
       providerNativeSkillTool: true,
-      deferred: false,
+      deferred: true,
     });
+    expect(CLAUDE_SCIENT_TOOL_PROJECTION.name("preview_open")).toBe("mcp__scient__preview_open");
   });
 });

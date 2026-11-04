@@ -1,6 +1,8 @@
+// SCIENT-FORK:START — Scient's names and its own tools in the shared table.
 import { SCIENT_MCP_TOOLS, type ScientMcpToolSummaryAction } from "./scientMcpToolPresentation.ts";
 
 export type T3McpToolLogo = "scient";
+// SCIENT-FORK:END
 
 export interface T3McpToolPresentation {
   readonly displayName: string;
@@ -71,29 +73,37 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   | ScientMcpToolSummaryAction;
+// SCIENT-FORK:END
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
   readonly labels: readonly [action: string, running: string, completed: string, detail: string];
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   readonly icon: "scient" | "browser" | "device" | "pull-request";
+  // SCIENT-FORK:END
   readonly summaryAction: T3McpToolSummaryAction;
 }
 
 function tool(
   labels: T3McpToolDefinition["labels"],
   summaryAction: T3McpToolSummaryAction,
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   icon: T3McpToolDefinition["icon"] = "scient",
+  // SCIENT-FORK:END
   displayName = `${labels[0]} ${labels[3]}`,
 ): T3McpToolDefinition {
   return { displayName, labels, icon, summaryAction };
 }
 
+// SCIENT-FORK:START — Scient's names and its own tools in the shared table.
 // Codex registers "scient-direct" for Scient tools kept out of Code Mode.
 const T3_MCP_SERVER_ALIASES = new Set([
   "scient",
   "scient-direct",
   "scient_direct",
+  // SCIENT-FORK:END
   "t3-code",
   "t3_code",
   "t3code",
@@ -168,6 +178,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "schedule-delete",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   create_threads: tool(["Create", "Creating", "Created", "Scient threads"], "thread-create"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a Scient thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "Scient threads"], "thread-list"),
@@ -175,6 +186,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_inspect: tool(["Inspect", "Inspecting", "Inspected", "a Scient thread"], "thread-read"),
   t3_thread_send: tool(["Send", "Sending", "Sent", "to a Scient thread"], "thread-send"),
   t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a Scient thread"], "thread-wait"),
+  // SCIENT-FORK:END
   t3_workflow_stop: tool(
     ["Stop", "Stopping", "Requested a stop for", "a workflow"],
     "workflow-stop",
@@ -183,10 +195,12 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "background waits"],
     "background-wait",
   ),
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   t3_thread_interrupt: tool(
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a Scient thread"],
     "thread-interrupt",
   ),
+  // SCIENT-FORK:END
   t3_worktree_handoff: tool(
     ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
     "worktree-handoff",
@@ -337,10 +351,12 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   t3_thread_update: tool(
     ["Update", "Updating", "Updated", "Scient thread metadata"],
     "thread-update",
   ),
+  // SCIENT-FORK:END
   t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
   t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),
@@ -380,20 +396,25 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "attachment-discard",
   ),
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   ...SCIENT_MCP_TOOLS,
+  // SCIENT-FORK:END
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
 };
 
+// SCIENT-FORK:START — Scient adapter: agents call `scient_*`; the table keeps upstream's `t3_*` keys.
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(
   Object.keys(T3_MCP_TOOLS).flatMap((name) => [name, name.replace(/^t3_/, "scient_")]),
 );
+// SCIENT-FORK:END
 
 function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
 // ACP tool prefixes vary; match loosely but require a known display-name entry.
+// SCIENT-FORK:START — Scient adapter: agents call `scient_*`; the table keeps upstream's `t3_*` keys.
 export function resolveT3McpToolName(
   value: string,
   knownToolNames: ReadonlySet<string> = T3_MCP_TOOL_NAMES,
@@ -439,6 +460,7 @@ export function resolveT3McpToolId(toolName: string | null | undefined): string 
     toolName == null ? null : (resolveT3McpToolName(toolName)?.replace(/^scient_/, "t3_") ?? null);
   return name !== null && Object.hasOwn(T3_MCP_TOOLS, name) ? name : null;
 }
+// SCIENT-FORK:END
 
 type SummaryInput = Readonly<Record<string, unknown>>;
 
@@ -461,8 +483,10 @@ export function resolveT3McpToolDefinition(
   toolName: string | null | undefined,
   input?: unknown,
 ): T3McpToolDefinition | null {
+  // SCIENT-FORK:START — Scient adapter: agents call `scient_*`; the table keeps upstream's `t3_*` keys.
   const name = resolveT3McpToolId(toolName);
   if (name === null) return null;
+  // SCIENT-FORK:END
   const action = asSummaryInput(input)?.action;
   const actionTool = typeof action === "string" ? ACTION_TOOLS[name]?.(action) : undefined;
   return actionTool !== undefined && Object.hasOwn(T3_MCP_TOOLS, actionTool)
@@ -486,7 +510,9 @@ export function resolveT3McpSummaryAction(
 ): T3McpToolSummaryAction | null {
   const definition = resolveT3McpToolDefinition(toolName, input);
   if (definition === null) return null;
+  // SCIENT-FORK:START — Scient adapter: agents call `scient_*`; the table keeps upstream's `t3_*` keys.
   const summarize = ACTION_SUMMARIES[resolveT3McpToolId(toolName) ?? ""];
+  // SCIENT-FORK:END
   const fields = asSummaryInput(input);
   return (fields && summarize?.(fields)) ?? definition.summaryAction;
 }
@@ -496,5 +522,7 @@ export function resolveT3McpToolPresentation(
   input?: unknown,
 ): T3McpToolPresentation | null {
   const definition = resolveT3McpToolDefinition(toolName, input);
+  // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   return definition === null ? null : { displayName: definition.displayName, logo: "scient" };
+  // SCIENT-FORK:END
 }

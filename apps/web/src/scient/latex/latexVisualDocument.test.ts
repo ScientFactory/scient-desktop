@@ -8,7 +8,6 @@ import {
   adoptLatexVisualContent,
   applyLatexVisualDocumentChange,
   latexInlineCommandSource,
-  latexVisualFigureSource,
   latexVisualLayoutProfile,
   latexVisualScientificSource,
   latexVisualTableSource,
@@ -623,7 +622,14 @@ Theory & Proofs \\\\
   });
 
   it("edits a supported figure as a complete visual object", () => {
-    const source = document(latexVisualFigureSource());
+    const source = document(
+      [
+        "\\begin{figure}[htbp]",
+        "\\centering",
+        "\\includegraphics[width=0.8\\textwidth]{figures/image.png}",
+        "\\end{figure}",
+      ].join("\n"),
+    );
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks[0]!.node.attrs).toMatchObject({
       kind: "figure",

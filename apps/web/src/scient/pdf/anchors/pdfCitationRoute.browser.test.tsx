@@ -21,11 +21,7 @@ import { useFileCitationTarget } from "~/scient/markdownEditor/fileCitationNavig
 
 import { workspacePdfSource } from "../pdfSource";
 import { pdfCitationHash } from "./pdfCitationNavigation";
-import {
-  pdfRevealDocumentKey,
-  pendingPdfReveal,
-  resetPdfRevealRequests,
-} from "./pdfRevealRequests";
+import { pdfRevealDocumentKey, pendingPdfReveal, clearPdfReveals } from "./pdfRevealRequests";
 import { pdfDocumentIdentity } from "./pdfTextTarget";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -72,7 +68,7 @@ function Route(props: { href: string }) {
 }
 
 function setup() {
-  resetPdfRevealRequests();
+  clearPdfReveals();
   openFile.mockClear();
 }
 

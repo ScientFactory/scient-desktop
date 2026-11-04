@@ -4,12 +4,7 @@ import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLang
 // SCIENT-FORK:END
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { isHostPath, workspaceRelativeFilePath } from "@t3tools/shared/path";
-import {
-  isWorkspaceImagePreviewPath,
-  isWorkspacePdfPreviewPath,
-  isWorkspaceVideoPreviewPath,
-  filePreviewKind,
-} from "@t3tools/shared/filePreview";
+import { filePreviewKind } from "@t3tools/shared/filePreview";
 
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
   if (path === null) return null;
@@ -20,20 +15,6 @@ export const isMarkdownPreviewFile = (path: string): boolean =>
   /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 
 export const isLatexPreviewFile = (path: string): boolean => /\.(?:tex|latex|ltx)$/i.test(path);
-
-export type FilePreviewKind = "empty" | "image" | "pdf" | "text" | "video";
-
-export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
-  if (path === null) return "empty";
-  if (isWorkspaceVideoPreviewPath(path)) return "video";
-  if (isWorkspaceImagePreviewPath(path)) return "image";
-  if (isWorkspacePdfPreviewPath(path.split(/[?#]/u, 1)[0] ?? "")) return "pdf";
-  return "text";
-}
-
-export function shouldLoadFileAsText(path: string | null): boolean {
-  return resolveFilePreviewKind(path) === "text";
-}
 
 // SCIENT-FORK:START — richer source and citation owners retain their bounded source view.
 export function shouldUseLargeTextPreview(input: {

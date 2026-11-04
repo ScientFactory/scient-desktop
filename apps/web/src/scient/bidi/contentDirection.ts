@@ -265,14 +265,7 @@ export function resolveAggregateDirection(
   text: string,
   fallbackDirection: FixedContentDirection,
 ): FixedContentDirection {
-  return resolveAggregateDirectionFromCounts(countStrongScripts(text), fallbackDirection);
-}
-
-export function resolveAggregateDirectionFromCounts(
-  counts: StrongScriptCounts,
-  fallbackDirection: FixedContentDirection,
-): FixedContentDirection {
-  return resolveProseBlockDirectionFromCounts(counts, fallbackDirection);
+  return resolveProseBlockDirectionFromCounts(countStrongScripts(text), fallbackDirection);
 }
 
 /**
@@ -281,13 +274,6 @@ export function resolveAggregateDirectionFromCounts(
  * otherwise dominant table. A tie has no dominant script and keeps the
  * surrounding direction.
  */
-export function resolveDominantDirection(
-  text: string,
-  fallbackDirection: FixedContentDirection,
-): FixedContentDirection {
-  return resolveDominantDirectionFromCounts(countStrongScripts(text), fallbackDirection);
-}
-
 export function resolveDominantDirectionFromCounts(
   counts: StrongScriptCounts,
   fallbackDirection: FixedContentDirection,

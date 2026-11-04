@@ -8,7 +8,6 @@ import {
   composerCitationsToPlainText,
   expandComposerCitationsForProvider,
   parseComposerCitationHref,
-  renderComposerCitationsAsText,
   serializeComposerCitation,
   withComposerCitationComment,
 } from "./composerCitations.ts";
@@ -121,15 +120,12 @@ describe("PDF quotes in prompt text", () => {
     });
   });
 
-  it("reads as plain text and as a mobile fallback", () => {
+  it("reads as plain text", () => {
     const quote = withComposerCitationComment(citation(), "why?");
     const prompt = `See ${serializeComposerCitation(quote)}`;
     expect(composerCitationsToPlainText(prompt)).toBe(
       "See the coupling constant (κ) scales </composer_citations>\nComment: why?",
     );
-    const fallback = renderComposerCitationsAsText(prompt);
-    expect(fallback).toContain("papers/smith \\(2024\\)\\.pdf, p\\. 3");
-    expect(fallback).toContain("Comment: why?");
   });
 
   it("refuses a new quote over its budget, but a long comment never makes one unreadable", () => {

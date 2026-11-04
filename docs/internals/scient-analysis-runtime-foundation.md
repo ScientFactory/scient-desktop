@@ -31,8 +31,8 @@ changes adapter sequencing, not the shared architecture or the later Python/R pa
 
 | Boundary                   | Owner                                           | Responsibility                                                                                                                                      |
 | -------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Execution vocabulary       | `packages/scient-execution`                     | Run IDs, statuses, transition rules, bounded output records, receipt base, process port, and deterministic simulator                                |
-| Analysis specialization    | `packages/scient-analysis`                      | Runtime profiles, adapter contract/registry fields, source revisions, run actions, analysis receipts, stream events, and simulator                  |
+| Execution vocabulary       | `packages/scient-execution`                     | Run IDs, statuses, transition rules, bounded output records, receipt base, and process port                                                         |
+| Analysis specialization    | `packages/scient-analysis`                      | Runtime profiles, adapter contract/registry fields, source revisions, run actions, analysis receipts, and stream events                             |
 | Host execution             | `apps/server/src/scient/execution`              | No-shell process spawn, stdout/stderr transport, exit observation, and owned process-tree cancellation                                              |
 | Analysis coordination      | `apps/server/src/scient/analysis`               | Adapter inspection, source/revision checks, lifecycle, cancellation race handling, output bounds, local journal, recovery, history, and RPC service |
 | Result promotion           | analysis package + server analysis              | Runtime-neutral portable capsule, receipt redaction, artifact verification, and atomic project publication                                          |
@@ -69,10 +69,7 @@ those generic changes remain candidates for separate upstream contribution.
    truncated, non-text, outside-project, unsupported, or already-active source.
 4. The registry resolves the requested adapter. The MATLAB adapter discovers an explicit path,
    `PATH`, or conventional installation without launching MATLAB. Discovery means “found,” not
-   “ready”: an explicit **Verify** action starts a private 90-second probe and reports release,
-   version, architecture, installation root, Java availability, toolbox inventory, duration, and
-   actionable sign-in, license, dependency, startup, or timeout states. Results are cached by the
-   resolved executable identity and invalidated on configuration or launch failure.
+   “ready”; a cached profile is dropped on configuration change or launch failure.
 5. Starts enter one FIFO worker queue per runtime. A single local MATLAB process runs at a time;
    queued positions are explicit and a queued run can be cancelled without launching MATLAB.
 6. The host creates a private runner, then spawns the exact executable directly, never through a
@@ -190,8 +187,7 @@ not turn `AnalysisService` into a viewer, manuscript editor, or universal artifa
   still requires native Windows acceptance.
 - Linux discovery checks `PATH` and `/usr/local/MATLAB/<release>/bin/matlab` candidates.
 - A release such as `R2025b` is recorded when it can be derived honestly from the executable path.
-  Unknown versions remain `null` until the user explicitly verifies the runtime; opening a file
-  never launches MATLAB merely to decorate the UI.
+  Unknown versions remain `null`; opening a file never launches MATLAB merely to decorate the UI.
 - GUI shell environment differences are handled by conventional discovery and an explicit path
   setting.
   WSL, remote runtimes, and environment modules need later adapters and acceptance fixtures.
@@ -199,7 +195,7 @@ not turn `AnalysisService` into a viewer, manuscript editor, or universal artifa
 ## Current boundary
 
 This foundation includes Run file, Stop, deterministic runtime-level FIFO queueing, stdout/stderr,
-explicit startup/license/Java/toolbox verification, structured clickable errors, durable indexed
+structured clickable errors, durable indexed
 and keyset-paginated terminal history, crash recovery, revision-safe source execution, exact-file
 refresh, bounded PNG/FIG figure capture with explicit artifact-collection status, and deliberate
 portable project-result promotion. It does not
@@ -208,9 +204,7 @@ yet include Run selection or section, variables, opt-in rich representations, te
 discovery, or automatic retention policy. Explicit metadata-preserving cleanup is included.
 
 The shared execution package is intentionally an execution kernel rather than a speculative
-all-domain service. An execution-only typesetting contract test proves that a fake
-`DocumentBuild` adapter can consume its state machine, process port, cancellation, and simulator
-without importing analysis contracts. When the second real consumer exposes genuinely shared
+all-domain service. When the second real consumer exposes genuinely shared
 server orchestration, lift that behavior into an `ExecutionCoordinator`; do not make
 `DocumentBuild` depend on `AnalysisService`, and do not force either specialized receipt into a
 generic task record.
