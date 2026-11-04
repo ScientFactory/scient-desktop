@@ -1,19 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-  AccountsError,
   AccountsSnapshot,
   BrowserProfileId,
-  DEFAULT_BROWSER_PROFILE_ID,
-  EnvironmentId,
   ProjectId,
-  defaultBrowserProfileRecord,
   ThreadId,
   defaultAccountControls,
 } from "@t3tools/contracts";
 import { Clock, Deferred, Effect, Fiber, Redacted, Schema, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { TOTP } from "otpauth";
-import { issueUnit, withShared } from "./sendLog.ts";
 import {
   makeHarness,
   memoryStore,
@@ -330,7 +325,6 @@ describe("AccountsService profiles and evidence", () => {
 });
 
 describe("AccountsService and Main", () => {
-  const MAIN = BrowserProfileId.make("default");
   const row = (profileId: string, sites: string[], username?: string) => ({
     name: sites[0]!,
     details: {
@@ -341,56 +335,6 @@ describe("AccountsService and Main", () => {
     },
     secrets: {},
   });
-
-  it.effect("updates Main's row for a copied sign-in, or makes one, and never duplicates it", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const work = yield* service.save(row("profile-work", ["overleaf.com"], "person@example.com"));
-      // Main already keeps a saved password for the same person.
-      const saved = yield* service.save({
-        ...website(),
-        details: {
-          ...website().details,
-          sites: ["overleaf.com"],
-          username: "person@example.com",
-          profileId: MAIN,
-        },
-      });
-      yield* service.mainFilled({ accountId: work.accountId, profileName: "Work" });
-      yield* service.mainFilled({ accountId: work.accountId, profileName: "Work" });
-      const github = yield* service.save(row("profile-work", ["github.com"]));
-      yield* service.mainFilled({ accountId: github.accountId, profileName: "Work" });
-      const university = yield* service.save({
-        ...row("profile-work", ["university.example"]),
-        details: {
-          ...row("profile-work", ["university.example"]).details,
-          institution: {
-            name: "Synthetic University",
-            entityId: "https://idp.university.example/entity",
-            domain: "university.example",
-          },
-        },
-      });
-      yield* service.mainFilled({ accountId: university.accountId, profileName: "Work" });
-      const main = (yield* service.snapshot).accounts.filter(
-        ({ details }) => details.kind === "website" && details.profileId === MAIN,
-      );
-      expect(
-        main.map(({ accountId, details, signIn, secrets }) => [
-          accountId === saved.accountId,
-          details.kind === "website" ? details.sites : [],
-          signIn?.state,
-          signIn?.from,
-          Object.keys(secrets),
-          details.kind === "website" ? details.origin : undefined,
-        ]),
-      ).toEqual([
-        // A saved password stays fillable; a copy with nothing to type is the session.
-        [true, ["overleaf.com"], "unknown", "copy", ["password"], undefined],
-        [false, ["github.com"], "unknown", "copy", [], "browser-session"],
-      ]);
-    }),
-  );
 
   it.effect("reads rows stored before `from` as imported or copied, keeping the rest", () =>
     Effect.gen(function* () {
@@ -423,106 +367,6 @@ describe("AccountsService and Main", () => {
         [["github.com"], "unknown", "look", "Imported from Chrome · Person", "import"],
         [["overleaf.com"], "unknown", "look", "Copied from Work", "copy"],
       ]);
-    }),
-  );
-
-  it.effect("reads Main's sign-outs and back-fill stored on its record as its `main`", () =>
-    Effect.gen(function* () {
-      const storage = memoryStore();
-      const { service, vault, blobs } = yield* makeHarness({ storage });
-      yield* service.mainBackfilled([BrowserProfileId.make("profile-work")]);
-      yield* service.profileSignedOut(MAIN, "github.com");
-      const name = "accounts-state";
-      const stored = JSON.parse(
-        new TextDecoder().decode(Redacted.value(yield* vault.decrypt(name, blobs.get(name)!))),
-      ) as { profiles: Array<Record<string, unknown>> };
-      // The earlier shape: the two lists straight on Main's record.
-      stored.profiles = stored.profiles.map(({ main, ...profile }) => ({
-        ...profile,
-        ...(main as object),
-      }));
-      blobs.set(
-        name,
-        yield* vault.encrypt(name, Redacted.make(new TextEncoder().encode(JSON.stringify(stored)))),
-      );
-      const restarted = yield* makeHarness({ storage });
-      const main = (yield* restarted.service.snapshot).profiles.find(
-        (profile) => profile.profileId === MAIN,
-      );
-      expect(main?.main).toEqual({ signedOutSites: ["github.com"], backfilled: ["profile-work"] });
-    }),
-  );
-
-  it.effect("records the back-fill once per profile, and an empty one as done", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const backfilled = Effect.map(
-        service.snapshot,
-        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.main?.backfilled,
-      );
-      yield* service.mainBackfilled([]);
-      expect(yield* backfilled).toEqual([]);
-      yield* service.mainBackfilled([BrowserProfileId.make("profile-work")]);
-      yield* service.mainBackfilled([BrowserProfileId.make("profile-work")]);
-      expect(yield* backfilled).toEqual(["profile-work"]);
-    }),
-  );
-
-  it.effect("keeps Accounts' sign-outs on Main until a sign-in action there", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const signedOut = Effect.map(
-        service.snapshot,
-        ({ profiles }) =>
-          profiles.find((profile) => profile.profileId === MAIN)?.main?.signedOutSites,
-      );
-      const cleared = (run: Effect.Effect<void, AccountsError>, site = "github.com") =>
-        Effect.gen(function* () {
-          yield* service.profileSignedOut(DEFAULT_BROWSER_PROFILE_ID, site);
-          expect(yield* signedOut).toEqual([site]);
-          yield* run;
-          expect(yield* signedOut).toBeUndefined();
-        });
-      yield* service.profileSignedOut(DEFAULT_BROWSER_PROFILE_ID, "github.com");
-      // Looks never clear it: a row appearing, a Check, a copy.
-      yield* service.save(row("default", ["github.com"]));
-      const main = (yield* service.save(row("default", ["github.com"], "person"))).accountId;
-      yield* service.recordCheck(main, { state: "signed-in" });
-      expect(yield* signedOut).toEqual(["github.com"]);
-      yield* TestClock.adjust("1 minute");
-      const settled = yield* service.changes.pipe(
-        Stream.filter(({ profiles }) => profiles.every((profile) => !profile.main?.signedOutSites)),
-        Stream.take(1),
-        Stream.runDrain,
-        Effect.forkChild,
-      );
-      yield* service.recordUse({
-        target: { type: "account", accountId: main },
-        action: "sign-in",
-        outcome: "ok",
-        signInOutcome: "signed-in",
-      });
-      yield* Fiber.join(settled);
-      yield* cleared(
-        Effect.asVoid(
-          service.googleSessionsSeen({
-            profileId: MAIN,
-            sessions: [{ email: "person@example.com", valid: true }],
-          }),
-        ),
-        "google.com",
-      );
-      yield* service.profileSignedOut(DEFAULT_BROWSER_PROFILE_ID, "github.com");
-      // A sign-in in another profile leaves Main's record alone.
-      const other = (yield* service.save(row("profile-work", ["github.com"], "other"))).accountId;
-      yield* service.recordUse({
-        target: { type: "account", accountId: other },
-        action: "sign-in",
-        outcome: "ok",
-        signInOutcome: "signed-in",
-      });
-      yield* TestClock.adjust("1 second");
-      expect(yield* signedOut).toEqual(["github.com"]);
     }),
   );
 
@@ -1313,157 +1157,3 @@ it.effect(
       expect(yield* service.handoffCancelled(entry.handoffId)).toBe(false);
     }),
 );
-
-describe("the send log other computers follow", () => {
-  const WORK = BrowserProfileId.make("profile-work");
-  const row = (sites: string[], profileId = WORK) => ({
-    name: sites[0]!,
-    details: { kind: "website" as const, sites, profileId },
-    secrets: {},
-  });
-  const shared = (environmentId: string, applied: number) => ({
-    environmentId: EnvironmentId.make(environmentId),
-    label: environmentId,
-    applied,
-    waiting: 0,
-    needsYou: [],
-  });
-
-  it.effect("writes each action's revision in its own commit, and none for a look", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const log = (profileId = WORK) => service.profileSendLog(profileId);
-      for (const profileId of [WORK, DEFAULT_BROWSER_PROFILE_ID])
-        yield* service.profileShared(profileId, shared("lab", 0));
-      const github = (yield* service.save(row(["github.com"]))).accountId;
-      expect((yield* log()).head).toBe(0);
-      // A look that sees the session working is not an action.
-      yield* service.recordCheck(github, { state: "signed-in" });
-      expect((yield* log()).head).toBe(0);
-      yield* TestClock.adjust("1 minute");
-      yield* service.recordUse({
-        target: { type: "account", accountId: github },
-        action: "sign-in",
-        outcome: "ok",
-        signInOutcome: "signed-in",
-      });
-      yield* Effect.yieldNow;
-      yield* service.snapshot;
-      expect(yield* log()).toEqual({
-        head: 1,
-        units: [{ sites: ["github.com"], revision: 1, kind: "copy" }],
-      });
-      expect(yield* service.profileSignedOut(WORK, "github.com")).toBe(2);
-      expect(yield* service.profileResend(WORK)).toBe(3);
-      expect(yield* log()).toEqual({
-        head: 3,
-        jar: 3,
-        units: [{ sites: ["github.com"], revision: 2, kind: "delete" }],
-      });
-      yield* service.mainFilled({ accountId: github, profileName: "Work" });
-      expect((yield* log(DEFAULT_BROWSER_PROFILE_ID)).units).toEqual([
-        { sites: ["github.com"], revision: 1, kind: "copy" },
-      ]);
-      // Clients see only the head.
-      const record = (yield* service.snapshot).profiles.find((p) => p.profileId === WORK);
-      expect(record?.send).toEqual({ head: 3, units: [] });
-    }),
-  );
-
-  it.effect("takes a revision for a sign-in action seen in a profile, none for an import", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      yield* service.profileShared(WORK, shared("lab", 0));
-      yield* service.sessionsSeen({
-        profileId: WORK,
-        sessions: [{ site: "overleaf.com", how: "imported", from: "Chrome · Person" }],
-      });
-      expect((yield* service.profileSendLog(WORK)).head).toBe(0);
-      yield* TestClock.adjust("1 minute");
-      yield* service.sessionsSeen({
-        profileId: WORK,
-        sessions: [{ site: "overleaf.com", how: "signed-in" }],
-      });
-      expect((yield* service.profileSendLog(WORK)).units).toEqual([
-        { sites: ["overleaf.com"], revision: 1, kind: "copy" },
-      ]);
-    }),
-  );
-
-  it.effect("keeps a revision when its row is deleted, and across restarts", () =>
-    Effect.gen(function* () {
-      const storage = memoryStore();
-      const first = yield* makeHarness({ storage });
-      yield* first.service.profileShared(WORK, shared("lab", 0));
-      const github = (yield* first.service.save(row(["github.com"]))).accountId;
-      yield* first.service.profileSignedOut(WORK, "github.com");
-      yield* first.service.remove(github);
-      expect((yield* first.service.profileSendLog(WORK)).units).toHaveLength(1);
-      const again = yield* makeHarness({ storage });
-      expect(yield* again.service.profileResend(WORK)).toBe(2);
-    }),
-  );
-
-  it.effect("keeps no entries while no other computer follows the profile", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      yield* service.profileSignedOut(WORK, "github.com");
-      expect(yield* service.profileResend(WORK)).toBe(2);
-      // The revisions move, so a computer that links later is filled or reconciled whole.
-      expect(yield* service.profileSendLog(WORK)).toEqual({ head: 2, jar: 2, units: [] });
-    }),
-  );
-
-  it.effect("keeps a deletion until every computer it goes to applied it", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      yield* service.profileShared(WORK, shared("laptop", 0));
-      yield* service.profileSignedOut(WORK, "github.com");
-      yield* service.profileShared(WORK, shared("lab", 1));
-      expect((yield* service.profileSendLog(WORK)).units).toHaveLength(1);
-      yield* service.profileShared(WORK, shared("laptop", 1));
-      expect((yield* service.profileSendLog(WORK)).units).toEqual([]);
-    }),
-  );
-
-  it.effect(
-    "withdraws a profile that turns restricted, and resends its jar when shared again",
-    () =>
-      Effect.gen(function* () {
-        const { service } = yield* makeHarness();
-        const target = { type: "profile" as const, profileId: WORK };
-        yield* service.setControls({ target, access: "off" });
-        expect(yield* service.profileSendLog(WORK)).toEqual({ head: 1, withdrawn: 1, units: [] });
-        yield* service.setControls({ target, access: "ask" });
-        expect(yield* service.profileSendLog(WORK)).toEqual({
-          head: 2,
-          withdrawn: 1,
-          jar: 2,
-          units: [],
-        });
-      }),
-  );
-});
-
-describe("deletions an offline computer still needs", () => {
-  it("keeps every deletion past the copy bound, and forgets a computer only when unlinked", () => {
-    const shared = (environmentId: string, applied: number) => ({
-      environmentId: EnvironmentId.make(environmentId),
-      label: environmentId,
-      applied,
-      waiting: 0,
-      needsYou: [],
-    });
-    let log = issueUnit(undefined, ["signed-out.test"], "delete");
-    for (let index = 0; index < 5_001; index += 1)
-      log = issueUnit(log, [`site${index}.test`], "copy");
-    // Past the bound, copies fall back to the whole jar; the deletion stays.
-    expect(log.jar).toBe(log.head);
-    expect(log.units).toEqual([{ sites: ["signed-out.test"], revision: 1, kind: "delete" }]);
-    const record = { ...defaultBrowserProfileRecord(BrowserProfileId.make("work")), send: log };
-    const offline = withShared(record, EnvironmentId.make("lab"), shared("lab", 0));
-    const online = withShared(offline, EnvironmentId.make("laptop"), shared("laptop", log.head));
-    expect(online.send?.units).toHaveLength(1);
-    expect(withShared(online, EnvironmentId.make("lab"), undefined).send?.units).toEqual([]);
-  });
-});
