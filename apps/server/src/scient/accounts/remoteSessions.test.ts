@@ -268,14 +268,47 @@ describe("receiving a desktop's sign-ins", () => {
     }),
   );
 
+  it.effect("withdraws only cookies still holding this sender's copy", () =>
+    Effect.gen(function* () {
+      const { remote, jars, revoked, active } = yield* setup();
+      const pc = { sessionId: "session-pc", subject: "desktop" };
+      active.add(pc.sessionId);
+      // A copies github.com; B, another desktop, replaces it with its own session.
+      yield* remote.receive(desktop, batch([copy(1)]));
+      yield* remote.receive(
+        pc,
+        batch([copy(1, [cookie({ value: "synthetic-pc" })])], {
+          source: EnvironmentId.make("pc"),
+          label: "PC",
+        }),
+      );
+      revoked.add(desktop.sessionId);
+      yield* remote.sweep();
+      expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-pc"]);
+    }),
+  );
+
+  it.effect("leaves a sign-in made here after the copy when the sender withdraws", () =>
+    Effect.gen(function* () {
+      const { remote, jars } = yield* setup();
+      yield* remote.receive(desktop, batch([copy(1)]));
+      jars.set(WORK, [cookie({ value: "synthetic-signed-in-here" })]);
+      expect(yield* remote.withdraw(desktop, { source: MAC, all: true })).toEqual({ deleted: 0 });
+      expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-signed-in-here"]);
+    }),
+  );
+
   it.effect("returns names and numbers only", () =>
     Effect.gen(function* () {
-      const { remote } = yield* setup();
+      const { remote, accounts } = yield* setup();
       const result = yield* remote.receive(desktop, batch([copy(1)]));
       const applied = yield* remote.applied(desktop, { source: MAC, profileId: WORK });
       const listed = yield* remote.list(WORK);
-      for (const value of [result, applied, listed])
+      const snapshot = yield* accounts.snapshot;
+      for (const value of [result, applied, listed, snapshot]) {
         expect(JSON.stringify(value)).not.toContain("synthetic-desktop");
+        expect(JSON.stringify(value)).not.toContain("fingerprint");
+      }
       expect(listed).toEqual({ sites: [{ site: "github.com", cookies: 1 }] });
     }),
   );

@@ -128,3 +128,20 @@ export function withSendLog<S extends State>(before: S, next: S): S {
     ],
   };
 }
+
+/**
+ * A profile as clients see it: only the head of its send log (the entries come from
+ * profileSendLog), and received units without the digest of what their copy wrote.
+ */
+export const clientProfile = (profile: BrowserProfileRecord): BrowserProfileRecord => ({
+  ...profile,
+  ...(profile.send ? { send: { head: profile.send.head, units: [] } } : {}),
+  ...(profile.received
+    ? {
+        received: profile.received.map((entry) => ({
+          ...entry,
+          units: entry.units.map(({ fingerprint: _, ...unit }) => unit),
+        })),
+      }
+    : {}),
+});

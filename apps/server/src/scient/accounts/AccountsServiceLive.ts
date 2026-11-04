@@ -50,7 +50,7 @@ import {
 } from "./AccountsService.ts";
 import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
 import { mainRowFor, withMainSignOutsCleared, withSignedOutSite } from "./mainRecord.ts";
-import { issueJar, issueUnit, withSendLog, withShared } from "./sendLog.ts";
+import { clientProfile, issueJar, issueUnit, withSendLog, withShared } from "./sendLog.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
   AccountPersistence,
@@ -215,10 +215,7 @@ export const layer = Layer.effect(
       return {
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
-        // Clients see only the head of each send log; the entries come from profileSendLog.
-        profiles: state.profiles.map((profile) =>
-          profile.send ? { ...profile, send: { head: profile.send.head, units: [] } } : profile,
-        ),
+        profiles: state.profiles.map(clientProfile),
         ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
         ...(state.codeSources ? { codeSources: state.codeSources } : {}),
         ...(state.keyLinks ? { keyLinks: state.keyLinks } : {}),
@@ -1197,6 +1194,9 @@ export const layer = Layer.effect(
             return "kept" as const;
           }),
         ),
+      ),
+      receivedProfiles: locked(
+        Effect.sync(() => state.profiles.filter((profile) => profile.received?.length)),
       ),
       updateReceived: Effect.fn("AccountsService.updateReceived")((profileId, change) =>
         locked(

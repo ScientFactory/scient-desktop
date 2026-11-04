@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off -- Cookie expiries follow the wall clock Chromium uses.
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off -- Cookie expiries follow the wall clock Chromium uses; digests use node:crypto.
 import {
   AccountsError,
   type AccountSessionsApplied,
@@ -18,10 +18,14 @@ import {
 import {
   applyUnit,
   shareable,
+  unitCookies,
   travels,
   unitSites,
   universitySites,
 } from "@t3tools/shared/scientSessionCookies";
+import * as NodeCrypto from "node:crypto";
+
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -78,6 +82,31 @@ function withApplied(
     ...applied,
   ].slice(-RECEIVED_UNITS_LIMIT);
 }
+
+const isLive = (cookie: SessionCookie, nowSeconds: number) =>
+  cookie.expires === undefined || cookie.expires > nowSeconds;
+
+/** A digest of a unit's live cookies, values included: what a copy wrote, to tell it from later changes. */
+const fingerprintOf = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
+  NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(
+        cookies
+          .filter((cookie) => isLive(cookie, nowSeconds))
+          .map((c) => [
+            c.name,
+            c.domain,
+            c.path,
+            c.partitionKey?.topLevelSite ?? null,
+            c.partitionKey?.hasCrossSiteAncestor ?? null,
+            c.hostOnly,
+            c.value,
+          ])
+          .map((entry) => JSON.stringify(entry))
+          .sort(),
+      ),
+    )
+    .digest("base64url");
 
 const fromSent = (cookie: AccountSessionsReceiveInput["units"][number]["cookies"]) =>
   (cookie ?? []).map(({ value, ...rest }): SessionCookie => ({
@@ -182,7 +211,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     );
   };
 
-  const records = accounts.snapshot;
+  const records = accounts.receivedProfiles.pipe(Effect.map((profiles) => ({ profiles })));
   const senderOf = (record: BrowserProfileRecord, source: EnvironmentId) =>
     record.received?.find((entry) => entry.source === source);
 
@@ -214,13 +243,19 @@ export const makeRemoteSessions = Effect.gen(function* () {
         const copies = entry.units.filter(
           (unit) => unit.outcome === "copied" || unit.outcome === "same",
         );
-        if (copies.length)
-          yield* withJar(profileId, async (jar) => {
-            for (const unit of copies) {
-              const present = await jar.readUnit(unit.sites);
-              if (present.length) await jar.remove(present);
-            }
-          });
+        // Only a unit still holding exactly this sender's copy goes; a later change is someone's.
+        const deleted = copies.length
+          ? yield* withJar(profileId, async (jar) => {
+              let count = 0;
+              for (const unit of copies) {
+                const present = await jar.readUnit(unit.sites);
+                if (fingerprintOf(present, Date.now() / 1000) !== unit.fingerprint) continue;
+                await jar.remove(present);
+                count += 1;
+              }
+              return count;
+            })
+          : 0;
         yield* accounts.updateReceived(profileId, (record) => ({
           received: (record.received ?? []).flatMap((candidate) =>
             candidate.source !== source
@@ -230,7 +265,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
                 : [{ ...candidate, units: [], withdrawn: end.revision }],
           ),
         }));
-        return copies.length;
+        return deleted;
       }),
     );
 
@@ -306,7 +341,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
         const entry = senderOf(before, input.source);
         // Checked again here, against this computer's own rows and the controls just set.
         const allowed = shareable(input.profileId, input.controls);
-        const university = universitySites((yield* records).accounts);
+        const university = universitySites((yield* accounts.snapshot).accounts);
         const decided = input.units.map((unit) => {
           if (!allowed || !travels(unit.sites, university, siteOf)) return "blocked" as const;
           return unit.revision <= appliedRevision(entry, unit.sites) ? ("stale" as const) : unit;
@@ -332,17 +367,27 @@ export const makeRemoteSessions = Effect.gen(function* () {
             outcome: typeof early === "string" ? early : (outcomes.get(unit) ?? "failed"),
           };
         });
-        const applied = result.flatMap((unit) =>
-          RECORDED.has(unit.outcome)
-            ? [
-                {
-                  sites: unit.sites,
-                  revision: unit.revision,
-                  outcome: unit.outcome as ReceivedUnit["outcome"],
-                },
-              ]
-            : [],
-        );
+        const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;
+        const applied = result.flatMap((unit, index) => {
+          if (!RECORDED.has(unit.outcome)) return [];
+          const sent = input.units[index]!;
+          const copy = unit.outcome === "copied" || unit.outcome === "same";
+          return [
+            {
+              sites: unit.sites,
+              revision: unit.revision,
+              outcome: unit.outcome as ReceivedUnit["outcome"],
+              ...(copy
+                ? {
+                    fingerprint: fingerprintOf(
+                      unitCookies(unit.sites, fromSent(sent.cookies), siteOf),
+                      nowSeconds,
+                    ),
+                  }
+                : {}),
+            },
+          ];
+        });
         if (applied.length)
           yield* accounts.updateReceived(input.profileId, (record) => ({
             received: (record.received ?? []).map((candidate) =>
@@ -367,7 +412,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     return {
       bound: entry !== undefined,
       ...(entry?.withdrawn === undefined ? {} : { withdrawn: entry.withdrawn }),
-      units: entry?.units ?? [],
+      units: (entry?.units ?? []).map(({ fingerprint: _, ...unit }) => unit),
     };
   });
 

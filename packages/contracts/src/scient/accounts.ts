@@ -392,6 +392,8 @@ export const ReceivedUnit = Schema.Struct({
   revision: SessionRevision,
   outcome: ReceivedUnitOutcome,
   needsYou: Schema.optional(IsoDateTime),
+  /** A digest of exactly the cookies the copy wrote; never sent to clients. */
+  fingerprint: Schema.optional(TrimmedNonEmptyString),
 });
 export type ReceivedUnit = typeof ReceivedUnit.Type;
 

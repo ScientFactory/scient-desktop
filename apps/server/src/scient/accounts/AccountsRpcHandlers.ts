@@ -587,6 +587,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         profileResend: unavailable,
         profileSendLog: unavailable,
         profileShared: unavailable,
+        receivedProfiles: Effect.succeed([]),
         updateReceived: unavailable,
         mainBackfilled: unavailable,
         setHandoff: unavailable,

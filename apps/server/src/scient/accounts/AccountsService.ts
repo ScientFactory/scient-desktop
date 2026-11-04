@@ -151,6 +151,8 @@ export interface AccountsServiceShape {
     profileId: BrowserProfileId,
     share: ProfileSharedWith,
   ) => Effect.Effect<void, AccountsError>;
+  /** On a remote: the profiles holding copies from other computers, as stored. */
+  readonly receivedProfiles: Effect.Effect<ReadonlyArray<BrowserProfileRecord>, AccountsError>;
   /**
    * On a remote: changes a profile's received copies, and the controls a sender sets, in one
    * locked commit. Returns the record as it was before the change.
