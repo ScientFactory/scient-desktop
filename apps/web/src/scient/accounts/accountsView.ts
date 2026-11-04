@@ -537,8 +537,16 @@ export function fillableAccounts(
   return matchingAccounts(accounts, url, profileId).filter((account) => !hasNothingToType(account));
 }
 
-/** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
-export const GMAIL_URL = "https://mail.google.com/mail/";
+/**
+ * Google's own page for signing one of its accounts in to a profile, address filled in when known;
+ * it comes back to My Account afterwards.
+ */
+export function googleSignInUrl(email?: string) {
+  const url = new URL("https://accounts.google.com/AddSession");
+  if (email) url.searchParams.set("Email", email);
+  url.searchParams.set("continue", "https://myaccount.google.com/");
+  return url.href;
+}
 
 /** The domain of the address a browser profile was imported from, such as mail.huji.ac.il. */
 export function profileAddressDomain(

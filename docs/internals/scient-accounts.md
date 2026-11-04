@@ -760,11 +760,11 @@ provider environment. The existing proxy redacts reflected values in responses.
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
   own profile: Scient has no record of most sites a profile is signed in to, so a missing record
-  doesn't mean signed out. An empty tab's Gmail link and the
-  Sign in link in `BrowserProfiles` open `GMAIL_URL` in the selected profile: signed out, Google
-  shows its own sign-in and returns to the inbox, so Scient adds no flow of its own, and the Google
-  check that follows clears the label. `/mail/u/<address>/` gives "Temporary Error", so it is not
-  used.
+  doesn't mean signed out. The Sign in link in `BrowserProfiles`, like Add to Main, opens
+  Google's own AddSession page in that profile (`googleSignInUrl`, with the profile's address
+  when it has one, back to My Account), so Scient adds no flow of its own, and the Google check
+  that follows clears the label. Gmail is only a home shortcut; `/mail/u/<address>/` gives
+  "Temporary Error".
 - **University access**: a website account with `institution` (from the public directory) or
   `proxyUrl` (a library link with `{url}`) reaches a university's subscriptions; older `library`
   accounts fold into this shape when read (`foldStoredAccounts`). `accounts.universities.signIn`

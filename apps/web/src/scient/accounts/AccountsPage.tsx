@@ -84,6 +84,7 @@ import {
   activityLine,
   type GitHubIdentity,
   githubIdentities,
+  googleSignInUrl,
   type KeyInUse,
   isBrowserSignIn,
   isSavedPassword,
@@ -519,10 +520,6 @@ function SavedPasswordsDialog({
   );
 }
 
-/** Google adds another of its accounts to a profile through its own page. */
-const addGoogleSession = (email: string) =>
-  `https://accounts.google.com/AddSession?Email=${encodeURIComponent(email)}&continue=${encodeURIComponent("https://myaccount.google.com/")}`;
-
 /**
  * One site signed in from several browser profiles: the profiles' pictures, opening to each.
  * When Main has the site but it doesn't work there, the row says which profile is used instead.
@@ -601,7 +598,7 @@ export function SignInGroupRow({
                 {googleEmail ? (
                   <MenuItem
                     onClick={() =>
-                      void openBrowser(addGoogleSession(googleEmail), DEFAULT_BROWSER_PROFILE_ID)
+                      void openBrowser(googleSignInUrl(googleEmail), DEFAULT_BROWSER_PROFILE_ID)
                     }
                   >
                     Add to Main

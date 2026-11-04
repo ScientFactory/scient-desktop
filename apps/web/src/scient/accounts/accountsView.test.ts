@@ -15,6 +15,7 @@ import {
 import {
   accountStatusLabel,
   fillableAccounts,
+  googleSignInUrl,
   isBrowserSignIn,
   signedOutOfGoogle,
   sitesToKeep,
@@ -879,5 +880,17 @@ describe("githubIdentities", () => {
       },
       { id: "github.com:gone", host: "github.com", login: "gone", connector: orphan },
     ]);
+  });
+});
+
+describe("googleSignInUrl", () => {
+  it("opens Google's own sign-in for the profile's address, or for any account without one", () => {
+    const back = encodeURIComponent("https://myaccount.google.com/");
+    expect(googleSignInUrl("person@example.com")).toBe(
+      `https://accounts.google.com/AddSession?Email=person%40example.com&continue=${back}`,
+    );
+    expect(googleSignInUrl(undefined)).toBe(
+      `https://accounts.google.com/AddSession?continue=${back}`,
+    );
   });
 });

@@ -69,7 +69,7 @@ import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
-  GMAIL_URL,
+  googleSignInUrl,
   importProfileName,
   mergeProfiles,
   matchExistingProfile,
@@ -1014,7 +1014,13 @@ export function BrowserProfiles({
                     email={profile.record.source?.email}
                     signedOut={signedOutOfGoogle(snapshot.accounts, profile.id)}
                     {...(previewBridge
-                      ? { onSignIn: () => void openBrowser(GMAIL_URL, profile.id) }
+                      ? {
+                          onSignIn: () =>
+                            void openBrowser(
+                              googleSignInUrl(profile.record.source?.email),
+                              profile.id,
+                            ),
+                        }
                       : {})}
                   />
                 </span>
