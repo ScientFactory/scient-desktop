@@ -359,10 +359,12 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
   const held = !userPress(caller) && !resume && signInHeld(newest);
   // A person can still finish a held sign-in by hand; Scient types nothing into it.
   const handOver = held && caller.kind === "agent" && !caller.scope.unattended;
+  // Named, so whatever waits on this sign-in can ask the person for it.
   if (held && !handOver)
     return {
       outcome: "failed",
       message: `${account.name}'s last sign-in didn't go through, so Scient won't repeat it by itself.`,
+      accountId: account.accountId,
     } satisfies SignInAttempt;
   const permitted = yield* mayType(caller, account, agentAccess);
   if (!permitted && caller.kind !== "person")

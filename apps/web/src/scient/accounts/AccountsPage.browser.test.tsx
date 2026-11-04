@@ -144,6 +144,24 @@ it("signs in again through Scient, then removes the status and action once signe
     .not.toBeInTheDocument();
 });
 
+it("says a held sign-in needs the person, with its Sign in on the row", async () => {
+  using _fixture = fixture();
+  state.calls = [];
+  state.features = { signInAnyRow: true };
+  // An overnight attempt that met a slow page: Scient stops trying until the person signs in.
+  await using _screen = await render(
+    row({ ...account, signIn: { state: "failed", at: "2026-11-04T02:00:00.000Z" } }),
+  );
+  await expect.element(page.getByText("Sign in needed", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await vi.waitFor(() =>
+    expect(state.calls).toContainEqual([
+      "record",
+      { accountId: account.accountId, threadId: "synthetic-thread" },
+    ]),
+  );
+});
+
 it("says an older server can't sign in to a website row from here", async () => {
   using _fixture = fixture();
   state.features = {};

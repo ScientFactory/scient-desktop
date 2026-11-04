@@ -64,6 +64,7 @@ import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/serve
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { environmentThreadShells } from "~/state/threads";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { signInHeld } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import { siteIdentities } from "@t3tools/shared/scientBrowserProfileChoice";
 import "./accounts.css";
@@ -145,7 +146,8 @@ export function AccountRow({
   const university = universityDetails(details);
   const signIn = useSignIn(environmentId);
   const signInAnyRow = useAccounts(environmentId).data?.features?.signInAnyRow === true;
-  const signInAgain = ["signed-out", "needs-you"].includes(account.signIn?.state ?? "");
+  const held = signInHeld(account.signIn);
+  const signInAgain = held || account.signIn?.state === "signed-out";
   const openSite = async () => {
     if (!site) return;
     await openBrowser(site, details.kind === "website" ? details.profileId : undefined);
@@ -228,7 +230,8 @@ export function AccountRow({
       }
       control={
         <div className="flex items-center gap-2">
-          {university && !signedIntoUniversity(account) ? (
+          {(university && !signedIntoUniversity(account)) ||
+          (!university && held && signInAnyRow && details.kind === "website") ? (
             <Button
               size="xs"
               variant="outline"

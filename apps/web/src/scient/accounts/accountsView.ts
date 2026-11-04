@@ -863,8 +863,9 @@ export function accountStatusLabel(
             signIn.by === "action" && signIn.detail
             ? signIn.detail
             : "Couldn't check";
+    // A failed attempt holds automatic sign-ins until the person signs in.
     case "failed":
-      return "Couldn't check";
+      return "Sign in needed";
   }
 }
 

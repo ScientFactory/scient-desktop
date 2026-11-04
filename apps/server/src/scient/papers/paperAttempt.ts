@@ -252,7 +252,12 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
     if (result.reason === "refused") noteRefusal(lane, yield* Clock.currentTimeMillis);
     else if (step.route === "publisher" && result.reason !== "bot-check")
       lane.directFailedAt = yield* Clock.currentTimeMillis;
-    missed.push({ ...step, result });
+    const signedInTo = known.find((account) => account.accountId === result.signInAccountId);
+    missed.push({
+      ...step,
+      ...(step.account || !signedInTo ? {} : { account: signedInTo }),
+      result,
+    });
   }
   return { saved: undefined, route: undefined, missed, universities, site, lane };
 });

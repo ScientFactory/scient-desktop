@@ -685,6 +685,10 @@ describe("account status", () => {
       ),
     ).toBe("Password changed");
     expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
+    // A failed attempt holds automatic sign-ins: the row says what the person can do.
+    expect(accountStatusLabel({ signIn: { state: "failed", at } }, relative)).toBe(
+      "Sign in needed",
+    );
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(
       accountStatusLabel(

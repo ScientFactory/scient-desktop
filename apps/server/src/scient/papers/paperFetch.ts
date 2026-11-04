@@ -1,6 +1,7 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
+  type AccountId,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -70,6 +71,8 @@ export type FetchResult =
       readonly profileId: string;
       /** The journal's "Access through your institution" button, when it showed one. */
       readonly institutionUrl?: string;
+      /** The saved sign-in that didn't sign in here, for the person to sign in to. */
+      readonly signInAccountId?: AccountId;
     };
 
 export interface PageRequest {
@@ -232,11 +235,14 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
           // A sign-in waiting at a second factor keeps this tab, for the person to finish there.
           if (result.pending) kept = true;
           if (result.outcome !== "signed-in")
-            return stopped(
-              "needs-sign-in",
-              "sign-in",
-              result.message ?? "The sign-in did not finish.",
-            );
+            return {
+              ...stopped(
+                "needs-sign-in",
+                "sign-in",
+                result.message ?? "The sign-in did not finish.",
+              ),
+              ...(result.accountId ? { signInAccountId: result.accountId } : {}),
+            };
           signedIn = true;
           continue;
         }
