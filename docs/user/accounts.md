@@ -12,7 +12,10 @@ profile, shows the Scient symbol. Profiles imported from a browser show its curr
 name, or that browser's mark when it has no picture; the refresh button next to **Browser
 profiles** also brings in new sign-ins and passwords (quit that browser first for sign-ins). The
 import shows how many cookies each profile holds where the browser allows it, then what each
-brought, counted per site. Connected services remain managed in [Extensions](extensions.md).
+brought, counted per site. A site the import brought a session for, where you keep a password or
+Scient knows the service, appears under **Browser sign-ins** as **Imported** (Google and university
+sign-in services aside) until a sign-in or a check sees it working, which then names who is
+signed in where the site says. Connected services remain managed in [Extensions](extensions.md).
 
 Everything you add starts **Allowed**. Change access to **Ask me** for approval on each use
 or **Off** to deny agents. Scope can limit access to selected projects. The global switch
@@ -28,7 +31,7 @@ can enforce it; readable values are supplied to agents through private session f
 | `scient_account_request`         | Make an HTTPS request with a hidden key.                                        |
 | `scient_account_find_profile`    | Find a browser profile that can open a page.                                    |
 | `scient_account_browser_session` | Supply a site's browser session to scripts.                                     |
-| `scient_account_add`             | Ask you for a key in a private card and keep it here.                           |
+| `scient_account_add`             | Ask you for a key, or to sign in to a website or university, in a card here.    |
 | `scient_paper_get`               | Save one paper's PDF through open access or your university.                    |
 | `scient_papers_queue`            | Queue any number of papers to fetch in the background.                          |
 | `scient_papers_status`           | Read what arrived, what waits for you and what can't be reached.                |
@@ -43,10 +46,12 @@ unless another profile is signed in to the site and that one is not; then Main i
 else the profile that signed in first. The tab's profile menu says why, such as "Work · signed in to
 overleaf.com". Switching a tab's profile is remembered for the conversation and the site.
 
-Main receives every sign-in. An import or Refresh into another profile, a sign-in Scient sees in
-another profile, and a one-time copy of each profile when Scient first starts with this version all
-fill Main where it has nothing for that site; Main then opens new tabs, and **Use for new tabs**
-changes that. A copy shows "Copied from Work" until Scient sees it working in Main. Only profiles
+Main receives every sign-in. An import or Refresh into another profile, a sign-in in another
+profile (Scient's, yours through a sign-in service, or Google showing a new account), and a
+one-time copy of each profile when Scient first starts with this version all fill Main where it has
+nothing for that site; Main then opens new tabs, and **Use for new tabs** changes that. A check
+that only sees a session copies nothing. A copy shows **Copied** ("Copied from Work") until a
+sign-in or a check sees it working in Main. Only profiles
 with no limits give Main their sessions. **Sign out** in Main's signed-in sites is remembered: imports
 and the one-time copy never bring that site back, though signing in to it in another profile does.
 Signing out on a site's own page isn't seen, so a later import or sign-in elsewhere can fill Main
@@ -60,8 +65,12 @@ If none works, the agent receives guidance to ask you to sign in or allow a prof
 
 When no profile opens a sign-in page and a saved sign-in for that site is Allowed, Scient signs in
 on that tab and returns to the page the agent wanted, so agents never chain these steps themselves.
-Ask me accounts wait for your approval, and a sign-in the site rejected is not repeated until you
-change it.
+Ask me accounts wait for your approval. An attempt that didn't sign in holds that site and person,
+across duplicate rows and universities that share a sign-in service: nothing tries it again by
+itself until you sign in there, change the saved password or two-factor key, or press **Sign in**
+or **Check my accounts**. No time lifts it. An attempt that stops at a code, push, CAPTCHA or passkey
+keeps its tab; the next **Sign in**, paper chip or agent call in that conversation continues it
+there instead of typing the password again.
 
 Choosing a profile explicitly or navigating an existing tab keeps that profile. If access fails and
 no saved sign-in helps, Scient tells the agent to use `scient_account_find_profile` with the URL.
@@ -73,8 +82,9 @@ once a day, and checks Google's accounts at startup, on focus and after sign-ins
 untick them; shared-computer options stay off.
 
 **Check my accounts** opens your browser sign-ins one at a time in their own profiles and shows what
-it found on each row: signed in, signed out, needs you, or rejected. A signed-out account with a
-saved password gets one sign-in attempt; a sign-in the site rejected gets none until you change it.
+it found on each row: signed in, signed out, needs you, or rejected. It is your own press, so a
+signed-out account with a saved password gets one sign-in attempt, even one that failed before; an
+account that is Off is never typed. It looks at the least recently seen rows first.
 Imported passwords nobody has used are skipped; **Check sign-in** in a row's menu checks that one.
 
 When a site sends a sign-in code, a private card asks for it on any of your devices, including the
@@ -106,11 +116,19 @@ Turning an account Off stops agents using its password; a profile you allow stil
 the sites that profile is signed in to.
 
 After you submit a login form, Scient offers to save a new sign-in or update a changed password.
-An unchanged password produces no prompt. Capture requires a `<form>` element.
+An unchanged password produces no prompt. Capture sees a real `<form>` submitted, or sent by a
+click on its submit button or Enter in a field; buttons that only run a script, and logins with no
+form, aren't seen. A code field is never taken for the password, and a username typed on an
+earlier step is carried to the password step.
 
-In Add an account, **Sign in with the browser** opens the site in Scient's browser. Sign in however
-the site allows, then press **Done** on the notification; the account is saved with that browser
-profile. If you type a password, Scient offers to save it as usual. When you sign in to a site
+A row's **Sign in again**, and **Sign in with the browser** in Add an account, open the site's own
+sign-in beside your work. Scient types what it may and you finish the rest. What you type there is
+kept once the site lets you in, and only the password it accepted; a password kept in Keychain,
+1Password or another linked store stays there. A tab streamed from a remote server says what you
+type isn't kept. An agent can ask you to sign in the same way, in a card in its conversation, and
+learns only the account's name. While Scient runs a sign-in, no agent can read or drive its tab or
+export that site's session, and a university's own sign-in pages stay closed to agents after. When
+you sign in to a site
 through Google, your university or another sign-in service, Scient adds that site for the profile
 and shows Undo. Coming back to the sign-in service's own sites, such as Google Docs after Google's
 sign-in, adds nothing. A site signed in from several profiles is one row with their pictures.
@@ -138,9 +156,10 @@ or not a paper is waiting:
 
 - **Connect your university** is the first row in Sources until you do. Pick your university there,
   in a conversation that asks for it, or under **University library** in Add an account.
-- Its own sign-in opens beside your work. When you finish, the tab closes and the university shows
-  **Signed in**. If it already knows you, nothing opens to type into. Pressing Sign in again
-  reuses the same tab. Passwords are offered for saving as on any other site.
+- Its own sign-in opens beside your work. When you finish and a check reaches a journal through it,
+  the tab closes and the university shows **Signed in**. If it already knows you, nothing opens to
+  type into. Pressing Sign in again continues a sign-in waiting at a code. The password you type is
+  kept, as on any other site.
 - If your university isn't listed, paste a link from your library's website.
 - The university's crest then stays beside the Sources title. Press it to see the sign-in's status,
   sign in, or check it. An amber dot means it needs you.
