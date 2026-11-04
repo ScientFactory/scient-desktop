@@ -1,3 +1,5 @@
+import type { SessionCookie } from "@t3tools/contracts";
+import { applyUnit, type CdpCookie } from "@t3tools/shared/scientSessionCookies";
 import { chromium, type BrowserContext } from "playwright-core";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -141,4 +143,79 @@ it("discards a context whose helper never closes, and the waiting tab opens a fr
   expect(opened).toBe(fresh);
   expect(launch).toHaveBeenCalledTimes(2);
   await pool.close();
+});
+
+/** A context whose helper pages answer cookie commands from one in-memory jar a page can write. */
+function jarContext() {
+  const cookies: CdpCookie[] = [];
+  const slot = (cookie: { name: string; domain: string; path: string }) =>
+    `${cookie.name} ${cookie.domain} ${cookie.path}`;
+  const put = (cookie: CdpCookie) => {
+    const index = cookies.findIndex((held) => slot(held) === slot(cookie));
+    if (index >= 0) cookies.splice(index, 1);
+    cookies.push(cookie);
+  };
+  const send = async (method: string, params: Record<string, unknown> = {}) => {
+    if (method === "Network.getAllCookies") return { cookies: [...cookies] };
+    if (method === "Network.setCookies")
+      for (const param of params.cookies as Array<Record<string, unknown>>)
+        put({
+          name: param.name as string,
+          value: param.value as string,
+          domain: (param.domain as string | undefined) ?? new URL(param.url as string).hostname,
+          path: param.path as string,
+          expires: (param.expires as number | undefined) ?? -1,
+          session: param.expires === undefined,
+          secure: param.secure as boolean,
+          httpOnly: param.httpOnly as boolean,
+          sameSite: param.sameSite as CdpCookie["sameSite"],
+        });
+    if (method === "Network.deleteCookies") {
+      const index = cookies.findIndex((held) => slot(held) === slot(params as never));
+      if (index >= 0) cookies.splice(index, 1);
+    }
+    return {};
+  };
+  const context = {
+    newPage: async () => ({ close: async () => undefined, isClosed: () => false, url: () => "" }),
+    newCDPSession: async () => ({ send }),
+    pages: () => [],
+    cookies: async () => [],
+  } as unknown as BrowserContext;
+  return { context, cookies, put };
+}
+
+it("reads a unit afresh, so a page's write between two units is seen and kept", async () => {
+  const { context, cookies, put } = jarContext();
+  const { jar } = await openProfileCookieJar(context);
+  const copy = (domain: string): SessionCookie => ({
+    name: "session",
+    value: "synthetic-desktop",
+    domain,
+    hostOnly: false,
+    path: "/",
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    expires: 4_000_000_000,
+  });
+  const fill = (site: string, domain: string) =>
+    applyUnit(jar, {
+      unit: [site],
+      source: [copy(domain)],
+      mode: "fill",
+      replaceAllowed: false,
+      nowSeconds: 1,
+    });
+  expect(await fill("github.com", ".github.com")).toBe("copied");
+  // An open page signs in to Overleaf after the first unit: the next unit is no longer empty.
+  put({
+    ...copy(".overleaf.com"),
+    value: "synthetic-site",
+    expires: 4_000_000_000,
+    session: false,
+    sameSite: "Lax",
+  });
+  expect(await fill("overleaf.com", ".overleaf.com")).toBe("conflict");
+  expect(cookies.find((cookie) => cookie.domain === ".overleaf.com")?.value).toBe("synthetic-site");
 });
