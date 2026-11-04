@@ -216,6 +216,10 @@ export const accountsState = {
     label: "accounts:profileShared",
     tag: WS_METHODS.accountsProfileShared,
   }),
+  profilesUnshared: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profilesUnshared",
+    tag: WS_METHODS.accountsProfilesUnshared,
+  }),
   sessionsReceive: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:sessionsReceive",
     tag: WS_METHODS.accountsSessionsReceive,

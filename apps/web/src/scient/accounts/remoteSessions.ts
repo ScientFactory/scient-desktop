@@ -103,6 +103,8 @@ export interface DeliveryDeps {
   /** Undefined while the route, destination, permission and feature still hold as planned. */
   readonly revalidate: () => string | undefined;
   readonly sendLog: (profileId: string) => Promise<ProfileSendLog>;
+  /** A whole-jar revision on the desktop, so a reconciliation outranks what the remote holds. */
+  readonly resend: (profileId: string) => Promise<void>;
   readonly applied: (profileId: string) => Promise<AccountSessionsApplied>;
   readonly remoteRecord: (profileId: string) => BrowserProfileRecord | undefined;
   readonly receive: (input: AccountSessionsReceiveInput) => Promise<AccountSessionsReceiveResult>;
@@ -153,7 +155,14 @@ export async function deliverOnce(deps: DeliveryDeps) {
       deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
       defaultBrowserProfileRecord(profileId);
     const isShareable = shareable(profileId, record);
-    const [log, applied] = await Promise.all([deps.sendLog(profileId), deps.applied(profileId)]);
+    const applied = await deps.applied(profileId);
+    // A computer this desktop forgot (unlinked, then linked again) is reconciled in full.
+    const reconcile =
+      isShareable &&
+      applied.bound &&
+      !record.sharedWith?.some((entry) => entry.environmentId === deps.remoteId);
+    if (reconcile) await deps.resend(profileId);
+    const log = await deps.sendLog(profileId);
     check();
     const controls = remoteControls(record);
     const own = { access: record.access, scope: record.scope, scriptSignIn: record.scriptSignIn };
@@ -167,6 +176,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
       applied,
       jar: jar.map(({ sites }) => sites),
       shareable: isShareable,
+      reconcile,
       travels: (unit) => travels(unit, university, siteOf),
       siteOf,
     });
@@ -431,6 +441,11 @@ export function watchRemoteSessions(
           profileId: BrowserProfileId.make(profileId),
           revision,
         }).then(() => undefined),
+      resend: (profileId) =>
+        call(registry, accountsState.profileResend, primaryId, {
+          profileId: BrowserProfileId.make(profileId),
+          why: "send-again",
+        }).then(() => undefined),
       shared: (profileId, share) =>
         call(registry, accountsState.profileShared, primaryId, {
           profileId: BrowserProfileId.make(profileId),
@@ -524,6 +539,10 @@ export async function withdrawCopies(environmentId: EnvironmentId) {
     setTimeout(() => resolve("offline"), WITHDRAW_LIMIT_MS),
   );
   const outcome = await Promise.race([withdrawn, timeout]);
+  // Delivery stops either way: no deletion waits for this computer any more.
+  await call(appAtomRegistry, accountsState.profilesUnshared, primaryId, { environmentId }).catch(
+    () => undefined,
+  );
   if (outcome === "offline" && readEnvironment(environmentId)) return "offline" as const;
   return outcome;
 }

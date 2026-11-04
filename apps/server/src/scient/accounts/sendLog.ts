@@ -2,6 +2,7 @@ import {
   type AccountSummary,
   type BrowserProfileId,
   type BrowserProfileRecord,
+  type EnvironmentId,
   type ProfileSendLog,
   type ProfileSharedWith,
 } from "@t3tools/contracts";
@@ -10,8 +11,8 @@ import { shareable, unitSites } from "@t3tools/shared/scientSessionCookies";
 import { effectiveProfile, isGoogleSessionRow } from "./AccountDecisions.ts";
 import { siteOf } from "./profileCookieJar.ts";
 
-const UNITS_LIMIT = 5_000;
-const SHARED_LIMIT = 32;
+/** Copies beyond this fall back to a whole-jar revision; deletions are never dropped unapplied. */
+const COPIES_LIMIT = 5_000;
 const EMPTY: ProfileSendLog = { head: 0, units: [] };
 
 /**
@@ -40,15 +41,11 @@ export function issueUnit(
   const key = unitKey(sites);
   const others = current.units.filter((unit) => unitKey(unit.sites) !== key);
   const entry = { sites, revision: head, kind };
-  if (others.length < UNITS_LIMIT) return { ...current, head, units: [...others, entry] };
-  // Full: the whole jar goes again instead, so no unit is lost; deletions stay until applied.
-  const deletes = others.filter((unit) => unit.kind === "delete");
-  return {
-    ...current,
-    head,
-    jar: head,
-    units: [...deletes, ...(kind === "delete" ? [entry] : [])].slice(-UNITS_LIMIT),
-  };
+  const copies = others.filter((unit) => unit.kind === "copy").length;
+  if (kind === "delete" || copies < COPIES_LIMIT)
+    return { ...current, head, units: [...others, entry] };
+  // Full of copies: the whole jar goes again instead, so no unit is lost.
+  return { ...current, head, jar: head, units: others.filter((unit) => unit.kind === "delete") };
 }
 
 export function issueJar(log: ProfileSendLog | undefined): ProfileSendLog {
@@ -63,15 +60,23 @@ function issueWithdrawal(log: ProfileSendLog | undefined): ProfileSendLog {
   return { ...current, head, withdrawn: head };
 }
 
-/** Entries every computer has applied are dropped; with none recorded, nothing is. */
+/**
+ * Entries every computer still sent to has applied are dropped; with none recorded, nothing is.
+ * `share` undefined forgets that computer, as unlinking it does.
+ */
 export function withShared(
   record: BrowserProfileRecord,
-  share: ProfileSharedWith,
+  environmentId: EnvironmentId,
+  share: ProfileSharedWith | undefined,
 ): BrowserProfileRecord {
   const sharedWith = [
-    ...(record.sharedWith ?? []).filter((entry) => entry.environmentId !== share.environmentId),
-    share,
-  ].slice(-SHARED_LIMIT);
+    ...(record.sharedWith ?? []).filter((entry) => entry.environmentId !== environmentId),
+    ...(share ? [share] : []),
+  ];
+  if (sharedWith.length === 0) {
+    const { sharedWith: _, ...rest } = record;
+    return rest;
+  }
   const applied = Math.min(...sharedWith.map((entry) => entry.applied));
   const send = record.send && {
     ...record.send,

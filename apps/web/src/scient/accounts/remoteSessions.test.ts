@@ -8,6 +8,7 @@ import {
   defaultBrowserProfileRecord,
   type AccountSessionsApplied,
   type AccountSessionsReceiveInput,
+  type BrowserProfileRecord,
   type ProfileSendLog,
   type SessionCookie,
 } from "@t3tools/contracts";
@@ -104,7 +105,11 @@ function fixture(options: {
   const sent: AccountSessionsReceiveInput[] = [];
   const shares: unknown[] = [];
   let applied = options.applied ?? { bound: true, units: [] };
-  const record = defaultBrowserProfileRecord("work");
+  const record: BrowserProfileRecord = {
+    ...defaultBrowserProfileRecord("work"),
+    sharedWith: [{ environmentId: LAB, label: "Lab server", applied: 0, waiting: 0, needsYou: [] }],
+  };
+  let log = options.log;
   const deps = {
     source: MAC,
     label: "MacBook",
@@ -113,7 +118,10 @@ function fixture(options: {
     profiles: () => [{ profileId: "work", record }],
     desktopAccounts: () => [],
     revalidate: () => options.revalidate?.(sent.length),
-    sendLog: async () => options.log,
+    sendLog: async () => log,
+    resend: vi.fn(async () => {
+      log = { ...log, head: log.head + 1, jar: log.head + 1 };
+    }),
     applied: async () => applied,
     remoteRecord: () => record,
     receive: async (input: AccountSessionsReceiveInput) => {
@@ -249,5 +257,27 @@ it("withdraws a restricted profile's copies, then sends its controls as Off", as
   expect(deps.withdraw).toHaveBeenCalledWith("work", 3);
   expect(sent).toEqual([
     expect.objectContaining({ units: [], controls: expect.objectContaining({ access: "off" }) }),
+  ]);
+});
+
+it("reconciles a computer this desktop forgot: the jar whole, and copies it no longer has deleted", async () => {
+  const { deps, sent } = fixture({
+    log: { head: 4, units: [] },
+    applied: {
+      bound: true,
+      units: [
+        { sites: ["github.com"], revision: 2, outcome: "copied" },
+        { sites: ["gone.test"], revision: 3, outcome: "copied" },
+        { sites: ["own.test"], revision: 3, outcome: "kept" },
+      ],
+    },
+    jar: ["github.com"],
+  });
+  deps.profiles = () => [{ profileId: "work", record: defaultBrowserProfileRecord("work") }];
+  await deliverOnce(deps);
+  expect(deps.resend).toHaveBeenCalledWith("work");
+  expect(sent[0]!.units.map(({ sites, kind, revision }) => [sites, kind, revision])).toEqual([
+    [["github.com"], "copy", 5],
+    [["gone.test"], "delete", 5],
   ]);
 });

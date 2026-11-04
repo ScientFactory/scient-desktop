@@ -43,6 +43,7 @@ import {
   AccountProfileRevision,
   AccountProfileSendLogInput,
   AccountProfileSharedInput,
+  AccountProfileUnsharedInput,
   AccountProfileSignedOutInput,
   AccountSessionsApplied,
   AccountSessionsAppliedInput,
@@ -120,6 +121,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileResend: "accounts.profiles.resend",
   accountsProfileSignedOut: "accounts.profiles.signedOut",
   accountsProfileShared: "accounts.profiles.shared",
+  accountsProfilesUnshared: "accounts.profiles.unshared",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -451,5 +453,10 @@ export const WsAccountsProfileSignedOutRpc = accountRpc(
 export const WsAccountsProfileSharedRpc = accountRpc(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfileShared,
   AccountProfileSharedInput,
+  Empty,
+);
+export const WsAccountsProfilesUnsharedRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfilesUnshared,
+  AccountProfileUnsharedInput,
   Empty,
 );

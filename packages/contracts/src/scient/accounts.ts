@@ -359,7 +359,7 @@ export const ProfileSendLog = Schema.Struct({
       revision: SessionRevision,
       kind: Schema.Literals(["copy", "delete"]),
     }),
-  ).check(Schema.isMaxLength(5_000)),
+  ),
   /** When the profile stopped being shareable, so other computers drop its copies. */
   withdrawn: Schema.optional(SessionRevision),
 });
@@ -435,7 +435,7 @@ export const BrowserProfileRecord = Schema.Struct({
   /** On the desktop: the actions other computers follow. */
   send: Schema.optional(ProfileSendLog),
   /** On the desktop: the other computers this profile's sign-ins go to. */
-  sharedWith: Schema.optional(Schema.Array(ProfileSharedWith).check(Schema.isMaxLength(32))),
+  sharedWith: Schema.optional(Schema.Array(ProfileSharedWith)),
   /** On a remote: copies received from desktops; their controls are set there. */
   received: Schema.optional(Schema.Array(ProfileReceived).check(Schema.isMaxLength(4))),
 });
@@ -965,6 +965,9 @@ export const AccountProfileResendInput = Schema.Struct({
 });
 
 export const AccountProfileRevision = Schema.Struct({ revision: SessionRevision });
+
+/** A computer this desktop no longer sends to: its deletions no longer wait for it. */
+export const AccountProfileUnsharedInput = Schema.Struct({ environmentId: EnvironmentId });
 
 export const AccountProfileSharedInput = Schema.Struct({
   profileId: BrowserProfileId,

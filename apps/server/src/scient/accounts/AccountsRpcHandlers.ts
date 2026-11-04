@@ -323,6 +323,12 @@ export const makeAccountsRpcHandlers = ({
         accounts.profileShared(input.profileId, input.share).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsProfilesUnshared]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfilesUnshared,
+        accounts.profilesUnshared(input.environmentId).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsSessionsReceive]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSessionsReceive,
@@ -587,6 +593,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         profileResend: unavailable,
         profileSendLog: unavailable,
         profileShared: unavailable,
+        profilesUnshared: unavailable,
         receivedProfiles: Effect.succeed([]),
         updateReceived: unavailable,
         mainBackfilled: unavailable,

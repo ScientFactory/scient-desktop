@@ -497,6 +497,11 @@ export function planDelivery(input: {
   readonly applied: AccountSessionsApplied;
   readonly jar: ReadonlyArray<ReadonlyArray<string>>;
   readonly shareable: boolean;
+  /**
+   * The desktop no longer tracks what this computer applied (it was unlinked): the jar goes whole,
+   * and every copy it holds that the jar no longer has is deleted, all at the log's head.
+   */
+  readonly reconcile?: boolean;
   readonly travels: (unit: ReadonlyArray<string>) => boolean;
   readonly siteOf: SiteOf;
 }): DeliveryPlan {
@@ -516,6 +521,22 @@ export function planDelivery(input: {
       units: jar.map((sites) => ({ sites, revision: head, kind: "copy" as const })),
       head,
     };
+  if (input.reconcile) {
+    const gone = applied.units.filter(
+      (unit) =>
+        (unit.outcome === "copied" || unit.outcome === "same") &&
+        !jar.some((present) => overlaps(present, unit.sites, siteOf)),
+    );
+    return {
+      kind: "units",
+      mode: "replace",
+      units: [
+        ...jar.map((sites) => ({ sites, revision: head, kind: "copy" as const })),
+        ...gone.map(({ sites }) => ({ sites, revision: head, kind: "delete" as const })),
+      ],
+      head,
+    };
+  }
   const entries = (log?.units ?? []).filter(({ sites }) => input.travels(sites));
   const floor = applied.withdrawn ?? -1;
   const units: PlannedUnit[] = [];

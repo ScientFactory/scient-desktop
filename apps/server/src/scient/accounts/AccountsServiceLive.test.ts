@@ -6,12 +6,14 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   EnvironmentId,
   ProjectId,
+  defaultBrowserProfileRecord,
   ThreadId,
   defaultAccountControls,
 } from "@t3tools/contracts";
 import { Clock, Deferred, Effect, Fiber, Redacted, Schema, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { TOTP } from "otpauth";
+import { issueUnit, withShared } from "./sendLog.ts";
 import {
   makeHarness,
   memoryStore,
@@ -1346,4 +1348,27 @@ describe("the send log other computers follow", () => {
         });
       }),
   );
+});
+
+describe("deletions an offline computer still needs", () => {
+  it("keeps every deletion past the copy bound, and forgets a computer only when unlinked", () => {
+    const shared = (environmentId: string, applied: number) => ({
+      environmentId: EnvironmentId.make(environmentId),
+      label: environmentId,
+      applied,
+      waiting: 0,
+      needsYou: [],
+    });
+    let log = issueUnit(undefined, ["signed-out.test"], "delete");
+    for (let index = 0; index < 5_001; index += 1)
+      log = issueUnit(log, [`site${index}.test`], "copy");
+    // Past the bound, copies fall back to the whole jar; the deletion stays.
+    expect(log.jar).toBe(log.head);
+    expect(log.units).toEqual([{ sites: ["signed-out.test"], revision: 1, kind: "delete" }]);
+    const record = { ...defaultBrowserProfileRecord(BrowserProfileId.make("work")), send: log };
+    const offline = withShared(record, EnvironmentId.make("lab"), shared("lab", 0));
+    const online = withShared(offline, EnvironmentId.make("laptop"), shared("laptop", log.head));
+    expect(online.send?.units).toHaveLength(1);
+    expect(withShared(online, EnvironmentId.make("lab"), undefined).send?.units).toEqual([]);
+  });
 });

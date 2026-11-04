@@ -180,8 +180,10 @@ or 2FA key goes. Decisions use revisions, never clocks:
   action (`isNewerAction`, the one seam for item 4's `by: "action"`), Main's copy (`mainFilled`),
   Accounts' Sign out (`accounts.profiles.signedOut`, a delete), an import or Send again
   (`accounts.profiles.resend`, the whole jar), and a profile turning restricted (`withdrawn`) or
-  shareable again (the jar). A full log falls back to a jar revision. Entries every computer in
-  `sharedWith` applied are dropped. Clients see only `send.head`.
+  shareable again (the jar). Past 5,000 copies the log falls back to a jar revision; a deletion
+  is never dropped until every computer in `sharedWith` applied it. Unlinking removes the computer
+  from `sharedWith` (`accounts.profiles.unshared`); one linked again is reconciled in full: the jar
+  goes whole and copies the jar no longer has are deleted. Clients see only `send.head`.
 - **Delivery** (`apps/web/src/scient/accounts/remoteSessions.ts`) runs on the desktop, serially per
   remote, from durable state: `accounts.profiles.sendLog`, the jar through the bridge's
   `readSessions` (under item 3's Main lock), and the remote's `accounts.sessions.applied`. The pure

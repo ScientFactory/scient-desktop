@@ -1076,7 +1076,28 @@ export const layer = Layer.effect(
       profileShared: Effect.fn("AccountsService.profileShared")((profileId, share) =>
         locked(
           Effect.suspend(() =>
-            commit(withProfile(profileId, (record) => withShared(record, share)).state, true),
+            commit(
+              withProfile(profileId, (record) => withShared(record, share.environmentId, share))
+                .state,
+              true,
+            ),
+          ),
+        ),
+      ),
+      profilesUnshared: Effect.fn("AccountsService.profilesUnshared")((environmentId) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                profiles: state.profiles.map((profile) =>
+                  profile.sharedWith?.some((entry) => entry.environmentId === environmentId)
+                    ? withShared(profile, environmentId, undefined)
+                    : profile,
+                ),
+              },
+              true,
+            ),
           ),
         ),
       ),
