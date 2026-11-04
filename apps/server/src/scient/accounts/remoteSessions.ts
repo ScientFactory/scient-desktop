@@ -22,7 +22,9 @@ import {
   shareable,
   unitCookies,
   travels,
-  unitFingerprintText,
+  isLive,
+  unitFingerprint,
+  withdrawCopies,
   unitSites,
   universitySites,
 } from "@t3tools/shared/scientSessionCookies";
@@ -89,15 +91,6 @@ function withApplied(
     ...applied,
   ].slice(-RECEIVED_UNITS_LIMIT);
 }
-
-const isLive = (cookie: SessionCookie, nowSeconds: number) =>
-  cookie.expires === undefined || cookie.expires > nowSeconds;
-
-/** A digest of a unit's live cookies, values included: what a copy wrote, to tell it from later changes. */
-const fingerprintOf = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
-  NodeCrypto.createHash("sha256")
-    .update(unitFingerprintText(cookies, nowSeconds))
-    .digest("base64url");
 
 const fromSent = (cookie: AccountSessionsReceiveInput["units"][number]["cookies"]) =>
   (cookie ?? []).map(({ value, ...rest }): SessionCookie => ({
@@ -248,16 +241,15 @@ export const makeRemoteSessions = Effect.gen(function* () {
     );
     // Only a unit still holding exactly this sender's copy goes; a later change is someone's.
     const deleted = copies.length
-      ? yield* withJar(profileId, async (jar) => {
-          let count = 0;
-          for (const unit of copies) {
-            const present = await jar.readUnit(unit.sites);
-            if (fingerprintOf(present, Date.now() / 1000) !== unit.fingerprint) continue;
-            await jar.remove(present);
-            count += 1;
-          }
-          return count;
-        })
+      ? yield* withJar(profileId, async (jar) =>
+          withdrawCopies(
+            jar,
+            copies.flatMap(({ sites, fingerprint }) =>
+              fingerprint ? [{ sites, fingerprint }] : [],
+            ),
+            () => Date.now() / 1000,
+          ).then((removed) => removed.length),
+        )
       : 0;
     yield* accounts.updateReceived(profileId, (record) => ({
       received: (record.received ?? []).flatMap((candidate) =>
@@ -501,7 +493,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
               outcome: unit.outcome as ReceivedUnit["outcome"],
               ...(copy
                 ? {
-                    fingerprint: fingerprintOf(
+                    fingerprint: unitFingerprint(
                       unitCookies(unit.sites, fromSent(sent.cookies)),
                       nowSeconds,
                     ),

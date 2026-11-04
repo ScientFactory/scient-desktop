@@ -1,14 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Copy records are plain files written beside the cookie work, outside Effect.
-import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import type { SessionCookie } from "@t3tools/contracts";
-import {
-  unitFingerprintText,
-  withMainCopies,
-  type MainCopy,
-} from "@t3tools/shared/scientSessionCookies";
+import { withMainCopies, type MainCopy } from "@t3tools/shared/scientSessionCookies";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -23,12 +17,6 @@ const Records = Schema.Record(
   ),
 );
 const decodeRecords = Schema.decodeUnknownOption(Schema.fromJsonString(Records));
-
-/** The digest a copy into Main records, the same one a computer receiving sign-ins keeps. */
-export const mainCopyFingerprint = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
-  NodeCrypto.createHash("sha256")
-    .update(unitFingerprintText(cookies, nowSeconds))
-    .digest("base64url");
 
 export interface MainCopyRecords {
   readonly record: (environmentId: string, copies: ReadonlyArray<MainCopy>) => Promise<void>;

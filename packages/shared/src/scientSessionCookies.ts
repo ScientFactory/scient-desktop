@@ -8,6 +8,9 @@ import {
   type SessionCookie,
 } from "@t3tools/contracts";
 
+import { sha256 } from "@noble/hashes/sha2";
+import * as Base64Url from "effect/encoding/Base64Url";
+
 import { siteHost, siteOf } from "./scientSiteMatch.ts";
 
 /** A cookie as CDP's `Storage.getCookies` and `Network.getAllCookies` return it. */
@@ -173,7 +176,8 @@ export const unitCookies = (unit: ReadonlyArray<string>, jar: ReadonlyArray<Sess
   return jar.filter((cookie) => sites.has(siteOf(bareHost(cookie.domain))));
 };
 
-const isLive = (cookie: SessionCookie, nowSeconds: number) =>
+/** A cookie that hasn't expired by `nowSeconds`; a session cookie always is. */
+export const isLive = (cookie: SessionCookie, nowSeconds: number) =>
   cookie.expires === undefined || cookie.expires > nowSeconds;
 
 /** A unit with no live cookie is empty, whatever expired ones it still holds. */
@@ -408,8 +412,8 @@ export async function applyUnit(
   }
 }
 
-/** A unit's live cookies, values included, in one order: hashed, it tells a copy from later changes. */
-export const unitFingerprintText = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
+/** A unit's live cookies, values included, in one order. */
+const unitFingerprintText = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
   JSON.stringify(
     cookies
       .filter((cookie) => isLive(cookie, nowSeconds))
@@ -426,6 +430,13 @@ export const unitFingerprintText = (cookies: ReadonlyArray<SessionCookie>, nowSe
       )
       .sort(),
   );
+
+/**
+ * The digest of a unit's live cookies, values included (SHA-256, base64url): what a copy wrote,
+ * to tell it from later changes. Main's copy records and a computer's received copies keep it.
+ */
+export const unitFingerprint = (cookies: ReadonlyArray<SessionCookie>, nowSeconds: number) =>
+  Base64Url.encode(sha256(new TextEncoder().encode(unitFingerprintText(cookies, nowSeconds))));
 
 /** One unit a copy wrote into Main: from which profile, and the digest of exactly what it wrote. */
 export interface MainCopy {
@@ -451,15 +462,16 @@ export function withMainCopies(
  * Removes each copy that still holds exactly what it wrote; a unit the site rotated or someone
  * signed in to since is no longer the copy, and stays. Returns the units removed.
  */
-export async function withdrawMainCopies(
+export async function withdrawCopies(
   store: CookieStore,
-  copies: ReadonlyArray<MainCopy>,
-  fingerprint: (cookies: ReadonlyArray<SessionCookie>) => string,
+  copies: ReadonlyArray<Pick<MainCopy, "sites" | "fingerprint">>,
+  nowSeconds: () => number,
 ): Promise<ReadonlyArray<ReadonlyArray<string>>> {
   const removed: Array<ReadonlyArray<string>> = [];
   for (const copy of copies) {
     const present = await store.readUnit(copy.sites);
-    if (present.length === 0 || fingerprint(present) !== copy.fingerprint) continue;
+    if (present.length === 0 || unitFingerprint(present, nowSeconds()) !== copy.fingerprint)
+      continue;
     await store.remove(present);
     removed.push(copy.sites);
   }

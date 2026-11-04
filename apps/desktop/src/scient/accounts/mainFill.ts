@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import {
   applyUnit,
+  isLive,
   deleteCookies,
   jarUnits,
   mergeUnits,
@@ -22,7 +23,8 @@ import {
   shareable,
   unitCookies,
   unitSites,
-  withdrawMainCopies,
+  unitFingerprint,
+  withdrawCopies,
   type CdpSend,
   type CookieStore,
   type MainCopy,
@@ -36,7 +38,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
-import { mainCopyFingerprint, mainCopyRecords } from "./mainCopies.ts";
+import { mainCopyRecords } from "./mainCopies.ts";
 import { mainInsertTracker, markOwnWrites, watchForeignInserts } from "./mainInserts.ts";
 import { withCookieDebugger } from "./sessionCookies.ts";
 import { siteCookieRemovals } from "./signedInSites.ts";
@@ -156,10 +158,8 @@ export async function copyIntoMain(
         planned.flatMap((unit, index) => {
           // Only a write makes the copy Main's source; `same` keeps whoever wrote it first.
           if (units[index]?.outcome !== "copied") return [];
-          const written = unitCookies(unit, jar).filter(
-            (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
-          );
-          return [{ sites: [...unit], fingerprint: mainCopyFingerprint(written, nowSeconds) }];
+          const written = unitCookies(unit, jar).filter((cookie) => isLive(cookie, nowSeconds));
+          return [{ sites: [...unit], fingerprint: unitFingerprint(written, nowSeconds) }];
         }),
       );
       if (units.some(({ outcome }) => outcome === "copied" || outcome.endsWith("failed")))
@@ -262,9 +262,7 @@ export const withdrawFromMain = Effect.fn("DesktopAccounts.withdrawFromMain")(fu
       const copies = await records.from(environmentId, input.from);
       if (copies.length === 0) return { units: [] };
       const units = await withCookieDebugger(main.value, (send) =>
-        withdrawMainCopies(jarStore(main.value, send), copies, (cookies) =>
-          mainCopyFingerprint(cookies, Date.now() / 1000),
-        ),
+        withdrawCopies(jarStore(main.value, send), copies, () => Date.now() / 1000),
       );
       await records.forget(environmentId, input.from);
       if (units.length) await main.value.cookies.flushStore().catch(() => undefined);
@@ -326,9 +324,7 @@ export const readSessions = Effect.fn("DesktopAccounts.readSessions")(function* 
     underMainLock(PRIMARY_LOCAL_ENVIRONMENT_ID, () =>
       withCookieDebugger(session.value, async (send) => {
         const nowSeconds = Date.now() / 1000;
-        const live = (await readJar(send)).cookies.filter(
-          (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
-        );
+        const live = (await readJar(send)).cookies.filter((cookie) => isLive(cookie, nowSeconds));
         const planned = input.units ? mergeUnits(input.units) : jarUnits(live, input.join);
         return {
           units: planned.flatMap((unit) => {

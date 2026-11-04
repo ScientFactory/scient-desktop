@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Node's own digest pins the stored fingerprint format.
+import * as NodeCrypto from "node:crypto";
+
 import type { SessionCookie } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -13,12 +16,14 @@ import {
   sameUnit,
   shareable,
   travels,
+  unitCookies,
+  unitFingerprint,
+  withdrawCopies,
   sessionCookieFromCdp,
   sessionCookieFromImported,
   sessionCookieToCdpParam,
 } from "./scientSessionCookies.ts";
 
-/** Last two labels, enough for the synthetic hosts here. */
 const NOW = 1_000_000;
 
 const cookie = (overrides: Partial<SessionCookie> = {}): SessionCookie => ({
@@ -539,5 +544,46 @@ describe("sharing with other computers", () => {
       travels: (unit) => !unit.includes("huji.ac.il"),
     });
     expect(result).toMatchObject({ units: [] });
+  });
+});
+
+describe("withdrawing copies by their digest", () => {
+  it("keeps the digest Node computed for records stored before it moved here", () => {
+    const text = JSON.stringify(
+      [JSON.stringify(["session", ".example.test", "/", null, null, false, "synthetic-a"])].sort(),
+    );
+    expect(unitFingerprint([cookie()], NOW)).toBe(
+      NodeCrypto.createHash("sha256").update(text).digest("base64url"),
+    );
+    // Expired cookies are no part of what a copy holds.
+    expect(unitFingerprint([cookie(), cookie({ name: "old", expires: NOW - 1 })], NOW)).toBe(
+      unitFingerprint([cookie()], NOW),
+    );
+  });
+
+  it("removes only a unit still holding exactly the copy", async () => {
+    let jar = [cookie(), cookie({ domain: ".other.test", value: "rotated" })];
+    const store: CookieStore = {
+      readUnit: async (unit) => unitCookies(unit, jar),
+      set: async () => undefined,
+      remove: async (gone) => {
+        jar = jar.filter(
+          (held) => !gone.some((c) => c.name === held.name && c.domain === held.domain),
+        );
+      },
+    };
+    const removed = await withdrawCopies(
+      store,
+      [
+        { sites: ["example.test"], fingerprint: unitFingerprint([cookie()], NOW) },
+        {
+          sites: ["other.test"],
+          fingerprint: unitFingerprint([cookie({ domain: ".other.test" })], NOW),
+        },
+      ],
+      () => NOW,
+    );
+    expect(removed).toEqual([["example.test"]]);
+    expect(jar.map(({ domain }) => domain)).toEqual([".other.test"]);
   });
 });
