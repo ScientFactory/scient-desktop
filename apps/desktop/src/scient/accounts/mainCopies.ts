@@ -39,50 +39,55 @@ export interface MainCopyRecords {
 
 type ByEnvironment = Record<string, ReadonlyArray<MainCopy>>;
 
-const stores = new Map<string, MainCopyRecords>();
+/** One queue per file: environments have separate Main locks but share the file. */
+const queues = new Map<string, Promise<unknown>>();
 
 /**
  * What each copy into an environment's Main wrote, by source profile, in one file of digests.
- * Callers hold that environment's Main lock, so reads and writes of one environment never race.
+ * Every operation reads the file afresh, one at a time.
  */
 export function mainCopyRecords(file: string, siteOf: SiteOf): MainCopyRecords {
-  const known = stores.get(file);
-  if (known) return known;
-  let loaded: Promise<ByEnvironment> | undefined;
-  let writes = Promise.resolve();
+  const serial = <A>(operation: () => Promise<A>) => {
+    const next = (queues.get(file) ?? Promise.resolve()).then(operation, operation);
+    queues.set(
+      file,
+      next.catch(() => undefined),
+    );
+    return next;
+  };
   const load = () =>
-    (loaded ??= NodeFSP.readFile(file, "utf8").then(
+    NodeFSP.readFile(file, "utf8").then(
       (text): ByEnvironment => ({ ...Option.getOrElse(decodeRecords(text), () => ({})) }),
       (): ByEnvironment => ({}),
-    ));
-  const save = (records: ByEnvironment) => {
-    writes = writes
-      .then(async () => {
-        const temporary = `${file}.tmp`;
-        await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
-        await NodeFSP.writeFile(temporary, JSON.stringify(records), { mode: 0o600 });
-        await NodeFSP.rename(temporary, file);
-      })
-      .catch(() => undefined);
-    return writes;
+    );
+  const save = async (records: ByEnvironment) => {
+    const temporary = `${file}.tmp`;
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    // A leftover temporary file would keep its own mode; this one is the owner's alone.
+    await NodeFSP.rm(temporary, { force: true });
+    await NodeFSP.writeFile(temporary, JSON.stringify(records), { mode: 0o600 });
+    await NodeFSP.rename(temporary, file);
   };
-  const store: MainCopyRecords = {
-    record: async (environmentId, copies) => {
-      if (copies.length === 0) return;
-      const records = await load();
-      records[environmentId] = withMainCopies(records[environmentId] ?? [], copies, siteOf);
-      await save(records);
-    },
-    from: async (environmentId, profileId) =>
-      ((await load())[environmentId] ?? []).filter((copy) => copy.from === profileId),
-    forget: async (environmentId, profileId) => {
-      const records = await load();
-      const kept = (records[environmentId] ?? []).filter((copy) => copy.from !== profileId);
-      if (kept.length === (records[environmentId] ?? []).length) return;
-      records[environmentId] = kept;
-      await save(records);
-    },
+  return {
+    record: (environmentId, copies) =>
+      copies.length === 0
+        ? Promise.resolve()
+        : serial(async () => {
+            const records = await load();
+            records[environmentId] = withMainCopies(records[environmentId] ?? [], copies, siteOf);
+            await save(records);
+          }).catch(() => undefined),
+    from: (environmentId, profileId) =>
+      serial(async () =>
+        ((await load())[environmentId] ?? []).filter((copy) => copy.from === profileId),
+      ),
+    forget: (environmentId, profileId) =>
+      serial(async () => {
+        const records = await load();
+        const kept = (records[environmentId] ?? []).filter((copy) => copy.from !== profileId);
+        if (kept.length === (records[environmentId] ?? []).length) return;
+        records[environmentId] = kept;
+        await save(records);
+      }).catch(() => undefined),
   };
-  stores.set(file, store);
-  return store;
 }

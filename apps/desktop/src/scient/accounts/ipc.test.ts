@@ -9,6 +9,7 @@ import { it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type SessionCookie } from "@t3tools/contracts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
@@ -241,7 +242,9 @@ const fillInput = (input: Record<string, unknown>) => ({ mode: "fill", skipSites
 const allowed = { access: "allowed", scope: { type: "all-projects" } };
 
 /** Jars kept in memory behind a fake debugger, with faults a test can set. */
-function fillFixture() {
+function fillFixture(
+  stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-main-copies-")),
+) {
   const sessions = new Map<string, ReturnType<typeof fakeJarSession>>();
   const imports: Array<{ scope: string; persistent: boolean }> = [];
   const sessionFor = (scope: string, persistent = true, namespace?: "profile") => {
@@ -256,7 +259,6 @@ function fillFixture() {
   };
   const frame = {};
   const mainContents = { id: 1, mainFrame: frame, isDestroyed: () => false };
-  const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-main-copies-"));
   const layer = Layer.mergeAll(
     Layer.succeed(
       DesktopEnvironment.DesktopEnvironment,
@@ -295,6 +297,7 @@ function fillFixture() {
     sessions,
     copy: (input: Record<string, unknown>, sender: unknown = event) =>
       fillMainHandler(fillInput(input), sender as never).pipe(Effect.provide(layer)),
+    stateDir,
     withdraw: (from: string) =>
       withdrawFromMainHandler({ from }, event as never).pipe(Effect.provide(layer)),
   };
@@ -406,6 +409,65 @@ describe("withdrawFromMain", () => {
       expect(yield* f.withdraw("work")).toEqual({ units: [] });
       expect(f.profile("work").jar.size).toBe(2);
     }),
+  );
+
+  it.effect("never takes back a session Main had before an identical copy", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      // Main was signed in on its own, to the same session the profile holds.
+      f.main().put(jarCookie(), true);
+      f.profile("work").put(jarCookie());
+      const filled = yield* f.copy({ from: "work", sourceControls: allowed });
+      expect(filled?.units[0]?.outcome).toBe("same");
+      expect(yield* f.withdraw("work")).toEqual({ units: [] });
+      expect(f.main().jar.size).toBe(1);
+    }),
+  );
+
+  it.effect("keeps the first source's copy when an identical second source is restricted", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      f.profile("home").put(jarCookie());
+      expect((yield* f.copy({ from: "work", sourceControls: allowed }))?.units[0]?.outcome).toBe(
+        "copied",
+      );
+      expect((yield* f.copy({ from: "home", sourceControls: allowed }))?.units[0]?.outcome).toBe(
+        "same",
+      );
+      expect(yield* f.withdraw("home")).toEqual({ units: [] });
+      expect(f.main().jar.size).toBe(1);
+      expect(yield* f.withdraw("work")).toEqual({ units: [["github.com"]] });
+      expect(f.main().jar.size).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "keeps copy records on disk, digests only, and withdraws from them after a restart",
+    () =>
+      Effect.gen(function* () {
+        const first = fillFixture();
+        first.profile("work").put(jarCookie({ value: "work-session" }));
+        yield* first.copy({ from: "work", sourceControls: allowed });
+        const file = NodePath.join(first.stateDir, "scient", "main-copies.json");
+        const text = NodeFS.readFileSync(file, "utf8");
+        expect(text).not.toContain("work-session");
+        expect(JSON.parse(text)).toEqual({
+          [PRIMARY_LOCAL_ENVIRONMENT_ID]: [
+            { from: "work", sites: ["github.com"], fingerprint: expect.any(String) },
+          ],
+        });
+        if ((yield* HostProcess.Platform) !== "win32")
+          expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
+        // A new run reads the records back from the file, with Main as the copy left it.
+        const restarted = fillFixture(first.stateDir);
+        restarted.main().put(jarCookie({ value: "work-session" }), true);
+        expect(yield* restarted.withdraw("work")).toEqual({ units: [["github.com"]] });
+        expect(restarted.main().jar.size).toBe(0);
+        expect(JSON.parse(NodeFS.readFileSync(file, "utf8"))).toEqual({
+          [PRIMARY_LOCAL_ENVIRONMENT_ID]: [],
+        });
+      }),
   );
 });
 

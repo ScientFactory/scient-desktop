@@ -104,7 +104,7 @@ export function jarStore(session: Electron.Session, send: CdpSend): CookieStore 
 
 /**
  * Copies the source session's units into Main, one transaction each; the source is only read.
- * `record` keeps what each unit that landed holds, while the Main lock is still held.
+ * `record` keeps what each unit it wrote holds, while the Main lock is still held.
  */
 export async function copyIntoMain(
   source: Electron.Session,
@@ -157,8 +157,8 @@ export async function copyIntoMain(
       const nowSeconds = Date.now() / 1000;
       await record?.(
         planned.flatMap((unit, index) => {
-          const outcome = units[index]?.outcome;
-          if (outcome !== "copied" && outcome !== "same") return [];
+          // Only a write makes the copy Main's source; `same` keeps whoever wrote it first.
+          if (units[index]?.outcome !== "copied") return [];
           const written = unitCookies(unit, jar, site).filter(
             (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
           );
