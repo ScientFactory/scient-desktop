@@ -52,8 +52,9 @@ remembered. Your university signs in in Main. Signing in through Google, your un
 sign-in service adds that site to the profile, with Undo.
 
 Only a profile agents may use in every project gives Main its sign-ins. Turn a profile **Off** or
-**Ask me**, or limit it to some projects, and Scient takes its copies back out of Main, except where
-that sign-in changed in Main since. Allow it again and its next sign-in is copied again.
+**Ask me**, or limit it to some projects, and Scient takes out of Main what that profile's copies
+wrote there. A sign-in Main already had, or one that changed in Main since, stays. Allow the
+profile again and its next sign-in is copied again.
 
 **Which profile a tab opens in.** A site you switched to another profile in this conversation stays
 there. Otherwise the conversation's profile, then the project's (**Use … in this project** in the
