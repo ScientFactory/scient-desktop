@@ -208,6 +208,10 @@ export const accountsState = {
     tag: WS_METHODS.accountsMainBackfilled,
     ...lane,
   }),
+  sessionsQualify: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsQualify",
+    tag: WS_METHODS.accountsSessionsQualify,
+  }),
   showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:showHandoff",
     tag: WS_METHODS.accountsHandoffShow,

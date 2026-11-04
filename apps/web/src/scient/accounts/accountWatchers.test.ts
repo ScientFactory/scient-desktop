@@ -23,6 +23,7 @@ vi.mock("./googleSessions", () => ({ watchGoogleSessions: watcher("google") }));
 vi.mock("./keepSignedIn", () => ({ watchKeepSignedIn: watcher("keep") }));
 vi.mock("./mainFill", () => ({ watchMainFill: watcher("main") }));
 vi.mock("./signInKeeps", () => ({ watchSignInKeeps: watcher("typed") }));
+vi.mock("./qualifyRemoteSessions", () => ({ offerRemoteQualification: () => undefined }));
 
 const { startAccountWatchers } = await import("./accountWatchers");
 

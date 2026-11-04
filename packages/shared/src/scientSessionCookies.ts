@@ -74,6 +74,51 @@ export function sessionCookieToCdpParam(cookie: SessionCookie) {
   };
 }
 
+/** Sends one CDP command to a page whose browser context holds the jar. */
+export type CdpSend = (method: string, params?: object) => Promise<unknown>;
+
+const SET_BATCH = 100;
+
+/**
+ * Network commands act on the sending page's own context. Storage commands without a browser
+ * context id act on the browser's default one, whatever page sends them, so none is used here.
+ */
+export async function setCookies(send: CdpSend, cookies: ReadonlyArray<SessionCookie>) {
+  for (let start = 0; start < cookies.length; start += SET_BATCH)
+    await send("Network.setCookies", {
+      cookies: cookies.slice(start, start + SET_BATCH).map(sessionCookieToCdpParam),
+    });
+}
+
+/** Every cookie of the page's jar, partitioned ones included. */
+export async function readJar(send: CdpSend) {
+  const read = (await send("Network.getAllCookies")) as {
+    readonly cookies: ReadonlyArray<CdpCookie>;
+  };
+  const cookies: SessionCookie[] = [];
+  let unsupported = 0;
+  for (const cookie of read.cookies) {
+    const converted = sessionCookieFromCdp(cookie);
+    if ("unsupported" in converted) unsupported += 1;
+    else cookies.push(converted);
+  }
+  return { cookies, unsupported };
+}
+
+/** Removes exactly these cookies: name, domain, path and partition must all match. */
+export async function deleteCookies(
+  send: CdpSend,
+  cookies: ReadonlyArray<Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">>,
+) {
+  for (const cookie of cookies)
+    await send("Network.deleteCookies", {
+      name: cookie.name,
+      domain: cookie.domain,
+      path: cookie.path,
+      ...(cookie.partitionKey ? { partitionKey: cookie.partitionKey } : {}),
+    });
+}
+
 /** A cookie read from another browser's jar, whose host-only cookies carry no domain. */
 export function sessionCookieFromImported(cookie: {
   readonly url: string;

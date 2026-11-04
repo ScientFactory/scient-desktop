@@ -60,6 +60,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsMainBackfilled]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSessionsSeen]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepTyped]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsQualify]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
   // SCIENT-FORK:END
   [WS_METHODS.documentsExportServerBrowserPdf]: AuthPreviewOperateScope,

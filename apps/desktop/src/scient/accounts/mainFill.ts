@@ -14,10 +14,14 @@ import {
 } from "@t3tools/contracts";
 import {
   applyUnit,
+  deleteCookies,
   jarUnits,
   mergeUnits,
+  readJar,
+  setCookies,
   unitCookies,
   unitSites,
+  type CdpSend,
   type CookieStore,
   type UnitOutcome,
 } from "@t3tools/shared/scientSessionCookies";
@@ -29,13 +33,7 @@ import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { mainInsertTracker, markOwnWrites, watchForeignInserts } from "./mainInserts.ts";
-import {
-  deleteCookies,
-  readJar,
-  setCookies,
-  withCookieDebugger,
-  type CdpSend,
-} from "./sessionCookies.ts";
+import { withCookieDebugger } from "./sessionCookies.ts";
 import { siteCookieRemovals, siteOf } from "./signedInSites.ts";
 
 const Site = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253));

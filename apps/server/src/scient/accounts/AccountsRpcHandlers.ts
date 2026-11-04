@@ -39,8 +39,26 @@ import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
+import { RemoteSessions } from "./remoteSessions.ts";
 
 const isAccountsError = Schema.is(AccountsError);
+
+/** The server-lifetime receiver; older test harnesses and servers without a browser have none. */
+const withRemoteSessions = <A>(
+  use: (remote: RemoteSessions["Service"]) => Effect.Effect<A, AccountsError>,
+) =>
+  Effect.serviceOption(RemoteSessions).pipe(
+    Effect.flatMap((remote) =>
+      Option.isSome(remote)
+        ? use(remote.value)
+        : Effect.fail(
+            new AccountsError({
+              reason: "unavailable",
+              message: "This computer can't receive sign-ins.",
+            }),
+          ),
+    ),
+  );
 
 export const makeAccountsRpcHandlers = ({
   accounts,
@@ -272,6 +290,12 @@ export const makeAccountsRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.accountsMainBackfilled,
         accounts.mainBackfilled(input.profileIds).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsQualify]: () =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsQualify,
+        withRemoteSessions((remote) => remote.qualify()),
         attributes,
       ),
     [WS_METHODS.accountsProfileChoose]: (input) =>

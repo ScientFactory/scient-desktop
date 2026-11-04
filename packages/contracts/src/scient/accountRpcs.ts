@@ -37,6 +37,7 @@ import {
   UniversityBrowseInput,
   AccountKeyUnlinkInput,
   AccountMainBackfilledInput,
+  AccountsQualifyCase,
   AccountMainFilledInput,
   AccountMainSignedOutInput,
   AccountSignInSeenInput,
@@ -95,6 +96,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsMainFilled: "accounts.main.filled",
   accountsMainSignedOut: "accounts.main.signedOut",
   accountsMainBackfilled: "accounts.main.backfilled",
+  accountsSessionsQualify: "accounts.sessions.qualify",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -369,3 +371,9 @@ export const WsAccountsKeepTypedRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.account
   success: Schema.Struct({ kept: Schema.Boolean }),
   error: AccountsRpcError,
 });
+
+/** Dev builds only: the cookie adapter's qualification on this computer's browser. */
+export const WsAccountsSessionsQualifyRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsQualify,
+  { payload: Empty, success: Schema.Array(AccountsQualifyCase), error: AccountsRpcError },
+);

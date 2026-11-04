@@ -28,8 +28,8 @@ import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.
 import type { CookieReadResult } from "./CookieDatabase.ts";
 // SCIENT-FORK:START — Scient Accounts: partitioned cookies keep their key.
 import type { ImportedCookie } from "./CookieDatabase.ts";
-import { sessionCookieFromImported } from "@t3tools/shared/scientSessionCookies";
-import { setCookies, withCookieDebugger } from "../../scient/accounts/sessionCookies.ts";
+import { sessionCookieFromImported, setCookies } from "@t3tools/shared/scientSessionCookies";
+import { withCookieDebugger } from "../../scient/accounts/sessionCookies.ts";
 // SCIENT-FORK:END
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";

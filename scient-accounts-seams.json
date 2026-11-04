@@ -220,6 +220,16 @@
       "purpose": "Execute account operations over server and desktop CDP sessions."
     },
     {
+      "path": "apps/server/src/preview/ServerBrowserContexts.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a profile's context, held for one cookie copy.",
+      "purpose": "Hold a persistent profile's context for one cookie copy; tabs and clears wait, and profile directories are private."
+    },
+    {
+      "path": "apps/server/src/preview/ServerBrowserContexts.test.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a cookie copy holds its profile's context.",
+      "purpose": "Prove tabs and clears wait for a cookie copy's hold, and its 10 s limit."
+    },
+    {
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
       "anchor": "Scient Accounts: provider sessions receive account tools.",
       "purpose": "Expect the account capability in provider session grants."

@@ -2,19 +2,17 @@
 import type { DesktopQualifyCase, SessionCookie } from "@t3tools/contracts";
 import {
   applyUnit,
+  deleteCookies,
+  readJar,
   sameUnit,
   sessionCookieToCdpParam,
+  setCookies,
+  type CdpSend,
   type CookieStore,
 } from "@t3tools/shared/scientSessionCookies";
 import * as Electron from "electron";
 
-import {
-  deleteCookies,
-  readJar,
-  setCookies,
-  withCookieDebugger,
-  type CdpSend,
-} from "./sessionCookies.ts";
+import { withCookieDebugger } from "./sessionCookies.ts";
 import { copyIntoMain, jarStore } from "./mainFill.ts";
 import { watchForeignInserts } from "./mainInserts.ts";
 import { siteOf } from "./signedInSites.ts";

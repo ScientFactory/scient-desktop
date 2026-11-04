@@ -22,14 +22,24 @@ A failing case reads, for example:
 
 It exits 0 when every case passes and 1 otherwise. The app writes only synthetic cookies for
 qualify.test into two throwaway partitions (persist:scient-qualify-{a,b}-<uuid>) and clears them
-afterwards; the user's profiles are never read or written. Needs Node 22 or later.`;
+afterwards; the user's profiles are never read or written. Needs Node 22 or later.
+
+With --environment <id>, the same dev app asks that connected computer's server to run cases
+1-9 on its own browser, plus "helper page" and "persistence", in two throwaway server-browser
+profiles (scient-qualify-{a,b}-<uuid>) it deletes afterwards, failure or not:
+
+  node apps/desktop/scripts/qualify-session-copy.mjs --port 9372 --environment <id>
+
+The remote server must be a development one, or run with SCIENT_QUALIFY_SESSION_COPY=1.`;
 const portFlag = process.argv.indexOf("--port");
 const port = Number(portFlag === -1 ? Number.NaN : process.argv[portFlag + 1]);
+const environmentFlag = process.argv.indexOf("--environment");
+const environmentId = environmentFlag === -1 ? undefined : process.argv[environmentFlag + 1];
 if (process.argv.includes("--help")) {
   console.log(USAGE);
   process.exit(0);
 }
-if (!Number.isInteger(port) || port <= 0) {
+if (!Number.isInteger(port) || port <= 0 || (environmentFlag !== -1 && !environmentId)) {
   console.error(USAGE);
   process.exit(2);
 }
@@ -67,24 +77,24 @@ async function evaluate(webSocketDebuggerUrl, expression) {
 const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) =>
   response.json(),
 );
+const run = environmentId
+  ? `window.scientQualifyRemoteSessions(${JSON.stringify(environmentId)})`
+  : "window.desktopBridge.accounts.qualifySessionCopy()";
+const offered = environmentId
+  ? "typeof window.scientQualifyRemoteSessions === 'function'"
+  : "typeof window.desktopBridge?.accounts?.qualifySessionCopy === 'function'";
 let results;
 for (const target of targets) {
   if (target.type !== "page" || !target.webSocketDebuggerUrl) continue;
-  const available = await evaluate(
-    target.webSocketDebuggerUrl,
-    "typeof window.desktopBridge?.accounts?.qualifySessionCopy === 'function'",
-  ).catch(() => false);
+  const available = await evaluate(target.webSocketDebuggerUrl, offered).catch(() => false);
   if (!available) continue;
-  results = await evaluate(
-    target.webSocketDebuggerUrl,
-    "window.desktopBridge.accounts.qualifySessionCopy()",
-  );
+  results = await evaluate(target.webSocketDebuggerUrl, run);
   break;
 }
 if (!Array.isArray(results)) {
   console.error(
     results === null
-      ? "The app refused the check."
+      ? "The app refused the check, or that computer's server is not a development one."
       : "No app window with the qualification found. Is this a dev app on that port?",
   );
   process.exit(1);

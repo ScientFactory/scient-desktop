@@ -7,6 +7,7 @@ import { watchGoogleSessions } from "./googleSessions";
 import { watchKeepSignedIn } from "./keepSignedIn";
 import { watchMainFill } from "./mainFill";
 import { watchSignInKeeps } from "./signInKeeps";
+import { offerRemoteQualification } from "./qualifyRemoteSessions";
 
 /**
  * Saved sign-ins and session checks run whatever the notification settings, for the primary
@@ -14,6 +15,7 @@ import { watchSignInKeeps } from "./signInKeeps";
  * browser. What the user types in a sign-in goes to the attempt of whichever environment runs it.
  */
 export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
+  offerRemoteQualification(registry);
   let watched: { readonly environmentId: EnvironmentId; readonly stop: () => void } | undefined;
   const keeps = new Map<EnvironmentId, () => void>();
   const sync = () => {

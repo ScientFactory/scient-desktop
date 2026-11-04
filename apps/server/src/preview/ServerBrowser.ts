@@ -58,6 +58,11 @@ import {
   typeAccountValue,
   waitForAccountPage,
 } from "../scient/accounts/agent/browserOperations.ts";
+import {
+  openProfileCookieJar,
+  ProfileCookiesError,
+  type ProfileCookieJar,
+} from "../scient/accounts/profileCookieJar.ts";
 // SCIENT-FORK:END
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import type { GeneratedDocumentStore } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
@@ -279,6 +284,11 @@ export class ServerBrowser extends Context.Service<
     }) => Effect.Effect<Option.Option<{ readonly path: string; readonly fileName: string }>>;
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
+    // SCIENT-FORK:START — Scient Accounts: one profile's jar, for copies from another computer.
+    readonly profileCookies?: (
+      profileId: string,
+    ) => Effect.Effect<ProfileCookieJar, ProfileCookiesError, Scope.Scope>;
+    // SCIENT-FORK:END
 
     readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
   }
@@ -2890,6 +2900,25 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  // SCIENT-FORK:START — Scient Accounts: one profile's jar, held against tabs and clears.
+  const profileCookies = (profileId: string) =>
+    Effect.acquireRelease(
+      Effect.tryPromise({
+        try: async () => {
+          const lease = await contexts.lease(profileId);
+          try {
+            return { ...(await openProfileCookieJar(lease.context)), release: lease.release };
+          } catch (cause) {
+            await lease.release();
+            throw cause;
+          }
+        },
+        catch: (cause) => new ProfileCookiesError({ profileId, cause }),
+      }),
+      (held) => Effect.promise(() => held.close().then(held.release)),
+    ).pipe(Effect.map(({ jar }) => jar));
+  // SCIENT-FORK:END
+
   // A document lease addresses an already live page. It never reopens a URL or
   // creates a replacement browser context when a tab or server generation changed.
   const documentLease = Effect.fn("ServerBrowser.documentLease")(function* (
@@ -3086,6 +3115,9 @@ const make = Effect.gen(function* () {
     navigateDocument,
     attachViewer,
     clearProfile,
+    // SCIENT-FORK:START — Scient Accounts: one profile's jar.
+    profileCookies,
+    // SCIENT-FORK:END
     profileReporter,
     openDownload,
     answerFileChooser,

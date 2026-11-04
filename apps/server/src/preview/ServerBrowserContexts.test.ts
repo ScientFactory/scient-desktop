@@ -2,7 +2,7 @@ import * as NodeEvents from "node:events";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 
@@ -11,10 +11,19 @@ const launches = vi.hoisted(() => ({
   persistent: vi.fn<BrowserType["launchPersistentContext"]>(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
+  // SCIENT-FORK:START — Scient Accounts: profile directories are made private.
+  chmod: vi.fn().mockResolvedValue(undefined),
+  // SCIENT-FORK:END
 }));
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
-vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
+vi.mock("node:fs/promises", () => ({
+  mkdir: launches.mkdir,
+  rm: launches.rm,
+  // SCIENT-FORK:START — Scient Accounts: profile directories are made private.
+  chmod: launches.chmod,
+  // SCIENT-FORK:END
+}));
 
 const makeContext = () => {
   const events = new NodeEvents.EventEmitter();
@@ -294,3 +303,94 @@ describe("ServerBrowserContexts", () => {
     expect(browser.contexts[0]?.close).toHaveBeenCalled();
   });
 });
+
+// SCIENT-FORK:START — Scient Accounts: a cookie copy holds its profile's context.
+describe("ServerBrowserContexts lease", () => {
+  // Fake time short of the 10 s limit lets every pending promise chain run.
+  const settle = () => vi.advanceTimersByTimeAsync(5_000);
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("makes a profile's directory private to the server's user", async () => {
+    launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work");
+    expect(launches.chmod).toHaveBeenCalledWith("/test/profiles/work", 0o700);
+    await pool.close();
+  });
+
+  it("holds tab creation and clears until the copy releases the profile", async () => {
+    const context = makeContext();
+    launches.persistent.mockResolvedValue(context as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    const lease = await pool.lease("work");
+    const order: string[] = [];
+    const tab = pool.contextFor("work").then(() => order.push("tab"));
+    const clear = pool.clearProfile("work").then(() => order.push("clear"));
+    await settle();
+    expect(order).toEqual([]);
+    expect(launches.rm).not.toHaveBeenCalled();
+    order.push("released");
+    await lease.release();
+    await Promise.all([tab, clear]);
+    expect(order[0]).toBe("released");
+    expect(launches.rm).toHaveBeenCalledTimes(1);
+    await pool.close();
+  });
+
+  it("lets a tab through after 10 s, and keeps the context open for it", async () => {
+    const context = makeContext();
+    launches.persistent.mockResolvedValue(context as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    const lease = await pool.lease("work");
+    let opened = false;
+    const tab = pool.contextFor("work").then(() => (opened = true));
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(opened).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await tab;
+    expect(opened).toBe(true);
+    await lease.release();
+    expect(context.close).not.toHaveBeenCalled();
+    await pool.close();
+  });
+
+  it("closes a context the hold opened when no tab needs it, and never one a tab opened", async () => {
+    const opened = makeContext();
+    launches.persistent.mockResolvedValueOnce(opened as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await (await pool.lease("work")).release();
+    expect(opened.close).toHaveBeenCalledTimes(1);
+
+    const tabs = makeContext();
+    launches.persistent.mockResolvedValueOnce(tabs as unknown as BrowserContext);
+    const context = await pool.contextFor("work");
+    const lease = await pool.lease("work");
+    expect(lease.context).toBe(context);
+    await lease.release();
+    expect(tabs.close).not.toHaveBeenCalled();
+    await expect(pool.lease(INCOGNITO_BROWSER_PROFILE_ID)).rejects.toThrow("Incognito");
+    await pool.close();
+  });
+
+  it("runs one hold of a profile at a time", async () => {
+    launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    const first = await pool.lease("work");
+    let second = false;
+    const waiting = pool.lease("work").then((lease) => {
+      second = true;
+      return lease;
+    });
+    await settle();
+    expect(second).toBe(false);
+    await first.release();
+    await (await waiting).release();
+    await pool.close();
+  });
+});
+// SCIENT-FORK:END

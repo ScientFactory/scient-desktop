@@ -842,6 +842,15 @@ export const AccountMainFilledInput = Schema.Struct({
   profileName: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
 });
 
+/** One case of the dev-only check that a computer's browser copies sign-ins exactly. */
+export const AccountsQualifyCase = Schema.Struct({
+  case: Schema.Int,
+  name: Schema.String,
+  ok: Schema.Boolean,
+  detail: Schema.optional(Schema.String),
+});
+export type AccountsQualifyCase = typeof AccountsQualifyCase.Type;
+
 /** Profiles whose sessions the one-time back-fill has copied into Main; empty when there were none. */
 export const AccountMainBackfilledInput = Schema.Struct({
   profileIds: Schema.Array(BrowserProfileId).check(Schema.isMaxLength(64)),

@@ -22,12 +22,16 @@ import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeMana
 // SCIENT-FORK:START — Scient Accounts: capture the shared owner for each client connection.
 import { AccountsService } from "./accounts/AccountsService.ts";
 import { accountsForRpc } from "./accounts/AccountsRpcHandlers.ts";
+import { makeRemoteSessions, RemoteSessions } from "./accounts/remoteSessions.ts";
 // SCIENT-FORK:END
 import { BrowserHistory } from "./browserHistory/BrowserHistory.ts";
 
 export const captureScientWsServices = Effect.gen(function* () {
   // SCIENT-FORK:START — Scient Accounts: preserve one owner across WebSocket connections.
   const accounts = yield* accountsForRpc;
+  const remoteSessions = yield* makeRemoteSessions.pipe(
+    Effect.provideService(AccountsService, accounts),
+  );
   // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
   const browserHistory = yield* BrowserHistory;
@@ -44,6 +48,7 @@ export const captureScientWsServices = Effect.gen(function* () {
   return Layer.mergeAll(
     // SCIENT-FORK:START — Scient Accounts: reuse the captured owner.
     Layer.succeed(AccountsService, accounts),
+    Layer.succeed(RemoteSessions, remoteSessions),
     // SCIENT-FORK:END
     Layer.succeed(
       ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
