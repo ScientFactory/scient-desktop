@@ -8,8 +8,7 @@ import {
   type SessionCookie,
 } from "@t3tools/contracts";
 
-/** The registrable site of a host, such as `huji.ac.il` for `idp.cc.huji.ac.il`. */
-export type SiteOf = (host: string) => string;
+import { siteHost, siteOf } from "./scientSiteMatch.ts";
 
 /** A cookie as CDP's `Storage.getCookies` and `Network.getAllCookies` return it. */
 export interface CdpCookie {
@@ -164,26 +163,13 @@ const cookieKey = (cookie: Pick<SessionCookie, "name" | "domain" | "path" | "par
     cookie.partitionKey?.hasCrossSiteAncestor ?? null,
   ]);
 
-const siteHost = (site: string) => {
-  if (!site.startsWith("https://")) return bareHost(site);
-  try {
-    return new URL(site).hostname;
-  } catch {
-    return bareHost(site);
-  }
-};
-
 /** The registrable sites of a unit, whose entries may be bare sites or `https://` origins. */
-export const unitSites = (unit: ReadonlyArray<string>, siteOf: SiteOf) =>
+export const unitSites = (unit: ReadonlyArray<string>) =>
   new Set(unit.map((site) => siteOf(siteHost(site))));
 
 /** The cookies of a jar that belong to a unit, expired ones included. */
-export const unitCookies = (
-  unit: ReadonlyArray<string>,
-  jar: ReadonlyArray<SessionCookie>,
-  siteOf: SiteOf,
-) => {
-  const sites = unitSites(unit, siteOf);
+export const unitCookies = (unit: ReadonlyArray<string>, jar: ReadonlyArray<SessionCookie>) => {
+  const sites = unitSites(unit);
   return jar.filter((cookie) => sites.has(siteOf(bareHost(cookie.domain))));
 };
 
@@ -195,9 +181,8 @@ function unitState(
   unit: ReadonlyArray<string>,
   jar: ReadonlyArray<SessionCookie>,
   nowSeconds: number,
-  siteOf: SiteOf,
 ): "empty" | { readonly live: ReadonlyArray<SessionCookie> } {
-  const live = unitCookies(unit, jar, siteOf).filter((cookie) => isLive(cookie, nowSeconds));
+  const live = unitCookies(unit, jar).filter((cookie) => isLive(cookie, nowSeconds));
   return live.length === 0 ? "empty" : { live };
 }
 
@@ -227,7 +212,6 @@ export function sameUnit(a: ReadonlyArray<SessionCookie>, b: ReadonlyArray<Sessi
  */
 export function mergeUnits(
   units: ReadonlyArray<ReadonlyArray<string>>,
-  siteOf: SiteOf,
 ): ReadonlyArray<ReadonlyArray<string>> {
   const parent = new Map<string, string>();
   const root = (site: string): string => {
@@ -238,7 +222,7 @@ export function mergeUnits(
     return top;
   };
   for (const unit of units) {
-    const [first, ...rest] = unitSites(unit, siteOf);
+    const [first, ...rest] = unitSites(unit);
     if (first === undefined) continue;
     for (const site of rest) parent.set(root(site), root(first));
   }
@@ -254,12 +238,11 @@ export function mergeUnits(
 /** Each registrable group of a jar, except that groups multi-site sign-ins cover stay one unit. */
 export function jarUnits(
   jar: ReadonlyArray<SessionCookie>,
-  siteOf: SiteOf,
   join: ReadonlyArray<ReadonlyArray<string>> = [],
 ): ReadonlyArray<ReadonlyArray<string>> {
   const present = new Set(jar.map((cookie) => siteOf(bareHost(cookie.domain))));
-  return mergeUnits([...join, ...[...present].map((site) => [site])], siteOf)
-    .map((unit) => [...unitSites(unit, siteOf)])
+  return mergeUnits([...join, ...[...present].map((site) => [site])])
+    .map((unit) => [...unitSites(unit)])
     .filter((sites) => sites.some((site) => present.has(site)));
 }
 
@@ -281,16 +264,15 @@ export function decideUnit(input: {
   /** A computer that mirrors the desktop's profile replaces its Google jar whole too. */
   readonly replaceGoogle?: boolean;
   readonly nowSeconds: number;
-  readonly siteOf: SiteOf;
 }): UnitDecision {
-  const source = unitState(input.unit, input.source, input.nowSeconds, input.siteOf);
+  const source = unitState(input.unit, input.source, input.nowSeconds);
   if (source === "empty") return "blocked";
-  const target = unitState(input.unit, input.target, input.nowSeconds, input.siteOf);
+  const target = unitState(input.unit, input.target, input.nowSeconds);
   if (target === "empty") return "copy";
   if (sameUnit(source.live, target.live)) return "same";
   return input.mode === "fill-or-replace" &&
     input.replaceAllowed &&
-    (input.replaceGoogle === true || !unitSites(input.unit, input.siteOf).has(GOOGLE))
+    (input.replaceGoogle === true || !unitSites(input.unit).has(GOOGLE))
     ? "copy"
     : "conflict";
 }
@@ -335,7 +317,6 @@ export async function applyUnit(
     readonly replaceAllowed: boolean;
     readonly replaceGoogle?: boolean;
     readonly nowSeconds: number;
-    readonly siteOf: SiteOf;
     readonly foreign?: () => ReadonlyMap<string, SessionCookie>;
   },
 ): Promise<UnitOutcome> {
@@ -345,7 +326,7 @@ export async function applyUnit(
   const before = live(await store.readUnit(plan.unit));
   const decision = decideUnit({ ...plan, target: before });
   if (decision !== "copy") return decision;
-  const written = live(unitCookies(plan.unit, plan.source, plan.siteOf));
+  const written = live(unitCookies(plan.unit, plan.source));
   const slots = new Set([...written, ...before].map(cookieSlot));
   const competing = () => new Map([...foreign()].filter(([slot]) => slots.has(slot)));
   // The last look before writing: a change since the snapshot is newer than the copy.
@@ -457,12 +438,11 @@ export interface MainCopy {
 export function withMainCopies(
   records: ReadonlyArray<MainCopy>,
   added: ReadonlyArray<MainCopy>,
-  siteOf: SiteOf,
 ): ReadonlyArray<MainCopy> {
   const replaced = (record: MainCopy) =>
     added.some((copy) => {
-      const sites = unitSites(copy.sites, siteOf);
-      return [...unitSites(record.sites, siteOf)].some((site) => sites.has(site));
+      const sites = unitSites(copy.sites);
+      return [...unitSites(record.sites)].some((site) => sites.has(site));
     });
   return [...records.filter((record) => !replaced(record)), ...added];
 }
@@ -517,14 +497,10 @@ export const universitySites = (accounts: ReadonlyArray<AccountSummary>) =>
  * The university's sign-in never goes to another computer: OpenAthens, and any unit sharing a
  * registrable site with a university row. That computer signs in to the university itself.
  */
-export const travels = (
-  unit: ReadonlyArray<string>,
-  university: ReadonlyArray<string>,
-  siteOf: SiteOf,
-) => {
-  const sites = unitSites(unit, siteOf);
+export const travels = (unit: ReadonlyArray<string>, university: ReadonlyArray<string>) => {
+  const sites = unitSites(unit);
   if (sites.has(OPENATHENS)) return false;
-  return ![...unitSites(university, siteOf)].some((site) => sites.has(site));
+  return ![...unitSites(university)].some((site) => sites.has(site));
 };
 
 /**
@@ -535,14 +511,13 @@ export const hasAccountRow = (
   unit: ReadonlyArray<string>,
   accounts: ReadonlyArray<AccountSummary>,
   profileId: string,
-  siteOf: SiteOf,
 ) => {
-  const sites = unitSites(unit, siteOf);
+  const sites = unitSites(unit);
   return accounts.some(
     ({ details }) =>
       details.kind === "website" &&
       details.profileId === profileId &&
-      [...unitSites(details.sites, siteOf)].some((site) => sites.has(site)),
+      [...unitSites(details.sites)].some((site) => sites.has(site)),
   );
 };
 
@@ -563,9 +538,9 @@ export type DeliveryPlan =
       readonly head: number;
     };
 
-const overlaps = (a: ReadonlyArray<string>, b: ReadonlyArray<string>, siteOf: SiteOf) => {
-  const sites = unitSites(a, siteOf);
-  return [...unitSites(b, siteOf)].some((site) => sites.has(site));
+const overlaps = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) => {
+  const sites = unitSites(a);
+  return [...unitSites(b)].some((site) => sites.has(site));
 };
 
 /**
@@ -584,9 +559,8 @@ export function planDelivery(input: {
    */
   readonly reconcile?: boolean;
   readonly travels: (unit: ReadonlyArray<string>) => boolean;
-  readonly siteOf: SiteOf;
 }): DeliveryPlan {
-  const { log, applied, siteOf } = input;
+  const { log, applied } = input;
   const head = log?.head ?? 0;
   if (!input.shareable)
     return applied.bound &&
@@ -606,7 +580,7 @@ export function planDelivery(input: {
     const gone = applied.units.filter(
       (unit) =>
         (unit.outcome === "copied" || unit.outcome === "same") &&
-        !jar.some((present) => overlaps(present, unit.sites, siteOf)),
+        !jar.some((present) => overlaps(present, unit.sites)),
     );
     return {
       kind: "units",
@@ -621,15 +595,15 @@ export function planDelivery(input: {
   const entries = (log?.units ?? []).filter(({ sites }) => input.travels(sites));
   const floor = applied.withdrawn ?? -1;
   const units: PlannedUnit[] = [];
-  const components = mergeUnits(
-    [...entries.map(({ sites }) => sites), ...(log?.jar === undefined ? [] : jar)],
-    siteOf,
-  );
+  const components = mergeUnits([
+    ...entries.map(({ sites }) => sites),
+    ...(log?.jar === undefined ? [] : jar),
+  ]);
   for (const sites of components) {
     if (!input.travels(sites)) continue;
-    const inJar = jar.some((unit) => overlaps(unit, sites, siteOf));
+    const inJar = jar.some((unit) => overlaps(unit, sites));
     const entry = entries
-      .filter((candidate) => overlaps(candidate.sites, sites, siteOf))
+      .filter((candidate) => overlaps(candidate.sites, sites))
       .reduce<PlannedUnit | undefined>(
         (newest, candidate) =>
           newest === undefined || candidate.revision > newest.revision ? candidate : newest,
@@ -638,7 +612,7 @@ export function planDelivery(input: {
     const jarRevision = log?.jar !== undefined && inJar ? log.jar : -1;
     const revision = Math.max(entry?.revision ?? -1, jarRevision);
     const kind = entry && entry.revision >= jarRevision ? entry.kind : "copy";
-    const held = applied.units.filter((unit) => overlaps(unit.sites, sites, siteOf));
+    const held = applied.units.filter((unit) => overlaps(unit.sites, sites));
     const appliedRevision = held.length ? Math.min(...held.map((unit) => unit.revision)) : -1;
     if (revision <= Math.max(appliedRevision, floor)) continue;
     // Nothing to copy: the jar no longer has the unit.

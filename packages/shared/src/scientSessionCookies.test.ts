@@ -19,7 +19,6 @@ import {
 } from "./scientSessionCookies.ts";
 
 /** Last two labels, enough for the synthetic hosts here. */
-const siteOf = (host: string) => host.split(".").slice(-2).join(".");
 const NOW = 1_000_000;
 
 const cookie = (overrides: Partial<SessionCookie> = {}): SessionCookie => ({
@@ -159,7 +158,6 @@ describe("decideUnit", () => {
       mode: "fill",
       replaceAllowed: false,
       nowSeconds: NOW,
-      siteOf,
       ...input,
     });
 
@@ -198,8 +196,8 @@ describe("decideUnit", () => {
     expect(decide({ unit, source, target: [cookie({ domain: ".proxy.test", value: "b" })] })).toBe(
       "conflict",
     );
-    expect(jarUnits(source, siteOf, [unit])).toEqual([["uni.test", "proxy.test"]]);
-    expect(jarUnits(source, siteOf)).toEqual([["uni.test"], ["proxy.test"]]);
+    expect(jarUnits(source, [unit])).toEqual([["uni.test", "proxy.test"]]);
+    expect(jarUnits(source)).toEqual([["uni.test"], ["proxy.test"]]);
   });
 });
 
@@ -239,7 +237,6 @@ describe("applyUnit", () => {
     mode: "fill-or-replace" as const,
     replaceAllowed: true,
     nowSeconds: NOW,
-    siteOf,
   };
   const occupied = [cookie({ value: "synthetic-b" }), cookie({ name: "old", value: "b" })];
 
@@ -402,7 +399,7 @@ describe("mergeUnits", () => {
   it("makes sign-ins that share a site, directly or through others, one unit", () => {
     const first = ["https://idp.uni.test", "proxya.test"];
     const second = ["https://idp.uni.test", "proxyb.test"];
-    expect(mergeUnits([first, second, ["other.test"]], siteOf)).toEqual([
+    expect(mergeUnits([first, second, ["other.test"]])).toEqual([
       ["https://idp.uni.test", "proxya.test", "proxyb.test"],
       ["other.test"],
     ]);
@@ -410,9 +407,7 @@ describe("mergeUnits", () => {
       cookie({ domain, hostOnly: true }),
     );
     // Two university rows with one IdP and different proxies are one component, decided once.
-    expect(jarUnits(jar, siteOf, [first, second])).toEqual([
-      ["uni.test", "proxya.test", "proxyb.test"],
-    ]);
+    expect(jarUnits(jar, [first, second])).toEqual([["uni.test", "proxya.test", "proxyb.test"]]);
   });
 });
 
@@ -436,9 +431,9 @@ describe("sharing with other computers", () => {
 
   it("keeps the university's sign-in and OpenAthens on this computer", () => {
     const university = ["https://idp.huji.ac.il/login", "huji.ac.il"];
-    expect(travels(["github.com"], university, siteOf)).toBe(true);
-    expect(travels(["cc.huji.ac.il"], university, siteOf)).toBe(false);
-    expect(travels(["login.openathens.net"], [], siteOf)).toBe(false);
+    expect(travels(["github.com"], university)).toBe(true);
+    expect(travels(["cc.huji.ac.il"], university)).toBe(false);
+    expect(travels(["login.openathens.net"], [])).toBe(false);
   });
 
   const applied = (
@@ -456,7 +451,6 @@ describe("sharing with other computers", () => {
       jar: [],
       shareable: true,
       travels: () => true,
-      siteOf,
       ...input,
     });
 

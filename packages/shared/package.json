@@ -651,6 +651,7 @@
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",
     "remark-rehype": "catalog:",
+    "tldts": "catalog:",
     "unified": "catalog:",
     "yaml": "catalog:"
   },

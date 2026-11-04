@@ -8,7 +8,6 @@ import {
   unitFingerprintText,
   withMainCopies,
   type MainCopy,
-  type SiteOf,
 } from "@t3tools/shared/scientSessionCookies";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -46,7 +45,7 @@ const queues = new Map<string, Promise<unknown>>();
  * What each copy into an environment's Main wrote, by source profile, in one file of digests.
  * Every operation reads the file afresh, one at a time.
  */
-export function mainCopyRecords(file: string, siteOf: SiteOf): MainCopyRecords {
+export function mainCopyRecords(file: string): MainCopyRecords {
   const serial = <A>(operation: () => Promise<A>) => {
     const next = (queues.get(file) ?? Promise.resolve()).then(operation, operation);
     queues.set(
@@ -74,7 +73,7 @@ export function mainCopyRecords(file: string, siteOf: SiteOf): MainCopyRecords {
         ? Promise.resolve()
         : serial(async () => {
             const records = await load();
-            records[environmentId] = withMainCopies(records[environmentId] ?? [], copies, siteOf);
+            records[environmentId] = withMainCopies(records[environmentId] ?? [], copies);
             await save(records);
           }).catch(() => undefined),
     from: (environmentId, profileId) =>

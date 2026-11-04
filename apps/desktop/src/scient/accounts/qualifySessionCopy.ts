@@ -15,7 +15,6 @@ import * as Electron from "electron";
 import { withCookieDebugger } from "./sessionCookies.ts";
 import { copyIntoMain, jarStore } from "./mainFill.ts";
 import { watchForeignInserts } from "./mainInserts.ts";
-import { siteOf } from "./signedInSites.ts";
 
 /**
  * Dev-only check that CDP copies cookies between Electron sessions exactly, on this platform's
@@ -350,7 +349,6 @@ const replacePlan = {
   mode: "fill-or-replace",
   replaceAllowed: true,
   nowSeconds: Math.floor(Date.now() / 1000),
-  siteOf: (host: string) => siteOf(host) ?? host,
 } as const;
 
 /** The first read after the copy's write sees a different value, so the check fails on purpose. */

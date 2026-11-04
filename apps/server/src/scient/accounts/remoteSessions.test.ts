@@ -16,7 +16,7 @@ import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
 import { makeHarness } from "./Accounts.testkit.ts";
 import { AccountsService } from "./AccountsService.ts";
-import { siteOf, type ProfileCookieJar } from "./profileCookieJar.ts";
+import type { ProfileCookieJar } from "./profileCookieJar.ts";
 import { makeRemoteSessions } from "./remoteSessions.ts";
 
 const WORK = BrowserProfileId.make("profile-work");
@@ -53,7 +53,7 @@ function browserFixture() {
   const jarOf = (profileId: string) => jars.get(profileId) ?? [];
   const jar = (profileId: string): ProfileCookieJar => ({
     readAll: async () => jarOf(profileId),
-    readUnit: async (unit) => unitCookies(unit, jarOf(profileId), siteOf),
+    readUnit: async (unit) => unitCookies(unit, jarOf(profileId)),
     set: async (cookies) => {
       const next = jarOf(profileId).filter((c) => !cookies.some((n) => key(n) === key(c)));
       jars.set(profileId, [...next, ...cookies]);

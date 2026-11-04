@@ -26,6 +26,7 @@ import {
   unitSites,
   universitySites,
 } from "@t3tools/shared/scientSessionCookies";
+import { siteOf } from "@t3tools/shared/scientSiteMatch";
 import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
@@ -46,7 +47,7 @@ import { SessionStore } from "../../auth/SessionStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
 import { AccountsService } from "./AccountsService.ts";
-import { siteOf, type ProfileCookieJar } from "./profileCookieJar.ts";
+import type { ProfileCookieJar } from "./profileCookieJar.ts";
 
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 const denied = (message: string) => new AccountsError({ reason: "denied", message });
@@ -66,11 +67,11 @@ function appliedRevision(
   unit: ReadonlyArray<string>,
 ) {
   const floor = entry?.withdrawn ?? -1;
-  const covering = [...unitSites(unit, siteOf)].map((site) =>
+  const covering = [...unitSites(unit)].map((site) =>
     Math.max(
       floor,
       ...(entry?.units ?? []).flatMap((applied) =>
-        unitSites(applied.sites, siteOf).has(site) ? [applied.revision] : [],
+        unitSites(applied.sites).has(site) ? [applied.revision] : [],
       ),
     ),
   );
@@ -82,9 +83,9 @@ function withApplied(
   units: ReadonlyArray<ReceivedUnit>,
   applied: ReadonlyArray<ReceivedUnit>,
 ): ReadonlyArray<ReceivedUnit> {
-  const covered = new Set(applied.flatMap((unit) => [...unitSites(unit.sites, siteOf)]));
+  const covered = new Set(applied.flatMap((unit) => [...unitSites(unit.sites)]));
   return [
-    ...units.filter((unit) => ![...unitSites(unit.sites, siteOf)].some((s) => covered.has(s))),
+    ...units.filter((unit) => ![...unitSites(unit.sites)].some((s) => covered.has(s))),
     ...applied,
   ].slice(-RECEIVED_UNITS_LIMIT);
 }
@@ -110,7 +111,7 @@ async function receiveUnit(
   unit: AccountSessionsReceiveInput["units"][number],
   mode: AccountSessionsReceiveInput["mode"],
 ): Promise<SessionReceiveOutcome> {
-  const sites = unitSites(unit.sites, siteOf);
+  const sites = unitSites(unit.sites);
   if (jar.openTabSites().some((site) => sites.has(site))) return "busy";
   if (unit.kind === "delete") {
     const present = await jar.readUnit(unit.sites);
@@ -124,7 +125,6 @@ async function receiveUnit(
     replaceAllowed: true,
     replaceGoogle: true,
     nowSeconds: Date.now() / 1000,
-    siteOf,
   });
   return outcome === "conflict" ? "kept" : outcome;
 }
@@ -431,7 +431,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
         const allowed = shareable(input.profileId, input.controls);
         const university = universitySites((yield* accounts.snapshot).accounts);
         const decided = input.units.map((unit) => {
-          if (!allowed || !travels(unit.sites, university, siteOf)) return "blocked" as const;
+          if (!allowed || !travels(unit.sites, university)) return "blocked" as const;
           return unit.revision <= appliedRevision(entry, unit.sites) ? ("stale" as const) : unit;
         });
         const pending = decided.flatMap((unit) => (typeof unit === "string" ? [] : [unit]));
@@ -502,7 +502,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
               ...(copy
                 ? {
                     fingerprint: fingerprintOf(
-                      unitCookies(unit.sites, fromSent(sent.cookies), siteOf),
+                      unitCookies(unit.sites, fromSent(sent.cookies)),
                       nowSeconds,
                     ),
                   }
@@ -653,7 +653,7 @@ export const markNeedsYou = Effect.fn("RemoteSessions.markNeedsYou")(function* (
       ...entry,
       units: entry.units.map((unit) => {
         const copy = unit.outcome === "copied" || unit.outcome === "same";
-        if (!copy || !unitSites(unit.sites, siteOf).has(site)) return unit;
+        if (!copy || !unitSites(unit.sites).has(site)) return unit;
         label = entry.label;
         if ((unit.needsYou !== undefined) === (page === "refused")) return unit;
         changed = true;

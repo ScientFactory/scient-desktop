@@ -25,12 +25,12 @@ import {
   remoteControls,
   shareable,
   travels,
+  unitSites,
   universitySites,
   type PlannedUnit,
 } from "@t3tools/shared/scientSessionCookies";
 import * as Redacted from "effect/Redacted";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
-import { getDomain } from "tldts";
 
 import { readDesktopSecondaryBootstraps } from "~/connection/desktopLocal";
 import { getClientSettings } from "~/hooks/useSettings";
@@ -42,12 +42,6 @@ import { environmentSession, readEnvironmentScope, readPreparedConnection } from
 import { accountsState } from "./accountsState";
 
 type ReadSessions = NonNullable<DesktopAccountsBridge["readSessions"]>;
-
-/** The registrable site of a host, as the desktop and the remote both group cookies. */
-const siteOf = (host: string) => {
-  const bare = host.replace(/^\./, "").toLowerCase();
-  return getDomain(bare, { allowPrivateDomains: true }) ?? bare;
-};
 
 export type RouteRefusal = "relay" | "unencrypted";
 
@@ -197,7 +191,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
     hold();
     const jar = isShareable
       ? ((await deps.readSessions({ profileId, controls: own, join }))?.units ?? []).filter(
-          ({ sites }) => hasAccountRow(sites, deps.desktopAccounts(), profileId, siteOf),
+          ({ sites }) => hasAccountRow(sites, deps.desktopAccounts(), profileId),
         )
       : [];
     hold();
@@ -207,8 +201,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
       jar: jar.map(({ sites }) => sites),
       shareable: isShareable,
       reconcile,
-      travels: (unit) => travels(unit, university, siteOf),
-      siteOf,
+      travels: (unit) => travels(unit, university),
     });
     if (plan.kind === "withdraw") await deps.withdraw(profileId, plan.revision, key);
     const batch = (units: AccountSessionsReceiveInput["units"], mode: "fill" | "replace") =>
@@ -233,9 +226,9 @@ export async function deliverOnce(deps: DeliveryDeps) {
     }
     const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
     // A unit someone is signing in to goes once that sign-in ends; until then it waits.
-    const busy = registrable(deps.signingIn(profileId));
+    const busy = unitSites(deps.signingIn(profileId));
     const underWay = (unit: PlannedUnit) =>
-      [...registrable(unit.sites)].some((site) => busy.has(site));
+      [...unitSites(unit.sites)].some((site) => busy.has(site));
     for (const group of batches(plan.units)) {
       hold();
       const copies = group.filter((unit) => unit.kind === "copy" && !underWay(unit));
@@ -300,16 +293,11 @@ const cookiesOf = (
   }>,
   unit: PlannedUnit,
 ) => {
-  const sites = new Set(unit.sites.map((site) => siteOf(URL.parse(site)?.hostname ?? site)));
+  const sites = unitSites(unit.sites);
   return read
-    .filter((entry) =>
-      entry.sites.some((site) => sites.has(siteOf(URL.parse(site)?.hostname ?? site))),
-    )
+    .filter((entry) => [...unitSites(entry.sites)].some((site) => sites.has(site)))
     .flatMap((entry) => entry.cookies);
 };
-
-const registrable = (sites: ReadonlyArray<string>) =>
-  new Set(sites.map((site) => siteOf(URL.parse(site)?.hostname ?? site)));
 
 const sent = (cookies: ReadonlyArray<SessionCookie>) =>
   cookies.map(({ value, ...rest }) => ({ ...rest, value: Redacted.make(value) }));
@@ -359,9 +347,7 @@ async function recordShare(
     kept: after?.units.filter((unit) => unit.outcome === "kept").length ?? 0,
     needsYou: [
       ...new Set(
-        (after?.units ?? []).flatMap((unit) =>
-          unit.needsYou ? unit.sites.map((site) => siteOf(URL.parse(site)?.hostname ?? site)) : [],
-        ),
+        (after?.units ?? []).flatMap((unit) => (unit.needsYou ? [...unitSites(unit.sites)] : [])),
       ),
     ].slice(0, 50),
   });

@@ -14,6 +14,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import { siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
@@ -45,11 +46,6 @@ const sourceControls = (record: BrowserProfileRecord) => ({
 const mainSignOuts = (snapshot: Pick<AccountsSnapshot, "profiles">) =>
   recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).signedOutSites ?? [];
 
-const hostOf = (site: string) => (site.startsWith("https://") ? new URL(site).hostname : site);
-const under = (site: string, unitSite: string) => {
-  const host = hostOf(site);
-  return host === unitSite || host.endsWith(`.${unitSite}`);
-};
 const website = (row: AccountSummary) => (row.details.kind === "website" ? row.details : undefined);
 
 /** Persistent Scient profiles other than Main, which can give Main their sessions. */
@@ -96,9 +92,7 @@ export function replaceAllowedSince(accounts: ReadonlyArray<AccountSummary>, row
       if (
         details?.profileId === DEFAULT_BROWSER_PROFILE_ID &&
         main.signIn?.state === "signed-out" &&
-        details.sites.some(
-          (mainSite) => under(mainSite, hostOf(site)) || under(site, hostOf(mainSite)),
-        )
+        details.sites.some((mainSite) => sitesNest([mainSite], [site]))
       )
         since[site] = main.signIn.at;
     }
@@ -116,11 +110,7 @@ async function recordCopies(
   const landed = result.units.filter(({ outcome }) => outcome === "copied" || outcome === "same");
   for (const row of rows) {
     const sites = website(row)?.sites ?? [];
-    if (
-      !landed.some((unit) =>
-        sites.every((site) => unit.sites.some((u) => site === u || under(site, u))),
-      )
-    )
+    if (!landed.some((unit) => sites.every((site) => unit.sites.some((u) => siteUnder(site, u)))))
       continue;
     await accountsState.mainFilled.run(registry, {
       environmentId,
@@ -161,7 +151,7 @@ export function withdrawnRows(
     return (
       details?.profileId === DEFAULT_BROWSER_PROFILE_ID &&
       row.signIn?.from === "copy" &&
-      details.sites.every((site) => units.some((unit) => unit.some((u) => under(site, u))))
+      details.sites.every((site) => units.some((unit) => unit.some((u) => siteUnder(site, u))))
     );
   });
   return {

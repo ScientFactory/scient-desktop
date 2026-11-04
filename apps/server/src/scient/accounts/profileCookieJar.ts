@@ -7,15 +7,9 @@ import {
   type CdpSend,
   type CookieStore,
 } from "@t3tools/shared/scientSessionCookies";
+import { siteOf } from "@t3tools/shared/scientSiteMatch";
 import * as Data from "effect/Data";
 import type { BrowserContext, Page } from "playwright-core";
-import { getDomain } from "tldts";
-
-/** The registrable site of a host, such as `huji.ac.il` for `idp.cc.huji.ac.il`. */
-export const siteOf = (host: string) => {
-  const bare = host.replace(/^\./, "").toLowerCase();
-  return getDomain(bare, { allowPrivateDomains: true }) ?? bare;
-};
 
 /** One persistent server-browser profile's jar, held against new tabs and clears while open. */
 export interface ProfileCookieJar extends CookieStore {
@@ -119,7 +113,7 @@ export async function openProfileCookieJar(
   const readAll = async () => (await readJar(send)).cookies;
   const jar: ProfileCookieJar = {
     readAll,
-    readUnit: async (unit) => unitCookies(unit, await readAll(), siteOf),
+    readUnit: async (unit) => unitCookies(unit, await readAll()),
     set: (cookies) => setCookies(send, cookies),
     remove: (cookies) => deleteCookies(send, cookies),
     stopping,

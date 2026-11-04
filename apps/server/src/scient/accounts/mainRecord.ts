@@ -5,19 +5,12 @@ import {
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
 
+import { siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
+
 import { isGoogleSessionRow } from "./AccountDecisions.ts";
 
 type Website = Extract<AccountSummary["details"], { readonly kind: "website" }>;
 type Row = { readonly summary: AccountSummary };
-
-const hostOf = (site: string) => (site.startsWith("https://") ? new URL(site).hostname : site);
-/** Whether a row's site lies under a registrable site, such as `idp.example.ac.il` under `example.ac.il`. */
-const under = (rowSite: string, site: string) => {
-  const host = hostOf(rowSite);
-  return host === site || host.endsWith(`.${site}`);
-};
-const overlaps = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
-  a.some((left) => b.some((right) => under(left, hostOf(right)) || under(right, hostOf(left))));
 
 const isMainRow = (
   summary: AccountSummary,
@@ -31,7 +24,7 @@ export function mainRowFor<A extends Row>(accounts: ReadonlyArray<A>, source: Ac
   const { sites, username } = source.details;
   const google = isGoogleSessionRow(source);
   return accounts.find(({ summary }) => {
-    if (!isMainRow(summary) || !overlaps(summary.details.sites, sites)) return false;
+    if (!isMainRow(summary) || !sitesNest(summary.details.sites, sites)) return false;
     const theirs = summary.details.username;
     return google
       ? isGoogleSessionRow(summary) && theirs === username
@@ -75,7 +68,9 @@ export function withMainSignOutsCleared<
       : [],
   );
   if (seen.length === 0) return next;
-  const kept = main.signedOutSites.filter((site) => !seen.some((rowSite) => under(rowSite, site)));
+  const kept = main.signedOutSites.filter(
+    (site) => !seen.some((rowSite) => siteUnder(rowSite, site)),
+  );
   if (kept.length === main.signedOutSites.length) return next;
   const { signedOutSites: _, ...rest } = main;
   return {

@@ -4,7 +4,7 @@ import { cookieSlot } from "@t3tools/shared/scientSessionCookies";
 import type { Cookie, Session } from "electron";
 
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
-import { siteOf } from "./signedInSites.ts";
+import { cookieSite } from "./signedInSites.ts";
 
 type CookieSession = Pick<Session, "cookies">;
 
@@ -145,7 +145,7 @@ export function mainInsertTracker(session: CookieSession) {
 /** Installed with every persistent session; it records inserts only once the session is a Main. */
 export function trackMainInserts(session: CookieSession) {
   changesFor(session).onInsert = (cookie) => {
-    const site = cookie.domain === undefined ? undefined : siteOf(cookie.domain);
+    const site = cookie.domain === undefined ? undefined : cookieSite(cookie.domain);
     if (site) mainInsertTracker(session)?.record(site, Date.now());
   };
 }

@@ -39,7 +39,7 @@ import { PreviewManager } from "../../preview/Manager.ts";
 import { mainCopyFingerprint, mainCopyRecords } from "./mainCopies.ts";
 import { mainInsertTracker, markOwnWrites, watchForeignInserts } from "./mainInserts.ts";
 import { withCookieDebugger } from "./sessionCookies.ts";
-import { siteCookieRemovals, siteOf } from "./signedInSites.ts";
+import { siteCookieRemovals } from "./signedInSites.ts";
 
 const Site = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253));
 const Units = Schema.Array(Schema.Array(Site).check(Schema.isMaxLength(50))).check(
@@ -69,8 +69,6 @@ export const FillMainInput = Schema.Struct({
 });
 export type FillMainInput = typeof FillMainInput.Type;
 
-const site = (host: string) => siteOf(host) ?? host;
-
 /** One lock per environment: Scient's copies into its Main never interleave. */
 const locks = new Map<string, Promise<unknown>>();
 function underMainLock<A>(environmentId: string, run: () => Promise<A>): Promise<A> {
@@ -93,7 +91,7 @@ const refusedIn = (main: Electron.Session) => {
 /** A session's jar through CDP; its own writes are marked so they never count as foreign. */
 export function jarStore(session: Electron.Session, send: CdpSend): CookieStore {
   return {
-    readUnit: async (unit) => unitCookies(unit, (await readJar(send)).cookies, site),
+    readUnit: async (unit) => unitCookies(unit, (await readJar(send)).cookies),
     set: async (cookies) => {
       markOwnWrites(session, cookies);
       await setCookies(send, cookies);
@@ -114,16 +112,16 @@ export async function copyIntoMain(
 ): Promise<DesktopFillMainResult> {
   const tracker = mainInsertTracker(main);
   const failed = refusedIn(main);
-  const skipped = unitSites(input.skipSites, site);
+  const skipped = unitSites(input.skipSites);
   return withCookieDebugger(source, (readSource) =>
     withCookieDebugger(main, async (sendMain) => {
       const { cookies: jar, unsupported } = await readJar(readSource);
       const store = jarStore(main, sendMain);
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
       // Units sharing a site are one component, decided once, before anything is written.
-      const planned = input.units ? mergeUnits(input.units, site) : jarUnits(jar, site, input.join);
+      const planned = input.units ? mergeUnits(input.units) : jarUnits(jar, input.join);
       for (const unit of planned) {
-        const sites = [...unitSites(unit, site)];
+        const sites = [...unitSites(unit)];
         const since = unit.flatMap((entry) => {
           const at = input.replaceAllowedSince?.[entry];
           return at === undefined ? [] : [Date.parse(at)];
@@ -144,7 +142,6 @@ export async function copyIntoMain(
                 tracker !== undefined &&
                 !tracker.touchedSince(sites, Math.min(...since)),
               nowSeconds: Date.now() / 1000,
-              siteOf: site,
               foreign: () => foreign.cookies,
             });
           } finally {
@@ -159,7 +156,7 @@ export async function copyIntoMain(
         planned.flatMap((unit, index) => {
           // Only a write makes the copy Main's source; `same` keeps whoever wrote it first.
           if (units[index]?.outcome !== "copied") return [];
-          const written = unitCookies(unit, jar, site).filter(
+          const written = unitCookies(unit, jar).filter(
             (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
           );
           return [{ sites: [...unit], fingerprint: mainCopyFingerprint(written, nowSeconds) }];
@@ -236,10 +233,7 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
 
 const copyRecords = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  return mainCopyRecords(
-    environment.path.join(environment.stateDir, "scient", "main-copies.json"),
-    site,
-  );
+  return mainCopyRecords(environment.path.join(environment.stateDir, "scient", "main-copies.json"));
 });
 
 export const WithdrawMainInput = Schema.Struct({
@@ -335,12 +329,10 @@ export const readSessions = Effect.fn("DesktopAccounts.readSessions")(function* 
         const live = (await readJar(send)).cookies.filter(
           (cookie) => cookie.expires === undefined || cookie.expires > nowSeconds,
         );
-        const planned = input.units
-          ? mergeUnits(input.units, site)
-          : jarUnits(live, site, input.join);
+        const planned = input.units ? mergeUnits(input.units) : jarUnits(live, input.join);
         return {
           units: planned.flatMap((unit) => {
-            const cookies = unitCookies(unit, live, site);
+            const cookies = unitCookies(unit, live);
             return cookies.length ? [{ sites: [...unit], cookies }] : [];
           }),
         };

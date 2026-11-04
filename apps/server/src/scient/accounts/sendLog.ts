@@ -9,7 +9,6 @@ import {
 import { shareable, unitSites } from "@t3tools/shared/scientSessionCookies";
 
 import { effectiveProfile } from "./AccountDecisions.ts";
-import { siteOf } from "./profileCookieJar.ts";
 
 /** Copies beyond this fall back to a whole-jar revision; deletions are never dropped unapplied. */
 const COPIES_LIMIT = 5_000;
@@ -26,7 +25,7 @@ const isNewerAction = (before: AccountSummary | undefined, after: AccountSummary
   return previous === undefined || Date.parse(signIn.at) > Date.parse(previous);
 };
 
-const unitKey = (sites: ReadonlyArray<string>) => [...unitSites(sites, siteOf)].sort().join(" ");
+const unitKey = (sites: ReadonlyArray<string>) => [...unitSites(sites)].sort().join(" ");
 
 /** The next revision for one unit; a full log falls back to a whole-jar revision. */
 export function issueUnit(
