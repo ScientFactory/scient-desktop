@@ -19,7 +19,7 @@ const cookie = (name: string, partitioned: boolean): ImportedCookie => ({
     : {}),
 });
 
-describe("BrowserImport.writeCookies with partitioned cookies", () => {
+describe("BrowserImport.writeCookies for Scient Accounts", () => {
   it.effect("sends them to the partition writer and counts the ones it refuses", () =>
     Effect.gen(function* () {
       const plain: Array<string> = [];
@@ -53,6 +53,35 @@ describe("BrowserImport.writeCookies with partitioned cookies", () => {
         skippedDomains: ["chips.example"],
         importedSites: 1,
       });
+    }),
+  );
+
+  it.effect("counts the sites it wrote, not the ones it kept or that refused a cookie", () =>
+    Effect.gen(function* () {
+      const result = yield* BrowserImport.writeCookies(
+        {
+          cookies: {
+            set: (details: { readonly url: string }) =>
+              details.url.includes("refused")
+                ? Promise.reject(new Error("fixture"))
+                : Promise.resolve(),
+            flushStore: () => Promise.resolve(),
+          },
+        },
+        {
+          cookies: [
+            "https://mail.google.com/",
+            "https://notgoogle.com/",
+            "https://mail.notgoogle.com/",
+            "https://refused.example.net/",
+          ].map((url) => ({ ...cookie("fixture", false), url })),
+          undecryptable: 0,
+          undecryptableHosts: [],
+        },
+        ["google.com"],
+      );
+      assert.equal(result.imported, 2);
+      assert.equal(result.importedSites, 1);
     }),
   );
 });
