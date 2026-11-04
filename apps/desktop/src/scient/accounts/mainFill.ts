@@ -15,6 +15,7 @@ import {
 import {
   applyUnit,
   jarUnits,
+  mergeUnits,
   unitCookies,
   unitSites,
   type CookieStore,
@@ -112,7 +113,11 @@ export async function copyIntoMain(
       const { cookies: jar, unsupported } = await readJar(readSource);
       const store = jarStore(main, sendMain);
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
-      for (const unit of input.units ?? jarUnits(jar, site, input.join)) {
+      // Units sharing a site are one component, decided once, before anything is written.
+      const planned = input.units
+        ? mergeUnits(input.units, site)
+        : jarUnits(jar, site, input.join);
+      for (const unit of planned) {
         const sites = [...unitSites(unit, site)];
         const since = unit.flatMap((entry) => {
           const at = input.replaceAllowedSince?.[entry];

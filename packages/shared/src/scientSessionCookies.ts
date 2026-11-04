@@ -168,20 +168,46 @@ export function sameUnit(a: ReadonlyArray<SessionCookie>, b: ReadonlyArray<Sessi
   );
 }
 
-/** Each registrable group of a jar, except that groups one multi-site sign-in covers stay one unit. */
+/**
+ * Units that share a registrable site, directly or through others, merged into one: two
+ * university sign-ins with one IdP and different proxies are copied whole or not at all.
+ */
+export function mergeUnits(
+  units: ReadonlyArray<ReadonlyArray<string>>,
+  siteOf: SiteOf,
+): ReadonlyArray<ReadonlyArray<string>> {
+  const parent = new Map<string, string>();
+  const root = (site: string): string => {
+    const up = parent.get(site) ?? site;
+    if (up === site) return site;
+    const top = root(up);
+    parent.set(site, top);
+    return top;
+  };
+  for (const unit of units) {
+    const [first, ...rest] = unitSites(unit, siteOf);
+    if (first === undefined) continue;
+    for (const site of rest) parent.set(root(site), root(first));
+  }
+  const merged = new Map<string, Set<string>>();
+  for (const unit of units)
+    for (const entry of unit) {
+      const key = root(siteOf(siteHost(entry)));
+      merged.set(key, (merged.get(key) ?? new Set()).add(entry));
+    }
+  return [...merged.values()].map((entries) => [...entries]);
+}
+
+/** Each registrable group of a jar, except that groups multi-site sign-ins cover stay one unit. */
 export function jarUnits(
   jar: ReadonlyArray<SessionCookie>,
   siteOf: SiteOf,
   join: ReadonlyArray<ReadonlyArray<string>> = [],
 ): ReadonlyArray<ReadonlyArray<string>> {
-  const joined = join.map((unit) => [...unitSites(unit, siteOf)]);
-  const units = new Map<string, ReadonlyArray<string>>();
-  for (const cookie of jar) {
-    const site = siteOf(bareHost(cookie.domain));
-    const unit = joined.find((sites) => sites.includes(site)) ?? [site];
-    units.set(unit.join("\u0000"), unit);
-  }
-  return [...units.values()];
+  const present = new Set(jar.map((cookie) => siteOf(bareHost(cookie.domain))));
+  return mergeUnits([...join, ...[...present].map((site) => [site])], siteOf)
+    .map((unit) => [...unitSites(unit, siteOf)])
+    .filter((sites) => sites.some((site) => present.has(site)));
 }
 
 const GOOGLE = "google.com";

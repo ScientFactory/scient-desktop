@@ -7,6 +7,7 @@ import {
   decideUnit,
   type CookieStore,
   jarUnits,
+  mergeUnits,
   sameUnit,
   sessionCookieFromCdp,
   sessionCookieFromImported,
@@ -303,5 +304,23 @@ describe("applyUnit", () => {
         occupied,
       ),
     ).toBe(true);
+  });
+});
+
+describe("mergeUnits", () => {
+  it("makes sign-ins that share a site, directly or through others, one unit", () => {
+    const first = ["https://idp.uni.test", "proxya.test"];
+    const second = ["https://idp.uni.test", "proxyb.test"];
+    expect(mergeUnits([first, second, ["other.test"]], siteOf)).toEqual([
+      ["https://idp.uni.test", "proxya.test", "proxyb.test"],
+      ["other.test"],
+    ]);
+    const jar = ["idp.uni.test", "proxya.test", "proxyb.test"].map((domain) =>
+      cookie({ domain, hostOnly: true }),
+    );
+    // Two university rows with one IdP and different proxies are one component, decided once.
+    expect(jarUnits(jar, siteOf, [first, second])).toEqual([
+      ["uni.test", "proxya.test", "proxyb.test"],
+    ]);
   });
 });
