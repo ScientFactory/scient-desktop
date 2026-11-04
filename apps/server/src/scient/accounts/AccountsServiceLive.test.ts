@@ -403,7 +403,7 @@ describe("AccountsService and Main", () => {
     }),
   );
 
-  it.effect("keeps Accounts' sign-outs on Main until any path sees a sign-in there", () =>
+  it.effect("keeps Accounts' sign-outs on Main until a sign-in action there", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
       const signedOut = Effect.map(
@@ -417,13 +417,13 @@ describe("AccountsService and Main", () => {
           yield* run;
           expect(yield* signedOut).toBeUndefined();
         });
-      // A recorded session: a new passwordless row in Main.
-      yield* cleared(Effect.asVoid(service.save(row("default", ["github.com"]))));
-      const main = (yield* service.save(row("default", ["github.com"], "person"))).accountId;
-      yield* TestClock.adjust("1 minute");
-      yield* cleared(service.recordCheck(main, { state: "signed-in" }));
-      yield* TestClock.adjust("1 minute");
       yield* service.mainSignedOut("github.com");
+      // Looks never clear it: a row appearing, a Check, a copy.
+      yield* service.save(row("default", ["github.com"]));
+      const main = (yield* service.save(row("default", ["github.com"], "person"))).accountId;
+      yield* service.recordCheck(main, { state: "signed-in" });
+      expect(yield* signedOut).toEqual(["github.com"]);
+      yield* TestClock.adjust("1 minute");
       const settled = yield* service.changes.pipe(
         Stream.filter(({ profiles }) => profiles.every((profile) => !profile.signedOutSites)),
         Stream.take(1),
@@ -448,11 +448,87 @@ describe("AccountsService and Main", () => {
       );
       yield* service.mainSignedOut("github.com");
       // A sign-in in another profile leaves Main's record alone.
-      yield* service.recordCheck(
-        (yield* service.save(row("profile-work", ["github.com"], "other"))).accountId,
-        { state: "signed-in" },
-      );
+      const other = (yield* service.save(row("profile-work", ["github.com"], "other"))).accountId;
+      yield* service.recordUse({
+        target: { type: "account", accountId: other },
+        action: "sign-in",
+        outcome: "ok",
+        signInOutcome: "signed-in",
+      });
+      yield* TestClock.adjust("1 second");
       expect(yield* signedOut).toEqual(["github.com"]);
+    }),
+  );
+
+  it.effect("writes every action with a new date, and a repeated look once an hour", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const { accountId } = yield* service.save(row("profile-work", ["github.com"]));
+      const signIn = Effect.map(
+        service.snapshot,
+        ({ accounts }) => accounts.find((account) => account.accountId === accountId)?.signIn,
+      );
+      const used = Effect.gen(function* () {
+        const before = (yield* signIn)?.at;
+        const written = yield* service.changes.pipe(
+          Stream.filter(({ accounts }) =>
+            accounts.some(
+              (account) => account.accountId === accountId && account.signIn?.at !== before,
+            ),
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+        yield* service.recordUse({
+          target: { type: "account", accountId },
+          action: "sign-in",
+          outcome: "ok",
+          signInOutcome: "signed-in",
+        });
+        yield* Fiber.join(written);
+      });
+      yield* service.recordCheck(accountId, { state: "signed-in" });
+      const look = yield* signIn;
+      expect(look?.by).toBe("look");
+      yield* TestClock.adjust("10 minutes");
+      yield* service.recordCheck(accountId, { state: "signed-in" });
+      expect(yield* signIn).toEqual(look);
+      yield* used;
+      const action = yield* signIn;
+      expect(action).toMatchObject({ state: "signed-in", by: "action" });
+      yield* TestClock.adjust("1 minute");
+      yield* used;
+      expect((yield* signIn)?.at).not.toBe(action?.at);
+      // A changed state is always written; the same one again after the hour.
+      yield* TestClock.adjust("20 minutes");
+      yield* service.recordCheck(accountId, { state: "signed-out" });
+      expect(yield* signIn).toMatchObject({ state: "signed-out", by: "look" });
+      yield* TestClock.adjust("61 minutes");
+      const dated = (yield* signIn)?.at;
+      yield* service.recordCheck(accountId, { state: "signed-out" });
+      expect((yield* signIn)?.at).not.toBe(dated);
+    }),
+  );
+
+  it.effect("names a session row from the page, and never a row with a password", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const session = (yield* service.save(row("profile-work", ["github.com"]))).accountId;
+      const saved = (yield* service.save(website())).accountId;
+      for (const accountId of [session, saved])
+        yield* service.recordCheck(accountId, { state: "signed-in", username: "octo" });
+      const details = Effect.map(service.snapshot, ({ accounts }) =>
+        accounts.map((account) =>
+          account.details.kind === "website"
+            ? [account.details.username, account.details.origin]
+            : [],
+        ),
+      );
+      expect(yield* details).toEqual([
+        ["octo", "browser-session"],
+        ["synthetic-user", undefined],
+      ]);
     }),
   );
 });

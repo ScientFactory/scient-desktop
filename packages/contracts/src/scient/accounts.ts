@@ -294,6 +294,11 @@ export const AccountSignIn = Schema.Struct({
   state: AccountSignInState,
   at: IsoDateTime,
   detail: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * `action`: something signed in or tried to (Scient, a recording, Google showing a new account).
+   * `look`: Scient only looked (Check, an agent's page, a quiet visit, an import). Absent on old rows.
+   */
+  by: Schema.optional(Schema.Literals(["action", "look"])),
 });
 export type AccountSignIn = typeof AccountSignIn.Type;
 

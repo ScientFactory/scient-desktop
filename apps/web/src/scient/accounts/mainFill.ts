@@ -65,8 +65,9 @@ const profileName = (profileId: string) =>
   )?.name ?? "another profile";
 
 /**
- * Rows that newly say their profile is signed in: one that appears with evidence (a recording,
- * Google's list), or one whose sign-in turns `signed-in` (Scient signed in, or a look saw it).
+ * Rows recording a new sign-in action in their profile (Scient signed in, a recording, Google
+ * showing a new account): `signed-in` by an action, dated after the previous snapshot's. A look
+ * never copies, so an imported row a Check finds signed in stays where it is.
  */
 function signInEvents(
   previous: Pick<AccountsSnapshot, "accounts" | "profiles">,
@@ -78,9 +79,11 @@ function signInEvents(
     if (!profileId || !eligible(profileId) || !isUnrestricted(recordOf(next, profileId)))
       return false;
     const before = previous.accounts.find((old) => old.accountId === row.accountId);
-    return before
-      ? before.signIn?.state !== "signed-in" && row.signIn?.state === "signed-in"
-      : profileSignIns([row]).length > 0;
+    return (
+      row.signIn?.state === "signed-in" &&
+      row.signIn.by === "action" &&
+      row.signIn.at > (before?.signIn?.at ?? "")
+    );
   });
 }
 

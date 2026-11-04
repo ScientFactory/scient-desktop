@@ -25,13 +25,10 @@ export interface ProfileSignIn {
   readonly createdAt?: string | undefined;
 }
 
-/** States that say the sign-in is refused or held back, so the row is no identity. */
-const NOT_SIGNED_IN = new Set(["signed-out", "password-rejected", "code-rejected", "limited"]);
-
 /**
- * Sign-ins with evidence of a session in their profile: a recorded browser sign-in (no password,
- * no username), or one last signed in there, by Scient or as a check found, unless seen signed
- * out, refused or limited since. A saved password alone says nothing about the profile.
+ * Sign-ins with evidence of a session in their profile: one last seen `signed-in` there, or a row
+ * recorded before sign-ins had a state (no status, no password, no username). An imported or
+ * copied row (`unknown`) is not evidence, and a saved password alone says nothing about the profile.
  */
 export function profileSignIns(
   accounts: ReadonlyArray<{
@@ -50,9 +47,8 @@ export function profileSignIns(
     details.kind === "website" &&
     details.profileId &&
     details.sites &&
-    !NOT_SIGNED_IN.has(signIn?.state ?? "") &&
     (signIn?.state === "signed-in" ||
-      (secrets["password"] === undefined && details.username === undefined))
+      (signIn === undefined && secrets["password"] === undefined && details.username === undefined))
       ? [
           {
             profileId: details.profileId,

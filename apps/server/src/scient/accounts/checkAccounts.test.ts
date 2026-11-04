@@ -8,6 +8,8 @@ import { it } from "@effect/vitest";
 import { describe, expect, it as plain } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { TestClock } from "effect/testing";
 import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AccountsService } from "./AccountsService.ts";
@@ -129,7 +131,11 @@ describe("account session state", () => {
   });
 });
 
-const run = (accounts: ReadonlyArray<AccountSummary>, signInPage = true) => {
+const run = (
+  accounts: ReadonlyArray<AccountSummary>,
+  signInPage = true,
+  shown: Partial<ProfileDetection> = {},
+) => {
   const operations: string[] = [];
   let submitted = false;
   const status: PreviewAutomationStatus = {
@@ -154,7 +160,7 @@ const run = (accounts: ReadonlyArray<AccountSummary>, signInPage = true) => {
         if (request.operation !== "evaluate") return status as A;
         return (
           input.expression?.includes("finalUrl")
-            ? { ...page, passwordField: signInPage }
+            ? { ...page, passwordField: signInPage, ...shown }
             : {
                 origin: url,
                 username: submitted ? null : "#user",
@@ -216,6 +222,32 @@ it.effect("only records a session that is already live", () =>
     const { uses, checks } = yield* run([account], false);
     expect(uses).toEqual([]);
     expect(checks[0]?.state).toBe("unknown");
+  }),
+);
+
+it.effect("names who the page says is signed in, least recently seen rows first", () =>
+  Effect.gen(function* () {
+    const session = (id: string, at?: string): AccountSummary => ({
+      ...account,
+      accountId: AccountId.make(id),
+      details: { kind: "website", sites: ["example.com"] },
+      secrets: {},
+      ...(at ? { signIn: { state: "signed-in", at } } : {}),
+    });
+    const checking = yield* run(
+      [
+        session("acc_newerrow", "2026-02-01T00:00:00.000Z"),
+        session("acc_olderrow", "2026-01-01T00:00:00.000Z"),
+      ],
+      false,
+      { signOutLink: true, identity: "octo" },
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust("2 seconds");
+    const { checks } = yield* Fiber.join(checking);
+    expect(checks).toEqual([
+      { accountId: "acc_olderrow", state: "signed-in", username: "octo" },
+      { accountId: "acc_newerrow", state: "signed-in", username: "octo" },
+    ]);
   }),
 );
 

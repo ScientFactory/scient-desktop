@@ -30,6 +30,7 @@ import {
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
+import { COPIED_FROM, IMPORTED_FROM } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import { anySiteMatches, siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import ACCOUNT_ICONS from "./accountIcons.json";
@@ -818,8 +819,10 @@ export function accountStatusLabel(
   const university = account.details && universityDetails(account.details);
   if (!signIn) return university ? "Not signed in yet" : null;
   switch (signIn.state) {
-    case "signed-in":
-      return `Signed in · ${relativeTime(signIn.at)}`;
+    case "signed-in": {
+      const who = account.details?.kind === "website" ? account.details.username : undefined;
+      return `Signed in${who ? ` as ${who}` : ""} · ${relativeTime(signIn.at)}`;
+    }
     case "signed-out":
       return university ? "Sign in needed" : "Signed out";
     case "needs-you":
@@ -830,8 +833,13 @@ export function accountStatusLabel(
       return "Code rejected";
     case "limited":
       return "Site is limiting access";
-    case "failed":
     case "unknown":
+      return signIn.detail?.startsWith(IMPORTED_FROM)
+        ? "Imported"
+        : signIn.detail?.startsWith(COPIED_FROM)
+          ? "Copied"
+          : "Couldn't check";
+    case "failed":
       return "Couldn't check";
   }
 }

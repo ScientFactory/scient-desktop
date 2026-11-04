@@ -2,6 +2,12 @@ import type { AccountSignIn, AccountSignInState, AccountSummary } from "@t3tools
 
 const LIMITED_PAUSE_MS = 60 * 60 * 1000;
 const RETRY_PAUSE_MS = 15 * 60 * 1000;
+/** A look that finds the same state again is written this often, to date it without constant writes. */
+const LOOK_WRITE_MS = 60 * 60 * 1000;
+
+/** How an imported or copied session row's `unknown` detail begins. */
+export const IMPORTED_FROM = "Imported from";
+export const COPIED_FROM = "Copied from";
 
 type SignInFields = Pick<AccountSummary, "signIn"> & Partial<Pick<AccountSummary, "secrets">>;
 
@@ -66,8 +72,9 @@ export const agentSignInOnHold = (
 ) => signInOnHold(account, nowMs) && (session.unattended || account.signIn?.state !== "needs-you");
 
 /**
- * The one way an account's sign-in state changes: after a finished sign-in (`attempt`) or a look
- * at the site (`look`). Returns `summary` itself when nothing changes.
+ * The one way an account's sign-in state changes: after a finished sign-in (`attempt`, written
+ * `by: "action"` with a new `at` every time) or a look at the site (`look`, which writes nothing when
+ * it finds the same state within the hour). Returns `summary` itself when nothing changes.
  */
 export const withSignIn = (
   summary: AccountSummary,
@@ -87,5 +94,11 @@ export const withSignIn = (
   // Ended moments after signing in: saying only "signed out" would lift the hold on signing back in.
   const state =
     next.state === "signed-out" && signedInMomentsAgo(summary, nowMs) ? "needs-you" : next.state;
-  return { ...summary, signIn: { ...next, state } };
+  if (
+    source === "look" &&
+    summary.signIn?.state === state &&
+    within(summary.signIn, LOOK_WRITE_MS, nowMs)
+  )
+    return summary;
+  return { ...summary, signIn: { ...next, state, by: source === "attempt" ? "action" : "look" } };
 };

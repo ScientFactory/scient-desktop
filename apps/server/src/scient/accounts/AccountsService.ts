@@ -117,7 +117,7 @@ export interface AccountsServiceShape {
   readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
   /**
    * A row's sign-in was copied into Main: Main's row for it gains its sites and username, or a
-   * passwordless one is made, saying "Copied from …" until a look sees Main signed in.
+   * passwordless one is made, saying "Copied from …" until Main is seen signed in.
    */
   readonly mainFilled: (input: {
     readonly accountId: AccountId;
@@ -212,10 +212,13 @@ export interface AccountsServiceShape {
     accountId: AccountId,
     fields: ReadonlyArray<string>,
   ) => Effect.Effect<Readonly<Record<string, Redacted.Redacted<string>>>, AccountsError>;
-  /** Keeps what Scient last saw of a sign-in, through `withSignIn`, dated by the server clock. */
+  /**
+   * Keeps what Scient last saw of a sign-in, through `withSignIn` as a look, dated by the server
+   * clock. `username`, from the page, names a passwordless row that had none, when signed in.
+   */
   readonly recordCheck: (
     accountId: AccountId,
-    check: Omit<AccountSignIn, "at">,
+    check: Omit<AccountSignIn, "at" | "by"> & { readonly username?: string | undefined },
   ) => Effect.Effect<void, AccountsError>;
   /**
    * Non-blocking; records the outcome of a use that `authorize` allowed. `savedPasswordUsed` (not

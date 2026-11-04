@@ -223,6 +223,8 @@ describe("profileSignIns", () => {
         site({ secrets: password }),
         site({ secrets: password, signIn: { state: "signed-in" } }),
         site({ signIn: { state: "signed-out" } }),
+        site({ signIn: { state: "unknown", detail: "Imported from Chrome · Yaacov" } }),
+        site({ signIn: { state: "unknown", detail: "Copied from Work" } }),
       ]),
     ).toHaveLength(2);
   });

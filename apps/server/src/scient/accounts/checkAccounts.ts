@@ -228,16 +228,19 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
         Effect.flatMap(decodeCookies),
         Effect.orElseSucceed(() => []),
       );
-      return sessionState(
-        account,
-        url,
-        page,
-        cookies.some((cookie) => cookie.httpOnly),
-      );
+      return {
+        state: sessionState(
+          account,
+          url,
+          page,
+          cookies.some((cookie) => cookie.httpOnly),
+        ),
+        identity: page.identity,
+      };
     });
     const openAthens = openAthensUniversity(account);
-    const state: AccountSignInState = openAthens
-      ? yield* askOpenAthens(invoke, tabId)
+    const { state, identity } = openAthens
+      ? { state: yield* askOpenAthens(invoke, tabId), identity: undefined }
       : yield* readPage;
     const onHold = automaticSignInOnHold(account, yield* Clock.currentTimeMillis);
     if (keepsLastSeen(account, state)) return;
@@ -246,6 +249,7 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
       if (onHold && state === "signed-out" && account.signIn?.state !== "signed-in") return;
       return yield* accounts.recordCheck(account.accountId, {
         state,
+        ...(state === "signed-in" && identity ? { username: identity } : {}),
         ...(state === "unknown"
           ? {
               detail: openAthens
@@ -287,6 +291,8 @@ const runCheck = Effect.fn("AccountsCheck.run")(function* (input: AccountsCheckI
     )
     // Google says itself whether these work (`accounts.googleSessions.seen`).
     .filter((account) => !isGoogleSessionRow(account))
+    // Least recently seen first, so repeated presses reach every row past the cap.
+    .toSorted((a, b) => (a.signIn?.at ?? "").localeCompare(b.signIn?.at ?? ""))
     .slice(0, MAX_CHECKED);
   yield* Effect.forEach(
     chosen,

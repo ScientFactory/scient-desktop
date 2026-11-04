@@ -58,7 +58,10 @@ const snapshot = (
   accounts: ReadonlyArray<AccountSummary>,
   profiles: AccountsSnapshot["profiles"] = [],
 ) => ({ accounts, profiles }) as unknown as AccountsSnapshot;
-const signedIn = (at: string) => ({ signIn: { state: "signed-in" as const, at } });
+const signedIn = (at: string, by: "action" | "look" = "action") => ({
+  signIn: { state: "signed-in" as const, at, by },
+});
+const AT = "2026-11-03T11:00:00.000Z";
 const copied = (outcome: DesktopFillMainResult["units"][number]["outcome"]) => ({
   units: [{ sites: ["github.com"], outcome }],
   unsupported: 0,
@@ -101,7 +104,7 @@ describe("trigger 2: a sign-in seen in another profile", () => {
     expect(t.fills).toEqual([]);
   });
 
-  it("copies once for a recording, Scient's own sign-in, and a Google session", async () => {
+  it("copies once per action: a recording, Scient's own sign-in, a Google session", async () => {
     const t = setup();
     const executor = row("work", ["github.com"], {
       details: {
@@ -111,8 +114,11 @@ describe("trigger 2: a sign-in seen in another profile", () => {
         profileId: BrowserProfileId.make("work"),
       },
     });
-    await t.seen(snapshot([executor]));
-    const recording = row("work", ["overleaf.com"]);
+    const imported = row("work", ["gitlab.com"], {
+      signIn: { state: "unknown", at: AT, detail: "Imported from Chrome · Person", by: "look" },
+    });
+    await t.seen(snapshot([executor, imported]));
+    const recording = row("work", ["overleaf.com"], signedIn(AT));
     const google = row("home", ["google.com"], {
       details: {
         kind: "website",
@@ -120,26 +126,38 @@ describe("trigger 2: a sign-in seen in another profile", () => {
         username: "person@example.com",
         profileId: BrowserProfileId.make("home"),
       },
-      ...signedIn("2026-11-03T11:00:00.000Z"),
+      ...signedIn(AT),
     });
+    // A Check that finds the imported row signed in is a look: it stays in its profile.
     await t.seen(
-      snapshot([{ ...executor, ...signedIn("2026-11-03T11:00:00.000Z") }, recording, google]),
+      snapshot([
+        { ...executor, ...signedIn(AT) },
+        { ...imported, ...signedIn(AT, "look") },
+        recording,
+        google,
+      ]),
     );
     expect(t.fills.map((fill) => [fill.from, fill.units, fill.mode, fill.skipSites])).toEqual([
       ["work", [["github.com"]], "fill-or-replace", []],
       ["work", [["overleaf.com"]], "fill-or-replace", []],
       ["home", [["google.com"]], "fill-or-replace", []],
     ]);
-    // Google's recheck refreshes the time of a sign-in it already reported: no new copy.
+    // Google's hourly recheck is a look with a newer time: no copy. A second sign-in within the
+    // hour is a new action: a second copy.
     await t.seen(
       snapshot([
-        { ...executor, ...signedIn("2026-11-03T11:00:00.000Z") },
+        { ...executor, ...signedIn("2026-11-03T11:20:00.000Z") },
         recording,
-        { ...google, ...signedIn("2026-11-03T12:00:00.000Z") },
+        { ...google, ...signedIn("2026-11-03T12:00:00.000Z", "look") },
       ]),
     );
-    expect(t.fills).toHaveLength(3);
-    expect(t.recorded).toHaveLength(3);
+    expect(t.fills.map((fill) => fill.units)).toEqual([
+      [["github.com"]],
+      [["overleaf.com"]],
+      [["google.com"]],
+      [["github.com"]],
+    ]);
+    expect(t.recorded).toHaveLength(4);
   });
 
   it("leaves a profile with limits, and Main, alone", async () => {
@@ -147,7 +165,10 @@ describe("trigger 2: a sign-in seen in another profile", () => {
     const restricted = [{ profileId: BrowserProfileId.make("work"), access: "ask" as const }];
     await t.seen(snapshot([], restricted as never));
     await t.seen(
-      snapshot([row("work", ["github.com"]), row("default", ["gitlab.com"])], restricted as never),
+      snapshot(
+        [row("work", ["github.com"], signedIn(AT)), row("default", ["gitlab.com"], signedIn(AT))],
+        restricted as never,
+      ),
     );
     expect(t.fills).toEqual([]);
   });
@@ -155,25 +176,27 @@ describe("trigger 2: a sign-in seen in another profile", () => {
   it("retries a failed copy twice while the row is unchanged, and never a failed restore", async () => {
     const t = setup(copied("failed"));
     await t.seen(snapshot([]));
-    await t.seen(snapshot([row("work", ["github.com"])]));
+    await t.seen(snapshot([row("work", ["github.com"], signedIn(AT))]));
     for (const _ of [1, 2, 3]) await t.timers.shift()?.();
     expect(t.fills).toHaveLength(3);
     expect(t.timers).toHaveLength(0);
     // A page that wrote the site during the copy is tried again the same way.
     const busy = setup(copied("busy"));
     await busy.seen(snapshot([]));
-    await busy.seen(snapshot([row("work", ["github.com"])]));
+    await busy.seen(snapshot([row("work", ["github.com"], signedIn(AT))]));
     expect(busy.timers).toHaveLength(1);
     const restoreFailed = setup(copied("restore-failed"));
     await restoreFailed.seen(snapshot([]));
-    await restoreFailed.seen(snapshot([row("work", ["github.com"])]));
+    await restoreFailed.seen(snapshot([row("work", ["github.com"], signedIn(AT))]));
     expect(restoreFailed.timers).toHaveLength(0);
   });
 
   it("keeps at most 200 copies in flight or waiting", async () => {
     const t = setup(copied("failed"));
     await t.seen(snapshot([]));
-    const many = Array.from({ length: 201 }, (_, index) => row("work", [`site${index}.example`]));
+    const many = Array.from({ length: 201 }, (_, index) =>
+      row("work", [`site${index}.example`], signedIn(AT)),
+    );
     await t.seen(snapshot(many));
     // The oldest was dropped past the limit, so only the other 200 wait to retry.
     expect(t.fills).toHaveLength(201);

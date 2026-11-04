@@ -76,6 +76,7 @@ import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 import { parseTotp } from "./signIn/totp.ts";
+import { COPIED_FROM } from "@t3tools/shared/scientAccountSignIn";
 
 const missing = () => fail("not-found", "The account no longer exists.");
 
@@ -911,7 +912,8 @@ export const layer = Layer.effect(
             const signIn = {
               state: "unknown" as const,
               at: yield* now,
-              detail: `Copied from ${profileName}`,
+              detail: `${COPIED_FROM} ${profileName}`,
+              by: "look" as const,
             };
             const existing = mainRowFor(state.accounts, source.summary);
             if (!existing) {
@@ -1035,10 +1037,16 @@ export const layer = Layer.effect(
                 )
                   continue;
                 // Google's own answer for a password-free row: nothing to refuse or limit here.
+                // A new account, or one Google shows signed in again, is an action; the rest are looks.
+                const by = seen === "signed-in" && last?.state !== "signed-in" ? "action" : "look";
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: { ...account.summary, details: recorded, signIn: { state: seen, at } },
+                    summary: {
+                      ...account.summary,
+                      details: recorded,
+                      signIn: { state: seen, at, by },
+                    },
                   }),
                   true,
                 );
@@ -1541,13 +1549,26 @@ export const layer = Layer.effect(
       resolveSecrets: Effect.fn("AccountsService.resolveSecretsInput")((accountId, fields) =>
         locked(resolve(accountId, fields)),
       ),
-      recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, check) =>
+      recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, { username, ...check }) =>
         locked(
           Effect.gen(function* () {
             const account = findAccount(accountId);
             if (!account) return;
+            const { details } = account.summary;
+            // A page naming who is signed in names a session row that had no one yet.
+            const named =
+              username !== undefined &&
+              check.state === "signed-in" &&
+              details.kind === "website" &&
+              details.username === undefined &&
+              account.summary.secrets.password === undefined
+                ? {
+                    ...account.summary,
+                    details: { ...details, username, origin: "browser-session" as const },
+                  }
+                : account.summary;
             const summary = withSignIn(
-              account.summary,
+              named,
               { ...check, at: yield* now },
               yield* Clock.currentTimeMillis,
               "look",

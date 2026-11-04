@@ -648,6 +648,30 @@ describe("account status", () => {
     expect(accountStatusLabel({ signIn: { state: "signed-in", at } }, relative)).toBe(
       "Signed in · 2h ago",
     );
+    const session = (username?: string) => ({
+      kind: "website" as const,
+      sites: ["github.com"],
+      ...(username ? { username } : {}),
+    });
+    expect(
+      accountStatusLabel(
+        { details: session("octo"), signIn: { state: "signed-in", at } },
+        relative,
+      ),
+    ).toBe("Signed in as octo · 2h ago");
+    // An imported or copied session was never seen working; anything else unknown wasn't read.
+    expect(
+      accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, detail: "Copied from Work" } },
+        relative,
+      ),
+    ).toBe("Copied");
+    expect(
+      accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, detail: "No answer." } },
+        relative,
+      ),
+    ).toBe("Couldn't check");
     expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(

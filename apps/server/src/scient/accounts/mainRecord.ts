@@ -50,17 +50,13 @@ export function withSignedOutSite(profiles: ReadonlyArray<BrowserProfileRecord>,
   ];
 }
 
-/** A row saying Main is signed in that wasn't before: a new look, or a new recorded session. */
-const seenSignedIn = (summary: AccountSummary, before: AccountSummary | undefined) =>
-  summary.signIn?.state === "signed-in"
-    ? before?.signIn?.state !== "signed-in" || before.signIn.at !== summary.signIn.at
-    : before === undefined &&
-      summary.signIn === undefined &&
-      summary.secrets.password === undefined &&
-      summary.details.kind === "website" &&
-      summary.details.username === undefined;
+/** A row recording a new sign-in in Main: an action, never a look. */
+const signedInNow = (summary: AccountSummary, before: AccountSummary | undefined) =>
+  summary.signIn?.state === "signed-in" &&
+  summary.signIn.by === "action" &&
+  before?.signIn?.at !== summary.signIn.at;
 
-/** A sign-in seen in Main clears its sites from the record of Accounts' sign-outs. */
+/** A real sign-in in Main clears its sites from the record of Accounts' sign-outs. */
 export function withMainSignOutsCleared<
   S extends {
     readonly accounts: ReadonlyArray<Row>;
@@ -71,7 +67,7 @@ export function withMainSignOutsCleared<
   if (!main?.signedOutSites?.length) return next;
   const seen = next.accounts.flatMap(({ summary }) =>
     isMainRow(summary) &&
-    seenSignedIn(
+    signedInNow(
       summary,
       before.accounts.find((row) => row.summary.accountId === summary.accountId)?.summary,
     )
