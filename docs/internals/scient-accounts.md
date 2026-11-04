@@ -172,7 +172,7 @@ reach every profile.
 Each time Accounts opens, linked profiles take the source browser's current picture, colour, name
 and email, found by folder (older links: by unique name and email). That needs neither quitting the
 browser nor the Keychain. A Scient profile still named after its source follows a rename there; a
-name chosen in Scient stays. A picture that can't be read keeps the one shown. The manual refresh
+name chosen in Scient stays, and its row shows the source after it ("Lab · Chrome · Yaacov"). A picture that can't be read keeps the one shown. The manual refresh
 (the button beside Browser profiles, or Refresh in a profile's menu) also re-copies sign-ins, once
 the browser is closed, and imports saved passwords; it reports a running browser instead of
 skipping silently. It leaves sites that are working in that profile alone (`sitesToKeep`), and

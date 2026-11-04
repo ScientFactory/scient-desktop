@@ -27,6 +27,7 @@ import {
   type BrowserProfile,
   type BrowserProfileRecord,
   type BrowserImportSource,
+  type BrowserImportSourceId,
   type BrowserImportSourceProfile,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
@@ -138,6 +139,29 @@ export function importedLabel(cookies: number, sites: number | undefined) {
   if (cookies === 0) return "nothing to import";
   if (!sites) return cookieCount(cookies);
   return `cookies for ${sites.toLocaleString()} ${sites === 1 ? "site" : "sites"}`;
+}
+
+/** The names the desktop's browser import gives each browser. */
+const BROWSER_NAMES: Readonly<Record<BrowserImportSourceId, string>> = {
+  chrome: "Chrome",
+  edge: "Microsoft Edge",
+  brave: "Brave",
+  vivaldi: "Vivaldi",
+  opera: "Opera",
+  arc: "Arc",
+  helium: "Helium",
+  firefox: "Firefox",
+  zen: "Zen",
+  safari: "Safari",
+};
+
+/** "Chrome · Yaacov" beside an imported profile whose name here differs from its source's. */
+export function renamedSourceLabel(
+  name: string,
+  source: Pick<NonNullable<BrowserProfileRecord["source"]>, "browser" | "profileName"> | undefined,
+) {
+  if (!source || name.trim() === source.profileName.trim()) return undefined;
+  return `${BROWSER_NAMES[source.browser]} · ${source.profileName}`;
 }
 
 export function importProfileName(sourceName: string, taken: ReadonlyArray<string>) {

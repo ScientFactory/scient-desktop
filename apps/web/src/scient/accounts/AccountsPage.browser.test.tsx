@@ -276,7 +276,10 @@ it("withholds native store links in a browser client", async () => {
 
 it("lists Main beside imported profiles, each showing where it came from", async () => {
   state.settings = {
-    browserProfiles: [{ id: "profile-safari", name: "Personal", kind: "persistent" }],
+    browserProfiles: [
+      { id: "profile-safari", name: "Personal", kind: "persistent" },
+      { id: "profile-lab", name: "Lab", kind: "persistent" },
+    ],
     browserDefaultProfileId: "profile-safari",
   };
   const snapshot = {
@@ -287,6 +290,15 @@ it("lists Main beside imported profiles, each showing where it came from", async
           browser: "safari",
           profileName: "Personal",
           directory: ".",
+          importedAt: "2026-11-03T00:00:00.000Z",
+        },
+      },
+      {
+        ...defaultBrowserProfileRecord("profile-lab"),
+        source: {
+          browser: "chrome",
+          profileName: "Yaacov",
+          directory: "Profile 1",
           importedAt: "2026-11-03T00:00:00.000Z",
         },
       },
@@ -311,6 +323,14 @@ it("lists Main beside imported profiles, each showing where it came from", async
     .toBeVisible();
   expect(picture("Main")?.getAttribute("src")).toContain("scient-symbol");
   expect(picture("Personal")?.getAttribute("src")).toBe(browserIconUrl("safari"));
+  // Renamed here, the row names its source; a name that matches its source needs nothing more.
+  const lab = page.getByRole("button", { name: "Signed-in sites for Lab" });
+  await expect.element(lab.getByText("· Chrome · Yaacov")).toBeVisible();
+  const label = lab.getByText("Lab", { exact: true }).element() as HTMLElement;
+  expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+  expect(
+    page.getByRole("button", { name: "Signed-in sites for Personal" }).element().textContent,
+  ).not.toContain("Safari");
 });
 
 it("records a sign-out on Main before its cookies go", async () => {

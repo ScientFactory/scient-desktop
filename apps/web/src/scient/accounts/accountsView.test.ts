@@ -17,6 +17,7 @@ import {
   fillableAccounts,
   googleSignInUrl,
   isBrowserSignIn,
+  renamedSourceLabel,
   signedOutOfGoogle,
   sitesToKeep,
   activityLine,
@@ -891,6 +892,18 @@ describe("googleSignInUrl", () => {
     );
     expect(googleSignInUrl(undefined)).toBe(
       `https://accounts.google.com/AddSession?continue=${back}`,
+    );
+  });
+});
+
+describe("renamedSourceLabel", () => {
+  it("names the source of an imported profile renamed here, and nothing otherwise", () => {
+    const source = { browser: "chrome" as const, profileName: "Yaacov" };
+    expect(renamedSourceLabel("Lab", source)).toBe("Chrome · Yaacov");
+    expect(renamedSourceLabel("Yaacov", source)).toBeUndefined();
+    expect(renamedSourceLabel("Lab", undefined)).toBeUndefined();
+    expect(renamedSourceLabel("Work", { browser: "edge", profileName: "Profile 1" })).toBe(
+      "Microsoft Edge · Profile 1",
     );
   });
 });

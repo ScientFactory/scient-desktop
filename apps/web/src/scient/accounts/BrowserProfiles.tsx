@@ -77,6 +77,7 @@ import {
   changedSourceProfile,
   cookiesLabel,
   importedLabel,
+  renamedSourceLabel,
   signedOutOfGoogle,
   sitesToKeep,
 } from "./accountsView";
@@ -654,6 +655,14 @@ export function BrowserImportDialog({
   );
 }
 
+/** After a renamed imported profile's name: where it came from, "· Chrome · Yaacov". */
+function RenamedSource({ name, source }: { name: string; source: BrowserProfileRecord["source"] }) {
+  const label = renamedSourceLabel(name, source);
+  return label ? (
+    <span className="min-w-0 truncate text-xs text-muted-foreground">· {label}</span>
+  ) : null;
+}
+
 /** The line under a profile's name: its address and, when Google refused it, a way back in. */
 export function ProfileDetail({
   email,
@@ -1004,6 +1013,7 @@ export function BrowserProfiles({
                 <span className="grid min-w-0 gap-1 text-left">
                   <span className="flex items-center gap-2">
                     <span className="truncate text-sm text-foreground">{profile.name}</span>
+                    <RenamedSource name={profile.name} source={profile.record.source} />
                     {settings.browserDefaultProfileId === profile.id ? (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         New tabs
