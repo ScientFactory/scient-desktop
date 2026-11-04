@@ -6,6 +6,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { accountsState } from "./accountsState";
 import { accountCatalogue, isSavedPassword } from "./accountsView";
+import { fillMainFromProfile } from "./mainFill";
 import type { CookieMetadata } from "./sessionDetection";
 
 const MOST_SITES = 200;
@@ -85,7 +86,7 @@ export async function recordImportedSessions(
   if (read?._tag !== "Success" || !read.value.features?.sessionsSeen) return;
   const sites = importedSessionSites(cookies, read.value.accounts, Date.now());
   if (sites.length === 0) return;
-  await accountsState.sessionsSeen
+  const seen = await accountsState.sessionsSeen
     .run(appAtomRegistry, {
       environmentId,
       input: {
@@ -93,5 +94,8 @@ export async function recordImportedSessions(
         sessions: sites.map((site) => ({ site, how: "imported" as const, from })),
       },
     })
-    .catch(() => undefined);
+    .catch(() => null);
+  // The import filled Main before these rows existed; filling again gives Main's copies their rows.
+  if (seen?._tag === "Success" && seen.value.created.length > 0)
+    await fillMainFromProfile(environmentId, profileId).catch(() => undefined);
 }

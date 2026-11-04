@@ -281,8 +281,13 @@ async function fillFromProfile(
   const fillMain = window.desktopBridge?.accounts?.fillMain;
   const record = recordOf(snapshot, profileId);
   if (!fillMain || !otherPersistentProfile(profileId) || !isUnrestricted(record)) return false;
+  // Sign-ins with evidence, and the profile's session rows (an import's): each unit copied gives
+  // Main a "Copied from …" row, so a look at Main has a row to mark.
   const rows = snapshot.accounts.filter(
-    (row) => website(row)?.profileId === profileId && profileSignIns([row]).length > 0,
+    (row) =>
+      website(row)?.profileId === profileId &&
+      (profileSignIns([row]).length > 0 ||
+        (row.secrets.password === undefined && !website(row)?.institution)),
   );
   const join = rows.flatMap((row) => {
     const sites = website(row)?.sites ?? [];

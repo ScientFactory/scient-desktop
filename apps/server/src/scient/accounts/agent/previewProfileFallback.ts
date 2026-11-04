@@ -5,6 +5,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
@@ -183,6 +184,18 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
     );
     if (!opened.tabId) return status;
     yield* remember(best.profileId, url);
+    // The page that opened is evidence for the profile it opened in.
+    const there = yield* invoke<unknown>(
+      "evaluate",
+      { expression: profileDetectionScript },
+      opened.tabId,
+    ).pipe(Effect.flatMap(decodeDetection), Effect.option);
+    if (
+      Option.isSome(there) &&
+      there.value.signOutLink &&
+      classifyProfilePage(url, there.value) === "opens"
+    )
+      yield* pageSignedIn(best.profileId, there.value).pipe(Effect.ignore, Effect.forkDetach);
     yield* invoke("close", {}, tabId).pipe(Effect.orElseSucceed(() => undefined));
     const current = yield* invoke<PreviewAutomationStatus>("status", {}, opened.tabId).pipe(
       Effect.orElseSucceed(() => opened),

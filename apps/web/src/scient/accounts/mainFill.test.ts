@@ -228,14 +228,30 @@ describe("trigger 1: after an import into another profile", () => {
         accounts: {
           fillMain: async (input: unknown) => {
             fills.push(input);
-            return copied("copied");
+            return {
+              units: [
+                { sites: ["github.com"], outcome: "copied" },
+                { sites: ["overleaf.com"], outcome: "same" },
+              ],
+              unsupported: 0,
+            };
           },
         },
       },
     });
     const session = row("work", ["github.com"]);
+    // An import's row, which proves nothing yet, still gets Main's copy a row to mark.
+    const imported = row("work", ["overleaf.com"], {
+      details: {
+        kind: "website",
+        sites: ["overleaf.com"],
+        profileId: BrowserProfileId.make("work"),
+        origin: "browser-session",
+      },
+      signIn: { state: "unknown", at: AT, detail: "Imported from Chrome · Person", by: "look" },
+    });
     state.snapshot = snapshot(
-      [session],
+      [session, imported],
       [
         {
           profileId: BrowserProfileId.make("default"),
@@ -253,6 +269,7 @@ describe("trigger 1: after an import into another profile", () => {
     ]);
     expect(state.filled).toEqual([
       { environmentId, input: { accountId: session.accountId, profileName: "Work" } },
+      { environmentId, input: { accountId: imported.accountId, profileName: "Work" } },
     ]);
     vi.unstubAllGlobals();
   });

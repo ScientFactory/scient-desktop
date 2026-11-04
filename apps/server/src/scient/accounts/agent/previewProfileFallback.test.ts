@@ -25,7 +25,11 @@ const profiles = [
 ];
 
 /** A browser whose pages open only for the URLs `opens` accepts; everything else asks to sign in. */
-function browser(opens: (url: string) => boolean, shown: Record<string, unknown> = {}) {
+function browser(
+  opens: (url: string, tabId: string) => boolean,
+  shown: Record<string, unknown> = {},
+  tabProfile = "work",
+) {
   const urls = new Map<string, string>([["tab-work", ""]]);
   const calls: Array<{ operation: string; input: Record<string, unknown> }> = [];
   const status = (tabId = "tab-work"): PreviewAutomationStatus => ({
@@ -36,7 +40,7 @@ function browser(opens: (url: string) => boolean, shown: Record<string, unknown>
     title: "",
     loading: false,
     profiles,
-    tabs: [{ tabId: "tab-work", url: urls.get("tab-work") ?? null, profileId: "work" }],
+    tabs: [{ tabId: "tab-work", url: urls.get("tab-work") ?? null, profileId: tabProfile }],
   });
   const layer = Layer.mock(PreviewAutomationBroker)({
     invoke: <A>(request: { operation: string; input: unknown; tabId?: string }) =>
@@ -53,7 +57,7 @@ function browser(opens: (url: string) => boolean, shown: Record<string, unknown>
         if (request.operation === "evaluate") {
           const url = urls.get(tabId)!;
           return (
-            opens(url)
+            opens(url, tabId)
               ? { finalUrl: url, title: "Docs", passwordField: false, deniedText: false, ...shown }
               : {
                   finalUrl: "https://accounts.google.com/signin",
@@ -202,5 +206,95 @@ it.effect("a page showing a sign-out control signs in that profile's rows, and m
     expect(row(work)?.signIn).toMatchObject({ state: "signed-in", by: "look" });
     expect(row(work)?.details).toMatchObject({ username: "octo" });
     expect(row(home)?.signIn).toBeUndefined();
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a sign-in copied into Main at import is marked when a Main page shows it", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const work = BrowserProfileId.make("work");
+    yield* service.sessionsSeen({
+      profileId: work,
+      sessions: [{ site: "github.com", how: "imported", from: "Chrome · Person" }],
+    });
+    const imported = (yield* service.snapshot).accounts[0]!;
+    // What the import's fill records for the unit it copied into Main.
+    yield* service.mainFilled({ accountId: imported.accountId, profileName: "Work" });
+    const main = () =>
+      Effect.map(service.snapshot, ({ accounts }) =>
+        accounts.find(
+          (row) => row.details.kind === "website" && row.details.profileId === "default",
+        ),
+      );
+    expect((yield* main())?.signIn).toMatchObject({ state: "unknown", detail: "Copied from Work" });
+    const marked = service.changes.pipe(
+      Stream.filter(({ accounts }) =>
+        accounts.some(
+          (row) =>
+            row.details.kind === "website" &&
+            row.details.profileId === "default" &&
+            row.signIn?.state === "signed-in",
+        ),
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.forkChild,
+    );
+    const fake = browser(() => true, { signOutLink: true, identity: "yaacovcorcos" }, "default");
+    const url = "https://github.com/settings/profile";
+    fake.urls.set("tab-work", url);
+    yield* previewProfileFallback(scope, fake.status(), {
+      operation: "open",
+      requestedUrl: url,
+      targetsExistingTab: false,
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(fake.layer, invocation, Layer.succeed(AccountsService, service)),
+      ),
+    );
+    yield* Fiber.join(yield* marked);
+    expect((yield* main())?.details).toMatchObject({
+      username: "yaacovcorcos",
+      origin: "browser-session",
+    });
+    expect((yield* main())?.signIn).toMatchObject({ state: "signed-in" });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a page that opens in the profile it fell back to marks that profile's row", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const { accountId } = yield* service.save({
+      name: "Overleaf",
+      details: {
+        kind: "website",
+        sites: ["overleaf.com"],
+        profileId: BrowserProfileId.make("home"),
+      },
+      secrets: {},
+    });
+    const marked = service.changes.pipe(
+      Stream.filter(({ accounts }) =>
+        accounts.some((row) => row.accountId === accountId && row.signIn?.state === "signed-in"),
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.forkChild,
+    );
+    // Work's tab asks to sign in; Home's opens signed in.
+    const fake = browser((_url, tabId) => tabId === "tab-home", { signOutLink: true });
+    const url = "https://www.overleaf.com/project";
+    fake.urls.set("tab-work", url);
+    const result = yield* previewProfileFallback(scope, fake.status(), {
+      operation: "open",
+      requestedUrl: url,
+      targetsExistingTab: false,
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(fake.layer, invocation, Layer.succeed(AccountsService, service)),
+      ),
+    );
+    expect(result.accountsNote).toContain("Opened in Home");
+    yield* Fiber.join(yield* marked);
   }).pipe(Effect.scoped),
 );
