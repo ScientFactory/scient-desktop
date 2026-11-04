@@ -38,7 +38,7 @@ const isUnrestricted = (record: BrowserProfileRecord) =>
 
 /** Sites the user signed out of with Accounts' Sign out on Main: an import never brings them back. */
 const mainSignOuts = (snapshot: Pick<AccountsSnapshot, "profiles">) =>
-  recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).signedOutSites ?? [];
+  recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.signedOutSites ?? [];
 
 const website = (row: AccountSummary) => (row.details.kind === "website" ? row.details : undefined);
 
@@ -420,7 +420,7 @@ export function backfillOrder(
   snapshot: Pick<AccountsSnapshot, "profiles">,
   profiles: ReadonlyArray<BrowserProfile>,
 ) {
-  const done = new Set(recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).backfilled ?? []);
+  const done = new Set(recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.backfilled ?? []);
   const waiting = profiles.filter(
     ({ id, kind }) =>
       kind === "persistent" &&
@@ -451,7 +451,7 @@ export async function backfillMain(
     readonly makeMainDefault?: () => Promise<void>;
   },
 ) {
-  const first = recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).backfilled === undefined;
+  const first = recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.backfilled === undefined;
   let recorded = false;
   for (const profileId of backfillOrder(snapshot, deps.profiles)) {
     if (!(await deps.fill(profileId))) continue;

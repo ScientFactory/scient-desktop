@@ -343,7 +343,7 @@ describe("trigger 1: after an import into another profile", () => {
           access: "allowed",
           scope: { type: "all-projects" },
           scriptSignIn: true,
-          signedOutSites: ["gitlab.com"],
+          main: { signedOutSites: ["gitlab.com"] },
         },
       ],
     );
@@ -412,12 +412,12 @@ describe("trigger 3: the one-time back-fill", () => {
       done: [["early"], ["late"], ["unlinked"]],
       defaults: 1,
     });
-    expect(await run({ backfilled: ["early", "late", "unlinked"] })).toEqual({
+    expect(await run({ main: { backfilled: ["early", "late", "unlinked"] } })).toEqual({
       filled: [],
       done: [],
       defaults: 0,
     });
-    expect(await run({ backfilled: ["early"] })).toEqual({
+    expect(await run({ main: { backfilled: ["early"] } })).toEqual({
       filled: ["late", "unlinked"],
       done: [["late"], ["unlinked"]],
       defaults: 0,

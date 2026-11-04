@@ -426,12 +426,39 @@ describe("AccountsService and Main", () => {
     }),
   );
 
+  it.effect("reads Main's sign-outs and back-fill stored on its record as its `main`", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { service, vault, blobs } = yield* makeHarness({ storage });
+      yield* service.mainBackfilled([BrowserProfileId.make("profile-work")]);
+      yield* service.profileSignedOut(MAIN, "github.com");
+      const name = "accounts-state";
+      const stored = JSON.parse(
+        new TextDecoder().decode(Redacted.value(yield* vault.decrypt(name, blobs.get(name)!))),
+      ) as { profiles: Array<Record<string, unknown>> };
+      // The earlier shape: the two lists straight on Main's record.
+      stored.profiles = stored.profiles.map(({ main, ...profile }) => ({
+        ...profile,
+        ...(main as object),
+      }));
+      blobs.set(
+        name,
+        yield* vault.encrypt(name, Redacted.make(new TextEncoder().encode(JSON.stringify(stored)))),
+      );
+      const restarted = yield* makeHarness({ storage });
+      const main = (yield* restarted.service.snapshot).profiles.find(
+        (profile) => profile.profileId === MAIN,
+      );
+      expect(main?.main).toEqual({ signedOutSites: ["github.com"], backfilled: ["profile-work"] });
+    }),
+  );
+
   it.effect("records the back-fill once per profile, and an empty one as done", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
       const backfilled = Effect.map(
         service.snapshot,
-        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.backfilled,
+        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.main?.backfilled,
       );
       yield* service.mainBackfilled([]);
       expect(yield* backfilled).toEqual([]);
@@ -446,7 +473,8 @@ describe("AccountsService and Main", () => {
       const { service } = yield* makeHarness();
       const signedOut = Effect.map(
         service.snapshot,
-        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.signedOutSites,
+        ({ profiles }) =>
+          profiles.find((profile) => profile.profileId === MAIN)?.main?.signedOutSites,
       );
       const cleared = (run: Effect.Effect<void, AccountsError>, site = "github.com") =>
         Effect.gen(function* () {
@@ -463,7 +491,7 @@ describe("AccountsService and Main", () => {
       expect(yield* signedOut).toEqual(["github.com"]);
       yield* TestClock.adjust("1 minute");
       const settled = yield* service.changes.pipe(
-        Stream.filter(({ profiles }) => profiles.every((profile) => !profile.signedOutSites)),
+        Stream.filter(({ profiles }) => profiles.every((profile) => !profile.main?.signedOutSites)),
         Stream.take(1),
         Stream.runDrain,
         Effect.forkChild,

@@ -422,6 +422,18 @@ export const ProfileReceived = Schema.Struct({
 });
 export type ProfileReceived = typeof ProfileReceived.Type;
 
+/** What only Main keeps. */
+export const MainProfileState = Schema.Struct({
+  /**
+   * Sites the user signed out of with Accounts' Sign out, which an import or back-fill never
+   * copies back. A sign-in seen in Main clears its site.
+   */
+  signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** The profiles whose sessions have been copied into Main once, in this environment. */
+  backfilled: Schema.optional(Schema.Array(BrowserProfileId)),
+});
+export type MainProfileState = typeof MainProfileState.Type;
+
 /**
  * Scient's record for an upstream browser profile id. A profile without a
  * record is Allowed for all projects with script sign-ins on.
@@ -443,13 +455,8 @@ export const BrowserProfileRecord = Schema.Struct({
    * approves that, can tell which profiles Scient made.
    */
   madeInScient: Schema.optional(IsoDateTime),
-  /**
-   * Main only: sites the user signed out of with Accounts' Sign out, which an import or back-fill
-   * never copies back. A sign-in seen in Main clears its site.
-   */
-  signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  /** Main only: the profiles whose sessions have been copied into Main once, in this environment. */
-  backfilled: Schema.optional(Schema.Array(BrowserProfileId)),
+  /** Main's own record; no other profile has one. */
+  main: Schema.optional(MainProfileState),
   /** On the desktop: the actions other computers follow. */
   send: Schema.optional(ProfileSendLog),
   /** On the desktop: the other computers this profile's sign-ins go to. */

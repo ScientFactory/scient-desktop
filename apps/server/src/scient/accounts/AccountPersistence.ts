@@ -189,12 +189,31 @@ const foldSignInOrigin = (summary: Record<string, unknown>) => {
   return from ? { ...summary, signIn: { ...signIn, from } } : summary;
 };
 
+/** Main's sign-outs and back-fill were fields of its profile record; they are its `main` now. */
+const foldMainFields = (profile: unknown) => {
+  if (typeof profile !== "object" || profile === null) return profile;
+  if (!("signedOutSites" in profile || "backfilled" in profile)) return profile;
+  const { signedOutSites, backfilled, ...rest } = profile as Record<string, unknown>;
+  const existing = (rest["main"] ?? {}) as Record<string, unknown>;
+  return {
+    ...rest,
+    main: {
+      ...(signedOutSites === undefined ? {} : { signedOutSites }),
+      ...(backfilled === undefined ? {} : { backfilled }),
+      ...existing,
+    },
+  };
+};
+
 /** Older stored shapes, read as today's before decoding. */
 export const foldStoredAccounts = (state: unknown): unknown => {
   if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
   if (!Array.isArray(state.accounts)) return state;
+  const profiles =
+    "profiles" in state && Array.isArray(state.profiles) ? state.profiles : undefined;
   return {
     ...state,
+    ...(profiles ? { profiles: profiles.map(foldMainFields) } : {}),
     accounts: state.accounts.map((account) => {
       const summary = account?.summary;
       if (typeof summary !== "object" || summary === null) return account;

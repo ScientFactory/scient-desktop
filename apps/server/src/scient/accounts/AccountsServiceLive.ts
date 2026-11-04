@@ -1073,7 +1073,10 @@ export const layer = Layer.effect(
                   ...state.profiles.filter((profile) => profile.profileId !== main.profileId),
                   {
                     ...main,
-                    backfilled: [...new Set([...(main.backfilled ?? []), ...profileIds])],
+                    main: {
+                      ...main.main,
+                      backfilled: [...new Set([...(main.main?.backfilled ?? []), ...profileIds])],
+                    },
                   },
                 ],
               },

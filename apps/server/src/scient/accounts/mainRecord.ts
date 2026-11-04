@@ -39,7 +39,13 @@ export function withSignedOutSite(profiles: ReadonlyArray<BrowserProfileRecord>,
     defaultBrowserProfileRecord(DEFAULT_BROWSER_PROFILE_ID);
   return [
     ...profiles.filter((profile) => profile !== main),
-    { ...main, signedOutSites: [...new Set([...(main.signedOutSites ?? []), site])] },
+    {
+      ...main,
+      main: {
+        ...main.main,
+        signedOutSites: [...new Set([...(main.main?.signedOutSites ?? []), site])],
+      },
+    },
   ];
 }
 
@@ -57,7 +63,8 @@ export function withMainSignOutsCleared<
   },
 >(before: S, next: S): S {
   const main = next.profiles.find((profile) => profile.profileId === DEFAULT_BROWSER_PROFILE_ID);
-  if (!main?.signedOutSites?.length) return next;
+  const signedOutSites = main?.main?.signedOutSites;
+  if (!main || !signedOutSites?.length) return next;
   const seen = next.accounts.flatMap(({ summary }) =>
     isMainRow(summary) &&
     signedInNow(
@@ -68,15 +75,15 @@ export function withMainSignOutsCleared<
       : [],
   );
   if (seen.length === 0) return next;
-  const kept = main.signedOutSites.filter(
-    (site) => !seen.some((rowSite) => siteUnder(rowSite, site)),
-  );
-  if (kept.length === main.signedOutSites.length) return next;
-  const { signedOutSites: _, ...rest } = main;
+  const kept = signedOutSites.filter((site) => !seen.some((rowSite) => siteUnder(rowSite, site)));
+  if (kept.length === signedOutSites.length) return next;
+  const { signedOutSites: _, ...rest } = main.main ?? {};
   return {
     ...next,
     profiles: next.profiles.map((profile) =>
-      profile === main ? (kept.length ? { ...rest, signedOutSites: kept } : rest) : profile,
+      profile === main
+        ? { ...main, main: kept.length ? { ...rest, signedOutSites: kept } : rest }
+        : profile,
     ),
   };
 }
