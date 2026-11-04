@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   features: { signInAnyRow: true } as { signInAnyRow?: true },
   primary: "synthetic" as string | null,
   results: {} as Record<string, unknown>,
+  environments: [] as unknown[],
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -40,7 +41,9 @@ vi.mock("~/state/environments", async (original) => ({
   ...(await original<typeof import("~/state/environments")>()),
   usePrimaryEnvironmentId: () => state.primary,
   useEnvironment: () => ({ label: "Lab server" }),
+  useEnvironments: () => ({ environments: state.environments, isReady: true }),
 }));
+
 vi.mock("~/browser/openFileInPreview", () => ({ openUrlInPreview: state.open }));
 vi.mock("~/localApi", () => ({
   readLocalApi: () => ({ shell: { openExternal: state.external } }),
@@ -489,5 +492,72 @@ it("lets the owner of a computer that receives sign-ins forget the desktop sendi
     await vi.waitFor(() => expect(state.calls).toEqual([["record", { source: "macbook" }]]));
   } finally {
     state.primary = "synthetic";
+  }
+});
+
+it("signs in once on the computer that refused a copy, in that computer's own browser", async () => {
+  state.calls = [];
+  state.primary = "desktop";
+  state.features = { signInAnyRow: true };
+  state.results = { "accounts:save": { accountId: "acc_lab" } };
+  state.environments = [
+    {
+      environmentId: EnvironmentId.make("lab"),
+      label: "Lab server",
+      connection: { phase: "connected" },
+    },
+  ];
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: { accounts: { readSessions: async () => null } },
+  });
+  try {
+    await using _screen = await render(
+      <RemoteComputers
+        environmentId={EnvironmentId.make("desktop")}
+        snapshot={{
+          profiles: [
+            {
+              ...defaultBrowserProfileRecord("work"),
+              sharedWith: [
+                {
+                  environmentId: EnvironmentId.make("lab"),
+                  label: "Lab server",
+                  applied: 3,
+                  waiting: 0,
+                  needsYou: ["github.com"],
+                },
+              ],
+            },
+          ],
+          accounts: [],
+        }}
+        canWrite
+      />,
+    );
+    await page.getByRole("button", { name: "Sign in there" }).click();
+    await vi.waitFor(() =>
+      expect(state.calls).toEqual([
+        [
+          "record",
+          {
+            name: "github.com",
+            details: {
+              kind: "website",
+              sites: ["github.com"],
+              profileId: "work",
+              origin: "browser-session",
+            },
+            secrets: {},
+          },
+        ],
+        ["record", expect.objectContaining({ accountId: "acc_lab", discardIfUnfinished: true })],
+      ]),
+    );
+  } finally {
+    state.primary = "synthetic";
+    state.results = {};
+    state.environments = [];
+    Reflect.deleteProperty(window, "desktopBridge");
   }
 });

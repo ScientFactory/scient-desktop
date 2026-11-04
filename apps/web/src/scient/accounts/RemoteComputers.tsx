@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  BrowserProfileId,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   type AccountsSnapshot,
@@ -23,6 +24,7 @@ import { usePreparedConnection } from "~/state/session";
 import { allowedRoute, sendAgain, sendingRemotesAtom } from "./remoteSessions";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+import { useSignIn } from "./useSignIn";
 
 /** "10:14", "yesterday 18:40", or a date: times on these lines are labels only. */
 function when(iso: string, now = new Date()) {
@@ -145,6 +147,33 @@ function RemoteComputerRow({
   });
   const openThere = () =>
     void navigate({ to: "/settings/accounts", search: { machine: environmentId } });
+  const save = useAccountCommand(accountsState.save, environmentId);
+  const signIn = useSignIn(environmentId);
+  const needs = desktop.profiles.flatMap((record) =>
+    (record.sharedWith ?? [])
+      .filter((entry) => entry.environmentId === environmentId)
+      .flatMap((entry) => entry.needsYou.map((site) => ({ profileId: record.profileId, site }))),
+  );
+  /**
+   * The user signs in once on that computer, in its own browser: a row there for the site, then
+   * its sign-in, which goes again if nothing comes of it. Older computers open their Accounts.
+   */
+  const signInThere = async () => {
+    const first = needs[0];
+    if (!first || !remote?.features?.signInAnyRow) return openThere();
+    const saved = await save({
+      name: first.site,
+      details: {
+        kind: "website",
+        sites: [first.site],
+        profileId: BrowserProfileId.make(first.profileId),
+        origin: "browser-session",
+      },
+      secrets: {},
+    });
+    if (!saved.ok || !(await signIn(saved.value.accountId, { discardIfUnfinished: true })))
+      openThere();
+  };
   return (
     <SettingsRow
       title={
@@ -159,7 +188,7 @@ function RemoteComputerRow({
       }
       control={
         line.needsYou.length || universities.length ? (
-          <Button size="xs" variant="outline" onClick={openThere}>
+          <Button size="xs" variant="outline" onClick={() => void signInThere()}>
             Sign in there
           </Button>
         ) : undefined

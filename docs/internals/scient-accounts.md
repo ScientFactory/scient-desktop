@@ -215,6 +215,8 @@ or 2FA key goes. Decisions use revisions, never clocks:
   remote drops a sender, and its copies, when the session it last proved its key over is revoked
   (it watches session removals) or after `SENDER_KEEP_DAYS` (30) days without it, checked at start
   and daily. Only units still holding exactly the sender's copy are deleted.
+- **Never mid-sign-in.** A profile's unit that shares a site with a row whose sign-in attempt is
+  under way isn't read or sent; it waits until the attempt ends.
 - **Needs you.** A page on a received unit that asks to sign in marks it `needsYou`, and the agent's
   note asks for `scient_account_add` (attended) or to stop (unattended). A sign-out control there
   clears it.
