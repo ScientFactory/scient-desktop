@@ -32,6 +32,7 @@ export function issueUnit(
   log: ProfileSendLog | undefined,
   sites: ReadonlyArray<string>,
   kind: "copy" | "delete",
+  limit = COPIES_LIMIT,
 ): ProfileSendLog {
   const current = log ?? EMPTY;
   const head = current.head + 1;
@@ -39,8 +40,7 @@ export function issueUnit(
   const others = current.units.filter((unit) => unitKey(unit.sites) !== key);
   const entry = { sites, revision: head, kind };
   const copies = others.filter((unit) => unit.kind === "copy").length;
-  if (kind === "delete" || copies < COPIES_LIMIT)
-    return { ...current, head, units: [...others, entry] };
+  if (kind === "delete" || copies < limit) return { ...current, head, units: [...others, entry] };
   // Full of copies: the whole jar goes again instead, so no unit is lost.
   return { ...current, head, jar: head, units: others.filter((unit) => unit.kind === "delete") };
 }

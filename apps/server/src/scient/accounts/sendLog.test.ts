@@ -151,9 +151,10 @@ describe("deletions an offline computer still needs", () => {
       waiting: 0,
       needsYou: [],
     });
-    let log = issueUnit(undefined, ["signed-out.test"], "delete");
-    for (let index = 0; index < 5_001; index += 1)
-      log = issueUnit(log, [`site${index}.test`], "copy");
+    // The bound is 5,000 copies; 3 tells the same story.
+    let log = issueUnit(undefined, ["signed-out.test"], "delete", 3);
+    for (let index = 0; index < 4; index += 1)
+      log = issueUnit(log, [`site${index}.test`], "copy", 3);
     // Past the bound, copies fall back to the whole jar; the deletion stays.
     expect(log.jar).toBe(log.head);
     expect(log.units).toEqual([{ sites: ["signed-out.test"], revision: 1, kind: "delete" }]);
