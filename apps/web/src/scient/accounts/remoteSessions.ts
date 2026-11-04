@@ -29,6 +29,7 @@ import {
   universitySites,
   type PlannedUnit,
 } from "@t3tools/shared/scientSessionCookies";
+import * as Cause from "effect/Cause";
 import * as Redacted from "effect/Redacted";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -122,6 +123,28 @@ export interface DeliveryDeps {
 
 /** Stops a run: every await checks it, so nothing more is sent once it is set. */
 export class DeliveryStopped extends Error {}
+
+/** Why a delivery failed, in words safe to show: never a cookie, a key or a server's message. */
+export type DeliveryFailureReason = "refused" | "failed";
+
+/** A request of the delivery that the remote or this desktop answered with an error. */
+class DeliveryFailed extends Error {
+  readonly reason: DeliveryFailureReason;
+  constructor(reason: DeliveryFailureReason) {
+    super("The request failed.");
+    this.reason = reason;
+  }
+}
+
+const failureReason = (result: { readonly _tag: string; readonly cause?: unknown }) => {
+  const error = Cause.isCause(result.cause) ? Cause.squash(result.cause) : result.cause;
+  return typeof error === "object" &&
+    error !== null &&
+    "reason" in error &&
+    error.reason === "denied"
+    ? ("refused" as const)
+    : ("failed" as const);
+};
 
 /** The profile's controls changed after its plan was made. */
 class ControlsChanged extends DeliveryStopped {}
@@ -367,7 +390,7 @@ const call = async <I, A, E>(
   input: I,
 ): Promise<A> => {
   const result = await command.run(registry, { environmentId, input });
-  if (result._tag !== "Success") throw new Error("The request failed.");
+  if (result._tag !== "Success") throw new DeliveryFailed(failureReason(result));
   return result.value;
 };
 
@@ -395,6 +418,19 @@ async function bindSender(
   if (!key) throw new DeliveryStopped("unbound");
   return key;
 }
+
+/** The last delivery to each remote that failed, until one succeeds. */
+export interface DeliveryFailure {
+  readonly reason: DeliveryFailureReason;
+  readonly at: string;
+}
+
+export const deliveryFailuresAtom = Atom.make(
+  new Map<EnvironmentId, DeliveryFailure>() as ReadonlyMap<EnvironmentId, DeliveryFailure>,
+).pipe(Atom.keepAlive);
+
+/** Waits before each retry of a failed delivery; past the last, the next change tries again. */
+const RETRY_MS = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000] as const;
 
 /** Remotes being sent sign-ins now, for "sending your sign-ins…". */
 export const sendingRemotesAtom = Atom.make(
@@ -448,12 +484,21 @@ export function watchRemoteSessions(
   let running: { readonly identity: string; cancelled: boolean } | undefined;
   let again = false;
   let lastKey: string | undefined;
+  let retries = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
 
   const setSending = (sending: boolean) => {
     const current = new Set(registry.get(sendingRemotesAtom));
     if (sending) current.add(environmentId);
     else current.delete(environmentId);
     registry.set(sendingRemotesAtom, current);
+  };
+
+  const setFailure = (failure: DeliveryFailure | undefined) => {
+    const current = new Map(registry.get(deliveryFailuresAtom));
+    if (failure) current.set(environmentId, failure);
+    else if (!current.delete(environmentId)) return;
+    registry.set(deliveryFailuresAtom, current);
   };
 
   const run = async (): Promise<void> => {
@@ -468,7 +513,7 @@ export function watchRemoteSessions(
     running = token;
     setSending(true);
     const desktop = () => value(registry.get(desktopAtom));
-    await deliverOnce({
+    const outcome = await deliverOnce({
       source: primaryId,
       label: readEnvironment(primaryId)?.serverConfig?.environment.label ?? "this computer",
       remoteId: environmentId,
@@ -532,9 +577,36 @@ export function watchRemoteSessions(
         }).then(() => undefined),
       readSessions,
       now: () => new Date().toISOString(),
-    }).catch(() => undefined);
+    }).then(
+      () => "delivered" as const,
+      // A changed route, permission or control stops a run; that is no failure.
+      (cause: unknown) =>
+        cause instanceof DeliveryStopped
+          ? ("stopped" as const)
+          : cause instanceof DeliveryFailed
+            ? cause.reason
+            : ("failed" as const),
+    );
     running = undefined;
     setSending(false);
+    if (outcome === "delivered") {
+      retries = 0;
+      if (retry !== undefined) clearTimeout(retry);
+      retry = undefined;
+      setFailure(undefined);
+    } else if (outcome !== "stopped" && !stopped) {
+      setFailure({ reason: outcome, at: new Date().toISOString() });
+      const wait = RETRY_MS[retries];
+      if (wait !== undefined && retry === undefined) {
+        retries += 1;
+        retry = setTimeout(() => {
+          retry = undefined;
+          // The same state as the failed run: forget it, so it runs again.
+          lastKey = undefined;
+          nudge();
+        }, wait);
+      }
+    }
     if (again && !stopped) return run();
   };
 
@@ -581,6 +653,8 @@ export function watchRemoteSessions(
   return () => {
     stopped = true;
     if (running) running.cancelled = true;
+    if (retry !== undefined) clearTimeout(retry);
+    retry = undefined;
     for (const stop of stops) stop();
   };
 }

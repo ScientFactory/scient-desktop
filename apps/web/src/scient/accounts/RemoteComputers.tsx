@@ -21,7 +21,13 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
 
-import { allowedRoute, sendAgain, sendingRemotesAtom } from "./remoteSessions";
+import {
+  allowedRoute,
+  deliveryFailuresAtom,
+  sendAgain,
+  sendingRemotesAtom,
+  type DeliveryFailure,
+} from "./remoteSessions";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
@@ -44,6 +50,8 @@ export interface RemoteLineInput {
   /** Settings → Labs lets this desktop send sign-ins at all. */
   readonly sharing: boolean;
   readonly sending: boolean;
+  /** The last delivery that failed, until one succeeds. */
+  readonly failure?: DeliveryFailure | undefined;
   readonly refused: "relay" | "unencrypted" | undefined;
   /** The remote's snapshot while connected. */
   readonly remote: Pick<AccountsSnapshot, "features"> | undefined;
@@ -68,15 +76,17 @@ export function remoteLine(input: RemoteLineInput, now = new Date()) {
     ? "doesn't get your sign-ins: sending them is off in Settings → Labs"
     : input.sending
       ? "sending your sign-ins…"
-      : input.refused
-        ? `doesn't get sign-ins: ${input.refused === "relay" ? "connected through a relay" : "connected without encryption"}`
-        : connected && input.remote && !input.remote.features?.sessionsReceive
-          ? "can't receive sign-ins: update Scient there"
-          : connected && sentAt
-            ? `has your sign-ins from ${when(sentAt, now)}`
-            : !connected && sentAt
-              ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`
-              : "gets your sign-ins when it connects";
+      : input.failure
+        ? `couldn't send your sign-ins at ${when(input.failure.at, now)}: ${input.failure.reason === "refused" ? "it refused this computer" : "the request failed"}`
+        : input.refused
+          ? `doesn't get sign-ins: ${input.refused === "relay" ? "connected through a relay" : "connected without encryption"}`
+          : connected && input.remote && !input.remote.features?.sessionsReceive
+            ? "can't receive sign-ins: update Scient there"
+            : connected && sentAt
+              ? `has your sign-ins from ${when(sentAt, now)}`
+              : !connected && sentAt
+                ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`
+                : "gets your sign-ins when it connects";
   const needsYou = [...new Set(input.shared.flatMap(({ needsYou }) => needsYou))];
   const kept = input.shared.reduce((total, { kept }) => total + (kept ?? 0), 0);
   const waiting = input.shared.reduce((total, { waiting }) => total + waiting, 0);
@@ -132,6 +142,7 @@ function RemoteComputerRow({
 }) {
   const navigate = useNavigate();
   const sending = useAtomValue(sendingRemotesAtom).has(environmentId);
+  const failure = useAtomValue(deliveryFailuresAtom).get(environmentId);
   const prepared = usePreparedConnection(environmentId);
   const remote = useAccounts(environmentId).data ?? undefined;
   const refused = Option.isSome(prepared)
@@ -145,6 +156,7 @@ function RemoteComputerRow({
     phase,
     sharing,
     sending,
+    failure,
     refused,
     remote,
     shared: desktop.profiles.flatMap(
