@@ -18,6 +18,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   resend: [] as unknown[],
+  unshared: [] as unknown[],
+  withdrawAnswers: true,
   snapshot: { profiles: [] as unknown[], accounts: [] },
 }));
 vi.mock("~/hooks/useSettings", () => ({
@@ -37,15 +39,34 @@ vi.mock("./accountsState", () => ({
         return { _tag: "Success", value: { revision: 1 } };
       },
     },
+    senderKey: {
+      run: async () => ({ _tag: "Success", value: { key: "kept-sender-key" } }),
+    },
+    sessionsWithdraw: {
+      run: async () =>
+        mocks.withdrawAnswers
+          ? { _tag: "Success", value: { deleted: 1 } }
+          : { _tag: "Failure", cause: "offline" },
+    },
+    profilesUnshared: {
+      run: async (_registry: unknown, input: unknown) => {
+        mocks.unshared.push(input);
+        return { _tag: "Success", value: {} };
+      },
+    },
   },
 }));
-vi.mock("~/state/environments", () => ({}));
+vi.mock("~/state/environments", () => ({
+  readPrimaryEnvironmentId: () => "macbook",
+  readEnvironment: () => ({ label: "Lab server" }),
+}));
 vi.mock("~/state/presentation", () => ({}));
 vi.mock("~/state/session", () => ({}));
 vi.mock("~/connection/desktopLocal", () => ({ readDesktopSecondaryBootstraps: () => [] }));
-vi.mock("~/rpc/atomRegistry", () => ({}));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 
-const { allowedRoute, deliverOnce, DeliveryStopped, sendAgain } = await import("./remoteSessions");
+const { allowedRoute, deliverOnce, DeliveryStopped, sendAgain, withdrawCopies } =
+  await import("./remoteSessions");
 
 const MAC = EnvironmentId.make("macbook");
 const LAB = EnvironmentId.make("lab");
@@ -303,4 +324,21 @@ it("sends nothing of a profile restricted while its read was pending, and withdr
   await deliverOnce(deps);
   expect(sent.flatMap(({ units }) => units)).toEqual([]);
   expect(deps.withdraw).toHaveBeenCalledWith("work", 3, expect.anything());
+});
+
+it("keeps the key when an unlink can't reach the computer, and forgets it once withdrawn", async () => {
+  vi.stubGlobal("window", { desktopBridge: { accounts: { readSessions: async () => null } } });
+  try {
+    mocks.withdrawAnswers = false;
+    expect(await withdrawCopies(LAB)).toBe("offline");
+    mocks.withdrawAnswers = true;
+    expect(await withdrawCopies(LAB)).toBe("withdrawn");
+    // Both stop the deletions waiting; only the confirmed one drops the key.
+    expect(mocks.unshared).toEqual([
+      { environmentId: MAC, input: { environmentId: LAB } },
+      { environmentId: MAC, input: { environmentId: LAB, forgetKey: true } },
+    ]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

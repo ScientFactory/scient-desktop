@@ -965,8 +965,17 @@ export const AccountProfileResendInput = Schema.Struct({
 
 export const AccountProfileRevision = Schema.Struct({ revision: SessionRevision });
 
-/** A computer this desktop no longer sends to: its deletions no longer wait for it. */
-export const AccountProfileUnsharedInput = Schema.Struct({ environmentId: EnvironmentId });
+/**
+ * A computer this desktop no longer sends to: its deletions no longer wait for it. Its key goes
+ * only once it confirmed the withdrawal; kept, a later link proves the same sender again.
+ */
+export const AccountProfileUnsharedInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  forgetKey: Schema.optional(Schema.Literal(true)),
+});
+
+/** On a remote, its owner forgets a desktop: its copies and its registration go. */
+export const AccountSessionsForgetInput = Schema.Struct({ source: EnvironmentId });
 
 export const AccountProfileSharedInput = Schema.Struct({
   profileId: BrowserProfileId,

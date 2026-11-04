@@ -207,7 +207,11 @@ or 2FA key goes. Decisions use revisions, never clocks:
   wait for and go before the next one; a cookie operation past 30 s is aborted by closing its
   helper page, its unit restored and reported busy, and the lease released; CDP Network
   commands on a helper page of the profile's own context). Only applied units are recorded in
-  `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit. A
+  `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit; the
+  desktop drops its key only once that is confirmed, so a computer unlinked while offline is
+  proven and reconciled when linked again. The session that bound a sender gets a new key if it
+  lost the bind answer. On the remote, Forget this computer (`accounts.sessions.forget`) deletes a
+  sender's copies and registration, so a reinstalled desktop can bind again. A
   remote drops a sender, and its copies, when the session it last proved its key over is revoked
   (it watches session removals) or after `SENDER_KEEP_DAYS` (30) days without it, checked at start
   and daily. Only units still holding exactly the sender's copy are deleted.

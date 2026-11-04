@@ -17,7 +17,7 @@ import { render } from "../../../test/render";
 import { AccountRow, SignInGroupRow } from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, ProfileDetail } from "./BrowserProfiles";
-import { notSentLine, remoteLine } from "./RemoteComputers";
+import { notSentLine, RemoteComputers, remoteLine } from "./RemoteComputers";
 
 const state = vi.hoisted(() => ({
   open: vi.fn(),
@@ -456,5 +456,38 @@ it("on another computer, shows received controls as set on the desktop and signs
   } finally {
     state.primary = "synthetic";
     state.results = {};
+  }
+});
+
+it("lets the owner of a computer that receives sign-ins forget the desktop sending them", async () => {
+  state.calls = [];
+  state.primary = "desktop";
+  try {
+    await using _screen = await render(
+      <RemoteComputers
+        environmentId={EnvironmentId.make("lab")}
+        snapshot={{
+          profiles: [
+            {
+              ...defaultBrowserProfileRecord("work"),
+              received: [
+                {
+                  source: EnvironmentId.make("macbook"),
+                  label: "MacBook",
+                  sentAt: "2026-11-04T10:14:00.000Z",
+                  units: [],
+                },
+              ],
+            },
+          ],
+          accounts: [],
+        }}
+        canWrite
+      />,
+    );
+    await page.getByRole("button", { name: "Forget this computer" }).click();
+    await vi.waitFor(() => expect(state.calls).toEqual([["record", { source: "macbook" }]]));
+  } finally {
+    state.primary = "synthetic";
   }
 });

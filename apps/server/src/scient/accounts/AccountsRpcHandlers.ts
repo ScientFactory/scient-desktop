@@ -337,13 +337,21 @@ export const makeAccountsRpcHandlers = ({
     [WS_METHODS.accountsProfilesUnshared]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsProfilesUnshared,
-        accounts.profilesUnshared(input.environmentId).pipe(Effect.as({})),
+        accounts
+          .profilesUnshared(input.environmentId, input.forgetKey === true)
+          .pipe(Effect.as({})),
         attributes,
       ),
     [WS_METHODS.accountsSessionsBind]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSessionsBind,
         withCaller(caller, (remote, session) => remote.bind(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsForget]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsForget,
+        withRemoteSessions((remote) => remote.forgetSender(input.source)),
         attributes,
       ),
     [WS_METHODS.accountsSenderKey]: (input) =>

@@ -275,6 +275,42 @@ describe("receiving a desktop's sign-ins", () => {
       }),
   );
 
+  it.effect(
+    "re-issues a key only to the session that bound the sender, when its answer was lost",
+    () =>
+      Effect.gen(function* () {
+        const { remote } = yield* setup();
+        const lost = keys.desktop;
+        const again = yield* remote.bind(desktop, { source: MAC, label: "MacBook" });
+        expect(again.key).toBeDefined();
+        keys.desktop = again.key!;
+        expect(outcomes(yield* remote.receive(desktop, batch([copy(1)])))).toEqual(["copied"]);
+        const stale = yield* remote
+          .receive(desktop, batch([copy(2)], { key: lost }))
+          .pipe(Effect.flip);
+        expect(stale.message).toBe("Another connection already sends as MacBook.");
+        const other = { sessionId: "session-other", subject: "desktop" };
+        const refused = yield* remote
+          .bind(other, { source: MAC, label: "MacBook" })
+          .pipe(Effect.flip);
+        expect(refused.message).toBe("Another connection already sends as MacBook.");
+      }),
+  );
+
+  it.effect("binds a reinstalled desktop once the owner here forgets the old one", () =>
+    Effect.gen(function* () {
+      const { remote, jars, accounts } = yield* setup();
+      yield* remote.receive(desktop, batch([copy(1)]));
+      const reinstalled = { sessionId: "session-reinstalled", subject: "desktop" };
+      yield* remote.bind(reinstalled, { source: MAC, label: "MacBook" }).pipe(Effect.flip);
+      expect(yield* remote.forgetSender(MAC)).toEqual({ deleted: 1 });
+      expect(jars.get(WORK)).toEqual([]);
+      expect(yield* accounts.remoteSenders).toEqual([]);
+      const bound = yield* remote.bind(reinstalled, { source: MAC, label: "MacBook" });
+      expect(bound.key).toBeDefined();
+    }),
+  );
+
   it.effect("checks the sender's controls and the university here, under the profile's lock", () =>
     Effect.gen(function* () {
       const { remote, accounts, jars } = yield* setup();

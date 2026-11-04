@@ -224,6 +224,11 @@ export const accountsState = {
     label: "accounts:sessionsBind",
     tag: WS_METHODS.accountsSessionsBind,
   }),
+  sessionsForget: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsForget",
+    tag: WS_METHODS.accountsSessionsForget,
+    ...lane,
+  }),
   senderKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:senderKey",
     tag: WS_METHODS.accountsSenderKey,

@@ -48,6 +48,7 @@ import {
   AccountSenderKey,
   AccountSenderKeyInput,
   AccountSessionsBindInput,
+  AccountSessionsForgetInput,
   AccountSessionsBindResult,
   AccountProfileSignedOutInput,
   AccountSessionsApplied,
@@ -128,6 +129,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileShared: "accounts.profiles.shared",
   accountsProfilesUnshared: "accounts.profiles.unshared",
   accountsSessionsBind: "accounts.sessions.bind",
+  accountsSessionsForget: "accounts.sessions.forget",
   accountsSenderKey: "accounts.computers.senderKey",
   accountsKeepSenderKey: "accounts.computers.keepSenderKey",
   accountsHandoffShow: "accounts.handoffs.show",
@@ -484,4 +486,10 @@ export const WsAccountsKeepSenderKeyRpc = accountRpc(
   SCIENT_ACCOUNT_WS_METHODS.accountsKeepSenderKey,
   AccountKeepSenderKeyInput,
   Empty,
+);
+/** On a remote: its owner forgets a desktop, so a reinstalled one can bind again. */
+export const WsAccountsSessionsForgetRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsForget,
+  AccountSessionsForgetInput,
+  AccountSessionsWithdrawResult,
 );

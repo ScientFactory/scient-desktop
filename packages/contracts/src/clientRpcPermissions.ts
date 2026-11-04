@@ -70,6 +70,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsProfileShared]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfilesUnshared]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSessionsBind]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsForget]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSenderKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepSenderKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,

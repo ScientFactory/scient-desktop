@@ -148,8 +148,11 @@ export interface AccountsServiceShape {
   readonly profileSendLog: (
     profileId: BrowserProfileId,
   ) => Effect.Effect<ProfileSendLog, AccountsError>;
-  /** Unlinking a computer: no profile's deletions wait for it any more, and its key is gone. */
-  readonly profilesUnshared: (environmentId: EnvironmentId) => Effect.Effect<void, AccountsError>;
+  /** Unlinking a computer: no profile's deletions wait for it; `forgetKey` also drops its key. */
+  readonly profilesUnshared: (
+    environmentId: EnvironmentId,
+    forgetKey: boolean,
+  ) => Effect.Effect<void, AccountsError>;
   /** What another computer applied of the profile; entries all of them applied are dropped. */
   readonly profileShared: (
     profileId: BrowserProfileId,

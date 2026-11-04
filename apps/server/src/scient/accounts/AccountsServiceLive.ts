@@ -1084,13 +1084,13 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      profilesUnshared: Effect.fn("AccountsService.profilesUnshared")((environmentId) =>
+      profilesUnshared: Effect.fn("AccountsService.profilesUnshared")((environmentId, forgetKey) =>
         locked(
           Effect.suspend(() =>
             commit(
               {
                 ...state,
-                ...(state.senderKeys
+                ...(state.senderKeys && forgetKey
                   ? {
                       senderKeys: state.senderKeys.filter(
                         (entry) => entry.environmentId !== environmentId,

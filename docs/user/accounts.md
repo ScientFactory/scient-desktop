@@ -146,7 +146,8 @@ every project with scripts go; a profile that is Off or limited to projects does
 already sent leave. Passwords and 2FA keys never go. Each computer's line under Other computers
 says what it has. When a site refuses a copy there, the line says it needs you: sign in once on
 that computer and the sign-in stays there. Signing out on that computer stays there until you next
-sign in to the site here. Copies leave a computer when you remove this computer's access there, or
+sign in to the site here. Copies leave a computer when you remove it here while it's connected,
+when you remove this computer's access there or press Forget this computer in its Accounts, or
 after 30 days without this computer connecting. On another computer, a program running as you can
 read the sign-ins Scient keeps there.
 

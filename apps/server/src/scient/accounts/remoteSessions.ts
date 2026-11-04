@@ -186,6 +186,10 @@ export class RemoteSessions extends Context.Service<
       profileId: BrowserProfileId,
       site: string,
     ) => Effect.Effect<{ readonly signedOut: boolean }, AccountsError>;
+    /** The owner here forgets a desktop: its copies, as it wrote them, and its key go. */
+    readonly forgetSender: (
+      source: EnvironmentId,
+    ) => Effect.Effect<{ readonly deleted: number }, AccountsError>;
     /** Forgets every sender revoked here or silent past the keep limit, with its copies. */
     readonly sweep: () => Effect.Effect<void>;
     /** The server's lifelong sweeps: at start, daily, and on every removed session. */
@@ -356,6 +360,16 @@ export const makeRemoteSessions = Effect.gen(function* () {
         const sender = (yield* accounts.remoteSenders).find(
           (entry) => entry.source === input.source,
         );
+        // The session that bound the sender may lose the key in transit: it gets a new one.
+        if (sender && !input.key && sender.boundBy === caller.sessionId) {
+          const key = NodeCrypto.randomBytes(32).toString("base64url");
+          yield* accounts.setRemoteSender(input.source, {
+            ...sender,
+            keyHash: hashKey(key).toString("base64url"),
+            seenAt: yield* now,
+          });
+          return { key: Redacted.make(key) };
+        }
         if (sender) {
           if (!input.key)
             return yield* denied(`Another connection already sends as ${sender.label}.`);
@@ -370,11 +384,16 @@ export const makeRemoteSessions = Effect.gen(function* () {
           label: input.label,
           keyHash: hashKey(key).toString("base64url"),
           sessionId: caller.sessionId,
+          boundBy: caller.sessionId,
           seenAt: yield* now,
         });
         return { key: Redacted.make(key) };
       }),
     );
+  });
+
+  const forgetSender = Effect.fn("RemoteSessions.forgetSender")(function* (source: EnvironmentId) {
+    return { deleted: yield* exclusive(forget(source)) };
   });
 
   const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
@@ -588,6 +607,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     withdraw,
     list,
     signOutLocal,
+    forgetSender,
     sweep,
     watch,
     qualify,

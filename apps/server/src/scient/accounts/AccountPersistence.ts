@@ -31,6 +31,8 @@ export const RemoteSender = Schema.Struct({
   label: Schema.String,
   keyHash: Schema.String,
   sessionId: Schema.String,
+  /** The session that bound it; only that one may be issued a new key without the old. */
+  boundBy: Schema.optional(Schema.String),
   /** When it last proved its key; a sender silent for 30 days loses its copies. */
   seenAt: IsoDateTime,
 });

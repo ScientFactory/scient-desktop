@@ -21,7 +21,8 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
 
 import { allowedRoute, sendAgain, sendingRemotesAtom } from "./remoteSessions";
-import { useAccounts } from "./useAccounts";
+import { accountsState } from "./accountsState";
+import { useAccountCommand, useAccounts } from "./useAccounts";
 
 /** "10:14", "yesterday 18:40", or a date: times on these lines are labels only. */
 function when(iso: string, now = new Date()) {
@@ -168,6 +169,49 @@ function RemoteComputerRow({
 }
 
 /**
+ * On a computer that receives sign-ins: one line per desktop sending them. Forget this computer
+ * deletes its copies, as it wrote them, and its registration, so a reinstalled desktop binds again.
+ */
+function SendersHere({
+  environmentId,
+  snapshot,
+  canWrite,
+}: {
+  environmentId: EnvironmentId;
+  snapshot: Pick<AccountsSnapshot, "profiles">;
+  canWrite: boolean;
+}) {
+  const forget = useAccountCommand(accountsState.sessionsForget, environmentId);
+  const [forgetting, setForgetting] = useState<string | null>(null);
+  const senders = new Map<EnvironmentId, { label: string; sentAt: string }>();
+  for (const entry of snapshot.profiles.flatMap((record) => record.received ?? [])) {
+    const seen = senders.get(entry.source);
+    if (!seen || seen.sentAt < entry.sentAt)
+      senders.set(entry.source, { label: entry.label, sentAt: entry.sentAt });
+  }
+  return [...senders].map(([source, { label, sentAt }]) => (
+    <SettingsRow
+      key={source}
+      title={`Sign-ins from ${label}, ${when(sentAt)} · change them there`}
+      control={
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!canWrite || forgetting !== null}
+          onClick={async () => {
+            setForgetting(source);
+            await forget({ source });
+            setForgetting(null);
+          }}
+        >
+          Forget this computer
+        </Button>
+      }
+    />
+  ));
+}
+
+/**
  * The desktop's line per other computer: what it holds of this desktop's sign-ins, and what
  * needs the user there. Sign-ins go one way, from this desktop, and never with passwords.
  */
@@ -184,19 +228,8 @@ export function RemoteComputers({
   const { environments } = useEnvironments();
   const settings = useClientSettings();
   const [sendingAgain, setSendingAgain] = useState(false);
-  if (environmentId !== primaryId) {
-    const received = snapshot.profiles.flatMap((record) => record.received ?? []);
-    const from = received[0]?.label;
-    const at = received
-      .map(({ sentAt }) => sentAt)
-      .sort()
-      .at(-1);
-    return from && at ? (
-      <p className="text-sm text-muted-foreground">
-        Sign-ins from {from}, {when(at)} · change them there
-      </p>
-    ) : null;
-  }
+  if (environmentId !== primaryId)
+    return <SendersHere environmentId={environmentId} snapshot={snapshot} canWrite={canWrite} />;
   if (!window.desktopBridge?.accounts?.readSessions) return null;
   const remotes = environments.filter((environment) => environment.environmentId !== primaryId);
   if (remotes.length === 0) return null;

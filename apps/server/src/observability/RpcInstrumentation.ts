@@ -339,6 +339,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsProfileShared]: "accounts",
   [WS_METHODS.accountsProfilesUnshared]: "accounts",
   [WS_METHODS.accountsSessionsBind]: "accounts",
+  [WS_METHODS.accountsSessionsForget]: "accounts",
   [WS_METHODS.accountsSenderKey]: "accounts",
   [WS_METHODS.accountsKeepSenderKey]: "accounts",
   [WS_METHODS.accountsSessionsList]: "accounts",
