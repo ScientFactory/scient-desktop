@@ -36,12 +36,6 @@ const isUnrestricted = (record: BrowserProfileRecord) =>
   record.scope.type === "all-projects" &&
   !record.allowedProjects?.length;
 
-const sourceControls = (record: BrowserProfileRecord) => ({
-  access: record.access,
-  scope: record.scope,
-  ...(record.allowedProjects ? { allowedProjects: record.allowedProjects } : {}),
-});
-
 /** Sites the user signed out of with Accounts' Sign out on Main: an import never brings them back. */
 const mainSignOuts = (snapshot: Pick<AccountsSnapshot, "profiles">) =>
   recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).signedOutSites ?? [];
@@ -206,7 +200,6 @@ export function mainFillTrigger(deps: {
       .fillMain({
         environmentId: deps.environmentId,
         from: profileId,
-        sourceControls: sourceControls(recordOf(snapshot, profileId)),
         units: [website(row)!.sites],
         mode: "fill-or-replace",
         replaceAllowedSince: replaceAllowedSince(snapshot.accounts, row),
@@ -391,7 +384,6 @@ async function fillFromProfile(
   const input: DesktopFillMainInput = {
     environmentId,
     from: profileId,
-    sourceControls: sourceControls(record),
     ...(join.length ? { join } : {}),
     mode: "fill",
     skipSites: mainSignOuts(snapshot),

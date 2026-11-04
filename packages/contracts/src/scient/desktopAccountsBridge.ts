@@ -1,6 +1,5 @@
 import type { BrowserImportSourceId } from "../browserImport.ts";
 import type { SessionCookie } from "./accounts.ts";
-import type { GrantScope } from "./secrets.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
 export interface DesktopSourceProfileDetails {
@@ -91,6 +90,10 @@ export interface DesktopFillMainResult {
   readonly unsupported: number;
 }
 
+/**
+ * A copy into Main. The app window decides which profiles may give Main their sign-ins, from the
+ * server's profile record; the desktop refuses only Main and Incognito as sources.
+ */
 export interface DesktopFillMainInput {
   /** Omit for the primary local environment. */
   readonly environmentId?: string;
@@ -98,12 +101,6 @@ export interface DesktopFillMainInput {
   readonly from:
     | string
     | { readonly importSourceId: BrowserImportSourceId; readonly sourceProfileDirectory: string };
-  /** A profile source's controls; only an unrestricted profile is copied. */
-  readonly sourceControls?: {
-    readonly access: "off" | "ask" | "allowed";
-    readonly scope: GrantScope;
-    readonly allowedProjects?: ReadonlyArray<string>;
-  };
   /** Absent: the whole jar, one unit per registrable site. */
   readonly units?: ReadonlyArray<ReadonlyArray<string>>;
   /** For a whole jar: multi-site sign-ins whose sites are copied as one unit. */
@@ -115,16 +112,12 @@ export interface DesktopFillMainInput {
   readonly skipSites: ReadonlyArray<string>;
 }
 
-/** A shareable profile's sign-ins in the desktop's own jar, for other computers. */
+/**
+ * A shareable profile's sign-ins in the desktop's own jar, for other computers. The app window
+ * decides which profiles may be read, from the server's profile record; the desktop doesn't.
+ */
 export interface DesktopReadSessionsInput {
   readonly profileId: string;
-  /** Only a persistent profile Allowed or Ask for all projects, with scripts on, is read. */
-  readonly controls: {
-    readonly access: "off" | "ask" | "allowed";
-    readonly scope: GrantScope;
-    readonly allowedProjects?: ReadonlyArray<string>;
-    readonly scriptSignIn: boolean;
-  };
   /** Absent: the whole jar, one unit per registrable site. */
   readonly units?: ReadonlyArray<ReadonlyArray<string>>;
   /** For a whole jar: multi-site sign-ins whose sites are one unit. */

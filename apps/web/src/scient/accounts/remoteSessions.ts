@@ -210,12 +210,11 @@ export async function deliverOnce(deps: DeliveryDeps) {
     if (reconcile) await deps.resend(profileId);
     const log = await deps.sendLog(profileId);
     const controls = remoteControls(record);
-    const own = { access: record.access, scope: record.scope, scriptSignIn: record.scriptSignIn };
     const join = multiSiteRows(deps.desktopAccounts(), profileId);
     hold();
     const jar = isShareable
-      ? ((await deps.readSessions({ profileId, controls: own, join }))?.units ?? []).filter(
-          ({ sites }) => hasAccountRow(sites, deps.desktopAccounts(), profileId),
+      ? ((await deps.readSessions({ profileId, join }))?.units ?? []).filter(({ sites }) =>
+          hasAccountRow(sites, deps.desktopAccounts(), profileId),
         )
       : [];
     hold();
@@ -260,7 +259,6 @@ export async function deliverOnce(deps: DeliveryDeps) {
         ? ((
             await deps.readSessions({
               profileId,
-              controls: own,
               units: copies.map((unit) => unit.sites),
             })
           )?.units ?? [])

@@ -1,15 +1,12 @@
 // @effect-diagnostics globalDate:off cryptoRandomUUID:off cryptoRandomUUIDInEffect:off -- Cookie transactions run as plain async Electron work.
 import {
-  AccountAccess,
   BrowserImportSourceId,
   BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   EnvironmentId,
-  GrantScope,
   INCOGNITO_BROWSER_PROFILE_ID,
   IsoDateTime,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
-  ProjectId,
   type DesktopFillMainResult,
   type SessionCookie,
 } from "@t3tools/contracts";
@@ -21,7 +18,6 @@ import {
   mergeUnits,
   readJar,
   setCookies,
-  shareable,
   unitCookies,
   unitSites,
   unitFingerprint,
@@ -63,13 +59,6 @@ export const FillMainInput = Schema.Struct({
       sourceProfileDirectory: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
     }),
   ]),
-  sourceControls: Schema.optional(
-    Schema.Struct({
-      access: AccountAccess,
-      scope: GrantScope,
-      allowedProjects: Schema.optional(Schema.Array(ProjectId)),
-    }),
-  ),
   units: Schema.optional(Units),
   join: Schema.optional(Units),
   mode: Schema.Literals(["fill", "fill-or-replace"]),
@@ -199,24 +188,17 @@ export async function copyIntoMain(
   );
 }
 
-const unrestricted = (controls: FillMainInput["sourceControls"]) =>
-  controls?.access === "allowed" &&
-  controls.scope.type === "all-projects" &&
-  !controls.allowedProjects?.length;
-
 /**
- * The one writer of Scient's copies into an environment's Main. A profile source must be
- * unrestricted; an import goes through a throwaway in-memory partition, so the upstream importer
- * never writes Main. Null when refused or when a jar can't be opened.
+ * The one writer of Scient's copies into an environment's Main. The app window chose the source
+ * by its controls; an import goes through a throwaway in-memory partition, so the upstream
+ * importer never writes Main. Null when refused or when a jar can't be opened.
  */
 export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: FillMainInput) {
   const environmentId = input.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
   const from = input.from;
   if (
     typeof from === "string" &&
-    (from === DEFAULT_BROWSER_PROFILE_ID ||
-      from === INCOGNITO_BROWSER_PROFILE_ID ||
-      !unrestricted(input.sourceControls))
+    (from === DEFAULT_BROWSER_PROFILE_ID || from === INCOGNITO_BROWSER_PROFILE_ID)
   )
     return null;
   const manager = yield* PreviewManager;
@@ -330,12 +312,6 @@ export const signOutMainSite = Effect.fn("DesktopAccounts.signOutMainSite")(func
 
 export const ReadSessionsInput = Schema.Struct({
   profileId: BrowserProfileId,
-  controls: Schema.Struct({
-    access: AccountAccess,
-    scope: GrantScope,
-    allowedProjects: Schema.optional(Schema.Array(ProjectId)),
-    scriptSignIn: Schema.Boolean,
-  }),
   units: Schema.optional(Units),
   join: Schema.optional(Units),
 });
@@ -347,7 +323,7 @@ export const ReadSessionsInput = Schema.Struct({
 export const readSessions = Effect.fn("DesktopAccounts.readSessions")(function* (
   input: typeof ReadSessionsInput.Type,
 ) {
-  if (!shareable(input.profileId, input.controls)) return null;
+  if (input.profileId === INCOGNITO_BROWSER_PROFILE_ID) return null;
   const manager = yield* PreviewManager;
   const scope = resolvePartitionScope(PRIMARY_LOCAL_ENVIRONMENT_ID, input.profileId);
   const session = yield* manager

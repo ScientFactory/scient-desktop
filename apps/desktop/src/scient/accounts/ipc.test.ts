@@ -240,7 +240,6 @@ it.effect("returns only cookie metadata and distinguishes denied reads from empt
 );
 
 const fillInput = (input: Record<string, unknown>) => ({ mode: "fill", skipSites: [], ...input });
-const allowed = { access: "allowed", scope: { type: "all-projects" } };
 
 /** Jars kept in memory behind a fake debugger, with faults a test can set. */
 function fillFixture(
@@ -411,8 +410,8 @@ describe("withdrawFromMain", () => {
       f.profile("work").put(jarCookie());
       f.profile("work").put(jarCookie({ domain: ".overleaf.com", value: "overleaf" }));
       f.profile("home").put(jarCookie({ domain: ".gitlab.com", value: "home" }));
-      yield* f.copy({ from: "work", sourceControls: allowed });
-      yield* f.copy({ from: "home", sourceControls: allowed });
+      yield* f.copy({ from: "work" });
+      yield* f.copy({ from: "home" });
       expect(f.main().jar.size).toBe(3);
       // The site rotated Overleaf's session in Main since: it is Main's own now.
       f.main().put(jarCookie({ domain: ".overleaf.com", value: "rotated" }));
@@ -433,7 +432,7 @@ describe("withdrawFromMain", () => {
       // Main was signed in on its own, to the same session the profile holds.
       f.main().put(jarCookie(), true);
       f.profile("work").put(jarCookie());
-      const filled = yield* f.copy({ from: "work", sourceControls: allowed });
+      const filled = yield* f.copy({ from: "work" });
       expect(filled?.units[0]?.outcome).toBe("same");
       expect(yield* f.withdraw("work")).toEqual({ units: [] });
       expect(f.main().jar.size).toBe(1);
@@ -445,12 +444,8 @@ describe("withdrawFromMain", () => {
       const f = fillFixture();
       f.profile("work").put(jarCookie());
       f.profile("home").put(jarCookie());
-      expect((yield* f.copy({ from: "work", sourceControls: allowed }))?.units[0]?.outcome).toBe(
-        "copied",
-      );
-      expect((yield* f.copy({ from: "home", sourceControls: allowed }))?.units[0]?.outcome).toBe(
-        "same",
-      );
+      expect((yield* f.copy({ from: "work" }))?.units[0]?.outcome).toBe("copied");
+      expect((yield* f.copy({ from: "home" }))?.units[0]?.outcome).toBe("same");
       expect(yield* f.withdraw("home")).toEqual({ units: [] });
       expect(f.main().jar.size).toBe(1);
       expect(yield* f.withdraw("work")).toEqual({ units: [["github.com"]] });
@@ -464,7 +459,7 @@ describe("withdrawFromMain", () => {
       Effect.gen(function* () {
         const first = fillFixture();
         first.profile("work").put(jarCookie({ value: "work-session" }));
-        yield* first.copy({ from: "work", sourceControls: allowed });
+        yield* first.copy({ from: "work" });
         const file = NodePath.join(first.stateDir, "scient", "main-copies.json");
         const text = NodeFS.readFileSync(file, "utf8");
         expect(text).not.toContain("work-session");
@@ -488,24 +483,12 @@ describe("withdrawFromMain", () => {
 });
 
 describe("fillMain", () => {
-  it.effect("refuses other senders, Main, Incognito and any restricted profile", () =>
+  it.effect("refuses other senders, and Main or Incognito as a source", () =>
     Effect.gen(function* () {
       const f = fillFixture();
       f.profile("work").put(jarCookie());
-      expect(
-        yield* f.copy({ from: "work", sourceControls: allowed }, { sender: { id: 2 } }),
-      ).toBeNull();
-      for (const refused of [
-        { from: "default", sourceControls: allowed },
-        { from: "incognito", sourceControls: allowed },
-        { from: "work" },
-        { from: "work", sourceControls: { ...allowed, access: "ask" } },
-        {
-          from: "work",
-          sourceControls: { ...allowed, scope: { type: "projects", projectIds: [] } },
-        },
-        { from: "work", sourceControls: { ...allowed, allowedProjects: ["project-a"] } },
-      ])
+      expect(yield* f.copy({ from: "work" }, { sender: { id: 2 } })).toBeNull();
+      for (const refused of [{ from: "default" }, { from: "incognito" }])
         expect(yield* f.copy(refused)).toBeNull();
       expect(f.main().jar.size).toBe(0);
     }),
@@ -519,7 +502,7 @@ describe("fillMain", () => {
         const secret = NodeCrypto.randomBytes(16).toString("hex");
         f.profile("work").put(jarCookie({ value: secret }));
         const before = [...f.profile("work").jar.values()];
-        const result = yield* f.copy({ from: "work", sourceControls: allowed });
+        const result = yield* f.copy({ from: "work" });
         expect(result).toEqual({
           units: [{ sites: ["github.com"], outcome: "copied" }],
           unsupported: 0,
@@ -537,13 +520,13 @@ describe("fillMain", () => {
         f.profile("work").put(jarCookie({ domain }));
         f.main().put(jarCookie({ domain }), true);
       }
-      const first = yield* f.copy({ from: "work", sourceControls: allowed });
+      const first = yield* f.copy({ from: "work" });
       expect(first?.units.map(({ outcome }) => outcome)).toEqual(["same", "same", "same"]);
       expect(f.main().reads.count).toBe(1);
       // A page writing during the batch is a change event: the next unit reads the jar afresh.
       f.main().reads.count = 0;
       f.main().reads.after = () => f.main().put(jarCookie({ domain: ".example.com" }));
-      yield* f.copy({ from: "work", sourceControls: allowed });
+      yield* f.copy({ from: "work" });
       expect(f.main().reads.count).toBe(2);
     }),
   );
@@ -558,7 +541,6 @@ describe("fillMain", () => {
         (from) =>
           f.copy({
             from,
-            sourceControls: allowed,
             units: [["github.com"]],
             mode: "fill-or-replace",
           }),
@@ -582,7 +564,6 @@ describe("fillMain", () => {
         const replace = (at: number) =>
           f.copy({
             from: "work",
-            sourceControls: allowed,
             units: [["github.com"]],
             mode: "fill-or-replace",
             replaceAllowedSince: { "github.com": DateTime.formatIso(DateTime.makeUnsafe(at)) },
@@ -610,7 +591,7 @@ describe("fillMain", () => {
         main.faults.onSet = () => {};
         main.put(jarCookie({ name: "page", value: "site" }));
       };
-      const result = yield* f.copy({ from: "work", sourceControls: allowed });
+      const result = yield* f.copy({ from: "work" });
       expect(result?.units[0]?.outcome).toBe("failed");
       expect([...main.jar.values()].map((cookie) => cookie.name)).toEqual(["page"]);
     }),
@@ -625,7 +606,7 @@ describe("fillMain", () => {
         main.faults.beforeSet = () => {};
         main.put(jarCookie({ value: "from-the-site" }));
       };
-      const result = yield* f.copy({ from: "work", sourceControls: allowed });
+      const result = yield* f.copy({ from: "work" });
       expect(result?.units[0]?.outcome).toBe("busy");
       expect([...main.jar.values()].map((cookie) => cookie.value)).toEqual(["from-the-site"]);
     }),
@@ -644,7 +625,7 @@ describe("fillMain", () => {
           main.faults.beforeSet = () => {};
           main.put({ ...chip, value: "from-the-site" });
         };
-        const result = yield* f.copy({ from: "work", sourceControls: allowed });
+        const result = yield* f.copy({ from: "work" });
         expect(result?.units[0]?.outcome).toBe("busy");
         // The copy's value is gone, and no unpartitioned cookie took the slot's place.
         expect([...main.jar.values()]).toEqual([]);
@@ -660,16 +641,16 @@ describe("fillMain", () => {
       main.faults.onSet = () => {
         main.faults.failDeletes = true;
       };
-      const first = yield* f.copy({ from: "work", sourceControls: allowed });
+      const first = yield* f.copy({ from: "work" });
       expect(first?.units[0]?.outcome).toBe("restore-failed");
       main.faults.failDeletes = false;
       main.jar.clear();
-      const again = yield* f.copy({ from: "work", sourceControls: allowed });
+      const again = yield* f.copy({ from: "work" });
       expect(again?.units[0]?.outcome).toBe("restore-failed");
       expect(main.jar.size).toBe(0);
       // The user's own Sign out of the site in Main lets copies write it again.
       expect(yield* f.signOutMain("github.com")).toBe(true);
-      const afterSignOut = yield* f.copy({ from: "work", sourceControls: allowed });
+      const afterSignOut = yield* f.copy({ from: "work" });
       expect(afterSignOut?.units[0]?.outcome).toBe("copied");
     }),
   );
