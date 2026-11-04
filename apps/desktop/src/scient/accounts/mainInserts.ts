@@ -10,6 +10,8 @@ type CookieSession = Pick<Session, "cookies">;
 
 /** A mark is consumed by the insert it announces, or dropped if that insert never comes. */
 const MARK_MS = 60_000;
+/** Past this many marks, expired ones (writes Chromium refused) are swept at the next mark. */
+const SWEEP_AT = 500;
 const TRACKED_SITES = 20_000;
 
 const writeId = (
@@ -22,8 +24,11 @@ interface Marks {
   readonly ids: Map<string, { count: number; until: number }>;
 }
 const mark = (marks: Marks, id: string) => {
+  const now = Date.now();
+  if (marks.ids.size >= SWEEP_AT)
+    for (const [key, held] of marks.ids) if (held.until < now) marks.ids.delete(key);
   const entry = marks.ids.get(id);
-  const until = Date.now() + MARK_MS;
+  const until = now + MARK_MS;
   marks.ids.set(id, { count: (entry?.count ?? 0) + 1, until });
 };
 const take = (marks: Marks, id: string) => {
@@ -78,6 +83,9 @@ export function markOwnWrites(session: CookieSession, cookies: ReadonlyArray<Ses
   for (const cookie of cookies)
     mark(own, writeId(cookie, cookie.value, cookie.expires === undefined));
 }
+
+/** Own writes marked and not yet seen inserted. */
+export const pendingOwnWrites = (session: CookieSession) => changesFor(session).own.ids.size;
 
 /** A number that changes whenever anything changes the session's jar. */
 export const jarGeneration = (session: CookieSession) => changesFor(session).generation;
