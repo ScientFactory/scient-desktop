@@ -33,7 +33,7 @@ import {
   PaperQueueRequestInput,
   Institution,
   UniversitySearchInput,
-  UniversitySignInInput,
+  AccountSignInAsPersonInput,
   UniversityBrowseInput,
   AccountKeyUnlinkInput,
   AccountMainBackfilledInput,
@@ -105,6 +105,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsPapersContinue: "accounts.papers.continue",
   accountsPapersList: "accounts.papers.list",
   accountsUniversitySearch: "accounts.universities.search",
+  accountsSignInAsPerson: "accounts.signInAsPerson",
+  /** The old name of `accountsSignInAsPerson`, answered for one more release. */
   accountsUniversitySignIn: "accounts.universities.signIn",
   accountsUniversityBrowse: "accounts.universities.browse",
   accountsPlainKeys: "accounts.plainKeys.find",
@@ -247,14 +249,22 @@ export const WsAccountsPapersListRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
   error: AccountsRpcError,
 });
 
+const signInAsPerson = {
+  payload: AccountSignInAsPersonInput,
+  /** `threadId` is where the tab opened; older servers leave it out. */
+  success: Schema.Struct({ tabId: PreviewTabId, threadId: Schema.optional(ThreadId) }),
+  error: AccountsRpcError,
+};
+
+export const WsAccountsSignInAsPersonRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSignInAsPerson,
+  signInAsPerson,
+);
+
+/** The same sign-in under its old name, for clients of the last release. */
 export const WsAccountsUniversitySignInRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySignIn,
-  {
-    payload: UniversitySignInInput,
-    /** `threadId` is where the tab opened; older servers leave it out. */
-    success: Schema.Struct({ tabId: PreviewTabId, threadId: Schema.optional(ThreadId) }),
-    error: AccountsRpcError,
-  },
+  signInAsPerson,
 );
 
 export const WsAccountsUniversityBrowseRpc = Rpc.make(

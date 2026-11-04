@@ -7,7 +7,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Redacted from "effect/Redacted";
 import { foldStoredAccounts, withStoredAccountsFolded } from "./AccountPersistence.ts";
-import { isSignInTab, isUniversitySignInService, withSignInService } from "./universitySignIn.ts";
+import { isSignInTab, isUniversitySignInService, withSignInService } from "./signInTabs.ts";
 
 const ID = AccountId.make("acc_university1");
 const SIGN_IN = "https://login.microsoftonline.com";

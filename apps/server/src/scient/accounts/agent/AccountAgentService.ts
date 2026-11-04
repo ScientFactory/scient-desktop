@@ -13,7 +13,7 @@ import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
-import { isUniversitySignInService } from "../universitySignIn.ts";
+import { isUniversitySignInService } from "../signInTabs.ts";
 
 const isAccountsError = Schema.is(AccountsError);
 import { AccountCookies, netscapeCookieJar } from "./cookies.ts";

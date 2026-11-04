@@ -10,7 +10,7 @@ import {
   type PaperQueueInput,
   type PaperQueueRequestInput,
   type Institution,
-  type UniversitySignInInput,
+  type AccountSignInAsPersonInput,
   type UniversityBrowseInput,
   type AccountPlainKey,
   type AccountPlainKeyInput,
@@ -113,8 +113,8 @@ export const makeAccountsRpcHandlers = ({
     readonly list: (
       input: PaperQueueInput,
     ) => Effect.Effect<ReadonlyArray<PaperItem>, AccountsError>;
-    readonly universitySignIn: (
-      input: UniversitySignInInput,
+    readonly signInAsPerson: (
+      input: AccountSignInAsPersonInput,
     ) => Effect.Effect<
       { readonly tabId: PreviewTabId; readonly threadId: ThreadId },
       AccountsError
@@ -245,10 +245,12 @@ export const makeAccountsRpcHandlers = ({
       ),
     [WS_METHODS.accountsPapersList]: (input) =>
       observeRpcEffect(WS_METHODS.accountsPapersList, papers.list(input), attributes),
+    [WS_METHODS.accountsSignInAsPerson]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsSignInAsPerson, papers.signInAsPerson(input), attributes),
     [WS_METHODS.accountsUniversitySignIn]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsUniversitySignIn,
-        papers.universitySignIn(input),
+        papers.signInAsPerson(input),
         attributes,
       ),
     [WS_METHODS.accountsUniversityBrowse]: (input) =>
@@ -533,7 +535,7 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
         ),
       ),
     papers: {
-      universitySignIn: (input: UniversitySignInInput) =>
+      signInAsPerson: (input: AccountSignInAsPersonInput) =>
         run((environmentId) => signInAsPerson(input, environmentId)),
       universityBrowse: (input: UniversityBrowseInput) =>
         run((environmentId) =>
@@ -561,7 +563,7 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
  * names the tab as soon as it opens.
  */
 const signInAsPerson = Effect.fn("Accounts.signInAsPerson")(function* (
-  input: UniversitySignInInput,
+  input: AccountSignInAsPersonInput,
   environmentId: EnvironmentId,
 ) {
   const accounts = yield* AccountsService;

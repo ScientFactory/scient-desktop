@@ -15,7 +15,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { scientInvocationForMcp } from "../../../mcp/ScientMcpInvocation.ts";
 import { isGoogleSessionRow } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { isUniversitySignInService } from "../universitySignIn.ts";
+import { isUniversitySignInService } from "../signInTabs.ts";
 import { withAccountUse } from "./accountUse.ts";
 import { previewInvoker } from "./broker.ts";
 import { findProfiles } from "./findProfiles.ts";

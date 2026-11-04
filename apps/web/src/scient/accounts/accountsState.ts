@@ -137,6 +137,11 @@ export const accountsState = {
     label: "accounts:continuePapers",
     tag: WS_METHODS.accountsPapersContinue,
   }),
+  signInAsPerson: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:signInAsPerson",
+    tag: WS_METHODS.accountsSignInAsPerson,
+  }),
+  /** The same sign-in under its old name, for a server older than `ACCOUNTS_PROTOCOL`. */
   universitySignIn: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:universitySignIn",
     tag: WS_METHODS.accountsUniversitySignIn,

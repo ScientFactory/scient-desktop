@@ -35,6 +35,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsPapersRequest]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPapersContinue]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPapersList]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSignInAsPerson]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUniversitySignIn]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUniversityBrowse]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUniversitySearch]: AuthSettingsWriteScope,

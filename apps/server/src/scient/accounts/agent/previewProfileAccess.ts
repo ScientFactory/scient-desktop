@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { pickBrowserProfile, profileRows } from "@t3tools/shared/scientBrowserProfileChoice";
-import { onUniversitySignIn } from "../universitySignIn.ts";
+import { onUniversitySignIn } from "../signInTabs.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import {
   AccountsService,

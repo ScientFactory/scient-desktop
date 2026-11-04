@@ -32,7 +32,7 @@ import { AccountsService, type AccountSessionScope } from "../AccountsService.ts
 import { checkAccountNow } from "../checkAccounts.ts";
 import { SignInDetection, signInDetectionScript } from "../signIn/detection.ts";
 import { signIn, type SignInOptions } from "../signIn/engine.ts";
-import { closeLeftovers, withSignInService } from "../universitySignIn.ts";
+import { closeLeftovers, withSignInService } from "../signInTabs.ts";
 import { authorize } from "./accountUse.ts";
 import { previewInvoker } from "./broker.ts";
 import { signInCodes } from "./signInCodes.ts";

@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { userRunInvocation } from "./checkAccounts.ts";
-import { isUniversityPage } from "./universitySignIn.ts";
+import { isUniversityPage } from "./signInTabs.ts";
 
 /** A journal recognises a reader for hours once their university vouched for them. */
 const ROUTED_MEMORY_MS = 6 * 60 * 60 * 1000;

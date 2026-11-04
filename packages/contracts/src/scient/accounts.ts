@@ -772,14 +772,14 @@ export const UniversitySearchInput = Schema.Struct({
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
 });
 /** The user's own sign-in to any website row, a university's included, in a tab beside `threadId`. */
-export const UniversitySignInInput = Schema.Struct({
+export const AccountSignInAsPersonInput = Schema.Struct({
   accountId: AccountId,
   /** The conversation it opens beside. */
   threadId: ThreadId,
   /** A row made just for this sign-in goes again if it ends with nothing kept. */
   discardIfUnfinished: Schema.optional(Schema.Literal(true)),
 });
-export type UniversitySignInInput = typeof UniversitySignInInput.Type;
+export type AccountSignInAsPersonInput = typeof AccountSignInAsPersonInput.Type;
 
 /** A page the person opened, to bring in through their university when it is a journal article. */
 export const UniversityBrowseInput = Schema.Struct({

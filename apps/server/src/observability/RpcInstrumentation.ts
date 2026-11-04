@@ -301,6 +301,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsPapersRequest]: "accounts",
   [WS_METHODS.accountsPapersContinue]: "accounts",
   [WS_METHODS.accountsPapersList]: "accounts",
+  [WS_METHODS.accountsSignInAsPerson]: "accounts",
   [WS_METHODS.accountsUniversitySignIn]: "accounts",
   [WS_METHODS.accountsUniversityBrowse]: "accounts",
   [WS_METHODS.accountsUniversitySearch]: "accounts",

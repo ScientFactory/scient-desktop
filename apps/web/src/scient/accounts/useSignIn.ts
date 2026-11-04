@@ -1,9 +1,14 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { AccountId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ACCOUNTS_PROTOCOL,
+  type AccountId,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 
 import { useRightPanelStore } from "~/rightPanelStore";
 import { accountsState } from "./accountsState";
-import { useAccountCommand } from "./useAccounts";
+import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useScratchThread } from "./useScratchThread";
 
 /**
@@ -11,7 +16,10 @@ import { useScratchThread } from "./useScratchThread";
  * may, resumes a sign-in already waiting at a code, and the person finishes in the tab it shows.
  */
 export function useSignIn(environmentId: EnvironmentId) {
-  const signIn = useAccountCommand(accountsState.universitySignIn, environmentId);
+  const current = useAccountCommand(accountsState.signInAsPerson, environmentId);
+  const older = useAccountCommand(accountsState.universitySignIn, environmentId);
+  const signIn =
+    (useAccounts(environmentId).data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL ? current : older;
   const scratchThread = useScratchThread(environmentId);
   return async (
     accountId: AccountId,
