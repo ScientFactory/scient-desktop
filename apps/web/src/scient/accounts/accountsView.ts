@@ -155,13 +155,15 @@ const BROWSER_NAMES: Readonly<Record<BrowserImportSourceId, string>> = {
   safari: "Safari",
 };
 
+export const browserName = (id: BrowserImportSourceId) => BROWSER_NAMES[id];
+
 /** "Chrome · Yaacov" beside an imported profile whose name here differs from its source's. */
 export function renamedSourceLabel(
   name: string,
   source: Pick<NonNullable<BrowserProfileRecord["source"]>, "browser" | "profileName"> | undefined,
 ) {
   if (!source || name.trim() === source.profileName.trim()) return undefined;
-  return `${BROWSER_NAMES[source.browser]} · ${source.profileName}`;
+  return `${browserName(source.browser)} · ${source.profileName}`;
 }
 
 export function importProfileName(sourceName: string, taken: ReadonlyArray<string>) {

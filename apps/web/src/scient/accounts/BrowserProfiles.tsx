@@ -69,6 +69,7 @@ import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
+  browserName,
   googleSignInUrl,
   importProfileName,
   mergeProfiles,
@@ -663,17 +664,40 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
   ) : null;
 }
 
-/** The line under a profile's name: its address and, when Google refused it, a way back in. */
+/**
+ * The line under a profile's name: its address and, when Google refused it, a way back in. Google
+ * refuses signing in from Scient's browser, so a profile from a browser signs in there instead.
+ */
 export function ProfileDetail({
   email,
   signedOut,
   onSignIn,
+  refreshFrom,
 }: {
   email: string | undefined;
   signedOut: boolean;
   onSignIn?: () => void;
+  refreshFrom?: { readonly browser: string; readonly onRefresh: () => void };
 }) {
   if (!email && !signedOut) return null;
+  if (signedOut && refreshFrom)
+    return (
+      <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+        {email ? <span className="max-w-full truncate">{email} ·</span> : null}
+        <span>
+          Google blocks signing in here. Sign in in {refreshFrom.browser}, then Refresh from{" "}
+          {refreshFrom.browser}
+        </span>
+        <Button
+          size="micro"
+          variant="link"
+          className="-my-0.5 shrink-0"
+          onClick={refreshFrom.onRefresh}
+        >
+          <span className="text-xs text-foreground">Refresh from {refreshFrom.browser}</span>
+        </Button>
+      </span>
+    );
   return (
     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
       {email ? <span className="truncate">{email}</span> : null}
@@ -1032,6 +1056,14 @@ export function BrowserProfiles({
                             ),
                         }
                       : {})}
+                    {...(previewBridge && profile.record.source
+                      ? {
+                          refreshFrom: {
+                            browser: browserName(profile.record.source.browser),
+                            onRefresh: () => void act(() => refresh([profile])),
+                          },
+                        }
+                      : {})}
                   />
                 </span>
               )}
@@ -1104,9 +1136,7 @@ export function BrowserProfiles({
                 </MenuItem>
                 {previewBridge && profile.record.source ? (
                   <MenuItem onClick={() => void act(() => refresh([profile]))}>
-                    Refresh from{" "}
-                    {profile.record.source.browser[0]!.toUpperCase() +
-                      profile.record.source.browser.slice(1)}
+                    Refresh from {browserName(profile.record.source.browser)}
                   </MenuItem>
                 ) : null}
                 {profile.record.source?.email && profile.record.source.browser === "chrome" ? (

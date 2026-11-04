@@ -228,6 +228,43 @@ it("offers Sign in beside a Google sign-out, without leaving the row or clipping
   expect(onSignIn).toHaveBeenCalledOnce();
 });
 
+it("sends a profile from a browser there to sign in to Google, then refreshes it", async () => {
+  const onRefresh = vi.fn();
+  await using _screen = await render(
+    <div style={{ width: 220 }}>
+      <ProfileDetail
+        email="a-very-long-address-that-cannot-fit@example.com"
+        signedOut
+        onSignIn={vi.fn()}
+        refreshFrom={{ browser: "Chrome", onRefresh }}
+      />
+    </div>,
+  );
+  await expect
+    .element(
+      page.getByText("Google blocks signing in here. Sign in in Chrome, then Refresh from Chrome", {
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Sign in", exact: true }))
+    .not.toBeInTheDocument();
+  // The line wraps in a narrow row: nothing is cut off, and the action stays inside it.
+  const message = page
+    .getByText("Google blocks signing in here. Sign in in Chrome, then Refresh from Chrome", {
+      exact: true,
+    })
+    .element();
+  expect(message.scrollWidth).toBeLessThanOrEqual(message.clientWidth);
+  const button = page.getByRole("button", { name: "Refresh from Chrome", exact: true });
+  expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
+    button.element().closest("div")!.getBoundingClientRect().right,
+  );
+  await button.click();
+  expect(onRefresh).toHaveBeenCalledOnce();
+});
+
 it("shows only the address while Google accepts the profile", async () => {
   await using _screen = await render(
     <ProfileDetail email="a@example.com" signedOut={false} onSignIn={vi.fn()} />,

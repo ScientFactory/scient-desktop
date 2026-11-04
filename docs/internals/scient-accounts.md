@@ -760,10 +760,12 @@ provider environment. The existing proxy redacts reflected values in responses.
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
   own profile: Scient has no record of most sites a profile is signed in to, so a missing record
-  doesn't mean signed out. The Sign in link in `BrowserProfiles`, like Add to Main, opens
-  Google's own AddSession page in that profile (`googleSignInUrl`, with the profile's address
-  when it has one, back to My Account), so Scient adds no flow of its own, and the Google check
-  that follows clears the label. Gmail is only a home shortcut; `/mail/u/<address>/` gives
+  doesn't mean signed out. Google refuses signing in from Scient's browser ("This browser or app
+  may not be secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity
+  (Electron 44, 2026-11-04). So a signed-out profile imported from a browser says to sign in
+  there and offers Refresh from that browser. A profile with no source keeps a Sign in link to
+  Google's AddSession page (`googleSignInUrl`, as Add to Main uses), with the profile's address
+  when it has one, back to My Account. Gmail is only a home shortcut; `/mail/u/<address>/` gives
   "Temporary Error".
 - **University access**: a website account with `institution` (from the public directory) or
   `proxyUrl` (a library link with `{url}`) reaches a university's subscriptions; older `library`

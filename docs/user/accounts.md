@@ -87,8 +87,9 @@ needs Full Disk Access). A CAPTCHA or passkey needs the desktop.
 
 **Check my accounts** opens your browser sign-ins one at a time and marks each signed in, signed
 out, needs you or rejected. It counts as your own press, so it tries a saved password once more.
-A Google sign-in copied from Chrome can stop working while you use Chrome; sign in to Google once
-inside Scient with **Sign in** beside "Signed out of Google".
+A Google sign-in copied from Chrome can stop working while you use Chrome. Google doesn't allow
+signing in from inside Scient, so sign in to Google in Chrome, then choose **Refresh from Chrome**
+on the profile's row.
 
 **Other sign-ins** lists those managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
 GitHub login is one row, with its own chip for Source Control and for the GitHub connector.
