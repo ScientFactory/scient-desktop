@@ -2907,7 +2907,10 @@ const make = Effect.gen(function* () {
         try: async () => {
           const lease = await contexts.lease(profileId);
           try {
-            return { ...(await openProfileCookieJar(lease.context)), release: lease.release };
+            return {
+              ...(await openProfileCookieJar(lease.context, lease.stopping)),
+              release: lease.release,
+            };
           } catch (cause) {
             await lease.release();
             throw cause;

@@ -23,6 +23,8 @@ export interface ProfileCookieJar extends CookieStore {
   readonly readAll: () => Promise<ReadonlyArray<SessionCookie>>;
   /** Registrable sites of the profile's open pages. */
   readonly openTabSites: () => ReadonlyArray<string>;
+  /** A tab or clear has waited too long for this hold: stop before the next unit. */
+  readonly stopping: () => boolean;
   /** Reads through Playwright's own context API rather than CDP, for the qualification. */
   readonly independent: {
     readonly names: (url?: string) => Promise<ReadonlyArray<string>>;
@@ -43,7 +45,7 @@ export class ProfileCookiesError extends Data.TaggedError("ProfileCookiesError")
  * CDP runs on a blank helper page in the profile's own context, so every Network command acts on
  * that context's jar. The page is never a tab: tabs adopt only pages an open tab opened.
  */
-export async function openProfileCookieJar(context: BrowserContext) {
+export async function openProfileCookieJar(context: BrowserContext, stopping = () => false) {
   const page = await context.newPage();
   try {
     const cdp = await context.newCDPSession(page);
@@ -55,6 +57,7 @@ export async function openProfileCookieJar(context: BrowserContext) {
       readUnit: async (unit) => unitCookies(unit, await readAll(), siteOf),
       set: (cookies) => setCookies(send, cookies),
       remove: (cookies) => deleteCookies(send, cookies),
+      stopping,
       openTabSites: () =>
         context.pages().flatMap((open) => {
           if (open === page || open.isClosed()) return [];

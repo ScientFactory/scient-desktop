@@ -42,7 +42,7 @@ const key = (value: Pick<SessionCookie, "name" | "domain" | "path">) =>
 function browserFixture() {
   const jars = new Map<string, SessionCookie[]>();
   const tabs = new Map<string, string[]>();
-  const hooks: { afterSet?: ((profileId: string) => void) | undefined } = {};
+  const hooks: { afterSet?: ((profileId: string) => void) | undefined; stopping?: boolean } = {};
   const jarOf = (profileId: string) => jars.get(profileId) ?? [];
   const jar = (profileId: string): ProfileCookieJar => ({
     readAll: async () => jarOf(profileId),
@@ -59,6 +59,7 @@ function browserFixture() {
       );
     },
     openTabSites: () => tabs.get(profileId) ?? [],
+    stopping: () => hooks.stopping === true,
     independent: { names: async () => [], pages: () => 1 },
   });
   const browser = {
@@ -146,6 +147,19 @@ describe("receiving a desktop's sign-ins", () => {
       expect(jars.get(WORK)).toBeUndefined();
       // Nothing was recorded, so it comes again.
       expect((yield* remote.applied(desktop, { source: MAC, profileId: WORK })).units).toEqual([]);
+    }),
+  );
+
+  it.effect("stops at the next unit once a tab has waited too long, leaving the rest busy", () =>
+    Effect.gen(function* () {
+      const { remote, jars, hooks } = yield* setup();
+      hooks.afterSet = () => (hooks.stopping = true);
+      const result = yield* remote.receive(
+        desktop,
+        batch([copy(1), copy(1, [cookie({ domain: ".example.test" })], ["example.test"])]),
+      );
+      expect(outcomes(result)).toEqual(["copied", "busy"]);
+      expect(jars.get(WORK)?.map(({ domain }) => domain)).toEqual([".github.com"]);
     }),
   );
 

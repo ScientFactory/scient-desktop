@@ -342,7 +342,7 @@ describe("ServerBrowserContexts lease", () => {
     await pool.close();
   });
 
-  it("lets a tab through after 10 s, and keeps the context open for it", async () => {
+  it("never lets a tab in alongside a hold; after 10 s it asks the copy to stop", async () => {
     const context = makeContext();
     launches.persistent.mockResolvedValue(context as unknown as BrowserContext);
     const pool = new ServerBrowserContexts(options());
@@ -350,11 +350,14 @@ describe("ServerBrowserContexts lease", () => {
     let opened = false;
     const tab = pool.contextFor("work").then(() => (opened = true));
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(opened).toBe(false);
+    expect(lease.stopping()).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
+    expect(lease.stopping()).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(opened).toBe(false);
+    await lease.release();
     await tab;
     expect(opened).toBe(true);
-    await lease.release();
     expect(context.close).not.toHaveBeenCalled();
     await pool.close();
   });
