@@ -199,4 +199,37 @@ None of the text agents receive changes.
 
 Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state.
 
-Pending.
+- **Static checks:**
+  - `vp run -r typecheck`: 57/57.
+  - `vp check`: no errors; 5 warnings that main already has.
+  - `vp run knip:check` and `vp run brand:check`: pass.
+  - The seam check (`--base origin/main --head HEAD`) passes after the Oh My Pi managed-policy mount, and upstream provenance passes at `7c22e24e3f`.
+  - The lockfile keeps all 126 `hasBin` markers.
+- **Dropped-upstream audit.** Every T3 line missing from the result is a deliberate adaptation:
+  - Scient's npm update path;
+  - Pi's `shortLived` launch policy;
+  - the shared rolled-back-run filter;
+  - Scient's branding in the policy templates.
+- **Full suites:**
+  - server: 14,385 passed, 3 failed;
+  - packages, desktop and scripts: all passed except 4 failures in two packages;
+  - web: 14,633 passed, 2 failed.
+
+  Every failure was rerun on its own:
+  - **Fixed (2 tests, caused by the merge):** Pi's production-discovery arguments now include `--offline`. The inventory-generation tests needed the orchestration read grant that provider refresh now requires.
+  - **Load flakes (2):** two web browser tests that pass on rerun.
+  - **Fail on main's code on this Mac too (3):** `AgentSessionScanner` "next to a blocked one", `LatexRealEngine` (a missing local source-navigation helper) and the ssh install race. All are unchanged by this merge.
+
+- **Live review on a dev app:** an upgraded copy of a 65-thread test database, with a forced prune pass. Results and screenshots are in `reviews/t3-sync-7c22-20261104/RECORD.md`.
+  - **History after the prune:** 3,970 → 216 events. Every thread kept its full history, and a new turn kept the thread's workspace revision.
+  - **Links:** Copy thread copies Scient's in-app link, and pasted `app.t3.codes` links become chips.
+  - **Forks after an undo:** both the live and the frozen fork leave out the undone turn.
+  - **Other passes:**
+    - the permission menu;
+    - Ctrl+R in the in-app browser;
+    - copied code keeps its blank lines;
+    - a Codex turn;
+    - restart mid-run;
+    - the Group Policy templates.
+  - **Not driven live:** the provider banner (no provider was in a warning state) and deleting a thread (a native menu). Their tests cover them.
+- **Review:** a light Codex review of the Scient-side composition found nothing serious.
