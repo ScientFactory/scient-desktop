@@ -12,9 +12,9 @@ declare global {
   }
 }
 
-/** Offered where the desktop offers its own qualification, which only a dev build does. */
+/** Dev builds only, where the desktop offers its own qualification too. */
 export function offerRemoteQualification(registry: AtomRegistry.AtomRegistry) {
-  if (!window.desktopBridge?.accounts?.qualifySessionCopy) return;
+  if (!import.meta.env.DEV || !window.desktopBridge?.accounts?.qualifySessionCopy) return;
   window.scientQualifyRemoteSessions = async (environmentId) => {
     const result = await accountsState.sessionsQualify.run(registry, {
       environmentId: EnvironmentId.make(environmentId),

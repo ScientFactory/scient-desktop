@@ -501,3 +501,12 @@ describe("receiving a desktop's sign-ins", () => {
     }),
   );
 });
+
+it.effect("runs the cookie-copy qualification only on a development server", () =>
+  Effect.gen(function* () {
+    const { remote, jars } = yield* setup();
+    const refused = yield* Effect.flip(remote.qualify());
+    expect(refused.message).toBe("The check runs only on a development server.");
+    expect(jars.size).toBe(0);
+  }),
+);

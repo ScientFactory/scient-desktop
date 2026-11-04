@@ -37,7 +37,6 @@ import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
 import { readGoogleSessions } from "./googleSessions.ts";
 import { isPublicHttps, quietVisit } from "./quietVisit.ts";
-import { qualifySessionCopy } from "./qualifySessionCopy.ts";
 import * as Channels from "./protocol.ts";
 
 const Value = Schema.String.check(Schema.isMaxLength(65_536));
@@ -380,6 +379,10 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
         event?: AccountsInvokeEvent,
       ) {
         if (!(yield* appWindowSender(event))) return null;
+        // Loaded only here: a packaged build never registers this channel.
+        const { qualifySessionCopy } = yield* Effect.promise(
+          () => import("./qualifySessionCopy.ts"),
+        );
         return yield* Effect.promise(qualifySessionCopy);
       }),
     });

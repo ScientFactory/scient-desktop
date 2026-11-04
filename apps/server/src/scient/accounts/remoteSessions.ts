@@ -47,7 +47,6 @@ import { ServerConfig } from "../../config.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
 import { AccountsService } from "./AccountsService.ts";
 import { siteOf, type ProfileCookieJar } from "./profileCookieJar.ts";
-import { qualifyProfileCookies } from "./qualifyProfileCookies.ts";
 
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 const denied = (message: string) => new AccountsError({ reason: "denied", message });
@@ -602,6 +601,10 @@ export const makeRemoteSessions = Effect.gen(function* () {
     const profileCookies = browser.profileCookies;
     if (!qualifiable || !profileCookies)
       return yield* unavailable("The check runs only on a development server.");
+    // Loaded only on a development server.
+    const { qualifyProfileCookies } = yield* Effect.promise(
+      () => import("./qualifyProfileCookies.ts"),
+    );
     return yield* Effect.promise(() =>
       qualifyProfileCookies({
         open: (profileId) =>
