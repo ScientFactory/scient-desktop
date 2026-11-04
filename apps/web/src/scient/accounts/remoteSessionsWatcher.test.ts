@@ -11,7 +11,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const MAC = EnvironmentId.make("macbook");
 const LAB = EnvironmentId.make("lab");
 
-const state = vi.hoisted(() => ({ calls: [] as string[], failReceives: 0 }));
+const state = vi.hoisted(() => ({
+  calls: [] as string[],
+  failReceives: 0,
+  profiles: [{ id: "work", name: "Work", kind: "persistent" }] as Array<Record<string, string>>,
+  settingsListeners: new Set<() => void>(),
+}));
 const row: AccountSummary = {
   accountId: AccountId.make("acc_githubwork"),
   name: "github.com",
@@ -29,9 +34,11 @@ const atomFor = (key: string, initial: unknown) => {
 };
 
 vi.mock("~/hooks/useSettings", () => ({
-  getClientSettings: () => ({
-    browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
-  }),
+  getClientSettings: () => ({ browserProfiles: state.profiles }),
+  subscribeClientSettings: (listener: () => void) => {
+    state.settingsListeners.add(listener);
+    return () => state.settingsListeners.delete(listener);
+  },
 }));
 vi.mock("~/state/presentation", () => ({
   environmentPresentations: {
@@ -110,6 +117,7 @@ const snapshots = (registry: AtomRegistry.AtomRegistry) => {
 beforeEach(() => {
   vi.useFakeTimers();
   state.calls = [];
+  state.profiles = [{ id: "work", name: "Work", kind: "persistent" }];
   atoms.clear();
   vi.stubGlobal("window", {
     desktopBridge: {
@@ -171,4 +179,18 @@ it("cancels a pending retry when the watcher stops", async () => {
   stop();
   await vi.advanceTimersByTimeAsync(60 * 60_000);
   expect(receives()).toBe(1);
+});
+
+it("delivers a profile added in settings, with every snapshot unchanged", async () => {
+  state.failReceives = 0;
+  const registry = AtomRegistry.make();
+  snapshots(registry);
+  const stop = watchRemoteSessions(registry, LAB, MAC);
+  await vi.waitFor(() => expect(state.calls).toContain("shared:work"));
+  expect(state.calls.some((call) => call.endsWith(":home"))).toBe(false);
+  state.profiles = [...state.profiles, { id: "home", name: "Home", kind: "persistent" }];
+  for (const listener of state.settingsListeners) listener();
+  await vi.waitFor(() => expect(state.calls).toContain("receive:home"));
+  stop();
+  expect(state.settingsListeners.size).toBe(0);
 });

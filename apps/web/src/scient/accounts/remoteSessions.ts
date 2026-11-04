@@ -34,7 +34,7 @@ import * as Redacted from "effect/Redacted";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { readDesktopSecondaryBootstraps } from "~/connection/desktopLocal";
-import { getClientSettings } from "~/hooks/useSettings";
+import { getClientSettings, subscribeClientSettings } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readEnvironment, readPrimaryEnvironmentId } from "~/state/environments";
 import { environmentPresentations } from "~/state/presentation";
@@ -648,6 +648,8 @@ export function watchRemoteSessions(
     registry.subscribe(remoteAtom, nudge),
     registry.subscribe(environmentPresentations.presentationAtom(environmentId), nudge),
     registry.subscribe(environmentSession.sessionStateAtom(environmentId), nudge),
+    // The persistent profiles it delivers are client settings, part of the key above.
+    subscribeClientSettings(nudge),
   ];
   nudge();
   return () => {
