@@ -339,6 +339,46 @@ describe("receiving a desktop's sign-ins", () => {
     }),
   );
 
+  it.effect(
+    "refuses a fifth computer for one profile, and follows the strictest sender's controls",
+    () =>
+      Effect.gen(function* () {
+        const { remote, accounts, jars } = yield* setup();
+        const access = Effect.map(
+          accounts.receivedProfiles,
+          (profiles) => profiles.find((profile) => profile.profileId === WORK)?.access,
+        );
+        yield* remote.receive(desktop, batch([copy(1)]));
+        const senders = ["pc-1", "pc-2", "pc-3", "pc-4"].map((id) => EnvironmentId.make(id));
+        const keyOf = new Map<EnvironmentId, Redacted.Redacted<string>>();
+        for (const source of senders) {
+          const bound = yield* remote.bind(desktop, { source, label: source });
+          keyOf.set(source, bound.key!);
+        }
+        const from = (source: EnvironmentId, access: "allowed" | "ask") =>
+          remote.receive(
+            desktop,
+            batch([], {
+              source,
+              key: keyOf.get(source)!,
+              label: source,
+              controls: { access, scope: { type: "all-projects" }, scriptSignIn: true },
+            }),
+          );
+        yield* from(senders[0]!, "ask");
+        yield* from(senders[1]!, "allowed");
+        yield* from(senders[2]!, "allowed");
+        expect(yield* access).toBe("ask");
+        // A fifth sender would push one out and orphan its copies: it is refused instead.
+        const refused = yield* Effect.flip(from(senders[3]!, "allowed"));
+        expect(refused.message).toContain("4 computers");
+        expect(jars.get(WORK)).toHaveLength(1);
+        // The strict sender gone, the others' controls are what's left.
+        yield* remote.forgetSender(senders[0]!);
+        expect(yield* access).toBe("allowed");
+      }),
+  );
+
   it.effect("checks the sender's controls and the university here, under the profile's lock", () =>
     Effect.gen(function* () {
       const { remote, accounts, jars } = yield* setup();

@@ -54,6 +54,22 @@ import type { ProfileCookieJar } from "./profileCookieJar.ts";
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 const denied = (message: string) => new AccountsError({ reason: "denied", message });
 
+/** Senders one profile takes copies from; a further one is refused, never squeezed out. */
+const SENDERS_PER_PROFILE = 4;
+
+const ACCESS_ORDER = ["off", "ask", "allowed"] as const;
+
+/** The strictest of the controls a profile's senders set; undefined when none set any. */
+export const strictestControls = (received: ReadonlyArray<ProfileReceived>) => {
+  const sent = received.flatMap(({ controls }) => (controls ? [controls] : []));
+  if (sent.length === 0) return undefined;
+  return {
+    access: ACCESS_ORDER[Math.min(...sent.map(({ access }) => ACCESS_ORDER.indexOf(access)))]!,
+    scope: { type: "all-projects" as const },
+    scriptSignIn: sent.every(({ scriptSignIn }) => scriptSignIn),
+  };
+};
+
 /** The authenticated session a request came over; a sender is bound to it, never to a label. */
 export interface AccountsCallerSession {
   readonly sessionId: string;
@@ -251,15 +267,18 @@ export const makeRemoteSessions = Effect.gen(function* () {
           ).then((removed) => removed.length),
         )
       : 0;
-    yield* accounts.updateReceived(profileId, (record) => ({
-      received: (record.received ?? []).flatMap((candidate) =>
+    yield* accounts.updateReceived(profileId, (record) => {
+      const received = (record.received ?? []).flatMap((candidate) =>
         candidate.source !== source
           ? [candidate]
           : "all" in end
             ? []
             : [{ ...candidate, units: [], withdrawn: end.revision }],
-      ),
-    }));
+      );
+      // A forgotten sender's controls no longer count; the others' strictest still does.
+      const controls = "all" in end ? strictestControls(received) : undefined;
+      return controls ? { received, controls } : { received };
+    });
     return deleted;
   });
 
@@ -402,21 +421,32 @@ export const makeRemoteSessions = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* authorize(caller, input.source, input.key);
         yield* sweepSenders;
+        const current = (yield* records).profiles.find(
+          (record) => record.profileId === input.profileId,
+        );
+        if (
+          current &&
+          !senderOf(current, input.source) &&
+          (current.received?.length ?? 0) >= SENDERS_PER_PROFILE
+        )
+          return yield* denied(
+            `This computer already takes this profile's sign-ins from ${SENDERS_PER_PROFILE} computers. Forget one there first.`,
+          );
         const before = yield* accounts.updateReceived(input.profileId, (record) => {
           const entry = senderOf(record, input.source);
-          return {
-            received: [
-              ...(record.received ?? []).filter((candidate) => candidate !== entry),
-              {
-                source: input.source,
-                label: input.label,
-                sentAt: input.sentAt,
-                ...(entry?.withdrawn === undefined ? {} : { withdrawn: entry.withdrawn }),
-                units: entry?.units ?? [],
-              },
-            ].slice(-4),
-            controls: input.controls,
-          };
+          const received = [
+            ...(record.received ?? []).filter((candidate) => candidate !== entry),
+            {
+              source: input.source,
+              label: input.label,
+              sentAt: input.sentAt,
+              ...(entry?.withdrawn === undefined ? {} : { withdrawn: entry.withdrawn }),
+              units: entry?.units ?? [],
+              controls: input.controls,
+            },
+          ];
+          const controls = strictestControls(received);
+          return controls ? { received, controls } : { received };
         });
         const entry = senderOf(before, input.source);
         // Checked again here, against this computer's own rows and the controls just set.

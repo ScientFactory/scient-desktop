@@ -403,12 +403,22 @@ export const ReceivedUnit = Schema.Struct({
 export type ReceivedUnit = typeof ReceivedUnit.Type;
 
 /** On a remote: the copies of one sender, the desktop its key proves. */
+/** The controls a desktop sends with a profile; a project limit arrives as Off. */
+export const SentProfileControls = Schema.Struct({
+  access: AccountAccess,
+  scope: GrantScope,
+  scriptSignIn: Schema.Boolean,
+});
+export type SentProfileControls = typeof SentProfileControls.Type;
+
 export const ProfileReceived = Schema.Struct({
   source: EnvironmentId,
   label: ComputerLabel,
   sentAt: IsoDateTime,
   withdrawn: Schema.optional(SessionRevision),
   units: Schema.Array(ReceivedUnit).check(Schema.isMaxLength(5_000)),
+  /** The controls this sender last set; the profile follows the strictest of its senders'. */
+  controls: Schema.optional(SentProfileControls),
 });
 export type ProfileReceived = typeof ProfileReceived.Type;
 
@@ -988,14 +998,6 @@ export const AccountProfileSharedInput = Schema.Struct({
   profileId: BrowserProfileId,
   share: ProfileSharedWith,
 });
-
-/** The controls a desktop sends with a profile; a project limit arrives as Off. */
-export const SentProfileControls = Schema.Struct({
-  access: AccountAccess,
-  scope: GrantScope,
-  scriptSignIn: Schema.Boolean,
-});
-export type SentProfileControls = typeof SentProfileControls.Type;
 
 const SENT_COOKIES_LIMIT = 1_000;
 
