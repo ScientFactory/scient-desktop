@@ -70,19 +70,22 @@ export interface DesktopGoogleSession {
   readonly valid: boolean;
 }
 
+/** What a copy of one unit did; `restore-failed` left it refused until the user signs out there. */
+export type DesktopUnitOutcome =
+  | "copied"
+  | "same"
+  | "conflict"
+  | "blocked"
+  | "busy"
+  | "failed"
+  | "restore-failed";
+
 /** What a copy into Main did to each unit; never any cookie value. */
 export interface DesktopFillMainResult {
   readonly units: ReadonlyArray<{
     readonly sites: ReadonlyArray<string>;
     /** `busy`: a page wrote the unit meanwhile; its newer cookies were left and nothing copied. */
-    readonly outcome:
-      | "copied"
-      | "same"
-      | "conflict"
-      | "blocked"
-      | "busy"
-      | "failed"
-      | "restore-failed";
+    readonly outcome: DesktopUnitOutcome;
   }>;
   /** Cookies Scient can't carry exactly, such as opaque partitions; left out. */
   readonly unsupported: number;

@@ -69,7 +69,6 @@ function browserFixture() {
     stopping: () => hooks.stopping === true,
     stalled: () => hooks.stalled === true || hooks.quarantined === true,
     quarantined: () => hooks.quarantined === true,
-    independent: { names: async () => [], pages: () => 1 },
   });
   const browser = {
     // A fresh hold opens a fresh context: whatever stalled the last one is gone.

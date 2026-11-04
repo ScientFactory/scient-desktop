@@ -23,12 +23,18 @@ export interface ProfileCookieJar extends CookieStore {
   readonly stalled: () => boolean;
   /** Opening, attaching or closing a helper stalled: the context is discarded on release. */
   readonly quarantined: () => boolean;
-  /** Reads through Playwright's own context API rather than CDP, for the qualification. */
-  readonly independent: {
-    readonly names: (url?: string) => Promise<ReadonlyArray<string>>;
-    readonly pages: () => number;
-  };
 }
+
+/** Reads through Playwright's own context API rather than CDP: the qualification's second look. */
+export interface IndependentReads {
+  readonly names: (url?: string) => Promise<ReadonlyArray<string>>;
+  readonly pages: () => number;
+}
+
+const independentReads = new WeakMap<ProfileCookieJar, IndependentReads>();
+
+/** The qualification's own reads of a jar this module opened; never used by delivery. */
+export const independentReadsOf = (jar: ProfileCookieJar) => independentReads.get(jar);
 
 export class ProfileCookiesError extends Data.TaggedError("ProfileCookiesError")<{
   readonly profileId: string;
@@ -138,11 +144,11 @@ export async function openProfileCookieJar(
         const url = URL.parse(page.url());
         return url && /^https?:$/.test(url.protocol) ? [siteOf(url.hostname)] : [];
       }),
-    independent: {
-      names: async (url) => (await context.cookies(url)).map((cookie) => cookie.name),
-      pages: () => context.pages().length,
-    },
   };
+  independentReads.set(jar, {
+    names: async (url) => (await context.cookies(url)).map((cookie) => cookie.name),
+    pages: () => context.pages().length,
+  });
   return {
     jar,
     close: async () => {

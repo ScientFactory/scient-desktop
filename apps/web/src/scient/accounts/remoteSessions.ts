@@ -2,6 +2,7 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
+  ACCOUNTS_PROTOCOL,
   AuthSettingsWriteScope,
   BrowserProfileId,
   defaultBrowserProfileRecord,
@@ -449,7 +450,8 @@ function routeOf(registry: AtomRegistry.AtomRegistry, environmentId: Environment
   if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope))
     return { stopped: "permission" } as const;
   const remote = value(registry.get(accountsState.snapshot({ environmentId, input: {} })));
-  if (!remote?.features?.sessionsReceive) return { stopped: "no-feature" } as const;
+  if ((remote?.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL)
+    return { stopped: "no-feature" } as const;
   const target = connection.target;
   return {
     identity: JSON.stringify([

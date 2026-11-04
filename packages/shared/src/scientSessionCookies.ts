@@ -3,6 +3,7 @@ import {
   type AccountSessionsApplied,
   type AccountSummary,
   type BrowserProfileRecord,
+  type DesktopUnitOutcome,
   type ProfileSendLog,
   type SentProfileControls,
   type SessionCookie,
@@ -298,14 +299,7 @@ export interface CookieStore {
   ) => Promise<void>;
 }
 
-export type UnitOutcome =
-  | "copied"
-  | "same"
-  | "conflict"
-  | "blocked"
-  | "busy"
-  | "failed"
-  | "restore-failed";
+export type UnitOutcome = DesktopUnitOutcome;
 
 /**
  * One unit into a jar as one transaction: snapshot, decide, write, read the whole unit back,

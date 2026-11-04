@@ -1,4 +1,9 @@
-import { GOOGLE_SITE, type AccountSummary, type EnvironmentId } from "@t3tools/contracts";
+import {
+  ACCOUNTS_PROTOCOL,
+  GOOGLE_SITE,
+  type AccountSummary,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import { isIdentityPage } from "@t3tools/shared/scientSignInPage";
 
@@ -92,7 +97,7 @@ async function recordRows(environmentId: EnvironmentId, profileId: string, from:
   const read = await accountsState.readSnapshot
     .run(appAtomRegistry, { environmentId, input: {} })
     .catch(() => null);
-  if (read?._tag !== "Success" || !read.value.features?.sessionsSeen) return;
+  if (read?._tag !== "Success" || (read.value.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL) return;
   const sites = importedSessionSites(cookies, read.value.accounts, Date.now());
   if (sites.length === 0) return;
   await accountsState.sessionsSeen.run(appAtomRegistry, {

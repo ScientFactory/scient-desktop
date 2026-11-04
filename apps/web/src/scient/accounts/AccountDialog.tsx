@@ -1,4 +1,5 @@
 import {
+  ACCOUNTS_PROTOCOL,
   AccountSaveInput,
   DEFAULT_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
@@ -918,7 +919,9 @@ export function AccountDialog({
                 <AccountField
                   label="Name"
                   action={
-                    !account && details.kind === "website" && snapshot.features?.signInAnyRow ? (
+                    !account &&
+                    details.kind === "website" &&
+                    (snapshot.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL ? (
                       <Button
                         size="xs"
                         variant="ghost-muted"

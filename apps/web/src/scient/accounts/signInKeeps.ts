@@ -1,4 +1,9 @@
-import { ThreadId, type DesktopCapturedSignIn, type EnvironmentId } from "@t3tools/contracts";
+import {
+  ACCOUNTS_PROTOCOL,
+  ThreadId,
+  type DesktopCapturedSignIn,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
 import { runtimeTab } from "./accountAutofill";
@@ -24,7 +29,7 @@ export function watchSignInKeeps(
     const attempt = snapshot.attempts?.find(
       (item) => item.threadId === tab.threadId && item.tabId === tab.tabId,
     );
-    if (!snapshot.features?.keepTyped || !attempt) return;
+    if ((snapshot.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL || !attempt) return;
     void accountsState.keepTyped
       .run(registry, {
         environmentId,

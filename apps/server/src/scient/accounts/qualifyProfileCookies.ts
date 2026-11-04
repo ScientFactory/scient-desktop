@@ -2,7 +2,7 @@
 import type { DesktopQualifyCase, SessionCookie } from "@t3tools/contracts";
 import { sameUnit } from "@t3tools/shared/scientSessionCookies";
 
-import type { ProfileCookieJar } from "./profileCookieJar.ts";
+import { independentReadsOf, type ProfileCookieJar } from "./profileCookieJar.ts";
 
 /**
  * Checks that the server browser's cookie adapter copies exactly, on this computer's Chromium, in
@@ -18,6 +18,12 @@ export interface QualifyBrowser {
 }
 
 type Held = Awaited<ReturnType<QualifyBrowser["open"]>>;
+
+const independent = (held: Held) => {
+  const reads = independentReadsOf(held.jar);
+  if (!reads) throw new Error("The jar was not opened by the server browser.");
+  return reads;
+};
 
 const HOUR = 3600;
 const base = {
@@ -53,9 +59,9 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
     async (a, b) => {
       const name = `isolated-${crypto.randomUUID()}`;
       await a.jar.set([domainCookie(name)]);
-      if (!(await a.jar.independent.names()).includes(name))
+      if (!(await independent(a).names()).includes(name))
         return "the write did not land in A's own context";
-      return (await b.jar.independent.names()).includes(name) || named(await read(b), name).length
+      return (await independent(b).names()).includes(name) || named(await read(b), name).length
         ? "B sees A's cookie"
         : undefined;
     },
@@ -67,7 +73,7 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
       await b.jar.set(named(await read(a), "host"));
       const [copied] = named(await read(b), "host");
       if (!copied?.hostOnly) return "the copy is not host-only";
-      return (await b.jar.independent.names("https://b.qualify.test/")).includes("host")
+      return (await independent(b).names("https://b.qualify.test/")).includes("host")
         ? "b.qualify.test sees a host-only cookie of a.qualify.test"
         : undefined;
     },
@@ -76,7 +82,7 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
     "domain",
     async (_a, b) => {
       await b.jar.set([domainCookie("domain")]);
-      return (await b.jar.independent.names("https://b.qualify.test/")).includes("domain")
+      return (await independent(b).names("https://b.qualify.test/")).includes("domain")
         ? undefined
         : "b.qualify.test does not see the .qualify.test cookie";
     },
@@ -190,7 +196,7 @@ export async function qualifyProfileCookies(browser: QualifyBrowser) {
         for (const [name, check] of CASES) record(name, await check(a, b).catch(failure));
         record(
           "helper page",
-          a.jar.independent.pages() === 1 && a.jar.openTabSites().length === 0
+          independent(a).pages() === 1 && a.jar.openTabSites().length === 0
             ? undefined
             : "the helper page shows as a page of the profile",
         );

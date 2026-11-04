@@ -24,7 +24,7 @@ const state = vi.hoisted(() => ({
   external: vi.fn(),
   settings: {} as Partial<ClientSettings>,
   calls: [] as unknown[],
-  features: { signInAnyRow: true } as { signInAnyRow?: true },
+  protocol: 1 as number | undefined,
   primary: "synthetic" as string | null,
   results: {} as Record<string, unknown>,
   environments: [] as unknown[],
@@ -68,7 +68,7 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: {} }),
 }));
 vi.mock("./useAccounts", () => ({
-  useAccounts: () => ({ data: { features: state.features }, canWrite: true }),
+  useAccounts: () => ({ data: { accountsProtocol: state.protocol }, canWrite: true }),
   useAccountCommand: (command: { label: string }) => async (input: unknown) => {
     state.calls.push(["record", input]);
     return { ok: true, value: state.results[command.label] ?? {} };
@@ -127,7 +127,7 @@ const row = (value = account) => (
 it("signs in again through Scient, then removes the status and action once signed in", async () => {
   using _fixture = fixture();
   state.calls = [];
-  state.features = { signInAnyRow: true };
+  state.protocol = 1;
   await using screen = await render(row());
   await expect.element(page.getByText("Signed out", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Account menu" }).click();
@@ -175,7 +175,7 @@ it("says once that new tabs now open in Main, until dismissed", async () => {
 it("says a held sign-in needs the person, with its Sign in on the row", async () => {
   using _fixture = fixture();
   state.calls = [];
-  state.features = { signInAnyRow: true };
+  state.protocol = 1;
   // An overnight attempt that met a slow page: Scient stops trying until the person signs in.
   await using _screen = await render(
     row({ ...account, signIn: { state: "failed", at: "2026-11-04T02:00:00.000Z" } }),
@@ -192,7 +192,7 @@ it("says a held sign-in needs the person, with its Sign in on the row", async ()
 
 it("says an older server can't sign in to a website row from here", async () => {
   using _fixture = fixture();
-  state.features = {};
+  state.protocol = undefined;
   await using _screen = await render(row());
   await page.getByRole("button", { name: "Account menu" }).click();
   await expect
@@ -414,7 +414,7 @@ it("says what each other computer holds of this desktop's sign-ins, first state 
         sharing: true,
         sending: false,
         refused: undefined,
-        remote: { features: { sessionsReceive: true } },
+        remote: { accountsProtocol: 1 },
         shared: [share()],
         universities: [],
         ...overrides,
@@ -430,9 +430,7 @@ it("says what each other computer holds of this desktop's sign-ins, first state 
   expect(line({ phase: "offline" })).toBe(
     `Lab server · offline since ${time} · has your sign-ins from ${time}, kept 30 days without this computer`,
   );
-  expect(line({ remote: { features: {} } })).toBe(
-    "Lab server · can't receive sign-ins: update Scient there",
-  );
+  expect(line({ remote: {} })).toBe("Lab server · can't receive sign-ins: update Scient there");
   expect(line({ refused: "relay" })).toBe(
     "Lab server · doesn't get sign-ins: connected through a relay",
   );
@@ -548,7 +546,7 @@ it("lets the owner of a computer that receives sign-ins forget the desktop sendi
 it("signs in once on the computer that refused a copy, in that computer's own browser", async () => {
   state.calls = [];
   state.primary = "desktop";
-  state.features = { signInAnyRow: true };
+  state.protocol = 1;
   state.results = { "accounts:save": { accountId: "acc_lab" } };
   state.environments = [
     {

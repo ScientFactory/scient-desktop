@@ -12,7 +12,7 @@ vi.mock("./accountsState", () => ({
     readSnapshot: {
       run: async () => ({
         _tag: "Success",
-        value: { accounts: [], features: { sessionsSeen: true } },
+        value: { accounts: [], accountsProtocol: 1 },
       }),
     },
     sessionsSeen: {

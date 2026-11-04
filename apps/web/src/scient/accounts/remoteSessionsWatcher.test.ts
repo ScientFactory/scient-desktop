@@ -110,7 +110,7 @@ const snapshots = (registry: AtomRegistry.AtomRegistry) => {
   );
   registry.set(
     atomFor(`snapshot:${LAB}`, undefined),
-    AsyncResult.success({ accounts: [], profiles: [], features: { sessionsReceive: true } }),
+    AsyncResult.success({ accounts: [], profiles: [], accountsProtocol: 1 }),
   );
 };
 

@@ -437,7 +437,11 @@ export const BrowserProfileRecord = Schema.Struct({
   picture: Schema.optional(ProfilePictureDataUri),
   color: Schema.optional(ProfileColor),
   source: Schema.optional(BrowserProfileSource),
-  /** When Scient made the profile; one imported or made elsewhere has none. */
+  /**
+   * When Scient made the profile; one imported or made elsewhere has none. Nothing reads it yet:
+   * it is written from now on so that folding Scient-made profiles into Main, if the owner
+   * approves that, can tell which profiles Scient made.
+   */
   madeInScient: Schema.optional(IsoDateTime),
   /**
    * Main only: sites the user signed out of with Accounts' Sign out, which an import or back-fill
@@ -834,6 +838,13 @@ export const AccountCodeSourcesResult = Schema.Struct({
   messagesNeedAccess: Schema.Boolean,
 });
 
+/**
+ * Accounts' protocol between a client and a server, which may run different builds. 1: imported
+ * sessions recorded (`sessionsSeen`), sign-ins received from another computer, sign-in on any
+ * website row, and keeping what the user types in a sign-in Scient runs.
+ */
+export const ACCOUNTS_PROTOCOL = 1;
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
@@ -862,17 +873,8 @@ export const AccountsSnapshot = Schema.Struct({
     ),
   ),
   /** What this server can do that an older one can't, so a newer client offers only that. */
-  features: Schema.optional(
-    Schema.Struct({
-      sessionsSeen: Schema.optional(Schema.Literal(true)),
-      /** Receives the sign-ins another computer copies here (`accounts.sessions.receive`). */
-      sessionsReceive: Schema.optional(Schema.Literal(true)),
-      /** `accounts.universities.signIn` signs in to any website row. */
-      signInAnyRow: Schema.optional(Schema.Literal(true)),
-      /** `accounts.keepTyped` keeps what the user types in a sign-in Scient runs. */
-      keepTyped: Schema.optional(Schema.Literal(true)),
-    }),
-  ),
+  /** What this server's Accounts speaks; absent on a server older than `ACCOUNTS_PROTOCOL`. */
+  accountsProtocol: Schema.optional(Schema.Int),
   /** Sign-ins Scient is running, by tab; no values. Agents can't read these tabs meanwhile. */
   attempts: Schema.optional(Schema.Array(AccountSignInAttempt)),
 });

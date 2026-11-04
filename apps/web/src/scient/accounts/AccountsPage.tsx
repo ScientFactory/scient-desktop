@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import {
+  ACCOUNTS_PROTOCOL,
   AuthOrchestrationReadScope,
   DEFAULT_BROWSER_PROFILE_ID,
   GOOGLE_SITE,
@@ -145,7 +146,8 @@ export function AccountRow({
   const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
   const university = universityDetails(details);
   const signIn = useSignIn(environmentId);
-  const signInAnyRow = useAccounts(environmentId).data?.features?.signInAnyRow === true;
+  const signInAnyRow =
+    (useAccounts(environmentId).data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL;
   const held = signInHeld(account.signIn);
   const signInAgain = held || account.signIn?.state === "signed-out";
   const openSite = async () => {

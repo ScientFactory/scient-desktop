@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque record ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
 import {
+  ACCOUNTS_PROTOCOL,
   GOOGLE_SITE,
   ACCOUNT_SECRET_FIELDS,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -265,12 +266,7 @@ export const layer = Layer.effect(
         recentActivity,
         customModelKeys,
         managedElsewhere,
-        features: {
-          sessionsSeen: true,
-          signInAnyRow: true,
-          keepTyped: true,
-          sessionsReceive: true,
-        },
+        accountsProtocol: ACCOUNTS_PROTOCOL,
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {

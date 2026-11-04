@@ -161,7 +161,7 @@ it("offers to save a typed sign-in, except on a tab where Scient's sign-in keeps
     approvals: [],
     recentActivity: [],
     customModelKeys: [],
-    features: { keepTyped: true },
+    accountsProtocol: 1,
     attempts,
   });
   const environmentId = EnvironmentId.make("synthetic");

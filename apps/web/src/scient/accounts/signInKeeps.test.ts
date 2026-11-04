@@ -1,8 +1,4 @@
-import {
-  EnvironmentId,
-  type AccountsSnapshot,
-  type DesktopCapturedSignIn,
-} from "@t3tools/contracts";
+import { EnvironmentId, type DesktopCapturedSignIn } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -35,10 +31,10 @@ const capture: DesktopCapturedSignIn = {
   usernameFrom: "earlier-step",
 };
 
-function setup(features: AccountsSnapshot["features"]) {
+function setup(accountsProtocol: number | undefined) {
   state.kept = [];
   state.snapshot = {
-    features,
+    ...(accountsProtocol === undefined ? {} : { accountsProtocol }),
     attempts: [
       {
         attemptId: "attempt-1",
@@ -72,7 +68,7 @@ function setup(features: AccountsSnapshot["features"]) {
 }
 
 it("sends what is typed in an attempt's tab to that attempt, by its ids", () => {
-  using watcher = setup({ keepTyped: true });
+  using watcher = setup(1);
   watcher.capture(capture);
   // Another tab, or another environment's, is not this attempt's.
   watcher.capture({ ...capture, tabId: JSON.stringify([environmentId, "thread-fixture", 1, "x"]) });
@@ -98,7 +94,7 @@ it("sends what is typed in an attempt's tab to that attempt, by its ids", () => 
 });
 
 it("sends nothing to a server that doesn't keep what is typed", () => {
-  using watcher = setup({});
+  using watcher = setup(undefined);
   watcher.capture(capture);
   expect(state.kept).toEqual([]);
 });

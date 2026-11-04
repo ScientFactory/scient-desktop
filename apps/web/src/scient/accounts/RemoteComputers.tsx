@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ACCOUNTS_PROTOCOL,
   BrowserProfileId,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
@@ -54,7 +55,7 @@ export interface RemoteLineInput {
   readonly failure?: DeliveryFailure | undefined;
   readonly refused: "relay" | "unencrypted" | undefined;
   /** The remote's snapshot while connected. */
-  readonly remote: Pick<AccountsSnapshot, "features"> | undefined;
+  readonly remote: Pick<AccountsSnapshot, "accountsProtocol"> | undefined;
   /** This desktop's records of what the remote applied, one per profile. */
   readonly shared: ReadonlyArray<NonNullable<BrowserProfileRecord["sharedWith"]>[number]>;
   /** University rows here whose institution the remote has no row for. */
@@ -80,7 +81,7 @@ export function remoteLine(input: RemoteLineInput, now = new Date()) {
         ? `couldn't send your sign-ins at ${when(input.failure.at, now)}: ${input.failure.reason === "refused" ? "it refused this computer" : "the request failed"}`
         : input.refused
           ? `doesn't get sign-ins: ${input.refused === "relay" ? "connected through a relay" : "connected without encryption"}`
-          : connected && input.remote && !input.remote.features?.sessionsReceive
+          : connected && input.remote && (input.remote.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL
             ? "can't receive sign-ins: update Scient there"
             : connected && sentAt
               ? `has your sign-ins from ${when(sentAt, now)}`
@@ -179,7 +180,7 @@ function RemoteComputerRow({
    */
   const signInThere = async () => {
     const first = needs[0];
-    if (!first || !remote?.features?.signInAnyRow) return openThere();
+    if (!first || (remote?.accountsProtocol ?? 0) < ACCOUNTS_PROTOCOL) return openThere();
     const saved = await save({
       name: first.site,
       details: {

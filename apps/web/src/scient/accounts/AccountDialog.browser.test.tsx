@@ -167,18 +167,17 @@ it("signs in to a signed-in suggestion through Scient, in its profile, only wher
       keychain: { available: false, platform: "linux" },
       onePassword: { state: "not-connected" },
     },
-    features: { signInAnyRow: true },
   };
-  const dialog = (features: AccountsSnapshot["features"]) => (
+  const dialog = (accountsProtocol: number | undefined) => (
     <AccountDialog
       environmentId={EnvironmentId.make("synthetic")}
-      snapshot={{ ...snapshot, features }}
+      snapshot={{ ...snapshot, ...(accountsProtocol === undefined ? {} : { accountsProtocol }) }}
       account={null}
       canWrite
       onClose={closed}
     />
   );
-  await using screen = await render(dialog({}));
+  await using screen = await render(dialog(undefined));
   await page.getByRole("searchbox", { name: "Find an account" }).fill("synthetic");
   await expect.element(page.getByText("Signed in on Main", { exact: true })).toBeVisible();
   await page.getByText("synthetic.example.org", { exact: true }).first().click();
@@ -186,7 +185,7 @@ it("signs in to a signed-in suggestion through Scient, in its profile, only wher
   await expect
     .element(page.getByRole("button", { name: "Sign in with the browser", exact: true }))
     .not.toBeInTheDocument();
-  await screen.rerender(dialog({ signInAnyRow: true }));
+  await screen.rerender(dialog(1));
   await page.getByRole("button", { name: "Sign in with the browser", exact: true }).click();
   await vi.waitFor(() =>
     expect(browser.signIn).toHaveBeenCalledWith("acc_synthetic_added", {
