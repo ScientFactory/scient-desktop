@@ -32,8 +32,9 @@ export const captureScientWsServices = Effect.gen(function* () {
   const remoteSessions = yield* makeRemoteSessions.pipe(
     Effect.provideService(AccountsService, accounts),
   );
-  // For the server's life: copies from a desktop revoked here, or silent 30 days, go.
-  yield* remoteSessions.watch.pipe(Effect.forkDetach);
+  // For the server's life: copies from a desktop revoked here, or silent 30 days, go. Scoped to
+  // the route's layer, so shutdown interrupts the sweep and waits for its finalizers.
+  yield* remoteSessions.watch.pipe(Effect.forkScoped);
   // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
   const browserHistory = yield* BrowserHistory;

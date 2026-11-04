@@ -83,6 +83,8 @@ export class AccountPersistence extends Context.Service<
       value: Redacted.Redacted<Uint8Array>,
     ) => Effect.Effect<void, AccountsError>;
     readonly remove: (name: string) => Effect.Effect<void, AccountsError>;
+    /** Whether a record was ever stored, without opening the vault. */
+    readonly exists: (name: string) => Effect.Effect<boolean, AccountsError>;
   }
 >()("t3/scient/accounts/AccountPersistence") {}
 
@@ -110,6 +112,9 @@ export const layer = Layer.effect(
       }),
       remove: Effect.fn("AccountPersistence.remove")((name) =>
         store.remove(name).pipe(Effect.mapError(unavailable)),
+      ),
+      exists: Effect.fn("AccountPersistence.exists")((name) =>
+        store.get(name).pipe(Effect.map(Option.isSome), Effect.mapError(unavailable)),
       ),
     });
   }),

@@ -510,3 +510,28 @@ it.effect("runs the cookie-copy qualification only on a development server", () 
     expect(jars.size).toBe(0);
   }),
 );
+
+it.effect("sweeps a server nobody has used without opening Accounts, a browser or a profile", () =>
+  Effect.gen(function* () {
+    const { service, blobs, operations } = yield* makeHarness();
+    const fixture = browserFixture();
+    const opened: string[] = [];
+    const remote = yield* makeRemoteSessions.pipe(
+      Effect.provideService(AccountsService, service),
+      Effect.provideService(ServerBrowser, {
+        ...fixture.browser,
+        profileCookies: (profileId: string) => {
+          opened.push(profileId);
+          return fixture.browser.profileCookies!(profileId);
+        },
+      }),
+      Effect.provideService(ServerConfig, { devUrl: undefined } as ServerConfig["Service"]),
+    );
+    yield* remote.sweep();
+    expect(yield* service.remoteSenders).toEqual([]);
+    // No vault key, no stored state and no keychain write: nothing to sweep, nothing touched.
+    expect(operations).toEqual([]);
+    expect([...blobs.keys()]).toEqual([]);
+    expect(opened).toEqual([]);
+  }),
+);

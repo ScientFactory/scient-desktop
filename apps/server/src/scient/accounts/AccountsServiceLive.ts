@@ -1256,7 +1256,19 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      remoteSenders: locked(Effect.sync(() => state.senders ?? [])),
+      // Nothing stored means no senders: answered without opening the vault or reading Accounts,
+      // so a server nobody has used yet starts without touching the keychain or Source Control.
+      remoteSenders: Effect.suspend(() =>
+        initialized
+          ? locked(Effect.sync(() => state.senders ?? []))
+          : persistence
+              .exists("accounts-state")
+              .pipe(
+                Effect.flatMap((stored) =>
+                  stored ? locked(Effect.sync(() => state.senders ?? [])) : Effect.succeed([]),
+                ),
+              ),
+      ),
       setRemoteSender: Effect.fn("AccountsService.setRemoteSender")((source, sender) =>
         locked(
           Effect.suspend(() =>
