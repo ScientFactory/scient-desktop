@@ -271,7 +271,12 @@ const jarCookie = (overrides: Partial<SessionCookie> = {}): SessionCookie => ({
 
 function fakeJarSession() {
   const jar = new Map<string, SessionCookie>();
-  const faults = { corruptNextSet: false, failDeletes: false, onSet: () => {} };
+  const faults = {
+    corruptNextSet: false,
+    failDeletes: false,
+    beforeSet: () => {},
+    onSet: () => {},
+  };
   const cookies = Object.assign(new NodeEvents.EventEmitter(), {
     flushStore: vi.fn(async () => undefined),
   });
@@ -298,6 +303,7 @@ function fakeJarSession() {
         })),
       };
     if (method === "Storage.setCookies") {
+      faults.beforeSet();
       const corrupt = faults.corruptNextSet;
       faults.corruptNextSet = false;
       for (const param of params?.cookies ?? []) {
@@ -442,6 +448,21 @@ describe("fillMain", () => {
       const result = yield* f.copy({ from: "work", sourceControls: allowed });
       expect(result?.units[0]?.outcome).toBe("failed");
       expect([...main.jar.values()].map((cookie) => cookie.name)).toEqual(["page"]);
+    }),
+  );
+
+  it.effect("leaves a cookie a navigation wrote just before the copy wrote the same name", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie({ value: "from-work" }));
+      const main = f.main();
+      main.faults.beforeSet = () => {
+        main.faults.beforeSet = () => {};
+        main.put(jarCookie({ value: "from-the-site" }));
+      };
+      const result = yield* f.copy({ from: "work", sourceControls: allowed });
+      expect(result?.units[0]?.outcome).toBe("busy");
+      expect([...main.jar.values()].map((cookie) => cookie.value)).toEqual(["from-the-site"]);
     }),
   );
 

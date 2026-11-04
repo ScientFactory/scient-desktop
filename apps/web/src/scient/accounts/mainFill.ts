@@ -169,7 +169,8 @@ export function mainFillTrigger(deps: {
       })
       .catch(() => null);
     const outcome = result?.units[0]?.outcome;
-    if (result && outcome !== "failed") {
+    // A page writing the site meanwhile (`busy`) is retried like a failed copy.
+    if (result && outcome !== "failed" && outcome !== "busy") {
       pending.delete(key);
       await deps.record(result, [row], profileId).catch(() => undefined);
       return;

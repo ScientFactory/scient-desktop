@@ -114,9 +114,7 @@ export async function copyIntoMain(
       const store = jarStore(main, sendMain);
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
       // Units sharing a site are one component, decided once, before anything is written.
-      const planned = input.units
-        ? mergeUnits(input.units, site)
-        : jarUnits(jar, site, input.join);
+      const planned = input.units ? mergeUnits(input.units, site) : jarUnits(jar, site, input.join);
       for (const unit of planned) {
         const sites = [...unitSites(unit, site)];
         const since = unit.flatMap((entry) => {
@@ -140,7 +138,7 @@ export async function copyIntoMain(
                 !tracker.touchedSince(sites, Math.min(...since)),
               nowSeconds: Date.now() / 1000,
               siteOf: site,
-              foreign: () => foreign.slots,
+              foreign: () => foreign.cookies,
             });
           } finally {
             foreign.stop();

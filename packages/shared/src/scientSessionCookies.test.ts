@@ -264,7 +264,8 @@ describe("applyUnit", () => {
       ...unread.store,
       readUnit: async (unit) => {
         reads += 1;
-        if (reads === 2) throw new Error("synthetic read-back failure");
+        // The snapshot, the last look before writing, then the read-back.
+        if (reads === 3) throw new Error("synthetic read-back failure");
         return unread.store.readUnit(unit);
       },
     };
@@ -282,13 +283,13 @@ describe("applyUnit", () => {
   it("accepts a page's insert during the copy, and the restore leaves it", async () => {
     const target = jar(occupied);
     const page = cookie({ name: "page", value: "from-the-site" });
-    const changed = new Set<string>();
+    const changed = new Map<string, SessionCookie>();
     const store: CookieStore = {
       ...target.store,
       set: async (written) => {
         await target.store.set(written);
         target.cookies.set(key(page), page);
-        changed.add(cookieSlot(page));
+        changed.set(cookieSlot(page), page);
       },
     };
     expect(await applyUnit(store, { ...plan, foreign: () => changed })).toBe("copied");
@@ -304,6 +305,46 @@ describe("applyUnit", () => {
         occupied,
       ),
     ).toBe(true);
+  });
+
+  it("leaves the unit to a site that wrote it since the snapshot, and writes nothing", async () => {
+    const target = jar(occupied);
+    let reads = 0;
+    const sets: unknown[] = [];
+    const store: CookieStore = {
+      ...target.store,
+      readUnit: async (unit) => {
+        reads += 1;
+        // A response lands between the snapshot and the last look before writing.
+        if (reads === 2) target.cookies.set(key(occupied[0]!), { ...occupied[0]!, value: "newer" });
+        return target.store.readUnit(unit);
+      },
+      set: async (written) => void sets.push(written),
+    };
+    expect(await applyUnit(store, plan)).toBe("busy");
+    expect(sets).toEqual([]);
+    expect(target.cookies.get(key(occupied[0]!))?.value).toBe("newer");
+  });
+
+  it("gives a slot back to the site when a navigation wrote it just before the copy did", async () => {
+    // The site's session cookie lands first; the copy then writes the same name over it.
+    const target = jar([]);
+    const site = cookie({ value: "from-the-site", expires: NOW + 7200 });
+    const changed = new Map<string, SessionCookie>();
+    const store: CookieStore = {
+      ...target.store,
+      set: async (written) => {
+        if (changed.size === 0) {
+          target.cookies.set(key(site), site);
+          changed.set(cookieSlot(site), site);
+        }
+        await target.store.set(written);
+      },
+    };
+    expect(await applyUnit(store, { ...plan, foreign: () => changed })).toBe("busy");
+    expect(target.cookies.get(key(site))).toEqual(site);
+    // The rest of the copy is undone too: the unit is the site's, not half of each.
+    expect([...target.cookies.values()]).toEqual([site]);
   });
 });
 

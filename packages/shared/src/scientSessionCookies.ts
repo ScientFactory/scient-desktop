@@ -257,12 +257,20 @@ export interface CookieStore {
   ) => Promise<void>;
 }
 
-export type UnitOutcome = "copied" | "same" | "conflict" | "blocked" | "failed" | "restore-failed";
+export type UnitOutcome =
+  | "copied"
+  | "same"
+  | "conflict"
+  | "blocked"
+  | "busy"
+  | "failed"
+  | "restore-failed";
 
 /**
  * Copies one unit into a jar as one transaction: snapshot, decide, write, read the whole unit
- * back, and on a failed check restore the snapshot. `foreign` names the slots something else
- * changed meanwhile (a page, a response); the check accepts them and the restore leaves them.
+ * back, and on a failed check restore the snapshot. `foreign` holds, by slot, the newest cookie
+ * something else wrote meanwhile (a page, a response). Such a write to a slot the copy touches
+ * is newer than the copy: the unit is left as the site made it and reported `busy`.
  */
 export async function applyUnit(
   store: CookieStore,
@@ -273,16 +281,22 @@ export async function applyUnit(
     readonly replaceAllowed: boolean;
     readonly nowSeconds: number;
     readonly siteOf: SiteOf;
-    readonly foreign?: () => ReadonlySet<string>;
+    readonly foreign?: () => ReadonlyMap<string, SessionCookie>;
   },
 ): Promise<UnitOutcome> {
   const live = (cookies: ReadonlyArray<SessionCookie>) =>
     cookies.filter((cookie) => isLive(cookie, plan.nowSeconds));
-  const foreign = () => plan.foreign?.() ?? new Set<string>();
+  const foreign = () => plan.foreign?.() ?? new Map<string, SessionCookie>();
   const before = live(await store.readUnit(plan.unit));
   const decision = decideUnit({ ...plan, target: before });
   if (decision !== "copy") return decision;
   const written = live(unitCookies(plan.unit, plan.source, plan.siteOf));
+  const slots = new Set([...written, ...before].map(cookieSlot));
+  const competing = () => new Map([...foreign()].filter(([slot]) => slots.has(slot)));
+  // The last look before writing: a change since the snapshot is newer than the copy.
+  const still = await store.readUnit(plan.unit).then(live, () => undefined);
+  if (!still) return "failed";
+  if (competing().size > 0 || !sameUnit(still, before)) return "busy";
   try {
     if (before.length) await store.remove(before);
     await store.set(written);
@@ -293,9 +307,8 @@ export async function applyUnit(
   const changed = foreign();
   if (
     after &&
-    written.every(
-      (cookie) => changed.has(cookieSlot(cookie)) || after.some((read) => sameCookie(cookie, read)),
-    ) &&
+    competing().size === 0 &&
+    written.every((cookie) => after.some((read) => sameCookie(cookie, read))) &&
     after.every(
       (read) =>
         changed.has(cookieSlot(read)) ||
@@ -304,23 +317,36 @@ export async function applyUnit(
   )
     return "copied";
   try {
+    const raced = competing();
     const current = await store.readUnit(plan.unit);
-    const untouched = (cookie: SessionCookie) => !foreign().has(cookieSlot(cookie));
     const ours = current.filter(
       (read) =>
-        untouched(read) &&
+        raced.get(cookieSlot(read))?.value !== read.value &&
         written.some(
           (cookie) => cookieKey(cookie) === cookieKey(read) && cookie.value === read.value,
         ),
     );
     if (ours.length) await store.remove(ours);
     const kept = current.filter((read) => !ours.includes(read));
+    const holds = (cookie: SessionCookie, cookies: ReadonlyArray<SessionCookie>) =>
+      cookies.some(
+        (read) => cookieSlot(read) === cookieSlot(cookie) && read.value === cookie.value,
+      );
+    // A site's cookie the copy overwrote goes back; it is newer than both the copy and the snapshot.
+    const overwritten = live([...raced.values()]).filter((cookie) => !holds(cookie, kept));
     const missing = before.filter(
-      (cookie) => untouched(cookie) && !kept.some((read) => cookieKey(read) === cookieKey(cookie)),
+      (cookie) =>
+        !foreign().has(cookieSlot(cookie)) &&
+        !kept.some((read) => cookieKey(read) === cookieKey(cookie)),
     );
-    if (missing.length) await store.set(missing);
-    const restored = live(await store.readUnit(plan.unit)).filter(untouched);
-    return sameUnit(restored, before.filter(untouched)) ? "failed" : "restore-failed";
+    if (missing.length || overwritten.length) await store.set([...missing, ...overwritten]);
+    const restored = live(await store.readUnit(plan.unit));
+    const untouched = (cookie: SessionCookie) => !foreign().has(cookieSlot(cookie));
+    const restoredExactly =
+      sameUnit(restored.filter(untouched), before.filter(untouched)) &&
+      live([...raced.values()]).every((cookie) => holds(cookie, restored));
+    if (!restoredExactly) return "restore-failed";
+    return raced.size > 0 ? "busy" : "failed";
   } catch {
     return "restore-failed";
   }

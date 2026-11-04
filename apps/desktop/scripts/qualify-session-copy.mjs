@@ -12,7 +12,8 @@ window.desktopBridge.accounts.qualifySessionCopy() there, and prints one line pe
   PASS  2 host-only
   ...
   PASS 12 skip
-  12 passed, 0 failed
+  PASS 13 navigation first
+  13 passed, 0 failed
 
 A failing case reads, for example:
 

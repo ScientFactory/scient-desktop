@@ -68,7 +68,15 @@ export interface DesktopGoogleSession {
 export interface DesktopFillMainResult {
   readonly units: ReadonlyArray<{
     readonly sites: ReadonlyArray<string>;
-    readonly outcome: "copied" | "same" | "conflict" | "blocked" | "failed" | "restore-failed";
+    /** `busy`: a page wrote the unit meanwhile; its newer cookies were left and nothing copied. */
+    readonly outcome:
+      | "copied"
+      | "same"
+      | "conflict"
+      | "blocked"
+      | "busy"
+      | "failed"
+      | "restore-failed";
   }>;
   /** Cookies Scient can't carry exactly, such as opaque partitions; left out. */
   readonly unsupported: number;

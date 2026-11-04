@@ -217,7 +217,7 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
           ...replacePlan,
           unit: ["foreign.test"],
           source: [domainCookie("f", { domain: ".foreign.test", value: "after" })],
-          foreign: () => foreign.slots,
+          foreign: () => foreign.cookies,
         },
       ).finally(foreign.stop);
       if (outcome !== "failed") return `the copy ended ${outcome}`;
@@ -245,6 +245,44 @@ const CASES: ReadonlyArray<readonly [string, Check]> = [
       return (await sessionB.cookies.get({ domain: "skip.test" })).length
         ? "a blocked unit was written"
         : undefined;
+    },
+  ],
+  [
+    "navigation first",
+    async ({ b, sessionB }) => {
+      const store = jarStore(sessionB, b);
+      let pageWrote = false;
+      const foreign = watchForeignInserts(sessionB);
+      const outcome = await applyUnit(
+        {
+          ...store,
+          set: async (cookies) => {
+            if (!pageWrote) {
+              pageWrote = true;
+              // The site sets the same cookie just before the copy writes it.
+              await pageWrites(sessionB, {
+                url: "https://race.test/",
+                name: "n",
+                value: "from-the-site",
+                secure: true,
+                expirationDate: Math.floor(Date.now() / 1000) + HOUR,
+              });
+            }
+            await store.set(cookies);
+          },
+        },
+        {
+          ...replacePlan,
+          unit: ["race.test"],
+          source: [domainCookie("n", { domain: "race.test", hostOnly: true, value: "copied" })],
+          foreign: () => foreign.cookies,
+        },
+      ).finally(foreign.stop);
+      if (outcome !== "busy") return `the copy ended ${outcome}`;
+      const left = named(await store.readUnit(["race.test"]), "n");
+      return left.length === 1 && left[0]?.value === "from-the-site"
+        ? undefined
+        : "the site's newer cookie was not left in place";
     },
   ],
 ];

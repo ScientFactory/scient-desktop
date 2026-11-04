@@ -153,8 +153,10 @@ Main is filled from the other profiles by one desktop writer, `fillMain`
 registrable site, or every site of one multi-site sign-in) is one transaction in the shared
 `applyUnit` (`@t3tools/shared/scientSessionCookies`): snapshot Main's unit, decide, write through
 CDP on a blank script-free page (`sessionCookies.ts`), read the whole unit back, and on a failed
-check restore the snapshot, leaving whatever a page wrote meanwhile; a failed restore refuses the
-unit until restart. Fill copies only into an empty unit. Replace needs Main's row signed out and
+check restore the snapshot; a failed restore refuses the unit until restart. A cookie a page or
+response writes into one of the unit's slots during the copy is newer than the copy: the unit is
+left as the site made it (the site's cookie put back if the copy overwrote it) and reported `busy`,
+which trigger 2 retries. Sign-ins that share a registrable site are merged into one unit first. Fill copies only into an empty unit. Replace needs Main's row signed out and
 the insert tracker (`mainInserts.ts`, from `keepSessionCookies`) to vouch that nothing else wrote
 the unit since; never on Google. Otherwise the result is a conflict, and the other identity stays
 reachable. Copies follow a newer action only: an import or Refresh (`fillMainFromProfile`; an

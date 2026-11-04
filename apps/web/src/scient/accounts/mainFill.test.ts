@@ -159,6 +159,11 @@ describe("trigger 2: a sign-in seen in another profile", () => {
     for (const _ of [1, 2, 3]) await t.timers.shift()?.();
     expect(t.fills).toHaveLength(3);
     expect(t.timers).toHaveLength(0);
+    // A page that wrote the site during the copy is tried again the same way.
+    const busy = setup(copied("busy"));
+    await busy.seen(snapshot([]));
+    await busy.seen(snapshot([row("work", ["github.com"])]));
+    expect(busy.timers).toHaveLength(1);
     const restoreFailed = setup(copied("restore-failed"));
     await restoreFailed.seen(snapshot([]));
     await restoreFailed.seen(snapshot([row("work", ["github.com"])]));

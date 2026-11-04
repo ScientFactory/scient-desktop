@@ -36,13 +36,13 @@ const take = (marks: Marks, id: string) => {
 
 /**
  * One listener per session sorts each cookie insert: the coordinator's own write, the upkeep of
- * `keepSessionCookies`, or anything else (a page, a response). Transactions see every slot
+ * `keepSessionCookies`, or anything else (a page, a response). Transactions see every cookie
  * someone else changed; the Main tracker sees only inserts that bring something new.
  */
 interface Changes {
   readonly own: Marks;
   readonly upkeep: Marks;
-  readonly watchers: Set<(slot: string) => void>;
+  readonly watchers: Set<(cookie: Cookie) => void>;
   installedAt: number;
   onInsert?: (cookie: Cookie) => void;
 }
@@ -61,7 +61,7 @@ function changesFor(session: CookieSession): Changes {
   session.cookies.on("changed", (_event, cookie, _cause, removed) => {
     if (removed) return;
     if (take(created.own, writeId(cookie, cookie.value, cookie.session === true))) return;
-    for (const watcher of created.watchers) watcher(cookieSlot(cookie));
+    for (const watcher of created.watchers) watcher(cookie);
     const upkeep = !cookie.session && take(created.upkeep, writeId(cookie, cookie.value, false));
     if (!upkeep) created.onInsert?.(cookie);
   });
@@ -80,14 +80,29 @@ export function markUpkeep(session: CookieSession, cookie: Cookie) {
   mark(changesFor(session).upkeep, writeId(cookie, cookie.value, false));
 }
 
-/** The slots anything but the coordinator writes into the session until `stop`. */
+/** By slot, the newest cookie anything but the coordinator writes into the session until `stop`. */
 export function watchForeignInserts(session: CookieSession) {
-  const slots = new Set<string>();
-  const watcher = (slot: string) => void slots.add(slot);
+  const cookies = new Map<string, SessionCookie>();
+  const watcher = (cookie: Cookie) => void cookies.set(cookieSlot(cookie), fromElectron(cookie));
   const { watchers } = changesFor(session);
   watchers.add(watcher);
-  return { slots, stop: () => void watchers.delete(watcher) };
+  return { cookies, stop: () => void watchers.delete(watcher) };
 }
+
+/** The cookie a page or response wrote, as a copy could put it back. Electron names no partition. */
+const fromElectron = (cookie: Cookie): SessionCookie => ({
+  name: cookie.name,
+  value: cookie.value,
+  domain: cookie.domain ?? "",
+  hostOnly: cookie.hostOnly ?? !cookie.domain?.startsWith("."),
+  path: cookie.path ?? "/",
+  secure: cookie.secure === true,
+  httpOnly: cookie.httpOnly === true,
+  sameSite: cookie.sameSite,
+  ...(cookie.session || cookie.expirationDate === undefined
+    ? {}
+    : { expires: cookie.expirationDate }),
+});
 
 /**
  * When each site last got a cookie in Main from anything but the coordinator, since
