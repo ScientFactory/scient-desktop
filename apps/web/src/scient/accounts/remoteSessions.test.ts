@@ -283,3 +283,24 @@ it("reconciles a computer this desktop forgot: the jar whole, and copies it no l
     [["gone.test"], "delete", 5],
   ]);
 });
+
+it("sends nothing of a profile restricted while its read was pending, and withdraws it instead", async () => {
+  const { deps, sent } = fixture({
+    log: { head: 2, units: [{ sites: ["github.com"], revision: 2, kind: "copy" }] },
+    applied: { bound: true, units: [{ sites: ["github.com"], revision: 1, outcome: "copied" }] },
+    jar: ["github.com"],
+  });
+  let record: BrowserProfileRecord = deps.profiles()[0]!.record;
+  deps.profiles = () => [{ profileId: "work", record }];
+  const read = deps.readSessions;
+  deps.readSessions = async (input) => {
+    const units = await read(input);
+    // Restricted on the desktop while the jar was being read: its send log withdraws it.
+    record = { ...record, access: "off" };
+    deps.sendLog = async () => ({ head: 3, withdrawn: 3, units: [] });
+    return units;
+  };
+  await deliverOnce(deps);
+  expect(sent.flatMap(({ units }) => units)).toEqual([]);
+  expect(deps.withdraw).toHaveBeenCalledWith("work", 3, expect.anything());
+});

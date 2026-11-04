@@ -126,6 +126,14 @@ export interface DeliveryDeps {
 /** Stops a run: every await checks it, so nothing more is sent once it is set. */
 export class DeliveryStopped extends Error {}
 
+/** The profile's controls changed after its plan was made. */
+class ControlsChanged extends DeliveryStopped {}
+
+const sameProfileControls = (a: BrowserProfileRecord, b: BrowserProfileRecord) =>
+  a.access === b.access &&
+  a.scriptSignIn === b.scriptSignIn &&
+  JSON.stringify(a.scope) === JSON.stringify(b.scope);
+
 const BATCH_UNITS = 100;
 const BATCH_COOKIES = 1_000;
 const WAITING = new Set(["busy", "failed", "restore-failed"]);
@@ -159,12 +167,18 @@ export async function deliverOnce(deps: DeliveryDeps) {
   const university = universitySites(deps.desktopAccounts());
   check();
   const key = await deps.bind();
-  for (const { profileId } of deps.profiles()) {
+  const recordOf = (profileId: string) =>
+    deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
+    defaultBrowserProfileRecord(profileId);
+  const deliverProfile = async (profileId: string) => {
     check();
     // A fresh desktop record each time: a profile restricted meanwhile switches to the withdrawal.
-    const record =
-      deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
-      defaultBrowserProfileRecord(profileId);
+    const record = recordOf(profileId);
+    /** The controls this plan was made under still hold: checked before every read and send. */
+    const hold = () => {
+      check();
+      if (!sameProfileControls(recordOf(profileId), record)) throw new ControlsChanged();
+    };
     const isShareable = shareable(profileId, record);
     const applied = await deps.applied(profileId, key);
     // A computer this desktop forgot (unlinked, then linked again) is reconciled in full.
@@ -174,14 +188,14 @@ export async function deliverOnce(deps: DeliveryDeps) {
       !record.sharedWith?.some((entry) => entry.environmentId === deps.remoteId);
     if (reconcile) await deps.resend(profileId);
     const log = await deps.sendLog(profileId);
-    check();
     const controls = remoteControls(record);
     const own = { access: record.access, scope: record.scope, scriptSignIn: record.scriptSignIn };
     const join = multiSiteRows(deps.desktopAccounts(), profileId);
+    hold();
     const jar = isShareable
       ? ((await deps.readSessions({ profileId, controls: own, join }))?.units ?? [])
       : [];
-    check();
+    hold();
     const plan = planDelivery({
       log,
       applied,
@@ -205,14 +219,16 @@ export async function deliverOnce(deps: DeliveryDeps) {
       });
     // Controls go for every persistent profile; a restricted one sends nothing else.
     if (plan.kind !== "units" || plan.units.length === 0) {
-      if (!applied.bound || !sameControls(deps.remoteRecord(profileId), record))
+      if (!applied.bound || !sameControls(deps.remoteRecord(profileId), record)) {
+        hold();
         await batch([], plan.kind === "units" ? plan.mode : "replace");
+      }
       if (plan.kind === "units") await recordShare(deps, key, profileId, plan, []);
-      continue;
+      return;
     }
     const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
     for (const group of batches(plan.units)) {
-      check();
+      hold();
       const copies = group.filter((unit) => unit.kind === "copy");
       const read = copies.length
         ? ((
@@ -223,7 +239,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
             })
           )?.units ?? [])
         : [];
-      check();
+      hold();
       const ready: Array<{ planned: PlannedUnit; unit: SentUnit }> = [];
       for (const planned of group) {
         const { sites, revision } = planned;
@@ -239,7 +255,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
           ready.push({ planned, unit: { sites, revision, kind: "copy", cookies: sent(cookies) } });
       }
       for (const part of byCookies(ready)) {
-        check();
+        hold();
         const result = await batch(
           part.map(({ unit }) => unit),
           plan.mode,
@@ -250,7 +266,16 @@ export async function deliverOnce(deps: DeliveryDeps) {
       }
     }
     await recordShare(deps, key, profileId, plan, outcomes);
-  }
+  };
+  for (const { profileId } of deps.profiles())
+    for (let attempt = 0; ; attempt += 1)
+      try {
+        await deliverProfile(profileId);
+        break;
+      } catch (cause) {
+        // Changed controls: plan the profile again, which withdraws it if it is now restricted.
+        if (!(cause instanceof ControlsChanged) || attempt >= 2) throw cause;
+      }
 }
 
 type SentUnit = AccountSessionsReceiveInput["units"][number];

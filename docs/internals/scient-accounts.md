@@ -193,6 +193,8 @@ or 2FA key goes. Decisions use revisions, never clocks:
   Before each batch the route (`allowedRoute`: SSH tunnel end, TLS, a Tailscale name, loopback, or
   this desktop's WSL backend at its topology's address; never a relay), the catalog entry, the
   settings permission and `features.sessionsReceive` are checked again; a change stops the run.
+  The profile's controls are read again before every read and send; a change drops the batch and
+  plans the profile again, which withdraws it if it is now restricted.
 - **Receiver** (`apps/server/src/scient/accounts/remoteSessions.ts`): on its first
   `accounts.sessions.bind` a desktop gets a random key from the remote, which keeps only its hash;
   the desktop keeps the key encrypted with its Accounts. Every later call proves it, so a renewed or
