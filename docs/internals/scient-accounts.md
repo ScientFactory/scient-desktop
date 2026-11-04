@@ -10,6 +10,39 @@ Code: `apps/server/src/scient/accounts`, `apps/web/src/scient/accounts`,
 `accountRpcs.ts`, `desktopAccountsBridge.ts` and `secrets.ts`. Every upstream integration point is
 listed in `scient-accounts-seams.json`; `pnpm accounts:seams:check` verifies it.
 
+## Invariants
+
+The rules every change here keeps. The sections below explain each one.
+
+- **Main has one writer.** Scient changes Main's cookies only in the desktop's `mainFill.ts`,
+  under one lock per environment: copies, imports through a staging partition, and Accounts'
+  Sign out on Main. A page writing during a copy always wins (`busy`). Scient's background work
+  (Main fill, Google sessions, keep-signed-in, delivery) runs in one window, the one that owns
+  Accounts (`accountsOwner`).
+- **Lock order.** Outer locks come first, then the profile's browser context, then the Accounts
+  write lock. The outer locks are the sign-in attempt lock (`SignInAttempts.exclusive`, per real
+  site and identity) and the receiver's lock (`RemoteSessions`: bind, receive, withdraw, sweep).
+  The profile's browser context is a `ServerBrowserContexts` lease, or the desktop's Main lock.
+  The Accounts write lock (`writes`) is short and uninterruptible, and is never held across
+  browser work. No code takes an outer lock while holding an inner one.
+- **Withdraw only what we wrote.** A Main copy is taken back only while Main's unit still holds
+  that exact copy (`withdrawCopies`, by digest). A receiver deletes a sender's unit only while the
+  unit still holds exactly the sender's copy. A unit missing from a jar is never deleted for its
+  absence, and a cookie a site wrote since stays.
+- **Copies follow user actions.** Copies into Main and to other computers come from these
+  triggers only: a newer `signed-in` action (`by: "action"`), an import or Refresh, Send again,
+  the one-time back-fill, or a profile becoming shareable. A look never copies. Revisions decide
+  order, never clocks.
+- **One attempt per real site.** Every sign-in goes through `guardedSignIn`, which runs one
+  attempt per real site and username at a time. A failed attempt holds the key until the user
+  acts: a hand sign-in, a password or 2FA edit, or a press. An agent never retries past that hold.
+- **The secret boundary.** Passwords, 2FA keys and API keys are decrypted only in the server, and
+  only when the account's controls allow it. They never go to another computer.
+  - Cookie values cross the desktop bridge only for a copy or a delivery, and travel as
+    `Redacted`.
+  - No RPC result, snapshot, log or agent result carries a cookie value, a sender key or a
+    sign-in code. Snapshots strip the send log's units and the copies' digests.
+
 ## Model
 
 An account (`AccountSummary`) has a kind, kind details (`AccountDetails`), secret fields and four
@@ -184,15 +217,16 @@ or 2FA key goes. Decisions use revisions, never clocks:
   is never dropped until every computer in `sharedWith` applied it. Unlinking removes the computer
   from `sharedWith` (`accounts.profiles.unshared`); one linked again is reconciled in full: the jar
   goes whole and copies the jar no longer has are deleted. Clients see only `send.head`.
-- **Delivery** (`apps/web/src/scient/accounts/remoteSessions.ts`) runs on the desktop, serially per
-  remote, from durable state: `accounts.profiles.sendLog`, the jar through the bridge's
-  `readSessions` (under item 3's Main lock), and the remote's `accounts.sessions.applied`. The pure
+- **Delivery** (`deliverOnce` in `@t3tools/shared/scientSessionDelivery`, run by
+  `apps/web/src/scient/accounts/remoteSessions.ts`) runs on the desktop, serially per remote,
+  from durable state: `accounts.profiles.sendLog`, the jar through the bridge's `readSessions`
+  (under item 3's Main lock), and the remote's `accounts.sessions.applied`. The pure
   `planDelivery` fills a remote that never received, withdraws a restricted profile, and otherwise
   sends units whose revision is newer than the remote applied. A unit gone from the jar is never
   deleted for its absence. Batches hold at most 100 units and 1,000 cookies, values `Redacted`.
   Before each batch the route (`allowedRoute`: SSH tunnel end, TLS, a Tailscale name, loopback, or
   this desktop's WSL backend at its topology's address; never a relay), the catalog entry, the
-  settings permission and `features.sessionsReceive` are checked again; a change stops the run.
+  settings permission and the remote's `accountsProtocol` are checked again; a change stops the run.
   The profile's controls are read again before every read and send; a change drops the batch and
   plans the profile again, which withdraws it if it is now restricted.
 - **Receiver** (`apps/server/src/scient/accounts/remoteSessions.ts`): on its first
@@ -702,7 +736,7 @@ provider environment. The existing proxy redacts reflected values in responses.
   (domain metadata only) and matching Keychain items (debounced). "Search the web" is an explicit
   last row that opens a search in Scient's browser; typing sends nothing.
 - **Sign in with the browser** saves a passwordless row and runs the person sign-in for it
-  (`accounts.universities.signIn`, any website row behind `features.signInAnyRow`), which drops the
+  (`accounts.signInAsPerson`, `accounts.universities.signIn` for older servers), which drops the
   row again if nothing comes of it.
 - **Signing in while browsing**: returning from a known identity provider (Google, Microsoft, Apple,
   GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie records a website account for that
