@@ -292,6 +292,8 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           persistClientSettingsUpdate((current) => ({
             ...current,
             browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
+            // Browser profiles says so once, until dismissed.
+            mainDefaultNotice: true,
           })).then(() => undefined),
       }),
     withdraw: async (profileId) => {

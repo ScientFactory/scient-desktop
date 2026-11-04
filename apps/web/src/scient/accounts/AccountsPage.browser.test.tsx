@@ -36,6 +36,10 @@ vi.mock("~/hooks/useSettings", async (original) => ({
     return select ? select(settings) : settings;
   },
   useClientSettingsHydrated: () => true,
+  persistClientSettingsUpdate: async (update: (current: ClientSettings) => ClientSettings) => {
+    state.settings = update({ ...DEFAULT_CLIENT_SETTINGS, ...state.settings });
+    return state.settings;
+  },
 }));
 vi.mock("~/state/environments", async (original) => ({
   ...(await original<typeof import("~/state/environments")>()),
@@ -142,6 +146,30 @@ it("signs in again through Scient, then removes the status and action once signe
   await expect
     .element(page.getByRole("menuitem", { name: "Sign in again", exact: true }))
     .not.toBeInTheDocument();
+});
+
+it("says once that new tabs now open in Main, until dismissed", async () => {
+  using _fixture = fixture();
+  state.settings = { mainDefaultNotice: true };
+  const line = "New tabs now open in Main, which has your sign-ins. You can change this here.";
+  const view = () => (
+    <BrowserProfiles
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={{ profiles: [], accounts: [] } as unknown as AccountsSnapshot}
+      canWrite
+      onImport={() => undefined}
+    />
+  );
+  try {
+    await using screen = await render(view());
+    await expect.element(page.getByText(line)).toBeVisible();
+    await page.getByRole("button", { name: "Dismiss" }).click();
+    await vi.waitFor(() => expect(state.settings.mainDefaultNotice).toBe(false));
+    await screen.rerender(view());
+    await expect.element(page.getByText(line)).not.toBeInTheDocument();
+  } finally {
+    state.settings = {};
+  }
 });
 
 it("says a held sign-in needs the person, with its Sign in on the row", async () => {

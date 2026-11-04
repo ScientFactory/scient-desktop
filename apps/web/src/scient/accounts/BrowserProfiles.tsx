@@ -20,7 +20,14 @@ import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
-import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  XIcon,
+} from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { QuitStep } from "~/components/settings/BrowserImportWizard";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
@@ -932,6 +939,23 @@ export function BrowserProfiles({
         </span>
       }
     >
+      {settings.mainDefaultNotice ? (
+        <SettingsRow
+          title="New tabs now open in Main, which has your sign-ins. You can change this here."
+          control={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Dismiss"
+              onClick={() =>
+                void changeSettings((current) => ({ ...current, mainDefaultNotice: false }))
+              }
+            >
+              <XIcon />
+            </Button>
+          }
+        />
+      ) : null}
       {profiles.map((profile) => (
         <SettingsRow
           key={profile.id}
