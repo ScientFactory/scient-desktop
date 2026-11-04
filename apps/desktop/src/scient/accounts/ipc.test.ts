@@ -322,7 +322,6 @@ function fakeJarSession() {
   const faults = {
     corruptNextSet: false,
     failDeletes: false,
-    beforeSet: () => {},
     onSet: () => {},
   };
   const cookies = Object.assign(new NodeEvents.EventEmitter(), {
@@ -365,7 +364,6 @@ function fakeJarSession() {
         })),
       };
     if (method === "Network.setCookies") {
-      faults.beforeSet();
       const corrupt = faults.corruptNextSet;
       faults.corruptNextSet = false;
       for (const param of params?.cookies ?? []) {
@@ -581,7 +579,9 @@ describe("fillMain", () => {
       }),
   );
 
-  it.effect("keeps a site's own insert through a failed copy's restore", () =>
+  // The copy-race rules are tested in shared applyUnit and on real Electron by the qualify
+  // harness; this one proves Electron's change events reach the copy as foreign writes.
+  it.effect("passes a site's insert during a copy to the restore, which keeps it", () =>
     Effect.gen(function* () {
       const f = fillFixture();
       f.profile("work").put(jarCookie());
@@ -595,41 +595,6 @@ describe("fillMain", () => {
       expect(result?.units[0]?.outcome).toBe("failed");
       expect([...main.jar.values()].map((cookie) => cookie.name)).toEqual(["page"]);
     }),
-  );
-
-  it.effect("leaves a cookie a navigation wrote just before the copy wrote the same name", () =>
-    Effect.gen(function* () {
-      const f = fillFixture();
-      f.profile("work").put(jarCookie({ value: "from-work" }));
-      const main = f.main();
-      main.faults.beforeSet = () => {
-        main.faults.beforeSet = () => {};
-        main.put(jarCookie({ value: "from-the-site" }));
-      };
-      const result = yield* f.copy({ from: "work" });
-      expect(result?.units[0]?.outcome).toBe("busy");
-      expect([...main.jar.values()].map((cookie) => cookie.value)).toEqual(["from-the-site"]);
-    }),
-  );
-
-  it.effect(
-    "never writes an unpartitioned stand-in for a partitioned cookie a navigation wrote first",
-    () =>
-      Effect.gen(function* () {
-        const f = fillFixture();
-        const partitionKey = { topLevelSite: "https://top.test", hasCrossSiteAncestor: false };
-        const chip = jarCookie({ name: "chip", sameSite: "no_restriction", partitionKey });
-        f.profile("work").put({ ...chip, value: "from-work" });
-        const main = f.main();
-        main.faults.beforeSet = () => {
-          main.faults.beforeSet = () => {};
-          main.put({ ...chip, value: "from-the-site" });
-        };
-        const result = yield* f.copy({ from: "work" });
-        expect(result?.units[0]?.outcome).toBe("busy");
-        // The copy's value is gone, and no unpartitioned cookie took the slot's place.
-        expect([...main.jar.values()]).toEqual([]);
-      }),
   );
 
   it.effect("refuses a unit whose restore failed until the user signs out of it in Main", () =>
