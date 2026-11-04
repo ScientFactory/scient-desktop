@@ -25,6 +25,18 @@ vi.mock("./mainFill", () => ({ watchMainFill: watcher("main") }));
 vi.mock("./signInKeeps", () => ({ watchSignInKeeps: watcher("typed") }));
 vi.mock("./remoteSessions", () => ({ watchRemoteSessions: watcher("deliver") }));
 vi.mock("./qualifyRemoteSessions", () => ({ offerRemoteQualification: () => undefined }));
+const settings = vi.hoisted(() => ({ sharing: false, listeners: new Set<() => void>() }));
+vi.mock("~/hooks/useSettings", () => ({
+  getClientSettings: () => ({ signInSharingEnabled: settings.sharing }),
+  subscribeClientSettings: (listener: () => void) => {
+    settings.listeners.add(listener);
+    return () => settings.listeners.delete(listener);
+  },
+}));
+const setSharing = (sharing: boolean) => {
+  settings.sharing = sharing;
+  for (const listener of settings.listeners) listener();
+};
 
 const { startAccountWatchers } = await import("./accountWatchers");
 
@@ -36,6 +48,9 @@ it("reads only the desktop's own jars: nothing starts for another computer", () 
 
   registry.set(primaryAtom, EnvironmentId.make("desktop"));
   registry.set(primary.ids as Atom.Writable<ReadonlyArray<string>>, ["desktop", "lab-server"]);
+  // Nothing goes to another computer until Labs turns sending on.
+  expect(state.started).not.toContain("deliver:lab-server");
+  setSharing(true);
   expect(state.started).toEqual([
     "autofill:desktop",
     "google:desktop",
@@ -52,6 +67,11 @@ it("reads only the desktop's own jars: nothing starts for another computer", () 
     "deliver:lab-server",
   ]);
 
+  // Turned off, the delivery stops at once; typing for that computer's own sign-ins goes on.
+  setSharing(false);
+  expect(state.stopped).toEqual(["deliver:lab-server"]);
+
   stop();
   expect([...state.stopped].sort()).toEqual([...state.started].sort());
+  setSharing(false);
 });

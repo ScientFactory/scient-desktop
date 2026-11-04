@@ -4,8 +4,12 @@ import {
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import {
+  AccountId,
+  BrowserProfileId,
   EnvironmentId,
+  defaultAccountControls,
   defaultBrowserProfileRecord,
+  type AccountSummary,
   type AccountSessionsApplied,
   type AccountSessionsReceiveInput,
   type BrowserProfileRecord,
@@ -121,6 +125,8 @@ function fixture(options: {
   log: ProfileSendLog;
   applied?: AccountSessionsApplied;
   jar: string[];
+  /** Sites with a row naming the profile in Accounts; every jar site by default. */
+  rows?: string[];
   revalidate?: (sent: number) => string | undefined;
 }) {
   const sent: AccountSessionsReceiveInput[] = [];
@@ -137,7 +143,7 @@ function fixture(options: {
     remoteId: LAB,
     remoteLabel: "Lab server",
     profiles: () => [{ profileId: "work", record }],
-    desktopAccounts: () => [],
+    desktopAccounts: () => (options.rows ?? options.jar).map((site) => websiteRow(site, "work")),
     signingIn: (_profileId: string): ReadonlyArray<string> => [],
     revalidate: () => options.revalidate?.(sent.length),
     bind: async () => Redacted.make("synthetic-sender-key"),
@@ -169,6 +175,17 @@ function fixture(options: {
   return { deps, sent, shares };
 }
 
+const websiteRow = (site: string, profileId: string): AccountSummary => ({
+  accountId: AccountId.make(`acc_${site.replaceAll(".", "")}`),
+  name: site,
+  details: { kind: "website", sites: [site], profileId: BrowserProfileId.make(profileId) },
+  secrets: {},
+  controls: defaultAccountControls("website"),
+  status: "ready",
+  createdAt: "2026-11-01T00:00:00.000Z",
+  updatedAt: "2026-11-01T00:00:00.000Z",
+});
+
 const many = (count: number) => Array.from({ length: count }, (_, index) => `site${index}.test`);
 
 describe("delivering a desktop's sign-ins", () => {
@@ -188,6 +205,22 @@ describe("delivering a desktop's sign-ins", () => {
     expect(shares).toEqual([
       expect.objectContaining({ environmentId: LAB, applied: 4, waiting: 0 }),
     ]);
+  });
+
+  it("sends only the sites with a row in Accounts, never the rest of the jar", async () => {
+    const { deps, sent } = fixture({
+      log: { head: 4, units: [] },
+      applied: { bound: false, units: [] },
+      jar: ["github.com", "bank.example", "mail.example"],
+      rows: ["github.com"],
+    });
+    deps.desktopAccounts = () => [
+      websiteRow("github.com", "work"),
+      // Another profile's row says nothing about this profile's jar.
+      websiteRow("bank.example", "personal"),
+    ];
+    await deliverOnce(deps);
+    expect(sent.flatMap(({ units }) => units.map(({ sites }) => sites))).toEqual([["github.com"]]);
   });
 
   it("delivers actions recorded before it ever subscribed, from the log", async () => {

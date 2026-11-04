@@ -468,6 +468,25 @@ export const travels = (
   return ![...unitSites(university, siteOf)].some((site) => sites.has(site));
 };
 
+/**
+ * A unit goes to another computer only while one of its sites has a website row naming this
+ * profile in Accounts; the rest of the jar stays here.
+ */
+export const hasAccountRow = (
+  unit: ReadonlyArray<string>,
+  accounts: ReadonlyArray<AccountSummary>,
+  profileId: string,
+  siteOf: SiteOf,
+) => {
+  const sites = unitSites(unit, siteOf);
+  return accounts.some(
+    ({ details }) =>
+      details.kind === "website" &&
+      details.profileId === profileId &&
+      [...unitSites(details.sites, siteOf)].some((site) => sites.has(site)),
+  );
+};
+
 export interface PlannedUnit {
   readonly sites: ReadonlyArray<string>;
   readonly revision: number;

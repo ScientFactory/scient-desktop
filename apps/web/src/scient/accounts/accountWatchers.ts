@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
+import { getClientSettings, subscribeClientSettings } from "~/hooks/useSettings";
 import { environmentSummaries } from "~/state/presentation";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { watchAccountAutofill } from "./accountAutofill";
@@ -14,7 +15,7 @@ import { watchRemoteSessions } from "./remoteSessions";
  * Saved sign-ins and session checks run whatever the notification settings, for the primary
  * environment only: they read the desktop's own jars, and another computer's tabs live in its
  * browser. What the user types in a sign-in goes to the attempt of whichever environment runs it.
- * Each other computer gets this desktop's sign-ins, one way.
+ * Each other computer gets this desktop's sign-ins, one way, once Labs turns that on.
  */
 export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
   offerRemoteQualification(registry);
@@ -39,23 +40,25 @@ export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
       }
     }
     const environmentIds = registry.get(environmentSummaries.environmentIdsAtom);
+    const sharing = getClientSettings().signInSharingEnabled;
     // Unlinked: its watchers stop at once; deleting the copies is the removal's own step.
     for (const watchers of [keeps, remotes])
       for (const [environmentId, stop] of watchers) {
-        if (environmentIds.includes(environmentId)) continue;
+        if (environmentIds.includes(environmentId) && (watchers === keeps || sharing)) continue;
         stop();
         watchers.delete(environmentId);
       }
     for (const environmentId of environmentIds) {
       if (!keeps.has(environmentId))
         keeps.set(environmentId, watchSignInKeeps(registry, environmentId));
-      if (primary !== null && environmentId !== primary && !remotes.has(environmentId))
+      if (sharing && primary !== null && environmentId !== primary && !remotes.has(environmentId))
         remotes.set(environmentId, watchRemoteSessions(registry, environmentId, primary));
     }
   };
   const unsubscribe = [
     registry.subscribe(primaryEnvironmentIdAtom, sync),
     registry.subscribe(environmentSummaries.environmentIdsAtom, sync),
+    subscribeClientSettings(sync),
   ];
   sync();
   return () => {

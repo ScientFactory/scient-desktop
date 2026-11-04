@@ -41,6 +41,8 @@ function when(iso: string, now = new Date()) {
 export interface RemoteLineInput {
   readonly label: string;
   readonly phase: string;
+  /** Settings → Labs lets this desktop send sign-ins at all. */
+  readonly sharing: boolean;
   readonly sending: boolean;
   readonly refused: "relay" | "unencrypted" | undefined;
   /** The remote's snapshot while connected. */
@@ -62,17 +64,19 @@ export function remoteLine(input: RemoteLineInput, now = new Date()) {
     .sort()
     .at(-1);
   const connected = input.phase === "connected";
-  const state = input.sending
-    ? "sending your sign-ins…"
-    : input.refused
-      ? `doesn't get sign-ins: ${input.refused === "relay" ? "connected through a relay" : "connected without encryption"}`
-      : connected && input.remote && !input.remote.features?.sessionsReceive
-        ? "can't receive sign-ins: update Scient there"
-        : connected && sentAt
-          ? `has your sign-ins from ${when(sentAt, now)}`
-          : !connected && sentAt
-            ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`
-            : "gets your sign-ins when it connects";
+  const state = !input.sharing
+    ? "doesn't get your sign-ins: sending them is off in Settings → Labs"
+    : input.sending
+      ? "sending your sign-ins…"
+      : input.refused
+        ? `doesn't get sign-ins: ${input.refused === "relay" ? "connected through a relay" : "connected without encryption"}`
+        : connected && input.remote && !input.remote.features?.sessionsReceive
+          ? "can't receive sign-ins: update Scient there"
+          : connected && sentAt
+            ? `has your sign-ins from ${when(sentAt, now)}`
+            : !connected && sentAt
+              ? `offline${seenAt ? ` since ${when(seenAt, now)}` : ""} · has your sign-ins from ${when(sentAt, now)}, kept ${SENDER_KEEP_DAYS} days without this computer`
+              : "gets your sign-ins when it connects";
   const needsYou = [...new Set(input.shared.flatMap(({ needsYou }) => needsYou))];
   const kept = input.shared.reduce((total, { kept }) => total + (kept ?? 0), 0);
   const waiting = input.shared.reduce((total, { waiting }) => total + waiting, 0);
@@ -117,11 +121,13 @@ function RemoteComputerRow({
   environmentId,
   label,
   phase,
+  sharing,
   desktop,
 }: {
   environmentId: EnvironmentId;
   label: string;
   phase: string;
+  sharing: boolean;
   desktop: Pick<AccountsSnapshot, "accounts" | "profiles">;
 }) {
   const navigate = useNavigate();
@@ -137,6 +143,7 @@ function RemoteComputerRow({
   const line = remoteLine({
     label,
     phase,
+    sharing,
     sending,
     refused,
     remote,
@@ -277,18 +284,20 @@ export function RemoteComputers({
       id="accounts-other-computers"
       title="Other computers"
       headerAction={
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={!canWrite || sendingAgain}
-          onClick={async () => {
-            setSendingAgain(true);
-            await sendAgain(appAtomRegistry, environmentId).catch(() => undefined);
-            setSendingAgain(false);
-          }}
-        >
-          Send again
-        </Button>
+        settings.signInSharingEnabled ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!canWrite || sendingAgain}
+            onClick={async () => {
+              setSendingAgain(true);
+              await sendAgain(appAtomRegistry, environmentId).catch(() => undefined);
+              setSendingAgain(false);
+            }}
+          >
+            Send again
+          </Button>
+        ) : undefined
       }
     >
       {remotes.map((remote) => (
@@ -297,10 +306,11 @@ export function RemoteComputers({
           environmentId={remote.environmentId}
           label={remote.label}
           phase={remote.connection.phase}
+          sharing={settings.signInSharingEnabled}
           desktop={snapshot}
         />
       ))}
-      {notSent ? <SettingsRow title={notSent} /> : null}
+      {notSent && settings.signInSharingEnabled ? <SettingsRow title={notSent} /> : null}
     </SettingsSection>
   );
 }

@@ -343,6 +343,16 @@
       "path": "apps/server/src/mcp/toolkits/previewControls/tools.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a hidden profile's tab is refused with a safe denial.",
       "purpose": "Let the preview control tools return an Accounts denial for a hidden profile's tab."
+    },
+    {
+      "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: sending sign-ins to other computers.",
+      "purpose": "Show the Labs switch that lets this desktop send its sign-ins to other computers."
+    },
+    {
+      "path": "packages/contracts/src/settings.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: sign-ins go to other computers only once turned on in Labs.",
+      "purpose": "Keep the off-by-default client setting that gates sending sign-ins to other computers."
     }
   ],
   "scientMounts": [

@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 import {
+  hasAccountRow,
   planDelivery,
   remoteControls,
   shareable,
@@ -195,7 +196,9 @@ export async function deliverOnce(deps: DeliveryDeps) {
     const join = multiSiteRows(deps.desktopAccounts(), profileId);
     hold();
     const jar = isShareable
-      ? ((await deps.readSessions({ profileId, controls: own, join }))?.units ?? [])
+      ? ((await deps.readSessions({ profileId, controls: own, join }))?.units ?? []).filter(
+          ({ sites }) => hasAccountRow(sites, deps.desktopAccounts(), profileId, siteOf),
+        )
       : [];
     hold();
     const plan = planDelivery({

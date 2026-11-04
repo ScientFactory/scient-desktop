@@ -13,6 +13,9 @@ import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+// SCIENT-FORK:START — Scient Accounts: sending sign-ins to other computers is a Labs switch.
+import { SignInSharingSetting } from "~/scient/accounts/SignInSharingSetting";
+// SCIENT-FORK:END
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
 export function LabsSettingsPanel() {
@@ -27,6 +30,9 @@ export function LabsSettingsPanel() {
         {/* SCIENT-FORK:END */}
         <LinkedEnvironmentsRow />
         <SimlockHostsRow />
+        {/* SCIENT-FORK:START — Scient Accounts: sending sign-ins to other computers. */}
+        <SignInSharingSetting />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>

@@ -365,6 +365,7 @@ it("says what each other computer holds of this desktop's sign-ins, first state 
       {
         label: "Lab server",
         phase: "connected",
+        sharing: true,
         sending: false,
         refused: undefined,
         remote: { features: { sessionsReceive: true } },
@@ -375,6 +376,9 @@ it("says what each other computer holds of this desktop's sign-ins, first state 
       now,
     ).text;
   const time = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  expect(line({ sharing: false, sending: true })).toBe(
+    "Lab server · doesn't get your sign-ins: sending them is off in Settings → Labs",
+  );
   expect(line({ sending: true })).toBe("Lab server · sending your sign-ins…");
   expect(line()).toBe(`Lab server · has your sign-ins from ${time}`);
   expect(line({ phase: "offline" })).toBe(
