@@ -590,17 +590,21 @@ function ListRow({
   icon,
   title,
   detail,
+  description,
   onOpen,
 }: {
   icon: ReactNode;
   title: string;
   detail: string;
+  description?: string;
   onOpen: () => void;
 }) {
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
       aria-label={`Show ${title.toLowerCase()}`}
+      description={description}
+      descriptionSize="compact"
       title={
         <span className="flex min-w-0 items-center gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted [&_svg]:size-4 [&_svg]:text-muted-foreground">
@@ -1011,6 +1015,7 @@ function AccountsContent({
             icon={<GlobeIcon />}
             title="Browser sign-ins"
             detail={browserSignIns.length === 1 ? "1 site" : `${browserSignIns.length} sites`}
+            description="Passwords work in every profile. A sign-in stays in the profile it was made in and is copied into Main, unless Main already has someone else on that site. Then the site's row lets you pick who."
             onOpen={() => setDialog("browser-sign-ins")}
           />
         ) : null}

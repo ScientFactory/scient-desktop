@@ -56,6 +56,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
+import { recordImportedSessions } from "./importedSessions";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
@@ -335,6 +336,7 @@ export function BrowserImportDialog({
       profileId: string | undefined;
     }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
+    const sessionsFrom: Array<{ profileId: string; from: string }> = [];
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
@@ -369,6 +371,8 @@ export function BrowserImportDialog({
             setBrought((current) => new Map(current).set(key, label));
           }
           done.add(key);
+          if (profileId !== undefined)
+            sessionsFrom.push({ profileId, from: `${source.name} · ${profile.name}` });
           if (passwords && readPasswords && profile.passwordCount !== undefined)
             passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
@@ -387,6 +391,9 @@ export function BrowserImportDialog({
           passwordTotals.skipped += csv.skipped + result.value.skipped;
         } else passwordTotals.failed = true;
       }
+      // After the passwords: a site with a saved password is one whose session gets a row.
+      for (const { profileId, from } of sessionsFrom)
+        await recordImportedSessions(environmentId, profileId, from);
       if (passwordTotals.failed)
         toastManager.add({ type: "error", title: "Could not import saved passwords" });
       else if (passwordTotals.imported || passwordTotals.skipped)
@@ -793,6 +800,7 @@ export function BrowserProfiles({
           : null;
         if (!result?.ok) failed = true;
       }
+      await recordImportedSessions(environmentId, id, `${source.name} · ${profile.name}`);
     }
     await followSourceNames(renames);
     if (failed) profileError();

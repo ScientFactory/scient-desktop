@@ -209,3 +209,54 @@ it("lets the next snapshot decide the count after a refresh fails", async () => 
   registry.refresh(accountsState.snapshot({ environmentId, input: {} }));
   await expect.element(page.getByText("1 site", { exact: true })).toBeVisible();
 });
+
+it("keeps a session row in Browser sign-ins once it is named, and says what it is", async () => {
+  const session = (
+    id: string,
+    site: string,
+    patch: Partial<AccountSummary> & { readonly username?: string } = {},
+  ): AccountSummary => {
+    const { username, ...rest } = patch;
+    return {
+      ...summary(AccountId.make(id), site, {
+        kind: "website",
+        sites: [site],
+        profileId: "work",
+        origin: "browser-session",
+        ...(username ? { username } : {}),
+      }),
+      secrets: {},
+      ...rest,
+    };
+  };
+  server.accounts = [
+    session("acc_synthetic_imported", "github.com", {
+      signIn: {
+        state: "unknown",
+        at: "2026-11-04T00:00:00.000Z",
+        detail: "Imported from Chrome · Person",
+        by: "look",
+      },
+    }),
+    // What a Check leaves once the page names who is signed in.
+    session("acc_synthetic_named", "overleaf.com", {
+      username: "person@example.com",
+      signIn: { state: "signed-in", at: "2026-11-04T00:00:00.000Z", by: "look" },
+    }),
+  ];
+  server.gate = Promise.resolve();
+  await using _screen = await render(
+    <RegistryContext.Provider value={AtomRegistry.make()}>
+      <AccountsPage />
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(page.getByText("Passwords work in every profile.", { exact: false }))
+    .toBeVisible();
+  await expect.element(page.getByText("2 sites", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Saved passwords")).not.toBeInTheDocument();
+  await page.getByText("Browser sign-ins").click();
+  await expect.element(page.getByText("Imported", { exact: true })).toBeVisible();
+  // The named row is still listed here, not moved out once it has a username.
+  expect(page.getByRole("dialog").element().textContent).toContain("Signed in as");
+});
