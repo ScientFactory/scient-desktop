@@ -8,6 +8,9 @@ import * as NodePath from "node:path";
 import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
+// SCIENT-FORK:START — Scient Accounts: cookie copies hold a profile's context.
+import { ProfileContextLeases } from "../scient/accounts/profileContextLeases.ts";
+// SCIENT-FORK:END
 
 // Playwright needs its files on disk. createRequire also resolves it from a Node SEA executable.
 const requirePlaywright = NodeModule.createRequire(import.meta.url);
@@ -74,23 +77,15 @@ export const presentAsChrome = async (
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
-// SCIENT-FORK:START — Scient Accounts: after this long a waiting tab or clear asks the copy to stop.
-const LEASE_WAIT_MS = 10_000;
-/** A hold's closing of its context waits no longer; a context that doesn't close is dropped. */
-const LEASE_CLOSE_DEADLINE_MS = 30_000;
-// SCIENT-FORK:END
-
 export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
   private readonly clearing = new Map<string, Promise<void>>();
-  // SCIENT-FORK:START — Scient Accounts: one cookie copy at a time holds a profile's context.
-  private readonly leases = new Map<
-    string,
-    { readonly done: Promise<void>; wanted: boolean; stopping: boolean }
-  >();
-  /** Tabs waiting for a hold to end; they go before the next hold, so none waits forever. */
-  private readonly waitingTabs = new Map<string, Set<Promise<unknown>>>();
+  // SCIENT-FORK:START — Scient Accounts: cookie copies hold a profile's context.
+  readonly leases = new ProfileContextLeases({
+    contexts: this.contexts,
+    contextFor: (profileId) => this.contextFor(profileId),
+  });
   // SCIENT-FORK:END
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
@@ -150,20 +145,12 @@ export class ServerBrowserContexts {
     return this.browser;
   }
 
-  contextFor(profileId: string, isolationKey?: string, leased = false): Promise<BrowserContext> {
+  contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
     const key = JSON.stringify([profileId, isolationKey ?? null]);
     // SCIENT-FORK:START — Scient Accounts: a tab waits for a cookie copy into its profile.
-    if (!leased && this.leases.has(key)) {
-      const waiting = this.leaseReleased(key).then(() => this.contextFor(profileId, isolationKey));
-      const tabs = this.waitingTabs.get(key) ?? new Set();
-      this.waitingTabs.set(key, tabs.add(waiting));
-      void waiting.finally(() => {
-        tabs.delete(waiting);
-        if (tabs.size === 0 && this.waitingTabs.get(key) === tabs) this.waitingTabs.delete(key);
-      });
-      return waiting;
-    }
+    const held = this.leases.tabWaits(key, () => this.contextFor(profileId, isolationKey));
+    if (held) return held;
     // SCIENT-FORK:END
     const cached = this.contexts.get(key);
     if (cached) return cached;
@@ -245,7 +232,7 @@ export class ServerBrowserContexts {
     if (existing) return existing;
     const clearing = (async () => {
       // SCIENT-FORK:START — Scient Accounts: a clear waits for a cookie copy into the profile.
-      if (this.leases.has(key)) await this.leaseReleased(key);
+      if (this.leases.holds(key)) await this.leases.cleared(key);
       // SCIENT-FORK:END
       const pending = this.contexts.get(key);
       if (pending) {
@@ -262,73 +249,6 @@ export class ServerBrowserContexts {
       if (this.clearing.get(key) === clearing) this.clearing.delete(key);
     }
   }
-
-  // SCIENT-FORK:START — Scient Accounts: a profile's context, held for one cookie copy.
-  /**
-   * Holds a persistent profile's context: tabs and clears wait for `release`, never alongside it.
-   * One waiting 10 s sets `stopping`, and the copy stops at its next unit; a stalled cookie
-   * operation is aborted at its own deadline. Tabs waiting go before the next hold. A context the
-   * hold opened closes on release unless a tab asked for it meanwhile; a discarded one is dropped.
-   */
-  async lease(profileId: string) {
-    if (profileId === INCOGNITO_BROWSER_PROFILE_ID) throw new Error("Incognito keeps no cookies.");
-    const key = JSON.stringify([profileId, null]);
-    for (;;) {
-      const held = this.leases.get(key);
-      const tabs = this.waitingTabs.get(key);
-      if (held) await held.done;
-      else if (tabs?.size) await Promise.allSettled(tabs);
-      else break;
-    }
-    const done = Promise.withResolvers<void>();
-    const lease = { done: done.promise, wanted: false, stopping: false };
-    this.leases.set(key, lease);
-    try {
-      const opened = !this.contexts.has(key);
-      const context = await this.contextFor(profileId, undefined, true);
-      const pending = this.contexts.get(key);
-      return {
-        context,
-        stopping: () => lease.stopping,
-        /**
-         * `discard`: the context stopped answering. It is dropped, so the next tab or hold opens a
-         * fresh one from the same profile folder, and closed as far as it will.
-         */
-        release: async (options?: { readonly discard?: boolean }) => {
-          if (options?.discard || (opened && !lease.wanted)) {
-            if (this.contexts.get(key) === pending) this.contexts.delete(key);
-            await new Promise<void>((resolve) => {
-              // @effect-diagnostics-next-line globalTimers:off -- Playwright resources live outside Effect.
-              const timer = setTimeout(resolve, LEASE_CLOSE_DEADLINE_MS);
-              void context
-                .close()
-                .catch(constVoid)
-                .finally(() => {
-                  clearTimeout(timer);
-                  resolve();
-                });
-            });
-          }
-          this.leases.delete(key);
-          done.resolve();
-        },
-      };
-    } catch (cause) {
-      this.leases.delete(key);
-      done.resolve();
-      throw cause;
-    }
-  }
-
-  private leaseReleased(key: string) {
-    const lease = this.leases.get(key);
-    if (!lease) return Promise.resolve();
-    lease.wanted = true;
-    // @effect-diagnostics-next-line globalTimers:off -- Playwright resources live outside Effect.
-    const timer = setTimeout(() => (lease.stopping = true), LEASE_WAIT_MS);
-    return lease.done.then(() => clearTimeout(timer));
-  }
-  // SCIENT-FORK:END
 
   close() {
     this.closing ??= this.dispose();

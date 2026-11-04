@@ -69,7 +69,7 @@ it("lets a waiting tab in once a stalled operation is aborted and the copy gives
     executable: async () => "/test/chromium",
     env: {},
   });
-  const lease = await pool.lease("work");
+  const lease = await pool.leases.lease("work");
   const { jar, close } = await openProfileCookieJar(lease.context, lease.stopping, 30_000);
   // The copy as the receiver runs it: a stalled unit ends, then the hold is released.
   const copy = jar
@@ -119,7 +119,7 @@ it("discards a context whose helper never closes, and the waiting tab opens a fr
     executable: async () => "/test/chromium",
     env: {},
   });
-  const lease = await pool.lease("work");
+  const lease = await pool.leases.lease("work");
   const { jar, close } = await openProfileCookieJar(lease.context, lease.stopping, 30_000);
   // The copy as ServerBrowser.profileCookies runs it: the unit, then close and release.
   const copy = jar

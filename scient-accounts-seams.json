@@ -23,7 +23,8 @@
     "packages/shared/src/scientBrowserProfileChoice.ts",
     "packages/shared/src/scientSignInPage.ts",
     "apps/mobile/src/state/accounts.ts",
-    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx"
+    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx",
+    "apps/server/src/preview/ServerBrowserContexts.scient.test.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -226,13 +227,13 @@
     },
     {
       "path": "apps/server/src/preview/ServerBrowserContexts.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a profile's context, held for one cookie copy.",
-      "purpose": "Hold a persistent profile's context for one cookie copy; tabs and clears wait, and profile directories are private."
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a tab waits for a cookie copy into its profile.",
+      "purpose": "Hook ProfileContextLeases into contextFor and the clear path so tabs and clears wait for a cookie copy's hold; keep profile directories private."
     },
     {
       "path": "apps/server/src/preview/ServerBrowserContexts.test.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a cookie copy holds its profile's context.",
-      "purpose": "Prove tabs and clears wait for a cookie copy's hold, and its 10 s limit."
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: profile directories are made private.",
+      "purpose": "Mock the private-directory chmod that every persistent context launch now makes."
     },
     {
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
