@@ -521,7 +521,6 @@
   "src/provider/CodexProvider.catalog.test.ts": 6.526,
   "src/provider/CodexProvider.test.ts": 0.887,
   "src/provider/CodexThreadRevert.test.ts": 0.529,
-  "src/provider/CursorCli.test.ts": 0.196,
   "src/provider/Drivers/AntigravityDriver.test.ts": 13.495,
   "src/provider/Drivers/AntigravitySkills.test.ts": 0.489,
   "src/provider/Drivers/ClaudeDriver.test.ts": 1.197,
