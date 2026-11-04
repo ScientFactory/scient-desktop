@@ -415,6 +415,34 @@ export async function fillMainFromProfile(environmentId: EnvironmentId, profileI
   await resendImported(environmentId, profileId);
 }
 
+/**
+ * The user's Copy from a profile: one sign-in into Main through the same copy as trigger 2. It
+ * never replaces what Main holds of the site, and a restricted profile gives nothing.
+ */
+export async function copySignInIntoMain(environmentId: EnvironmentId, row: AccountSummary) {
+  const fillMain = window.desktopBridge?.accounts?.fillMain;
+  const details = website(row);
+  const profileId = details?.profileId;
+  if (!fillMain || !details || !profileId || !otherPersistentProfile(profileId)) return undefined;
+  const snapshot = await readSnapshot(environmentId);
+  if (!snapshot || !isUnrestricted(recordOf(snapshot, profileId))) return undefined;
+  const result = await fillMain({
+    environmentId,
+    from: profileId,
+    units: [details.sites],
+    mode: "fill",
+    skipSites: [],
+  }).catch((cause: unknown) => {
+    warn("Couldn't copy a sign-in into Main", cause);
+    return null;
+  });
+  if (!result) return undefined;
+  await recordCopies(appAtomRegistry, environmentId, result, [row], profileId).catch(
+    (cause: unknown) => warn("Couldn't record a copy into Main", cause),
+  );
+  return result.units[0]?.outcome;
+}
+
 /** Imported profiles first, by when they were imported, then the rest in list order. */
 export function backfillOrder(
   snapshot: Pick<AccountsSnapshot, "profiles">,

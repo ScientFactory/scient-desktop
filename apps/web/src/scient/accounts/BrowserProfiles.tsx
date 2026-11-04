@@ -65,12 +65,10 @@ import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
 import { recordImportedSessions } from "./importedSessions";
 import { ProfilePicture } from "./ProfilePicture";
-import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
   browserName,
-  googleSignInUrl,
   importProfileName,
   mergeProfiles,
   matchExistingProfile,
@@ -664,37 +662,46 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
   ) : null;
 }
 
-/**
- * The line under a profile's name: its address and, when Google refused it, a way back in. Google
- * refuses signing in from Scient's browser, so a profile from a browser signs in there instead.
- */
+/** Google refuses signing in from Scient's browser: the way back is the user's own browser. */
+export const GOOGLE_BLOCKED = "Google blocks signing in here.";
+
+/** What a signed-out profile does instead: sign in in a browser, then bring that in. */
+export function googleRecovery(
+  source: BrowserProfileRecord["source"],
+  actions: { readonly refresh: () => void; readonly importProfile: () => void },
+) {
+  if (!source)
+    return {
+      message: `${GOOGLE_BLOCKED} Sign in in your browser, then import that profile`,
+      action: "Import from a browser…",
+      onAction: actions.importProfile,
+    };
+  const browser = browserName(source.browser);
+  return {
+    message: `${GOOGLE_BLOCKED} Sign in in ${browser}, then Refresh from ${browser}`,
+    action: `Refresh from ${browser}`,
+    onAction: actions.refresh,
+  };
+}
+
+/** The line under a profile's name: its address and, when Google refused it, a way back in. */
 export function ProfileDetail({
   email,
   signedOut,
-  onSignIn,
-  refreshFrom,
+  recover,
 }: {
   email: string | undefined;
   signedOut: boolean;
-  onSignIn?: () => void;
-  refreshFrom?: { readonly browser: string; readonly onRefresh: () => void };
+  recover?: ReturnType<typeof googleRecovery> | undefined;
 }) {
   if (!email && !signedOut) return null;
-  if (signedOut && refreshFrom)
+  if (signedOut && recover)
     return (
       <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
         {email ? <span className="max-w-full truncate">{email} ·</span> : null}
-        <span>
-          Google blocks signing in here. Sign in in {refreshFrom.browser}, then Refresh from{" "}
-          {refreshFrom.browser}
-        </span>
-        <Button
-          size="micro"
-          variant="link"
-          className="-my-0.5 shrink-0"
-          onClick={refreshFrom.onRefresh}
-        >
-          <span className="text-xs text-foreground">Refresh from {refreshFrom.browser}</span>
+        <span>{recover.message}</span>
+        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={recover.onAction}>
+          <span className="text-xs text-foreground">{recover.action}</span>
         </Button>
       </span>
     );
@@ -702,11 +709,6 @@ export function ProfileDetail({
     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
       {email ? <span className="truncate">{email}</span> : null}
       {signedOut ? <span className="shrink-0">{email ? "· " : ""}Signed out of Google</span> : null}
-      {signedOut && onSignIn ? (
-        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={onSignIn}>
-          <span className="text-xs text-foreground">Sign in</span>
-        </Button>
-      ) : null}
     </span>
   );
 }
@@ -730,7 +732,6 @@ export function BrowserProfiles({
     reportFailure: false,
     reportDefect: false,
   });
-  const openBrowser = useAccountBrowser(environmentId);
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
@@ -1047,23 +1048,14 @@ export function BrowserProfiles({
                   <ProfileDetail
                     email={profile.record.source?.email}
                     signedOut={signedOutOfGoogle(snapshot.accounts, profile.id)}
-                    {...(previewBridge
-                      ? {
-                          onSignIn: () =>
-                            void openBrowser(
-                              googleSignInUrl(profile.record.source?.email),
-                              profile.id,
-                            ),
-                        }
-                      : {})}
-                    {...(previewBridge && profile.record.source
-                      ? {
-                          refreshFrom: {
-                            browser: browserName(profile.record.source.browser),
-                            onRefresh: () => void act(() => refresh([profile])),
-                          },
-                        }
-                      : {})}
+                    recover={
+                      previewBridge
+                        ? googleRecovery(profile.record.source, {
+                            refresh: () => void act(() => refresh([profile])),
+                            importProfile: onImport,
+                          })
+                        : undefined
+                    }
                   />
                 </span>
               )}

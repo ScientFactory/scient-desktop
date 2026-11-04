@@ -762,11 +762,13 @@ provider environment. The existing proxy redacts reflected values in responses.
   own profile: Scient has no record of most sites a profile is signed in to, so a missing record
   doesn't mean signed out. Google refuses signing in from Scient's browser ("This browser or app
   may not be secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity
-  (Electron 44, 2026-11-04). So a signed-out profile imported from a browser says to sign in
-  there and offers Refresh from that browser. A profile with no source keeps a Sign in link to
-  Google's AddSession page (`googleSignInUrl`, as Add to Main uses), with the profile's address
-  when it has one, back to My Account. Gmail is only a home shortcut; `/mail/u/<address>/` gives
-  "Temporary Error".
+  (Electron 44, 2026-11-04). Scient never offers a Google sign-in here as a way back
+  (`googleRecovery`). A signed-out profile imported from a browser says to sign in there and
+  offers Refresh from that browser; one with no source says to sign in in a browser and offers
+  Import from a browser…. When Main's Google doesn't work, its browser sign-in row offers Copy
+  from the profile that holds a working one (`copySignInIntoMain`, a fill through `fillMain`,
+  so never over a Google sign-in Main still holds), or, with none, the same import. Gmail is
+  only a home shortcut; `/mail/u/<address>/` gives "Temporary Error".
 - **University access**: a website account with `institution` (from the public directory) or
   `proxyUrl` (a library link with `{url}`) reaches a university's subscriptions; older `library`
   accounts fold into this shape when read (`foldStoredAccounts`). `accounts.universities.signIn`

@@ -46,7 +46,15 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
 import { toastManager } from "~/components/ui/toast";
@@ -84,7 +92,6 @@ import {
   activityLine,
   type GitHubIdentity,
   githubIdentities,
-  googleSignInUrl,
   type KeyInUse,
   isBrowserSignIn,
   isSavedPassword,
@@ -96,7 +103,13 @@ import {
 } from "./accountsView";
 import { UniversityIcon } from "./University";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
-import { BrowserImportDialog, BrowserProfiles, useImportingPasswords } from "./BrowserProfiles";
+import {
+  BrowserImportDialog,
+  BrowserProfiles,
+  GOOGLE_BLOCKED,
+  useImportingPasswords,
+} from "./BrowserProfiles";
+import { copySignInIntoMain } from "./mainFill";
 import { RemoteComputers } from "./RemoteComputers";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
@@ -523,17 +536,20 @@ function SavedPasswordsDialog({
 /**
  * One site signed in from several browser profiles: the profiles' pictures, opening to each.
  * When Main has the site but it doesn't work there, the row says which profile is used instead.
+ * Google refuses signing in from Scient's browser, so Main gets Google only as a copy.
  */
 export function SignInGroupRow({
   environmentId,
   accounts,
   profiles,
   onOpen,
+  onImport,
 }: {
   environmentId: EnvironmentId;
   accounts: ReadonlyArray<AccountSummary>;
   profiles: ReturnType<typeof mergeProfiles>;
   onOpen: () => void;
+  onImport?: () => void;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
   const first = accounts[0]!;
@@ -549,12 +565,28 @@ export function SignInGroupRow({
     profileIds.has(DEFAULT_BROWSER_PROFILE_ID) && !identities.includes(DEFAULT_BROWSER_PROFILE_ID)
       ? profiles.find((profile) => profile.id === identities[0])
       : undefined;
-  const usingEmail = accounts.find(
-    ({ details }) =>
-      details.kind === "website" && details.profileId === using?.id && details.username,
-  )?.details;
-  const googleEmail =
-    site === GOOGLE_SITE && usingEmail?.kind === "website" ? usingEmail.username : undefined;
+  const google = site === GOOGLE_SITE;
+  const usingRow = accounts.find(
+    ({ details }) => details.kind === "website" && details.profileId === using?.id,
+  );
+  // Main's Google doesn't work and no profile here holds one that does.
+  const googleMissing =
+    google &&
+    !using &&
+    profileIds.has(DEFAULT_BROWSER_PROFILE_ID) &&
+    !identities.includes(DEFAULT_BROWSER_PROFILE_ID);
+  const copyIntoMain = async (row: AccountSummary, from: string) => {
+    const outcome = await copySignInIntoMain(environmentId, row);
+    if (outcome === "copied" || outcome === "same")
+      toastManager.add({ type: "success", title: `Copied ${from}'s Google sign-in into Main` });
+    else if (outcome === "conflict")
+      toastManager.add({
+        type: "info",
+        title: "Main already holds a Google sign-in",
+        description: "Sign out of Google in Main, then copy again.",
+      });
+    else toastManager.add({ type: "error", title: "Couldn't copy the sign-in into Main" });
+  };
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
@@ -581,7 +613,7 @@ export function SignInGroupRow({
       }
       control={
         <span className="flex items-center gap-2">
-          {using && pageUrl ? (
+          {(using && pageUrl) || (googleMissing && onImport) ? (
             <Menu>
               <MenuTrigger
                 render={
@@ -595,19 +627,22 @@ export function SignInGroupRow({
                 <EllipsisIcon />
               </MenuTrigger>
               <MenuPopup align="end">
-                {googleEmail ? (
-                  <MenuItem
-                    onClick={() =>
-                      void openBrowser(googleSignInUrl(googleEmail), DEFAULT_BROWSER_PROFILE_ID)
-                    }
-                  >
-                    Add to Main
+                {googleMissing && onImport ? (
+                  <MenuGroup>
+                    <MenuGroupLabel className="max-w-64">
+                      {GOOGLE_BLOCKED} Sign in in your browser, then import that profile
+                    </MenuGroupLabel>
+                    <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
+                  </MenuGroup>
+                ) : google && using && usingRow ? (
+                  <MenuItem onClick={() => void copyIntoMain(usingRow, using.name)}>
+                    Copy from {using.name}
                   </MenuItem>
-                ) : (
+                ) : using && pageUrl ? (
                   <MenuItem onClick={() => void openBrowser(pageUrl, using.id)}>
                     Open in {using.name}
                   </MenuItem>
-                )}
+                ) : null}
               </MenuPopup>
             </Menu>
           ) : null}
@@ -1175,6 +1210,7 @@ function AccountsContent({
                 accounts={row}
                 profiles={profiles}
                 onOpen={() => setSignIns(row)}
+                onImport={() => setDialog("import")}
               />
             ),
           )}

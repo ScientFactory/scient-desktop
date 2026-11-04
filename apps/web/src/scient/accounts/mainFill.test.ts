@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   backfillMain,
   backfillOrder,
+  copySignInIntoMain,
   fillMainFromProfile,
   mainFillTrigger,
   replaceAllowedSince,
@@ -356,6 +357,58 @@ describe("trigger 1: after an import into another profile", () => {
       { environmentId, input: { accountId: session.accountId, profileName: "Work" } },
       { environmentId, input: { accountId: imported.accountId, profileName: "Work" } },
     ]);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("Copy from a profile into Main", () => {
+  const google = () =>
+    row("work", ["google.com"], {
+      details: {
+        kind: "website",
+        sites: ["google.com"],
+        profileId: BrowserProfileId.make("work"),
+        username: "person@example.com",
+      },
+    });
+  const bridge = (outcome: string) => {
+    const fills: unknown[] = [];
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        accounts: {
+          fillMain: async (input: unknown) => {
+            fills.push(input);
+            return { units: [{ sites: ["google.com"], outcome }], unsupported: 0 };
+          },
+        },
+      },
+    });
+    return fills;
+  };
+
+  it("copies the one sign-in through Main's fill, never over what Main holds", async () => {
+    const fills = bridge("copied");
+    const session = google();
+    state.snapshot = snapshot([session]);
+    state.filled = [];
+    expect(await copySignInIntoMain(environmentId, session)).toBe("copied");
+    expect(fills).toEqual([
+      { environmentId, from: "work", units: [["google.com"]], mode: "fill", skipSites: [] },
+    ]);
+    expect(state.filled).toEqual([
+      { environmentId, input: { accountId: session.accountId, profileName: "Work" } },
+    ]);
+    bridge("conflict");
+    expect(await copySignInIntoMain(environmentId, session)).toBe("conflict");
+    vi.unstubAllGlobals();
+  });
+
+  it("copies nothing from a restricted profile or from Main itself", async () => {
+    const fills = bridge("copied");
+    state.snapshot = snapshot([], [{ ...defaultBrowserProfileRecord("work"), access: "off" }]);
+    expect(await copySignInIntoMain(environmentId, google())).toBeUndefined();
+    expect(await copySignInIntoMain(environmentId, row("default", ["google.com"]))).toBeUndefined();
+    expect(fills).toEqual([]);
     vi.unstubAllGlobals();
   });
 });

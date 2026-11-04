@@ -16,7 +16,7 @@ import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts
 import { render } from "../../../test/render";
 import { AccountRow, SignInGroupRow } from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
-import { BrowserProfiles, ProfileDetail } from "./BrowserProfiles";
+import { BrowserProfiles, googleRecovery, ProfileDetail } from "./BrowserProfiles";
 import { RemoteComputers } from "./RemoteComputers";
 
 const state = vi.hoisted(() => ({
@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
   primary: "synthetic" as string | null,
   results: {} as Record<string, unknown>,
   environments: [] as unknown[],
+  copy: vi.fn(),
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
@@ -49,6 +50,10 @@ vi.mock("~/state/environments", async (original) => ({
 }));
 
 vi.mock("~/browser/openFileInPreview", () => ({ openUrlInPreview: state.open }));
+vi.mock("./mainFill", async (original) => ({
+  ...(await original<typeof import("./mainFill")>()),
+  copySignInIntoMain: state.copy,
+}));
 vi.mock("~/localApi", () => ({
   readLocalApi: () => ({ shell: { openExternal: state.external } }),
   ensureLocalApi: () => ({ shell: { openExternal: state.external } }),
@@ -205,73 +210,62 @@ it("says an older server can't sign in to a website row from here", async () => 
     .toBeVisible();
 });
 
-it("offers Sign in beside a Google sign-out, without leaving the row or clipping", async () => {
-  const onSignIn = vi.fn();
-  await using _screen = await render(
-    <div style={{ width: 220 }}>
-      <ProfileDetail
-        email="a-very-long-address-that-cannot-fit@example.com"
-        signedOut
-        onSignIn={onSignIn}
-      />
-    </div>,
-  );
-  await expect.element(page.getByText("· Signed out of Google", { exact: true })).toBeVisible();
-  const button = page.getByRole("button", { name: "Sign in", exact: true });
-  await expect.element(button).toBeVisible();
-  expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
-    button.element().closest("div")!.getBoundingClientRect().right,
-  );
-  const status = page.getByText("· Signed out of Google", { exact: true }).element();
-  expect(status.scrollWidth).toBeLessThanOrEqual(status.clientWidth);
-  await button.click();
-  expect(onSignIn).toHaveBeenCalledOnce();
-});
-
-it("sends a profile from a browser there to sign in to Google, then refreshes it", async () => {
-  const onRefresh = vi.fn();
-  await using _screen = await render(
-    <div style={{ width: 220 }}>
-      <ProfileDetail
-        email="a-very-long-address-that-cannot-fit@example.com"
-        signedOut
-        onSignIn={vi.fn()}
-        refreshFrom={{ browser: "Chrome", onRefresh }}
-      />
-    </div>,
-  );
-  await expect
-    .element(
-      page.getByText("Google blocks signing in here. Sign in in Chrome, then Refresh from Chrome", {
-        exact: true,
-      }),
-    )
-    .toBeVisible();
-  await expect
-    .element(page.getByRole("button", { name: "Sign in", exact: true }))
-    .not.toBeInTheDocument();
-  // The line wraps in a narrow row: nothing is cut off, and the action stays inside it.
-  const message = page
-    .getByText("Google blocks signing in here. Sign in in Chrome, then Refresh from Chrome", {
-      exact: true,
-    })
-    .element();
-  expect(message.scrollWidth).toBeLessThanOrEqual(message.clientWidth);
-  const button = page.getByRole("button", { name: "Refresh from Chrome", exact: true });
-  expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
-    button.element().closest("div")!.getBoundingClientRect().right,
-  );
-  await button.click();
-  expect(onRefresh).toHaveBeenCalledOnce();
-});
+it.each([
+  [
+    "a profile from a browser there to sign in, then refreshes it",
+    { browser: "chrome", profileName: "Yaacov", importedAt: "2026-11-03T00:00:00.000Z" },
+    "Google blocks signing in here. Sign in in Chrome, then Refresh from Chrome",
+    "Refresh from Chrome",
+    "refresh",
+  ],
+  [
+    "a profile with no source to a browser, then to import that profile",
+    undefined,
+    "Google blocks signing in here. Sign in in your browser, then import that profile",
+    "Import from a browser…",
+    "import",
+  ],
+] as const)(
+  "sends %s, never to a Google sign-in here",
+  async (_name, source, message, action, ran) => {
+    const actions = { refresh: vi.fn(), importProfile: vi.fn() };
+    await using _screen = await render(
+      <div style={{ width: 220 }}>
+        <ProfileDetail
+          email="a-very-long-address-that-cannot-fit@example.com"
+          signedOut
+          recover={googleRecovery(source as never, actions)}
+        />
+      </div>,
+    );
+    await expect.element(page.getByText(message, { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Sign in", exact: true }))
+      .not.toBeInTheDocument();
+    // The line wraps in a narrow row: nothing is cut off, and the action stays inside it.
+    const line = page.getByText(message, { exact: true }).element();
+    expect(line.scrollWidth).toBeLessThanOrEqual(line.clientWidth);
+    const button = page.getByRole("button", { name: action, exact: true });
+    expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
+      button.element().closest("div")!.getBoundingClientRect().right,
+    );
+    await button.click();
+    expect(actions.refresh).toHaveBeenCalledTimes(ran === "refresh" ? 1 : 0);
+    expect(actions.importProfile).toHaveBeenCalledTimes(ran === "import" ? 1 : 0);
+  },
+);
 
 it("shows only the address while Google accepts the profile", async () => {
   await using _screen = await render(
-    <ProfileDetail email="a@example.com" signedOut={false} onSignIn={vi.fn()} />,
+    <ProfileDetail
+      email="a@example.com"
+      signedOut={false}
+      recover={googleRecovery(undefined, { refresh: vi.fn(), importProfile: vi.fn() })}
+    />,
   );
   await expect.element(page.getByText("a@example.com", { exact: true })).toBeVisible();
   await expect
-    .element(page.getByRole("button", { name: "Sign in", exact: true }))
+    .element(page.getByRole("button", { name: "Import from a browser…", exact: true }))
     .not.toBeInTheDocument();
 });
 
@@ -404,7 +398,7 @@ it("records a sign-out on Main before its cookies go", async () => {
   ]);
 });
 
-it("says which profile a site uses when Main's copy doesn't work, and offers Main the account", async () => {
+it("says which profile a site uses when Main's copy doesn't work, and copies Google into Main", async () => {
   using _fixture = fixture();
   const signIn = (profileId: string, sites: string[], patch: Partial<AccountSummary> = {}) => ({
     ...account,
@@ -415,6 +409,8 @@ it("says which profile a site uses when Main's copy doesn't work, and offers Mai
     ...patch,
   });
   const profiles = mergeProfiles([{ id: "work", name: "Work", kind: "persistent" }], []);
+  const work = (sites: string[]) =>
+    signIn("work", sites, { signIn: { state: "signed-in", at: "2026-11-03T00:00:00.000Z" } });
   const group = (sites: string[]) => (
     <SignInGroupRow
       environmentId={EnvironmentId.make("synthetic")}
@@ -422,12 +418,14 @@ it("says which profile a site uses when Main's copy doesn't work, and offers Mai
         signIn("default", sites, {
           signIn: { state: "unknown", at: "2026-11-04T00:00:00.000Z", from: "copy" },
         }),
-        signIn("work", sites, { signIn: { state: "signed-in", at: "2026-11-03T00:00:00.000Z" } }),
+        work(sites),
       ]}
       profiles={profiles}
       onOpen={() => undefined}
     />
   );
+  state.copy.mockReset().mockResolvedValue("copied");
+  state.open.mockClear();
   await using screen = await render(group(["github.com"]));
   await expect.element(page.getByText("Browser sign-in · Using Work")).toBeVisible();
   await page.getByRole("button", { name: "More for github.com sign-ins" }).click();
@@ -439,15 +437,43 @@ it("says which profile a site uses when Main's copy doesn't work, and offers Mai
   );
   await screen.rerender(group(["google.com"]));
   await page.getByRole("button", { name: "More for google.com sign-ins" }).click();
-  await page.getByRole("menuitem", { name: "Add to Main" }).click();
+  // Google refuses a sign-in here: Main gets Work's session through the copy, never a sign-in page.
+  await page.getByRole("menuitem", { name: "Copy from Work" }).click();
   await vi.waitFor(() =>
-    expect(state.open).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: `https://accounts.google.com/AddSession?Email=person%40example.com&continue=${encodeURIComponent("https://myaccount.google.com/")}`,
-        profileId: "default",
-      }),
-    ),
+    expect(state.copy).toHaveBeenCalledWith(EnvironmentId.make("synthetic"), work(["google.com"])),
   );
+  expect(state.open).toHaveBeenCalledTimes(1);
+});
+
+it("offers importing a browser profile when no profile here holds a working Google sign-in", async () => {
+  const onImport = vi.fn();
+  await using _screen = await render(
+    <SignInGroupRow
+      environmentId={EnvironmentId.make("synthetic")}
+      accounts={[
+        {
+          ...account,
+          name: "google.com",
+          details: { kind: "website", sites: ["google.com"], profileId: "default" },
+          secrets: {},
+          signIn: { state: "signed-out", at: "2026-11-04T00:00:00.000Z" },
+        },
+      ]}
+      profiles={mergeProfiles([], [])}
+      onOpen={() => undefined}
+      onImport={onImport}
+    />,
+  );
+  await page.getByRole("button", { name: "More for google.com sign-ins" }).click();
+  await expect
+    .element(
+      page.getByText(
+        "Google blocks signing in here. Sign in in your browser, then import that profile",
+      ),
+    )
+    .toBeVisible();
+  await page.getByRole("menuitem", { name: "Import from a browser…" }).click();
+  expect(onImport).toHaveBeenCalledOnce();
 });
 
 it("on another computer, shows received controls as set on the desktop and signs out there only", async () => {

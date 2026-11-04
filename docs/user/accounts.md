@@ -89,7 +89,9 @@ needs Full Disk Access). A CAPTCHA or passkey needs the desktop.
 out, needs you or rejected. It counts as your own press, so it tries a saved password once more.
 A Google sign-in copied from Chrome can stop working while you use Chrome. Google doesn't allow
 signing in from inside Scient, so sign in to Google in Chrome, then choose **Refresh from Chrome**
-on the profile's row.
+on the profile's row. A profile that didn't come from a browser offers **Import from a browser…**
+instead. When Google doesn't work in Main, its row under Browser sign-ins offers **Copy from** the
+profile that has it.
 
 **Other sign-ins** lists those managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
 GitHub login is one row, with its own chip for Source Control and for the GitHub connector.
