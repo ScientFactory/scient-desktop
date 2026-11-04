@@ -30,6 +30,20 @@ export function makeDesktopAccountsBridge(
     signOutMainSite: (site, environmentId) =>
       ipc.invoke(Channels.SIGN_OUT_MAIN_SITE, { site, environmentId }),
     withdrawFromMain: (input) => ipc.invoke(Channels.WITHDRAW_FROM_MAIN, input),
+    onAccountsOwner: (listener) => {
+      let live = true;
+      const ask = () =>
+        void ipc.invoke(Channels.ACCOUNTS_OWNER).then(
+          (owner: unknown) => live && listener(owner === true),
+          () => undefined,
+        );
+      ipc.on(Channels.ACCOUNTS_OWNER_CHANGED, ask);
+      ask();
+      return () => {
+        live = false;
+        ipc.removeListener(Channels.ACCOUNTS_OWNER_CHANGED, ask);
+      };
+    },
     qualifySessionCopy: () => ipc.invoke(Channels.QUALIFY_SESSION_COPY),
     loginForm: (tabId) => ipc.invoke(Channels.LOGIN_FORM, { tabId }),
     onLoginFormDetected: (listener) => {

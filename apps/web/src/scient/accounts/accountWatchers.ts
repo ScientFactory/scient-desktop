@@ -12,19 +12,22 @@ import { offerRemoteQualification } from "./qualifyRemoteSessions";
 import { watchRemoteSessions } from "./remoteSessions";
 
 /**
- * Saved sign-ins and session checks run whatever the notification settings, for the primary
- * environment only: they read the desktop's own jars, and another computer's tabs live in its
- * browser. What the user types in a sign-in goes to the attempt of whichever environment runs it.
- * Each other computer gets this desktop's sign-ins, one way, once Labs turns that on.
+ * Saved sign-ins and session checks run for the primary environment only: they read the
+ * desktop's own jars. Filling and keeping what is typed follow each window's tabs; the background
+ * work (checks, Main fill, delivery to other computers) runs only in the window the desktop names.
  */
 export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
   offerRemoteQualification(registry);
-  let watched: { readonly environmentId: EnvironmentId; readonly stop: () => void } | undefined;
+  const elect = window.desktopBridge?.accounts?.onAccountsOwner;
+  let owner = elect === undefined;
+  let watched:
+    | { readonly environmentId: EnvironmentId; readonly owner: boolean; readonly stop: () => void }
+    | undefined;
   const keeps = new Map<EnvironmentId, () => void>();
   const remotes = new Map<EnvironmentId, () => void>();
   const sync = () => {
     const primary = registry.get(primaryEnvironmentIdAtom);
-    if (watched?.environmentId !== primary) {
+    if (watched?.environmentId !== primary || watched.owner !== owner) {
       watched?.stop();
       watched = undefined;
       for (const stop of remotes.values()) stop();
@@ -32,15 +35,19 @@ export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
       if (primary !== null) {
         const stops = [
           watchAccountAutofill(registry, primary),
-          watchGoogleSessions(registry, primary),
-          watchKeepSignedIn(registry, primary),
-          watchMainFill(registry, primary),
+          ...(owner
+            ? [
+                watchGoogleSessions(registry, primary),
+                watchKeepSignedIn(registry, primary),
+                watchMainFill(registry, primary),
+              ]
+            : []),
         ];
-        watched = { environmentId: primary, stop: () => stops.forEach((stop) => stop()) };
+        watched = { environmentId: primary, owner, stop: () => stops.forEach((stop) => stop()) };
       }
     }
     const environmentIds = registry.get(environmentSummaries.environmentIdsAtom);
-    const sharing = getClientSettings().signInSharingEnabled;
+    const sharing = owner && getClientSettings().signInSharingEnabled;
     // Unlinked: its watchers stop at once; deleting the copies is the removal's own step.
     for (const watchers of [keeps, remotes])
       for (const [environmentId, stop] of watchers) {
@@ -59,6 +66,15 @@ export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
     registry.subscribe(primaryEnvironmentIdAtom, sync),
     registry.subscribe(environmentSummaries.environmentIdsAtom, sync),
     subscribeClientSettings(sync),
+    ...(elect
+      ? [
+          elect((next) => {
+            if (next === owner) return;
+            owner = next;
+            sync();
+          }),
+        ]
+      : []),
   ];
   sync();
   return () => {

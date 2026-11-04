@@ -38,6 +38,8 @@ const setSharing = (sharing: boolean) => {
   for (const listener of settings.listeners) listener();
 };
 
+vi.stubGlobal("window", {});
+
 const { startAccountWatchers } = await import("./accountWatchers");
 
 it("reads only the desktop's own jars: nothing starts for another computer", () => {
@@ -74,4 +76,46 @@ it("reads only the desktop's own jars: nothing starts for another computer", () 
   stop();
   expect([...state.stopped].sort()).toEqual([...state.started].sort());
   setSharing(false);
+});
+
+it("runs the background work in the one window the desktop names, and moves it when that closes", () => {
+  state.started = [];
+  state.stopped = [];
+  setSharing(true);
+  const openWindow = (owner: boolean) => {
+    const elected = { owner, tell: (_owner: boolean) => undefined as void };
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        accounts: {
+          onAccountsOwner: (listener: (owner: boolean) => void) => {
+            elected.tell = listener;
+            listener(elected.owner);
+            return () => undefined;
+          },
+        },
+      },
+    });
+    const registry = AtomRegistry.make();
+    const stop = startAccountWatchers(registry);
+    registry.set(primary.atom as Atom.Writable<string | null>, EnvironmentId.make("desktop"));
+    registry.set(primary.ids as Atom.Writable<ReadonlyArray<string>>, ["desktop", "lab-server"]);
+    return { ...elected, stop };
+  };
+  const first = openWindow(true);
+  const second = openWindow(false);
+  const once = (name: string) => state.started.filter((started) => started === name).length;
+  // Filling and keeping what is typed follow each window's own tabs; the rest runs once.
+  expect([once("autofill:desktop"), once("typed:desktop")]).toEqual([2, 2]);
+  expect([once("main:desktop"), once("deliver:lab-server"), once("google:desktop")]).toEqual([
+    1, 1, 1,
+  ]);
+  // The first window closes: the second takes the role, and nothing runs twice.
+  first.stop();
+  second.tell(true);
+  expect(state.stopped).toContain("main:desktop");
+  expect([once("main:desktop"), once("deliver:lab-server")]).toEqual([2, 2]);
+  second.stop();
+  expect([...state.stopped].sort()).toEqual([...state.started].sort());
+  setSharing(false);
+  vi.stubGlobal("window", {});
 });

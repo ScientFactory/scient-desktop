@@ -35,6 +35,7 @@ import {
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
+import { accountsOwner } from "./accountsOwner.ts";
 import { readGoogleSessions } from "./googleSessions.ts";
 import { isPublicHttps, quietVisit } from "./quietVisit.ts";
 import * as Channels from "./protocol.ts";
@@ -369,6 +370,16 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.READ_SESSIONS, handler: readSessionsHandler });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_MAIN_SITE, handler: signOutMainHandler });
   yield* ipc.handle({ channel: Channels.WITHDRAW_FROM_MAIN, handler: withdrawFromMainHandler });
+  yield* ipc.handle({
+    channel: Channels.ACCOUNTS_OWNER,
+    handler: Effect.fn("DesktopAccounts.accountsOwner")(function* (
+      _raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      if (!(yield* appWindowSender(event))) return false;
+      return accountsOwner(yield* (yield* ElectronWindow).appWindows) === event?.sender.id;
+    }),
+  });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
   if (!Electron.app.isPackaged)
@@ -401,6 +412,24 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   const detected = (event: Electron.IpcMainEvent) => {
     void runPromise(forwardLoginForm(event).pipe(Effect.ignore)).catch(() => undefined);
   };
+  // A window closing may move the background work: every window asks again.
+  const ownerMayChange = (_event: unknown, window: Electron.BrowserWindow) =>
+    window.once("closed", () => {
+      void runPromise(
+        Effect.gen(function* () {
+          for (const open of yield* (yield* ElectronWindow).appWindows)
+            if (!open.webContents.isDestroyed())
+              open.webContents.send(Channels.ACCOUNTS_OWNER_CHANGED);
+        }),
+      ).catch(() => undefined);
+    });
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      for (const window of Electron.BrowserWindow.getAllWindows()) ownerMayChange(null, window);
+      Electron.app.on("browser-window-created", ownerMayChange);
+    }),
+    () => Effect.sync(() => Electron.app.removeListener("browser-window-created", ownerMayChange)),
+  );
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       Electron.ipcMain.on(Channels.CAPTURE_ALLOWED, allowed);

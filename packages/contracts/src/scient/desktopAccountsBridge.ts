@@ -200,6 +200,11 @@ export interface DesktopAccountsBridge {
    * Removes from Main what a restricted profile's copies wrote there, unit by unit, where Main
    * still holds exactly that; the units removed, or null when Main can't be opened.
    */
+  /**
+   * Whether this window runs Accounts' background work, now and whenever that changes. One app
+   * window does; the role moves when it closes.
+   */
+  readonly onAccountsOwner?: (listener: (owner: boolean) => void) => () => void;
   readonly withdrawFromMain?: (input: {
     readonly from: string;
     readonly environmentId?: string;
