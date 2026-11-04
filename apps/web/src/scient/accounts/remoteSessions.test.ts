@@ -118,6 +118,7 @@ function fixture(options: {
     profiles: () => [{ profileId: "work", record }],
     desktopAccounts: () => [],
     revalidate: () => options.revalidate?.(sent.length),
+    bind: async () => Redacted.make("synthetic-sender-key"),
     sendLog: async () => log,
     resend: vi.fn(async () => {
       log = { ...log, head: log.head + 1, jar: log.head + 1 };
@@ -161,6 +162,7 @@ describe("delivering a desktop's sign-ins", () => {
     const unit = sent[0]!.units[0]!;
     expect([unit.sites, unit.revision, unit.kind]).toEqual([["github.com"], 4, "copy"]);
     expect(Redacted.isRedacted(unit.cookies![0]!.value)).toBe(true);
+    expect(Redacted.value(sent[0]!.key)).toBe("synthetic-sender-key");
     expect(shares).toEqual([
       expect.objectContaining({ environmentId: LAB, applied: 4, waiting: 0 }),
     ]);
@@ -254,7 +256,7 @@ it("withdraws a restricted profile's copies, then sends its controls as Off", as
   const restricted = { ...defaultBrowserProfileRecord("work"), access: "off" as const };
   deps.profiles = () => [{ profileId: "work", record: restricted }];
   await deliverOnce(deps);
-  expect(deps.withdraw).toHaveBeenCalledWith("work", 3);
+  expect(deps.withdraw).toHaveBeenCalledWith("work", 3, expect.anything());
   expect(sent).toEqual([
     expect.objectContaining({ units: [], controls: expect.objectContaining({ access: "off" }) }),
   ]);

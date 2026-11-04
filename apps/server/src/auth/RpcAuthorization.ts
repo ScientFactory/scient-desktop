@@ -165,6 +165,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsProfileSignedOut]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileShared]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfilesUnshared]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionsBind]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSenderKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsKeepSenderKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSessionsList]: AuthOrchestrationReadScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.

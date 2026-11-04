@@ -88,14 +88,20 @@ const setup = Effect.fn("RemoteSessionsTest.setup")(function* (
         Effect.succeedSome({ revokedAt: revoked.has(sessionId) ? DateTime.nowUnsafe() : null }),
     } as unknown as AuthSessionRepository["Service"]),
   );
+  const { key } = yield* remote.bind(desktop, { source: MAC, label: "MacBook" });
+  keys.desktop = key!;
   return { ...fixture, active, revoked, remote, accounts: service };
 });
+
+/** The key this computer issued the desktop when the test began. */
+const keys: { desktop: Redacted.Redacted<string> } = { desktop: Redacted.make("unset") };
 
 const batch = (
   units: AccountSessionsReceiveInput["units"],
   overrides: Partial<AccountSessionsReceiveInput> = {},
 ): AccountSessionsReceiveInput => ({
   source: MAC,
+  key: keys.desktop,
   label: "MacBook",
   profileId: WORK,
   controls: { access: "allowed", scope: { type: "all-projects" }, scriptSignIn: true },
@@ -126,7 +132,11 @@ describe("receiving a desktop's sign-ins", () => {
       // The copy read before the sign-out arrives late: it must not bring the site back.
       expect(outcomes(yield* remote.receive(desktop, batch([copy(5)])))).toEqual(["stale"]);
       expect(jars.get(WORK)).toEqual([]);
-      const applied = yield* remote.applied(desktop, { source: MAC, profileId: WORK });
+      const applied = yield* remote.applied(desktop, {
+        source: MAC,
+        key: keys.desktop,
+        profileId: WORK,
+      });
       expect(applied).toEqual({
         bound: true,
         units: [{ sites: ["github.com"], revision: 6, outcome: "deleted" }],
@@ -146,7 +156,9 @@ describe("receiving a desktop's sign-ins", () => {
       expect(outcomes(yield* remote.receive(desktop, deleting))).toEqual(["busy"]);
       expect(jars.get(WORK)).toBeUndefined();
       // Nothing was recorded, so it comes again.
-      expect((yield* remote.applied(desktop, { source: MAC, profileId: WORK })).units).toEqual([]);
+      expect(
+        (yield* remote.applied(desktop, { source: MAC, key: keys.desktop, profileId: WORK })).units,
+      ).toEqual([]);
     }),
   );
 
@@ -191,24 +203,38 @@ describe("receiving a desktop's sign-ins", () => {
         "restore-failed",
       ]);
       expect(jars.get(WORK)?.map(({ name }) => name)).toEqual(["page"]);
-      expect((yield* remote.applied(desktop, { source: MAC, profileId: WORK })).units).toEqual([]);
+      expect(
+        (yield* remote.applied(desktop, { source: MAC, key: keys.desktop, profileId: WORK })).units,
+      ).toEqual([]);
     }),
   );
 
   it.effect(
-    "binds the sender to its session, and lets another take over only after revocation",
+    "refuses another authorized peer as the sender, even once the desktop's session expired",
     () =>
       Effect.gen(function* () {
         const { remote, active, accounts } = yield* setup();
         yield* remote.receive(desktop, batch([copy(1)]));
         const other = { sessionId: "session-other", subject: "desktop" };
-        const refused = yield* remote.receive(other, batch([copy(2)])).pipe(Effect.flip);
-        expect(refused.message).toBe("Another connection already sends as MacBook.");
-        // Expired: the desktop's next session takes over and keeps the copies.
+        active.add(other.sessionId);
         active.delete(desktop.sessionId);
-        expect(outcomes(yield* remote.receive(other, batch([copy(2)])))).toEqual(["same"]);
-        const record = (yield* accounts.snapshot).profiles.find((p) => p.profileId === WORK);
-        expect(record?.received?.map(({ sessionId }) => sessionId)).toEqual(["session-other"]);
+        const takeover = yield* remote
+          .bind(other, { source: MAC, label: "MacBook" })
+          .pipe(Effect.flip);
+        expect(takeover.message).toBe("Another connection already sends as MacBook.");
+        const guessed = yield* remote
+          .receive(other, batch([copy(2)], { key: Redacted.make("guessed") }))
+          .pipe(Effect.flip);
+        expect(guessed.message).toBe("Another connection already sends as MacBook.");
+        // The desktop's next session proves the same key and renews the sender.
+        const renewed = { sessionId: "session-renewed", subject: "desktop" };
+        expect(
+          yield* remote.bind(renewed, { source: MAC, label: "MacBook", key: keys.desktop }),
+        ).toEqual({});
+        expect(outcomes(yield* remote.receive(renewed, batch([copy(2)])))).toEqual(["same"]);
+        expect((yield* accounts.remoteSenders).map(({ sessionId }) => sessionId)).toEqual([
+          "session-renewed",
+        ]);
       }),
   );
 
@@ -255,11 +281,15 @@ describe("receiving a desktop's sign-ins", () => {
         desktop,
         batch([copy(1, [cookie({ domain: ".kept.test" })], ["kept.test"])], { mode: "fill" }),
       );
-      expect(yield* remote.withdraw(desktop, { source: MAC, all: true })).toEqual({ deleted: 1 });
+      expect(
+        yield* remote.withdraw(desktop, { source: MAC, key: keys.desktop, all: true }),
+      ).toEqual({ deleted: 1 });
       // A unit this computer kept with its own sign-in is its own; it stays.
       expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-own"]);
       const received = (yield* accounts.snapshot).profiles.flatMap((p) => p.received ?? []);
       expect(received).toEqual([]);
+      expect(yield* accounts.remoteSenders).toEqual([]);
+      keys.desktop = (yield* remote.bind(desktop, { source: MAC, label: "MacBook" })).key!;
 
       yield* remote.receive(desktop, batch([copy(2)]));
       revoked.add(desktop.sessionId);
@@ -273,12 +303,15 @@ describe("receiving a desktop's sign-ins", () => {
       const { remote, jars, revoked, active } = yield* setup();
       const pc = { sessionId: "session-pc", subject: "desktop" };
       active.add(pc.sessionId);
+      const PC = EnvironmentId.make("pc");
+      const pcKey = (yield* remote.bind(pc, { source: PC, label: "PC" })).key!;
       // A copies github.com; B, another desktop, replaces it with its own session.
       yield* remote.receive(desktop, batch([copy(1)]));
       yield* remote.receive(
         pc,
         batch([copy(1, [cookie({ value: "synthetic-pc" })])], {
-          source: EnvironmentId.make("pc"),
+          source: PC,
+          key: pcKey,
           label: "PC",
         }),
       );
@@ -293,7 +326,9 @@ describe("receiving a desktop's sign-ins", () => {
       const { remote, jars } = yield* setup();
       yield* remote.receive(desktop, batch([copy(1)]));
       jars.set(WORK, [cookie({ value: "synthetic-signed-in-here" })]);
-      expect(yield* remote.withdraw(desktop, { source: MAC, all: true })).toEqual({ deleted: 0 });
+      expect(
+        yield* remote.withdraw(desktop, { source: MAC, key: keys.desktop, all: true }),
+      ).toEqual({ deleted: 0 });
       expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-signed-in-here"]);
     }),
   );
@@ -302,7 +337,11 @@ describe("receiving a desktop's sign-ins", () => {
     Effect.gen(function* () {
       const { remote, accounts } = yield* setup();
       const result = yield* remote.receive(desktop, batch([copy(1)]));
-      const applied = yield* remote.applied(desktop, { source: MAC, profileId: WORK });
+      const applied = yield* remote.applied(desktop, {
+        source: MAC,
+        key: keys.desktop,
+        profileId: WORK,
+      });
       const listed = yield* remote.list(WORK);
       const snapshot = yield* accounts.snapshot;
       for (const value of [result, applied, listed, snapshot]) {

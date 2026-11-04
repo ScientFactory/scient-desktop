@@ -44,6 +44,11 @@ import {
   AccountProfileSendLogInput,
   AccountProfileSharedInput,
   AccountProfileUnsharedInput,
+  AccountKeepSenderKeyInput,
+  AccountSenderKey,
+  AccountSenderKeyInput,
+  AccountSessionsBindInput,
+  AccountSessionsBindResult,
   AccountProfileSignedOutInput,
   AccountSessionsApplied,
   AccountSessionsAppliedInput,
@@ -122,6 +127,9 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileSignedOut: "accounts.profiles.signedOut",
   accountsProfileShared: "accounts.profiles.shared",
   accountsProfilesUnshared: "accounts.profiles.unshared",
+  accountsSessionsBind: "accounts.sessions.bind",
+  accountsSenderKey: "accounts.computers.senderKey",
+  accountsKeepSenderKey: "accounts.computers.keepSenderKey",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -458,5 +466,22 @@ export const WsAccountsProfileSharedRpc = accountRpc(
 export const WsAccountsProfilesUnsharedRpc = accountRpc(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfilesUnshared,
   AccountProfileUnsharedInput,
+  Empty,
+);
+/** On a remote: proves, or first establishes, which desktop sends as `source`. */
+export const WsAccountsSessionsBindRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsBind,
+  AccountSessionsBindInput,
+  AccountSessionsBindResult,
+);
+/** On the desktop: the key a computer issued it, kept encrypted with Accounts. */
+export const WsAccountsSenderKeyRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSenderKey,
+  AccountSenderKeyInput,
+  AccountSenderKey,
+);
+export const WsAccountsKeepSenderKeyRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsKeepSenderKey,
+  AccountKeepSenderKeyInput,
   Empty,
 );

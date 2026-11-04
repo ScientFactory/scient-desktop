@@ -397,10 +397,9 @@ export const ReceivedUnit = Schema.Struct({
 });
 export type ReceivedUnit = typeof ReceivedUnit.Type;
 
-/** On a remote: the copies of one sender, bound to the session that first sent them. */
+/** On a remote: the copies of one sender, the desktop its key proves. */
 export const ProfileReceived = Schema.Struct({
   source: EnvironmentId,
-  sessionId: TrimmedNonEmptyString,
   label: ComputerLabel,
   sentAt: IsoDateTime,
   withdrawn: Schema.optional(SessionRevision),
@@ -984,8 +983,29 @@ export type SentProfileControls = typeof SentProfileControls.Type;
 
 const SENT_COOKIES_LIMIT = 1_000;
 
+/** The key a computer issued this desktop as a sender; only its hash is kept there. */
+const SenderKey = Schema.RedactedFromValue(TrimmedNonEmptyString.check(Schema.isMaxLength(128)));
+
+/** A desktop proves it is the sender it was: with its key, or for the first time, without one. */
+export const AccountSessionsBindInput = Schema.Struct({
+  source: EnvironmentId,
+  label: ComputerLabel,
+  key: Schema.optional(SenderKey),
+});
+
+/** A new sender's key, given once. */
+export const AccountSessionsBindResult = Schema.Struct({ key: Schema.optional(SenderKey) });
+
+export const AccountSenderKeyInput = Schema.Struct({ environmentId: EnvironmentId });
+export const AccountSenderKey = Schema.Struct({ key: Schema.optional(SenderKey) });
+export const AccountKeepSenderKeyInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  key: SenderKey,
+});
+
 const SessionsBatch = Schema.Struct({
   source: EnvironmentId,
+  key: SenderKey,
   label: ComputerLabel,
   profileId: BrowserProfileId,
   controls: SentProfileControls,
@@ -1039,6 +1059,7 @@ export type AccountSessionsReceiveResult = typeof AccountSessionsReceiveResult.T
 
 export const AccountSessionsAppliedInput = Schema.Struct({
   source: EnvironmentId,
+  key: SenderKey,
   profileId: BrowserProfileId,
 });
 
@@ -1052,6 +1073,7 @@ export type AccountSessionsApplied = typeof AccountSessionsApplied.Type;
 
 export const AccountSessionsWithdrawInput = Schema.Struct({
   source: EnvironmentId,
+  key: SenderKey,
   profileId: Schema.optional(BrowserProfileId),
   all: Schema.optional(Schema.Literal(true)),
   revision: Schema.optional(SessionRevision),

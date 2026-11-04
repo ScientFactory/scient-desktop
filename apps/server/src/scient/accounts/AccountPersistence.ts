@@ -7,6 +7,8 @@ import {
   AccountWriteStore,
   BrowserProfileRecord,
   AccountActivityEntry,
+  EnvironmentId,
+  IsoDateTime,
   OnePasswordStatus,
 } from "@t3tools/contracts";
 import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
@@ -22,6 +24,17 @@ export const StoredAccount = Schema.Struct({
   ),
 });
 export type StoredAccount = typeof StoredAccount.Type;
+
+/** A desktop that sends here: the hash of its key, and the session it last proved it over. */
+export const RemoteSender = Schema.Struct({
+  source: EnvironmentId,
+  label: Schema.String,
+  keyHash: Schema.String,
+  sessionId: Schema.String,
+  /** When it last proved its key; a sender silent for 30 days loses its copies. */
+  seenAt: IsoDateTime,
+});
+export type RemoteSender = typeof RemoteSender.Type;
 export const AccountsState = Schema.Struct({
   format: Schema.Literal(1),
   agentAccess: Schema.Boolean,
@@ -40,6 +53,12 @@ export const AccountsState = Schema.Struct({
     ]),
   ),
   onePasswordStatus: OnePasswordStatus,
+  /** On a remote: desktops sending sign-ins here, each proven by a key only it holds. */
+  senders: Schema.optional(Schema.Array(RemoteSender)),
+  /** On the desktop: the key each other computer issued it as a sender. */
+  senderKeys: Schema.optional(
+    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, key: Schema.String })),
+  ),
 });
 export type AccountsState = typeof AccountsState.Type;
 export const emptyState: AccountsState = {

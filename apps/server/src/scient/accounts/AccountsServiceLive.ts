@@ -1090,6 +1090,13 @@ export const layer = Layer.effect(
             commit(
               {
                 ...state,
+                ...(state.senderKeys
+                  ? {
+                      senderKeys: state.senderKeys.filter(
+                        (entry) => entry.environmentId !== environmentId,
+                      ),
+                    }
+                  : {}),
                 profiles: state.profiles.map((profile) =>
                   profile.sharedWith?.some((entry) => entry.environmentId === environmentId)
                     ? withShared(profile, environmentId, undefined)
@@ -1214,6 +1221,48 @@ export const layer = Layer.effect(
             });
             return "kept" as const;
           }),
+        ),
+      ),
+      remoteSenders: locked(Effect.sync(() => state.senders ?? [])),
+      setRemoteSender: Effect.fn("AccountsService.setRemoteSender")((source, sender) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                senders: [
+                  ...(state.senders ?? []).filter((entry) => entry.source !== source),
+                  ...(sender ? [sender] : []),
+                ],
+              },
+              true,
+            ),
+          ),
+        ),
+      ),
+      senderKey: Effect.fn("AccountsService.senderKey")((environmentId) =>
+        locked(
+          Effect.sync(
+            () => state.senderKeys?.find((entry) => entry.environmentId === environmentId)?.key,
+          ),
+        ),
+      ),
+      keepSenderKey: Effect.fn("AccountsService.keepSenderKey")((environmentId, key) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                senderKeys: [
+                  ...(state.senderKeys ?? []).filter(
+                    (entry) => entry.environmentId !== environmentId,
+                  ),
+                  { environmentId, key },
+                ],
+              },
+              true,
+            ),
+          ),
         ),
       ),
       receivedProfiles: locked(

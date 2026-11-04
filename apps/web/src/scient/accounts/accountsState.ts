@@ -220,6 +220,18 @@ export const accountsState = {
     label: "accounts:profilesUnshared",
     tag: WS_METHODS.accountsProfilesUnshared,
   }),
+  sessionsBind: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsBind",
+    tag: WS_METHODS.accountsSessionsBind,
+  }),
+  senderKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:senderKey",
+    tag: WS_METHODS.accountsSenderKey,
+  }),
+  keepSenderKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:keepSenderKey",
+    tag: WS_METHODS.accountsKeepSenderKey,
+  }),
   sessionsReceive: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:sessionsReceive",
     tag: WS_METHODS.accountsSessionsReceive,

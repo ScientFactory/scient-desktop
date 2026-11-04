@@ -193,9 +193,12 @@ or 2FA key goes. Decisions use revisions, never clocks:
   Before each batch the route (`allowedRoute`: SSH tunnel end, TLS, a Tailscale name, loopback, or
   this desktop's WSL backend at its topology's address; never a relay), the catalog entry, the
   settings permission and `features.sessionsReceive` are checked again; a change stops the run.
-- **Receiver** (`apps/server/src/scient/accounts/remoteSessions.ts`): the sender (`source`) is bound
-  to the authenticated session that first sent; another session takes over only once that one is
-  revoked or expired. Under a lock per profile it applies the sent controls (a project limit is
+- **Receiver** (`apps/server/src/scient/accounts/remoteSessions.ts`): on its first
+  `accounts.sessions.bind` a desktop gets a random key from the remote, which keeps only its hash;
+  the desktop keeps the key encrypted with its Accounts. Every later call proves it, so a renewed or
+  new session of the same desktop is the same sender, and any other connection is refused. Bind,
+  receive, withdrawal and sweeps run under one lock, and revoked senders are swept before a bind.
+  Under that lock it applies the sent controls (a project limit is
   Off), checks them and the university (`travels`) against its own rows, refuses a revision not
   newer than applied (`stale`) and a unit with an open tab (`busy`), then runs item 3's `applyUnit`
   through `ServerBrowser.profileCookies` (a context lease in `ServerBrowserContexts`; CDP Network

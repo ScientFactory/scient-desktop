@@ -27,6 +27,7 @@ import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -34,7 +35,6 @@ import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
-import { SessionStore } from "../../auth/SessionStore.ts";
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerBrowser } from "../../preview/ServerBrowser.ts";
@@ -143,18 +143,31 @@ async function receiveUnit(
 export class RemoteSessions extends Context.Service<
   RemoteSessions,
   {
+    readonly bind: (
+      caller: AccountsCallerSession,
+      input: {
+        readonly source: EnvironmentId;
+        readonly label: string;
+        readonly key?: Redacted.Redacted<string> | undefined;
+      },
+    ) => Effect.Effect<{ readonly key?: Redacted.Redacted<string> }, AccountsError>;
     readonly receive: (
       caller: AccountsCallerSession,
       input: AccountSessionsReceiveInput,
     ) => Effect.Effect<AccountSessionsReceiveResult, AccountsError>;
     readonly applied: (
       caller: AccountsCallerSession,
-      input: { readonly source: EnvironmentId; readonly profileId: BrowserProfileId },
+      input: {
+        readonly source: EnvironmentId;
+        readonly key: Redacted.Redacted<string>;
+        readonly profileId: BrowserProfileId;
+      },
     ) => Effect.Effect<AccountSessionsApplied, AccountsError>;
     readonly withdraw: (
       caller: AccountsCallerSession,
       input: {
         readonly source: EnvironmentId;
+        readonly key: Redacted.Redacted<string>;
         readonly profileId?: BrowserProfileId | undefined;
         readonly all?: true | undefined;
         readonly revision?: number | undefined;
@@ -168,30 +181,36 @@ export class RemoteSessions extends Context.Service<
       profileId: BrowserProfileId,
       site: string,
     ) => Effect.Effect<{ readonly signedOut: boolean }, AccountsError>;
-    /** Deletes the copies of every sender whose session was revoked or expired. */
+    /** Forgets every sender whose session was revoked here, with its copies. */
     readonly sweep: () => Effect.Effect<void>;
     /** Dev servers only: item 3's cases on this computer's browser, in throwaway profiles. */
     readonly qualify: () => Effect.Effect<ReadonlyArray<AccountsQualifyCase>, AccountsError>;
   }
 >()("t3/scient/accounts/remoteSessions") {}
 
+const hashKey = (key: string) => NodeCrypto.createHash("sha256").update(key).digest();
+
+const keyMatches = (key: Redacted.Redacted<string>, keyHash: string) => {
+  const expected = Buffer.from(keyHash, "base64url");
+  const actual = hashKey(Redacted.value(key));
+  return expected.length === actual.length && NodeCrypto.timingSafeEqual(expected, actual);
+};
+
+/** How often a sender proving its key again is written down. */
+const SEEN_WRITE_MS = 60 * 60 * 1000;
+
 export const makeRemoteSessions = Effect.gen(function* () {
   const browser = yield* ServerBrowser;
   const config = yield* ServerConfig;
   const accounts = yield* AccountsService;
-  const sessions = yield* Effect.serviceOption(SessionStore);
   const sessionRows = yield* Effect.serviceOption(AuthSessionRepository);
   // A development server, as the reusable dev sign-in decides it; never a packaged one.
   const qualifiable = config.devUrl !== undefined;
   const run = Effect.runPromiseWith(yield* Effect.context<never>());
-  const locks = new Map<string, Semaphore.Semaphore>();
-  const lockFor = (profileId: string) => {
-    let lock = locks.get(profileId);
-    if (!lock) locks.set(profileId, (lock = Semaphore.makeUnsafe(1)));
-    return lock;
-  };
-  const underLock = <A, E>(profileId: string, effect: Effect.Effect<A, E>) =>
-    lockFor(profileId).withPermits(1)(effect);
+  // Binding, receiving, withdrawing and sweeping never interleave.
+  const lock = Semaphore.makeUnsafe(1);
+  const exclusive = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
+  const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
   /** Runs cookie work holding the profile's jar; the jar is released however it ends. */
   const withJar = <A>(profileId: string, use: (jar: ProfileCookieJar) => Promise<A>) => {
@@ -215,61 +234,56 @@ export const makeRemoteSessions = Effect.gen(function* () {
   const senderOf = (record: BrowserProfileRecord, source: EnvironmentId) =>
     record.received?.find((entry) => entry.source === source);
 
-  const activeSessionIds = Effect.suspend(() =>
-    Option.match(sessions, {
-      onNone: () => Effect.sync((): ReadonlySet<string> | undefined => undefined),
-      onSome: (store) =>
-        store.listActive().pipe(
-          Effect.map((active) => new Set<string>(active.map((session) => session.sessionId))),
-          Effect.orElseSucceed(() => undefined),
-        ),
-    }),
-  );
-
   /** Deletes a sender's applied copies in one profile; `all` also forgets the sender there. */
-  const withdrawProfile = (
+  const withdrawProfile = Effect.fn("RemoteSessions.withdrawProfile")(function* (
     profileId: BrowserProfileId,
     source: EnvironmentId,
     end: { readonly all: true } | { readonly revision: number },
-  ) =>
-    underLock(
-      profileId,
-      Effect.gen(function* () {
-        const { profiles } = yield* records;
-        const entry = profiles
-          .find((record) => record.profileId === profileId)
-          ?.received?.find((candidate) => candidate.source === source);
-        if (!entry) return 0;
-        const copies = entry.units.filter(
-          (unit) => unit.outcome === "copied" || unit.outcome === "same",
-        );
-        // Only a unit still holding exactly this sender's copy goes; a later change is someone's.
-        const deleted = copies.length
-          ? yield* withJar(profileId, async (jar) => {
-              let count = 0;
-              for (const unit of copies) {
-                const present = await jar.readUnit(unit.sites);
-                if (fingerprintOf(present, Date.now() / 1000) !== unit.fingerprint) continue;
-                await jar.remove(present);
-                count += 1;
-              }
-              return count;
-            })
-          : 0;
-        yield* accounts.updateReceived(profileId, (record) => ({
-          received: (record.received ?? []).flatMap((candidate) =>
-            candidate.source !== source
-              ? [candidate]
-              : "all" in end
-                ? []
-                : [{ ...candidate, units: [], withdrawn: end.revision }],
-          ),
-        }));
-        return deleted;
-      }),
+  ) {
+    const { profiles } = yield* records;
+    const entry = profiles
+      .find((record) => record.profileId === profileId)
+      ?.received?.find((candidate) => candidate.source === source);
+    if (!entry) return 0;
+    const copies = entry.units.filter(
+      (unit) => unit.outcome === "copied" || unit.outcome === "same",
     );
+    // Only a unit still holding exactly this sender's copy goes; a later change is someone's.
+    const deleted = copies.length
+      ? yield* withJar(profileId, async (jar) => {
+          let count = 0;
+          for (const unit of copies) {
+            const present = await jar.readUnit(unit.sites);
+            if (fingerprintOf(present, Date.now() / 1000) !== unit.fingerprint) continue;
+            await jar.remove(present);
+            count += 1;
+          }
+          return count;
+        })
+      : 0;
+    yield* accounts.updateReceived(profileId, (record) => ({
+      received: (record.received ?? []).flatMap((candidate) =>
+        candidate.source !== source
+          ? [candidate]
+          : "all" in end
+            ? []
+            : [{ ...candidate, units: [], withdrawn: end.revision }],
+      ),
+    }));
+    return deleted;
+  });
 
-  /** Revoked on this computer; an expired session only lets the desktop's next one take over. */
+  /** A sender is forgotten: its copies go, and its key proves nothing any more. */
+  const forget = Effect.fn("RemoteSessions.forget")(function* (source: EnvironmentId) {
+    let deleted = 0;
+    for (const record of (yield* records).profiles)
+      if (senderOf(record, source))
+        deleted += yield* withdrawProfile(record.profileId, source, { all: true });
+    yield* accounts.setRemoteSender(source, undefined);
+    return deleted;
+  });
+
+  /** Revoked here: the session a sender last proved its key over. */
   const revoked = (sessionId: string) =>
     Option.isNone(sessionRows)
       ? Effect.succeed(false)
@@ -278,49 +292,88 @@ export const makeRemoteSessions = Effect.gen(function* () {
           Effect.orElseSucceed(() => false),
         );
 
-  const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
-    const { profiles } = yield* records;
-    for (const record of profiles)
-      for (const entry of record.received ?? [])
-        if (yield* revoked(entry.sessionId))
-          yield* withdrawProfile(record.profileId, entry.source, { all: true });
-  }, Effect.ignore);
+  const sweepSenders = Effect.gen(function* () {
+    for (const sender of yield* accounts.remoteSenders)
+      if (yield* revoked(sender.sessionId)) yield* forget(sender.source);
+  });
+
+  /** The sender proves its key; a new session proving it renews the sender on that session. */
+  const authorize = Effect.fn("RemoteSessions.authorize")(function* (
+    caller: AccountsCallerSession,
+    source: EnvironmentId,
+    key: Redacted.Redacted<string>,
+  ) {
+    const sender = (yield* accounts.remoteSenders).find((entry) => entry.source === source);
+    if (!sender || !keyMatches(key, sender.keyHash))
+      return yield* denied(
+        sender
+          ? `Another connection already sends as ${sender.label}.`
+          : "This computer doesn't know this sender.",
+      );
+    const at = yield* now;
+    if (
+      sender.sessionId !== caller.sessionId ||
+      Date.parse(at) - Date.parse(sender.seenAt) > SEEN_WRITE_MS
+    )
+      yield* accounts.setRemoteSender(source, {
+        ...sender,
+        sessionId: caller.sessionId,
+        seenAt: at,
+      });
+  });
 
   /**
-   * A sender is the session that first sent as `source`. Another session takes over only once
-   * that one is revoked or expired; then the old copies stay and the new session owns them.
+   * A desktop proves it is the sender it was, with the key this computer issued it. A source with
+   * no sender gets a new one and its key, once. Another connection without the key is refused,
+   * whatever happened to the first one's session. Revoked senders go first.
    */
   const bind = Effect.fn("RemoteSessions.bind")(function* (
     caller: AccountsCallerSession,
-    source: EnvironmentId,
+    input: {
+      readonly source: EnvironmentId;
+      readonly label: string;
+      readonly key?: Redacted.Redacted<string> | undefined;
+    },
   ) {
-    const { profiles } = yield* records;
-    const bound = profiles.flatMap((record) => {
-      const entry = senderOf(record, source);
-      return entry ? [{ profileId: record.profileId, entry }] : [];
-    });
-    const other = bound.find(({ entry }) => entry.sessionId !== caller.sessionId);
-    if (!other) return;
-    const active = yield* activeSessionIds;
-    if (!active || active.has(other.entry.sessionId))
-      return yield* denied(`Another connection already sends as ${other.entry.label}.`);
-    for (const { profileId } of bound)
-      yield* accounts.updateReceived(profileId, (record) => ({
-        received: (record.received ?? []).map((entry) =>
-          entry.source === source ? { ...entry, sessionId: caller.sessionId } : entry,
-        ),
-      }));
+    return yield* exclusive(
+      Effect.gen(function* () {
+        yield* sweepSenders;
+        const sender = (yield* accounts.remoteSenders).find(
+          (entry) => entry.source === input.source,
+        );
+        if (sender) {
+          if (!input.key)
+            return yield* denied(`Another connection already sends as ${sender.label}.`);
+          yield* authorize(caller, input.source, input.key);
+          return {};
+        }
+        // Copies left by a sender nobody can prove any more are not anyone's to keep.
+        yield* forget(input.source);
+        const key = NodeCrypto.randomBytes(32).toString("base64url");
+        yield* accounts.setRemoteSender(input.source, {
+          source: input.source,
+          label: input.label,
+          keyHash: hashKey(key).toString("base64url"),
+          sessionId: caller.sessionId,
+          seenAt: yield* now,
+        });
+        return { key: Redacted.make(key) };
+      }),
+    );
   });
+
+  const sweep = Effect.fn("RemoteSessions.sweep")(function* () {
+    yield* exclusive(sweepSenders);
+  }, Effect.ignore);
 
   const receive = Effect.fn("RemoteSessions.receive")(function* (
     caller: AccountsCallerSession,
     input: AccountSessionsReceiveInput,
   ) {
-    yield* bind(caller, input.source);
-    yield* sweep();
-    return yield* underLock(
-      input.profileId,
+    return yield* exclusive(
       Effect.gen(function* () {
+        yield* authorize(caller, input.source, input.key);
+        yield* sweepSenders;
         const before = yield* accounts.updateReceived(input.profileId, (record) => {
           const entry = senderOf(record, input.source);
           return {
@@ -328,7 +381,6 @@ export const makeRemoteSessions = Effect.gen(function* () {
               ...(record.received ?? []).filter((candidate) => candidate !== entry),
               {
                 source: input.source,
-                sessionId: caller.sessionId,
                 label: input.label,
                 sentAt: input.sentAt,
                 ...(entry?.withdrawn === undefined ? {} : { withdrawn: entry.withdrawn }),
@@ -403,50 +455,53 @@ export const makeRemoteSessions = Effect.gen(function* () {
 
   const applied = Effect.fn("RemoteSessions.applied")(function* (
     caller: AccountsCallerSession,
-    input: { readonly source: EnvironmentId; readonly profileId: BrowserProfileId },
+    input: {
+      readonly source: EnvironmentId;
+      readonly key: Redacted.Redacted<string>;
+      readonly profileId: BrowserProfileId;
+    },
   ) {
-    yield* bind(caller, input.source);
-    const { profiles } = yield* records;
-    const record = profiles.find((candidate) => candidate.profileId === input.profileId);
-    const entry = record && senderOf(record, input.source);
-    return {
-      bound: entry !== undefined,
-      ...(entry?.withdrawn === undefined ? {} : { withdrawn: entry.withdrawn }),
-      units: (entry?.units ?? []).map(({ fingerprint: _, ...unit }) => unit),
-    };
+    return yield* exclusive(
+      Effect.gen(function* () {
+        yield* authorize(caller, input.source, input.key);
+        const { profiles } = yield* records;
+        const record = profiles.find((candidate) => candidate.profileId === input.profileId);
+        const entry = record && senderOf(record, input.source);
+        return {
+          bound: entry !== undefined,
+          ...(entry?.withdrawn === undefined ? {} : { withdrawn: entry.withdrawn }),
+          units: (entry?.units ?? []).map(({ fingerprint: _, ...unit }) => unit),
+        };
+      }),
+    );
   });
 
   const withdraw = Effect.fn("RemoteSessions.withdraw")(function* (
     caller: AccountsCallerSession,
     input: {
       readonly source: EnvironmentId;
+      readonly key: Redacted.Redacted<string>;
       readonly profileId?: BrowserProfileId | undefined;
       readonly all?: true | undefined;
       readonly revision?: number | undefined;
     },
   ) {
-    yield* bind(caller, input.source);
-    const { profiles } = yield* records;
-    const targets = profiles.filter(
-      (record) =>
-        senderOf(record, input.source) &&
-        (input.all === true || record.profileId === input.profileId),
+    return yield* exclusive(
+      Effect.gen(function* () {
+        yield* authorize(caller, input.source, input.key);
+        if (input.all === true) return { deleted: yield* forget(input.source) };
+        if (!input.profileId) return { deleted: 0 };
+        return {
+          deleted: yield* withdrawProfile(input.profileId, input.source, {
+            revision: input.revision ?? 0,
+          }),
+        };
+      }),
     );
-    let deleted = 0;
-    for (const record of targets)
-      deleted += yield* withdrawProfile(
-        record.profileId,
-        input.source,
-        input.all === true ? { all: true } : { revision: input.revision ?? 0 },
-      );
-    return { deleted };
   });
 
   const list = Effect.fn("RemoteSessions.list")(function* (profileId: BrowserProfileId) {
-    const cookies = yield* underLock(
-      profileId,
-      withJar(profileId, (jar) => jar.readAll()),
-    );
+    const cookies = yield* exclusive(withJar(profileId, (jar) => jar.readAll()));
     const counts = new Map<string, number>();
     for (const cookie of cookies) {
       const site = siteOf(cookie.domain);
@@ -463,8 +518,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     profileId: BrowserProfileId,
     site: string,
   ) {
-    return yield* underLock(
-      profileId,
+    return yield* exclusive(
       withJar(profileId, async (jar) => {
         const present = await jar.readUnit([site]);
         if (present.length) await jar.remove(present);
@@ -493,6 +547,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
   });
 
   return RemoteSessions.of({
+    bind,
     receive,
     applied,
     withdraw,

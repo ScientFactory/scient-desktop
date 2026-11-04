@@ -3,6 +3,7 @@
  * Scient's own use (sign-in, brokered requests, per-session files) or through
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
+import type { RemoteSender } from "./AccountPersistence.ts";
 import type {
   AccountSignIn,
   AccountCodeSources,
@@ -147,12 +148,27 @@ export interface AccountsServiceShape {
   readonly profileSendLog: (
     profileId: BrowserProfileId,
   ) => Effect.Effect<ProfileSendLog, AccountsError>;
-  /** Unlinking a computer: no profile's deletions wait for it any more. */
+  /** Unlinking a computer: no profile's deletions wait for it any more, and its key is gone. */
   readonly profilesUnshared: (environmentId: EnvironmentId) => Effect.Effect<void, AccountsError>;
   /** What another computer applied of the profile; entries all of them applied are dropped. */
   readonly profileShared: (
     profileId: BrowserProfileId,
     share: ProfileSharedWith,
+  ) => Effect.Effect<void, AccountsError>;
+  /** On a remote: the desktops that send sign-ins here. */
+  readonly remoteSenders: Effect.Effect<ReadonlyArray<RemoteSender>, AccountsError>;
+  /** On a remote: records a sender, or forgets it with `undefined`. */
+  readonly setRemoteSender: (
+    source: EnvironmentId,
+    sender: RemoteSender | undefined,
+  ) => Effect.Effect<void, AccountsError>;
+  /** On the desktop: the key a computer issued it as a sender. */
+  readonly senderKey: (
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<string | undefined, AccountsError>;
+  readonly keepSenderKey: (
+    environmentId: EnvironmentId,
+    key: string,
   ) => Effect.Effect<void, AccountsError>;
   /** On a remote: the profiles holding copies from other computers, as stored. */
   readonly receivedProfiles: Effect.Effect<ReadonlyArray<BrowserProfileRecord>, AccountsError>;

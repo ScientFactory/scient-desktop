@@ -18,7 +18,18 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Clock, Deferred, Effect, Fiber, FileSystem, Option, Path, Schema, Stream } from "effect";
+import {
+  Clock,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
@@ -329,6 +340,26 @@ export const makeAccountsRpcHandlers = ({
         accounts.profilesUnshared(input.environmentId).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsSessionsBind]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsBind,
+        withCaller(caller, (remote, session) => remote.bind(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSenderKey]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSenderKey,
+        accounts
+          .senderKey(input.environmentId)
+          .pipe(Effect.map((key) => (key === undefined ? {} : { key: Redacted.make(key) }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsKeepSenderKey]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsKeepSenderKey,
+        accounts.keepSenderKey(input.environmentId, Redacted.value(input.key)).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsSessionsReceive]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSessionsReceive,
@@ -595,6 +626,10 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         profileShared: unavailable,
         profilesUnshared: unavailable,
         receivedProfiles: Effect.succeed([]),
+        remoteSenders: Effect.succeed([]),
+        setRemoteSender: unavailable,
+        senderKey: unavailable,
+        keepSenderKey: unavailable,
         updateReceived: unavailable,
         mainBackfilled: unavailable,
         setHandoff: unavailable,

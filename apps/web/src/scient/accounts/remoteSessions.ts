@@ -102,13 +102,22 @@ export interface DeliveryDeps {
   readonly desktopAccounts: () => AccountsSnapshot["accounts"];
   /** Undefined while the route, destination, permission and feature still hold as planned. */
   readonly revalidate: () => string | undefined;
+  /** Proves this desktop is the sender the remote knows, or becomes a new one; its key. */
+  readonly bind: () => Promise<Redacted.Redacted<string>>;
   readonly sendLog: (profileId: string) => Promise<ProfileSendLog>;
   /** A whole-jar revision on the desktop, so a reconciliation outranks what the remote holds. */
   readonly resend: (profileId: string) => Promise<void>;
-  readonly applied: (profileId: string) => Promise<AccountSessionsApplied>;
+  readonly applied: (
+    profileId: string,
+    key: Redacted.Redacted<string>,
+  ) => Promise<AccountSessionsApplied>;
   readonly remoteRecord: (profileId: string) => BrowserProfileRecord | undefined;
   readonly receive: (input: AccountSessionsReceiveInput) => Promise<AccountSessionsReceiveResult>;
-  readonly withdraw: (profileId: string, revision: number) => Promise<void>;
+  readonly withdraw: (
+    profileId: string,
+    revision: number,
+    key: Redacted.Redacted<string>,
+  ) => Promise<void>;
   readonly shared: (profileId: string, share: ProfileSharedWith) => Promise<void>;
   readonly readSessions: ReadSessions;
   readonly now: () => string;
@@ -148,6 +157,8 @@ export async function deliverOnce(deps: DeliveryDeps) {
     if (stopped !== undefined) throw new DeliveryStopped(stopped);
   };
   const university = universitySites(deps.desktopAccounts());
+  check();
+  const key = await deps.bind();
   for (const { profileId } of deps.profiles()) {
     check();
     // A fresh desktop record each time: a profile restricted meanwhile switches to the withdrawal.
@@ -155,7 +166,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
       deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
       defaultBrowserProfileRecord(profileId);
     const isShareable = shareable(profileId, record);
-    const applied = await deps.applied(profileId);
+    const applied = await deps.applied(profileId, key);
     // A computer this desktop forgot (unlinked, then linked again) is reconciled in full.
     const reconcile =
       isShareable &&
@@ -180,10 +191,11 @@ export async function deliverOnce(deps: DeliveryDeps) {
       travels: (unit) => travels(unit, university, siteOf),
       siteOf,
     });
-    if (plan.kind === "withdraw") await deps.withdraw(profileId, plan.revision);
+    if (plan.kind === "withdraw") await deps.withdraw(profileId, plan.revision, key);
     const batch = (units: AccountSessionsReceiveInput["units"], mode: "fill" | "replace") =>
       deps.receive({
         source: deps.source,
+        key,
         label: deps.label,
         profileId,
         controls,
@@ -195,7 +207,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
     if (plan.kind !== "units" || plan.units.length === 0) {
       if (!applied.bound || !sameControls(deps.remoteRecord(profileId), record))
         await batch([], plan.kind === "units" ? plan.mode : "replace");
-      if (plan.kind === "units") await recordShare(deps, profileId, plan, []);
+      if (plan.kind === "units") await recordShare(deps, key, profileId, plan, []);
       continue;
     }
     const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
@@ -237,7 +249,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
         );
       }
     }
-    await recordShare(deps, profileId, plan, outcomes);
+    await recordShare(deps, key, profileId, plan, outcomes);
   }
 }
 
@@ -286,12 +298,13 @@ function* byCookies<A extends { readonly unit: SentUnit }>(entries: ReadonlyArra
 /** The remote's line on the desktop; `applied` is the revision below which nothing waits. */
 async function recordShare(
   deps: DeliveryDeps,
+  key: Redacted.Redacted<string>,
   profileId: string,
   plan: Extract<ReturnType<typeof planDelivery>, { kind: "units" }>,
   outcomes: ReadonlyArray<{ unit: PlannedUnit; outcome: string }>,
 ) {
   const waiting = outcomes.filter(({ outcome }) => WAITING.has(outcome));
-  const after = await deps.applied(profileId).catch(() => undefined);
+  const after = await deps.applied(profileId, key).catch(() => undefined);
   const at = deps.now();
   await deps.shared(profileId, {
     environmentId: deps.remoteId,
@@ -330,6 +343,31 @@ const call = async <I, A, E>(
   if (result._tag !== "Success") throw new Error("The request failed.");
   return result.value;
 };
+
+const desktopLabel = (primaryId: EnvironmentId) =>
+  readEnvironment(primaryId)?.serverConfig?.environment.label ?? "this computer";
+
+/**
+ * The key the remote issued this desktop, kept encrypted with this desktop's Accounts. Without
+ * one, the remote issues a new key, once; a remote that already knows another key refuses.
+ */
+async function bindSender(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  primaryId: EnvironmentId,
+) {
+  const kept = await call(registry, accountsState.senderKey, primaryId, { environmentId });
+  const bound = await call(registry, accountsState.sessionsBind, environmentId, {
+    source: primaryId,
+    label: desktopLabel(primaryId),
+    ...(kept.key ? { key: kept.key } : {}),
+  });
+  if (bound.key)
+    await call(registry, accountsState.keepSenderKey, primaryId, { environmentId, key: bound.key });
+  const key = bound.key ?? kept.key;
+  if (!key) throw new DeliveryStopped("unbound");
+  return key;
+}
 
 /** Remotes being sent sign-ins now, for "sending your sign-ins…". */
 export const sendingRemotesAtom = Atom.make(
@@ -427,17 +465,20 @@ export function watchRemoteSessions(
         call(registry, accountsState.profileSendLog, primaryId, {
           profileId: BrowserProfileId.make(profileId),
         }),
-      applied: (profileId) =>
+      bind: () => bindSender(registry, environmentId, primaryId),
+      applied: (profileId, key) =>
         call(registry, accountsState.sessionsApplied, environmentId, {
           source: primaryId,
+          key,
           profileId: BrowserProfileId.make(profileId),
         }),
       remoteRecord: (profileId) =>
         value(registry.get(remoteAtom))?.profiles.find((record) => record.profileId === profileId),
       receive: (input) => call(registry, accountsState.sessionsReceive, environmentId, input),
-      withdraw: (profileId, revision) =>
+      withdraw: (profileId, revision, key) =>
         call(registry, accountsState.sessionsWithdraw, environmentId, {
           source: primaryId,
+          key,
           profileId: BrowserProfileId.make(profileId),
           revision,
         }).then(() => undefined),
@@ -528,13 +569,19 @@ export async function withdrawCopies(environmentId: EnvironmentId) {
   const primaryId = readPrimaryEnvironmentId();
   if (!primaryId || primaryId === environmentId || !window.desktopBridge?.accounts?.readSessions)
     return "none" as const;
-  const withdrawn = call(appAtomRegistry, accountsState.sessionsWithdraw, environmentId, {
-    source: primaryId,
-    all: true,
-  }).then(
-    () => "withdrawn" as const,
-    () => "offline" as const,
-  );
+  const kept = await call(appAtomRegistry, accountsState.senderKey, primaryId, {
+    environmentId,
+  }).catch(() => undefined);
+  const withdrawn = kept?.key
+    ? call(appAtomRegistry, accountsState.sessionsWithdraw, environmentId, {
+        source: primaryId,
+        key: kept.key,
+        all: true,
+      }).then(
+        () => "withdrawn" as const,
+        () => "offline" as const,
+      )
+    : Promise.resolve("none" as const);
   const timeout = new Promise<"offline">((resolve) =>
     setTimeout(() => resolve("offline"), WITHDRAW_LIMIT_MS),
   );
