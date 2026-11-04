@@ -505,8 +505,9 @@ every guarded preview operation on them, and on a university's own sign-in pages
 `scient_account_browser_session` refuses a site with an attempt under way. While an attempt runs,
 the desktop's capture of its tab goes to `accounts.keepTyped` (`signInKeeps.ts`); after the
 sign-in is proven, a typed password is kept only when it is the one password the person submitted
-in the attempt, captured before the proof, with no password field back on its page and nothing
-asked elsewhere since
+in the attempt, captured before the sign-in finished, with no password field back on its page and
+nothing asked elsewhere since. It is kept unverified (no `verifiedAt`), so autofill never submits it;
+only a later sign-in where Scient types it verifies it, and a wrong one is rejected once and held
 (`AccountsService.keepTyped`: never on a removed or Off row, never over a linked password).
 
 Autofill submits only on the user's own tab, when the site has one saved sign-in whose password

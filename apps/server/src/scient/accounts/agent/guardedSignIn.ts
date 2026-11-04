@@ -126,9 +126,9 @@ interface Pending {
 const pendingAttempts = new Map<string, Pending>();
 
 /**
- * What one attempt saw and the user typed in its tab, in order. Only the one password typed, before
- * the proof, with no field back on its page and nothing asked elsewhere since, is kept; anything
- * less keeps nothing and costs one retype. Values stay here until kept or the attempt ends.
+ * What one attempt saw and the user typed in its tab, in order. Only the one password typed before
+ * the sign-in finished, with no field back on its page and nothing asked elsewhere since, is kept,
+ * unverified; anything less keeps nothing. Values stay here until kept or the attempt ends.
  */
 interface Typed {
   readonly threadId: string;
@@ -141,8 +141,8 @@ interface Typed {
   readonly passwordSeen: Map<string, number>;
   readonly scientTyped: Set<string>;
   submitted: number;
-  /** Set once the sign-in is proven: what arrives after can't be the password that proved it. */
-  proven: boolean;
+  /** Set once the sign-in worked: what arrives after can't be the password it followed. */
+  signedIn: boolean;
   candidate?: {
     readonly origin: string;
     readonly username: string;
@@ -153,8 +153,8 @@ interface Typed {
 }
 const typedIn = new Map<string, Typed>();
 
-/** The one password the proven sign-in followed, if the attempt leaves no doubt which it was. */
-const provenCandidate = (typed: Typed) => {
+/** The one password the sign-in followed, when the attempt shows no other way it could have gone. */
+const typedCandidate = (typed: Typed) => {
   const { candidate } = typed;
   if (!candidate || typed.submitted !== 1) return undefined;
   const askedSince = [...typed.fieldsSeen].some(
@@ -183,7 +183,7 @@ export const keepTyped = Effect.fn("AccountsAgent.keepTyped")(function* (
   if (typed.scientTyped.has(origin)) return { kept: false };
   // Every password the person submits counts, an identity provider's on the way included.
   typed.submitted++;
-  if (typed.proven) return { kept: false };
+  if (typed.signedIn) return { kept: false };
   const onSite = typed.university
     ? origin.startsWith("https://") && typed.fieldsSeen.has(origin)
     : siteMatchesOrigin(typed.sites, origin);
@@ -197,10 +197,10 @@ export const keepTyped = Effect.fn("AccountsAgent.keepTyped")(function* (
   return { kept: true };
 });
 
-/** After a proven sign-in, the password it followed, if any, is kept; the rest is dropped. */
-const keepProven = Effect.fn("AccountsAgent.keepProven")(function* (attemptId: string) {
+/** After a sign-in that worked, the password it followed, if any, is kept; the rest is dropped. */
+const keepCandidate = Effect.fn("AccountsAgent.keepCandidate")(function* (attemptId: string) {
   const typed = typedIn.get(attemptId);
-  const candidate = typed && provenCandidate(typed);
+  const candidate = typed && typedCandidate(typed);
   if (!typed || !candidate) return;
   yield* (yield* AccountsService).keepTyped(typed.accountId, candidate).pipe(Effect.ignore);
 });
@@ -395,7 +395,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
           passwordSeen: new Map(),
           scientTyped: new Set(),
           submitted: 0,
-          proven: false,
+          signedIn: false,
           seen: 0,
         });
       return accounts.setAttempt({
@@ -448,7 +448,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       options,
     );
     const typed = typedIn.get(attemptId);
-    if (typed && ran.outcome === "signed-in") typed.proven = true;
+    if (typed && ran.outcome === "signed-in") typed.signedIn = true;
     return yield* withEvidence(account, ran, invocation);
   }).pipe(
     Effect.onExit((exit) =>
@@ -500,8 +500,8 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
     yield* register(result.tabId, "pending");
   } else {
     if (pendingAttempts.get(key)?.attemptId === attemptId) pendingAttempts.delete(key);
-    // Verified first, then recorded, then kept: only a proven sign-in keeps what was typed.
-    if (result.outcome === "signed-in") yield* keepProven(attemptId);
+    // Evidence first, then recorded, then kept: only a sign-in that worked keeps what was typed.
+    if (result.outcome === "signed-in") yield* keepCandidate(attemptId);
     yield* endAttempt(attemptId);
   }
   if (caller.kind === "person")

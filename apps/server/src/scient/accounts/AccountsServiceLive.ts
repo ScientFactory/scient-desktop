@@ -1111,19 +1111,15 @@ export const layer = Layer.effect(
                   : details,
               secrets: { password: { type: "scient", value: Redacted.value(typed.password) } },
             });
-            // The sign-in it came from already worked: its status stands, and the password with it.
+            // The sign-in it came from stands. The password is not verified: nothing showed it was
+            // the one that worked, so only a later sign-in where Scient types it verifies it.
             const kept = findAccount(accountId);
             if (kept) {
-              const at = yield* now;
               const { signIn: _, ...rest } = kept.summary;
               yield* commit(
                 replaceAccount({
                   ...kept,
-                  summary: {
-                    ...rest,
-                    ...(summary.signIn ? { signIn: summary.signIn } : {}),
-                    secrets: verifiedPassword(kept.summary.secrets, at),
-                  },
+                  summary: { ...rest, ...(summary.signIn ? { signIn: summary.signIn } : {}) },
                 }),
               );
             }

@@ -144,8 +144,9 @@ export interface AccountsServiceShape {
     input: AccountSessionsSeenInput,
   ) => Effect.Effect<{ readonly created: ReadonlyArray<AccountId> }, AccountsError>;
   /**
-   * Keeps a password the user typed in a proven sign-in, in one locked step: never on a removed
-   * row or one that is Off, and never over a linked password, which only gets an activity line.
+   * Keeps a password the user typed in a sign-in that worked, in one locked step, unverified: only
+   * a later sign-in where Scient types it verifies it. Never on a removed row or one that is Off,
+   * and never over a linked password, which only gets an activity line.
    */
   readonly keepTyped: (
     accountId: AccountId,

@@ -593,9 +593,9 @@ describe("AccountsService and Main", () => {
       expect(yield* service.keepTyped(session, typed)).toBe("kept");
       const kept = (yield* service.snapshot).accounts.find((row) => row.accountId === session)!;
       expect(kept.details).toMatchObject({ username: "person" });
-      // The sign-in it came from stands, and the kept password is the one that worked.
+      // The sign-in it came from stands; nothing yet shows the kept password is the one that worked.
       expect(kept.signIn).toMatchObject({ state: "signed-in", by: "action" });
-      expect(kept.secrets.password?.verifiedAt).toBeDefined();
+      expect(kept.secrets.password?.verifiedAt).toBeUndefined();
       expect(
         secretEquals(
           (yield* service.resolveSecrets(session, ["password"])).password,
@@ -624,6 +624,50 @@ describe("AccountsService and Main", () => {
       yield* service.remove(session);
       expect(yield* service.keepTyped(session, typed)).toBe("dropped");
       expect((yield* service.snapshot).accounts.map((row) => row.accountId)).toEqual([linked]);
+    }),
+  );
+
+  it.effect("verifies a kept password only when Scient signs in with it", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const kept = (outcome: "signed-in" | "password-rejected") =>
+        Effect.gen(function* () {
+          const { accountId } = yield* service.save(row("profile-work", [`${outcome}.example`]));
+          // What a silent sign-in elsewhere after a wrong password can leave: kept, unverified.
+          yield* service.keepTyped(accountId, {
+            username: "person",
+            password: Redacted.make("typed-password"),
+          });
+          const read = Effect.map(service.snapshot, ({ accounts }) =>
+            accounts.find((account) => account.accountId === accountId)!,
+          );
+          expect((yield* read).secrets.password?.verifiedAt).toBeUndefined();
+          // The next sign-in, where Scient's engine typed it.
+          const settled = yield* service.changes.pipe(
+            Stream.filter(({ accounts }) =>
+              accounts.some(
+                (account) => account.accountId === accountId && account.signIn?.state === outcome,
+              ),
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* service.recordUse({
+            target: { type: "account", accountId },
+            action: "sign-in",
+            outcome: outcome === "signed-in" ? "ok" : "error",
+            signInOutcome: outcome,
+            savedPasswordUsed: true,
+          });
+          yield* Fiber.join(settled);
+          return yield* read;
+        });
+      expect((yield* kept("signed-in")).secrets.password?.verifiedAt).toBeDefined();
+      // A wrong one is refused once: the row says so, holds, and the password stays unverified.
+      const refused = yield* kept("password-rejected");
+      expect(refused.signIn?.state).toBe("password-rejected");
+      expect(refused.secrets.password?.verifiedAt).toBeUndefined();
     }),
   );
 

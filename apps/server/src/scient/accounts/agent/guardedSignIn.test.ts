@@ -667,7 +667,18 @@ it.effect("keeps nothing when it can't tell which password worked", () =>
   }),
 );
 
-it.effect("never keeps a capture that arrives after the sign-in was proven", () =>
+it.effect("keeps a wrong password a silent sign-in elsewhere can't be told from", () =>
+  Effect.gen(function* () {
+    // A wrong password, then a sign-in through a provider the browser was already signed in to:
+    // no page asked for anything in between, so this looks like the right password. It is kept,
+    // and the service keeps it unverified until Scient signs in with it.
+    const visit = typedVisit([signInPage(), signedInPage], { 1: "wrong-password" });
+    expect((yield* visit.run).outcome).toBe("signed-in");
+    expect(visit.kept).toEqual(["wrong-password"]);
+  }),
+);
+
+it.effect("never keeps a capture that arrives after the sign-in finished", () =>
   Effect.gen(function* () {
     const visit = typedVisit([signInPage(), signedInPage], {});
     expect((yield* visit.run).outcome).toBe("signed-in");
