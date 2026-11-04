@@ -12,6 +12,7 @@ import {
   type PreviewTabId,
   type PreviewAutomationOpenInput,
   type PreviewAutomationStatus,
+  type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
@@ -36,7 +37,7 @@ const profileVisible = (session: SessionAccounts) => (id: string | undefined) =>
   session.profiles.some((profile) => profile.profileId === id && profile.access !== "off");
 
 /** Which of these profiles the session may see, as a predicate. */
-export const visibleProfiles = Effect.fn("AccountsAgent.visibleProfiles")(function* (
+const visibleProfiles = Effect.fn("AccountsAgent.visibleProfiles")(function* (
   scope: AccountSessionScope,
   ids: ReadonlyArray<BrowserProfileId>,
 ) {
@@ -52,6 +53,38 @@ export const profileUnavailable = () =>
       "This browser profile is unavailable to this session. Change its access in Settings → Accounts & secrets.",
   });
 
+/**
+ * Tabs whose contents are the user's while they sign in: an attempt's tab, and a university's own
+ * sign-in pages, whose address can carry the sign-in's state. No agent reads, drives or lists them.
+ */
+const privateTabs = Effect.fn("AccountsAgent.privateTabs")(function* () {
+  const accounts = yield* AccountsService;
+  const signingIn = new Set((yield* accounts.attempts).map((attempt) => attempt.tabId));
+  const { accounts: rows } = yield* accounts.snapshot;
+  return (tab: { readonly tabId: string; readonly url?: string | null | undefined }) =>
+    signingIn.has(tab.tabId) || (typeof tab.url === "string" && onUniversitySignIn(rows, tab.url));
+});
+
+/** The preview tabs this session may see: in a profile it may use, and none a user signs in on. */
+export const visiblePreviewSessions = Effect.fn("AccountsAgent.visiblePreviewSessions")(function* (
+  scope: AccountSessionScope,
+  sessions: ReadonlyArray<PreviewSessionSnapshot>,
+) {
+  const visible = yield* visibleProfiles(
+    scope,
+    sessions.flatMap((session) => (session.profileId ? [session.profileId] : [])),
+  );
+  const hidden = yield* privateTabs();
+  return sessions.filter(
+    (session) =>
+      visible(session.profileId) &&
+      !hidden({
+        tabId: session.tabId,
+        url: "url" in session.navStatus ? session.navStatus.url : undefined,
+      }),
+  );
+});
+
 export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab")(function* (
   scope: AccountSessionScope,
   status: PreviewAutomationStatus,
@@ -63,10 +96,7 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
   if (!tab || !profileVisible(session)(tab.profileId)) return yield* profileUnavailable();
   // What the user types while signing in is theirs: no agent reads or drives that tab, the one
   // that started the sign-in included, and a university's own sign-in pages stay closed after.
-  if (
-    (yield* accounts.attempts).some((attempt) => attempt.tabId === tab.tabId) ||
-    (tab.url && onUniversitySignIn((yield* accounts.snapshot).accounts, tab.url))
-  )
+  if ((yield* privateTabs())(tab))
     return yield* new AccountsError({
       reason: "denied",
       message: "The user is signing in on this tab. Wait for scient_account_sign_in.",
@@ -98,12 +128,17 @@ export const filterPreviewProfiles = Effect.fn("AccountsAgent.filterPreviewProfi
   status: PreviewAutomationStatus,
 ) {
   const allowed = yield* visibleProfiles(scope, profileIds(status));
+  const hidden = yield* privateTabs();
   const profiles = status.profiles?.filter((profile) => allowed(profile.id));
-  const tabs = status.tabs?.filter((tab) => allowed(tab.profileId));
+  const tabs = status.tabs?.filter((tab) => allowed(tab.profileId) && !hidden(tab));
   const { defaultProfileId, ...rest } = status;
   const current = status.tabs?.find((tab) => tab.tabId === status.tabId);
+  // The current tab's address and title are hidden the same way as its row.
+  const shown =
+    status.tabId === null ||
+    (allowed(current?.profileId) && !hidden({ tabId: status.tabId, url: status.url }));
   return {
-    ...(status.tabId === null || allowed(current?.profileId)
+    ...(shown
       ? rest
       : {
           available: status.available,

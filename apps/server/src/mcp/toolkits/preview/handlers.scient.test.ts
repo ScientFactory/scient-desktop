@@ -315,6 +315,29 @@ it.effect(
         );
       }
       expect(reached).toEqual([]);
+      // Listing shows neither the tab nor its address, to the agent that started it or another.
+      for (const thread of [attempt.threadId, ThreadId.make("another-thread")]) {
+        const listed = yield* toolkit.handle("preview_status", {}).pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.provideService(McpInvocationContext, {
+            environmentId: EnvironmentId.make("accounts-signing-environment"),
+            requestNamespace: "accounts-signing",
+            issuedAt: 0,
+            client: undefined,
+            capabilities: new Set(["preview"] as const),
+            thread: {
+              threadId: thread,
+              providerSessionId: "accounts-signing",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            },
+          }),
+          Effect.provide(dependencies),
+        );
+        const status = listed.at(-1)?.result;
+        expect(status).toMatchObject({ tabId: null, url: null, title: null, tabs: [] });
+        expect(JSON.stringify(status)).not.toContain("example.com/login");
+      }
       yield* service.removeAttempt(attempt.attemptId);
       // Once it ends, the agent's read reaches the browser again.
       yield* snapshot
