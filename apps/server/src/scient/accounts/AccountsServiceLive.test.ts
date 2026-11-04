@@ -944,7 +944,12 @@ describe("AccountsService grants and approvals", () => {
         yield* service.save({ ...input, accountId, secrets: {} });
         expect((yield* service.snapshot).accounts[0]?.signIn?.state).toBe("code-rejected");
         yield* service.save({ ...input, accountId });
-        expect((yield* service.snapshot).accounts[0]?.signIn).toBeUndefined();
+        // The user's reset of a held sign-in: an action newer than the refusal.
+        expect((yield* service.snapshot).accounts[0]?.signIn).toMatchObject({
+          state: "unknown",
+          detail: "Password changed",
+          by: "action",
+        });
         // A sign-in Scient didn't type the password for says nothing about the new one.
         const seen = yield* service.changes.pipe(
           Stream.filter((snapshot) => snapshot.accounts[0]?.signIn?.state === "signed-in"),

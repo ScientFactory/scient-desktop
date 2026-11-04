@@ -30,9 +30,8 @@ import {
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
-import { COPIED_FROM, IMPORTED_FROM } from "@t3tools/shared/scientAccountSignIn";
+import { COPIED_FROM, IMPORTED_FROM, matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
-import { anySiteMatches, siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import ACCOUNT_ICONS from "./accountIcons.json";
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
@@ -63,28 +62,12 @@ export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: 
   );
 }
 
-export function matchingAccounts(
+/** UI autofill offers every website sign-in for the page, in the one shared order. */
+export const matchingAccounts = (
   accounts: ReadonlyArray<AccountSummary>,
   url: string,
   profileId: string,
-) {
-  const sameProfile = ({ details }: AccountSummary) =>
-    "profileId" in details && details.profileId === profileId ? 1 : 0;
-  const exact = ({ details }: AccountSummary) =>
-    "sites" in details &&
-    details.sites.some((site) => site.startsWith("https://") && siteMatchesUrl(site, url))
-      ? 1
-      : 0;
-  return accounts
-    .filter(({ details }) => details.kind === "website" && anySiteMatches(details.sites, url))
-    .sort(
-      (a, b) =>
-        sameProfile(b) - sameProfile(a) ||
-        exact(b) - exact(a) ||
-        (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
-        a.accountId.localeCompare(b.accountId),
-    );
-}
+) => matchingSignIns(accounts, url, profileId);
 
 /** Whether the conversation's agent may use an account now, without asking. */
 export function agentMayUse(
@@ -838,7 +821,10 @@ export function accountStatusLabel(
         ? "Imported"
         : signIn.detail?.startsWith(COPIED_FROM)
           ? "Copied"
-          : "Couldn't check";
+          : // An action that said nothing yet about the site, such as a changed password.
+            signIn.by === "action" && signIn.detail
+            ? signIn.detail
+            : "Couldn't check";
     case "failed":
       return "Couldn't check";
   }

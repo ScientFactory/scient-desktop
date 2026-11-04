@@ -56,10 +56,9 @@ const browser = (page: Partial<PaperPage>) => {
 const fetchWith = (page: Partial<PaperPage>) => {
   const { broker, operations } = browser(page);
   return fetchFromPage({
-    session: scope,
     url: "https://journal.example.org/article/1",
     profileId: undefined,
-    signIn: () => undefined,
+    caller: { kind: "paper", scope, requester: { accounts: "all" } },
     accept: () => Effect.succeed(true),
   }).pipe(
     Effect.map((result) => ({ result, operations })),

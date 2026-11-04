@@ -1,7 +1,6 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
-  type AccountSummary,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -12,8 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import type { AccountSessionScope } from "../accounts/AccountsService.ts";
-import { guardedSignIn } from "../accounts/agent/guardedSignIn.ts";
+import { guardedSignIn, type SignInCaller } from "../accounts/agent/guardedSignIn.ts";
 import { isPdf } from "./paperLookup.ts";
 import { PaperPage, pageState, paperPageScript, pdfAddressFor } from "./paperPage.ts";
 
@@ -75,12 +73,11 @@ export type FetchResult =
     };
 
 export interface PageRequest {
-  readonly session: AccountSessionScope;
   readonly url: string;
   /** Where the university's session lives; the default profile otherwise. */
   readonly profileId: string | undefined;
-  /** The saved sign-in for a page that asks for one. */
-  readonly signIn: (url: string) => AccountSummary | undefined;
+  /** Who the sign-in on a page that asks for one is for. */
+  readonly caller: Extract<SignInCaller, { kind: "paper" }>;
   readonly accept: (bytes: Uint8Array) => Effect.Effect<boolean>;
 }
 
@@ -90,7 +87,7 @@ export interface PageRequest {
  * access: publishers that show "Purchase access" still hand a recognised university the PDF.
  */
 export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (request: PageRequest) {
-  const { session, url, signIn, accept } = request;
+  const { url, caller, accept } = request;
   const invocation = yield* AgentInvocationContext;
   const broker = yield* PreviewAutomationBroker;
   const fs = yield* FileSystem.FileSystem;
@@ -221,19 +218,16 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
             `${new URL(page.url).hostname} wants a person to pass its check.`,
           );
         case "sign-in": {
-          const account = signedIn ? undefined : signIn(page.url);
-          if (!account)
-            return stopped(
-              "needs-sign-in",
-              "sign-in",
-              `${new URL(page.url).hostname} asks for a sign-in.`,
-            );
-          const result = yield* guardedSignIn(session, account, {
-            tabId: tab,
-            automatic: true,
-            authorized: true,
-            engine: { userRun: true, stopAtCode: true },
+          const asks = `${new URL(page.url).hostname} asks for a sign-in.`;
+          if (signedIn) return stopped("needs-sign-in", "sign-in", asks);
+          const result = yield* guardedSignIn({
+            page: { tabId: tab, url: page.url },
+            profileId,
+            signIn: { find: page.url },
+            caller,
           });
+          if (result.outcome === "none" || result.outcome === "choose")
+            return stopped("needs-sign-in", "sign-in", asks);
           if (result.outcome !== "signed-in")
             return stopped(
               "needs-sign-in",

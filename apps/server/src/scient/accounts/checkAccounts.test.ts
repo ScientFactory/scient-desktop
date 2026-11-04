@@ -184,36 +184,37 @@ const run = (
   );
 };
 
-it.effect(
-  "signs a signed-out account back in, even one that is Off for agents, and closes up",
-  () =>
-    Effect.gen(function* () {
-      const { checked, operations, uses } = yield* run([account]);
-      expect(checked).toEqual({ checked: 1 });
-      expect(uses[0]?.signInOutcome).toBe("signed-in");
-      expect(operations.at(-1)).toBe("close");
-    }),
-);
-
-it.effect("never repeats a sign-in the site rejected", () =>
+it.effect("signs a signed-out account back in once per press, and closes up", () =>
   Effect.gen(function* () {
-    const rejected: AccountSummary = {
-      ...account,
-      signIn: { state: "password-rejected", at: "2026-01-01T00:00:00.000Z" },
-    };
-    const { uses, checks } = yield* run([rejected]);
-    expect(uses).toEqual([]);
-    expect(checks).toEqual([]);
+    const allowed = { ...account, controls: { ...account.controls, access: "allowed" as const } };
+    const { checked, operations, uses } = yield* run([allowed]);
+    expect(checked).toEqual({ checked: 1 });
+    expect(uses[0]?.signInOutcome).toBe("signed-in");
+    expect(operations.at(-1)).toBe("close");
+    // Check is the user's press: a refused or unfinished sign-in gets one attempt again.
+    for (const state of ["password-rejected", "needs-you"] as const) {
+      const pressed = yield* run([
+        { ...allowed, signIn: { state, at: "2026-01-01T00:00:00.000Z" } },
+      ]);
+      expect(pressed.uses[0]?.signInOutcome).toBe("signed-in");
+    }
   }),
 );
 
-it.effect("leaves alone a site that is limiting automation, or just needed the user", () =>
+it.effect("types nothing for a sign-in that is Off, and leaves a limiting site alone", () =>
   Effect.gen(function* () {
+    const off = yield* run([account]);
+    expect(off.uses).toEqual([]);
+    expect(off.checks[0]?.detail).toContain("access doesn't let Scient type");
     const at = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-    for (const state of ["limited", "needs-you"] as const) {
-      const { uses } = yield* run([{ ...account, signIn: { state, at } }]);
-      expect(uses).toEqual([]);
-    }
+    const limited = yield* run([
+      {
+        ...account,
+        controls: { ...account.controls, access: "allowed" },
+        signIn: { state: "limited", at },
+      },
+    ]);
+    expect(limited.uses).toEqual([]);
   }),
 );
 

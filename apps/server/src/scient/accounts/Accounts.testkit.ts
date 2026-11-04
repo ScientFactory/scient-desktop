@@ -142,7 +142,9 @@ export function fakeAccounts(
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
-  const checks: Array<{ accountId: AccountId; state: string; message?: string | undefined }> = [];
+  const checks: Array<
+    { accountId: AccountId } & Parameters<AccountsService["Service"]["recordCheck"]>[1]
+  > = [];
   const accounts = [...(options.accounts ?? [])];
   const saves: Array<AccountSaveInput> = [];
   const unsupported = Effect.fail(
@@ -169,7 +171,9 @@ export function fakeAccounts(
         cancelled.add(id);
       }),
     passwordStore: () => unsupported,
-    snapshot: Effect.sync(() => ({ accounts }) as unknown as AccountsSnapshot),
+    snapshot: Effect.sync(
+      () => ({ accounts, agentAccess: options.agentAccess ?? true }) as unknown as AccountsSnapshot,
+    ),
     changes: Stream.empty,
     save: (input) =>
       Effect.sync(() => {

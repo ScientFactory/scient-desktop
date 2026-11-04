@@ -13,7 +13,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
-import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
 import { fetchFromPage, type FetchResult } from "./paperFetch.ts";
 import { articleAddress, lookUpPaper, openAccessPdf, type Paper } from "./paperLookup.ts";
@@ -159,14 +158,6 @@ const isThePaper = (paper: Paper, bytes: Uint8Array) =>
     Effect.map((facts) => facts === undefined || pdfVerdict(paper, facts) === "the-paper"),
   );
 
-const savedSignIn = (accounts: ReadonlyArray<AccountSummary>, url: string) =>
-  accounts.find(
-    ({ details, secrets }) =>
-      details.kind === "website" &&
-      secrets.password !== undefined &&
-      anySiteMatches(details.sites, url),
-  );
-
 interface Reached extends Omit<RouteStep, "url"> {
   readonly result: Exclude<FetchResult, { status: "saved" }>;
 }
@@ -216,10 +207,13 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
     const attempt = yield* inLane(
       lane,
       fetchFromPage({
-        session: session(requester.threadId ?? PAPERS_THREAD),
         url: step.url,
         profileId,
-        signIn: (url) => savedSignIn(saved, url),
+        caller: {
+          kind: "paper",
+          scope: session(requester.threadId ?? PAPERS_THREAD),
+          requester,
+        },
         accept: (bytes) => isThePaper(paper, bytes),
       }).pipe(Effect.timeoutOption(ROUTE_DEADLINE)),
     );

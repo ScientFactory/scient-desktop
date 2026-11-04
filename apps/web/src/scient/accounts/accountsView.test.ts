@@ -672,6 +672,12 @@ describe("account status", () => {
         relative,
       ),
     ).toBe("Couldn't check");
+    expect(
+      accountStatusLabel(
+        { signIn: { state: "unknown", at, detail: "Password changed", by: "action" } },
+        relative,
+      ),
+    ).toBe("Password changed");
     expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(

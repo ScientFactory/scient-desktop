@@ -1,26 +1,16 @@
-import type { AccountSummary, PreviewAutomationStatus, PreviewTabId } from "@t3tools/contracts";
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  type PreviewAutomationStatus,
+  type PreviewTabId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
+import { signInsForPage } from "@t3tools/shared/scientAccountSignIn";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { previewInvoker } from "./broker.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
-
-const savedSignIn = (account: AccountSummary, url: string) =>
-  account.details.kind === "website" &&
-  account.secrets.password !== undefined &&
-  anySiteMatches(account.details.sites, url);
-
-const profileOf = ({ details }: AccountSummary) =>
-  details.kind === "website" ? details.profileId : undefined;
-
-/** The accounts of this tab's profile, else those of no profile; never another profile's. */
-const inProfile = (accounts: ReadonlyArray<AccountSummary>, profileId: string | undefined) => {
-  const own = accounts.filter((account) => profileOf(account) === profileId);
-  return own.length > 0 ? own : accounts.filter((account) => profileOf(account) === undefined);
-};
 
 /**
  * Signs in on a login page with the saved sign-in for this page or the page the agent asked for,
@@ -40,10 +30,7 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
   const session = yield* accounts.forSession(scope);
   if (!session.agentAccess) return undefined;
   const decided = (url: string, decision: "allowed" | "ask") =>
-    inProfile(
-      session.accounts.filter((account) => savedSignIn(account, url)),
-      input.profileId,
-    ).filter(
+    signInsForPage(session.accounts, url, input.profileId ?? DEFAULT_BROWSER_PROFILE_ID).filter(
       (account) => authorizationDecision(true, account.controls, scope).decision === decision,
     );
   const onPage = decided(input.pageUrl, "allowed");
@@ -63,10 +50,10 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
         }
       : undefined;
   }
-  const result = yield* guardedSignIn(scope, allowed, {
-    tabId: input.tabId,
-    automatic: true,
-    engine: { stopAtCode: true },
+  const result = yield* guardedSignIn({
+    page: { tabId: input.tabId },
+    signIn: allowed,
+    caller: { kind: "page", scope },
   });
   if (result.outcome !== "signed-in" || !("tabId" in result))
     return {

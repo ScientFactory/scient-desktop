@@ -230,14 +230,16 @@ export interface AccountsServiceShape {
     check: Omit<AccountSignIn, "at" | "by"> & { readonly username?: string | undefined },
   ) => Effect.Effect<void, AccountsError>;
   /**
-   * Non-blocking; records the outcome of a use that `authorize` allowed. `savedPasswordUsed` (not
-   * kept in the log) says Scient typed the saved password, so a `signed-in` outcome verifies it.
+   * Records the outcome of a use that `authorize` allowed; non-blocking unless `wait`, which a
+   * sign-in needs so the next attempt on its site reads it. `savedPasswordUsed` (not kept in the
+   * log) says Scient typed the saved password, so a `signed-in` outcome verifies it.
    */
   readonly recordUse: (
     entry: Omit<AccountActivityEntry, "at" | "decision"> & {
       readonly savedPasswordUsed?: boolean;
     },
     message?: string,
+    wait?: boolean,
   ) => Effect.Effect<void>;
 }
 

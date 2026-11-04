@@ -10,7 +10,6 @@ import {
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -18,8 +17,8 @@ import * as Semaphore from "effect/Semaphore";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import { automaticSignInOnHold, isGoogleSessionRow } from "./AccountDecisions.ts";
-import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
+import { isGoogleSessionRow } from "./AccountDecisions.ts";
+import { AccountsService } from "./AccountsService.ts";
 import { browserFailure, previewInvoker } from "./agent/broker.ts";
 import { isIdentityPage, isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import {
@@ -49,11 +48,6 @@ const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 
 /** The user's own check is not an agent's use, so it runs under its own identity. */
 const CHECK_THREAD = ThreadId.make("scient-accounts-check");
-const session: AccountSessionScope = {
-  threadId: CHECK_THREAD,
-  projectId: undefined,
-  unattended: true,
-};
 
 const run = Semaphore.makeUnsafe(1);
 
@@ -242,11 +236,9 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
     const { state, identity } = openAthens
       ? { state: yield* askOpenAthens(invoke, tabId), identity: undefined }
       : yield* readPage;
-    const onHold = automaticSignInOnHold(account, yield* Clock.currentTimeMillis);
     if (keepsLastSeen(account, state)) return;
-    if (state !== "signed-out" || account.secrets.password === undefined || onHold) {
-      // A hold keeps its own explanation, unless the row would otherwise go on saying signed in.
-      if (onHold && state === "signed-out" && account.signIn?.state !== "signed-in") return;
+    // Check is the user's own press: a signed-out sign-in with a saved password gets one attempt.
+    if (state !== "signed-out" || account.secrets.password === undefined) {
       return yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "signed-in" && identity ? { username: identity } : {}),
@@ -262,15 +254,18 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
           : {}),
       });
     }
-    const result = yield* guardedSignIn(session, account, {
-      tabId,
-      automatic: true,
-      authorized: true,
-      engine: { userRun: true },
+    const result = yield* guardedSignIn({
+      page: { tabId },
+      signIn: account,
+      caller: { kind: "check" },
     });
-    if ("tabId" in result) tabs.add(result.tabId);
+    if ("tabId" in result && result.tabId) tabs.add(result.tabId);
     // Nothing reached the site, so nothing else says what was seen here.
-    else yield* accounts.recordCheck(account.accountId, { state, detail: result.message });
+    else
+      yield* accounts.recordCheck(account.accountId, {
+        state,
+        ...("message" in result ? { detail: result.message } : {}),
+      });
   }).pipe(
     Effect.ensuring(
       Effect.forEach(tabs, (tab) => invoke("close", {}, tab).pipe(Effect.ignore), {

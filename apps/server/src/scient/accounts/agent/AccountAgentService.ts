@@ -29,7 +29,6 @@ import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { previewInvoker } from "./broker.ts";
 import { getPaper, paperStatus, queuePapers } from "../../papers/getPaper.ts";
-import { signInCodes } from "./signInCodes.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
@@ -165,9 +164,10 @@ export const accountAgentOperations = {
   }) {
     const scope = yield* accountSessionScope();
     const account = yield* getAccount(scope, accountId);
-    return yield* guardedSignIn(scope, account, {
-      tabId,
-      engine: yield* signInCodes(scope, account),
+    return yield* guardedSignIn({
+      page: { tabId },
+      signIn: account,
+      caller: { kind: "agent", scope },
     });
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (

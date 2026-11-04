@@ -564,13 +564,22 @@ export const layer = Layer.effect(
             ? "needs-attention"
             : "ready",
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
-        // A new password, code or key is untried: what the old one met no longer applies.
-        ...(!input.secrets?.password &&
-        !input.secrets?.totp &&
-        !input.secrets?.token &&
-        existing?.summary.signIn
-          ? { signIn: existing.summary.signIn }
-          : {}),
+        // A new password, code or key is untried: what the old one met no longer applies. On a
+        // website that is the user's reset of a held sign-in, so it is written as an action.
+        ...(!input.secrets?.password && !input.secrets?.totp && !input.secrets?.token
+          ? existing?.summary.signIn
+            ? { signIn: existing.summary.signIn }
+            : {}
+          : existing && input.details.kind === "website"
+            ? {
+                signIn: {
+                  state: "unknown" as const,
+                  at: timestamp,
+                  detail: "Password changed",
+                  by: "action" as const,
+                },
+              }
+            : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
         ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
@@ -1647,7 +1656,7 @@ export const layer = Layer.effect(
         ),
       ),
       recordUse: Effect.fn("AccountsService.recordUse")(
-        ({ savedPasswordUsed, ...entry }, message) =>
+        ({ savedPasswordUsed, ...entry }, message, wait) =>
           locked(
             Effect.gen(function* () {
               yield* appendActivity({ ...entry, decision: "allowed" });
@@ -1682,7 +1691,11 @@ export const layer = Layer.effect(
                 }
               }
             }),
-          ).pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid),
+          ).pipe(
+            Effect.ignore,
+            (record) => (wait ? record : record.pipe(Effect.forkIn(serviceScope))),
+            Effect.asVoid,
+          ),
       ),
     });
     return service;
