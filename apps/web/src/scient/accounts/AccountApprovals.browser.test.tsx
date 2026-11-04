@@ -72,7 +72,7 @@ it("shows one compact line, the browser or its fallback, and cancels the identif
   }
 });
 
-it("says what is typed in a tab streamed from the server isn't kept", async () => {
+it("says why an agent asked, and what is typed in a tab streamed from the server isn't kept", async () => {
   state.sessions = { "synthetic-tab": { runtime: "server" } };
   const handoff: AccountHandoff = {
     handoffId: "synthetic-streamed",
@@ -82,6 +82,7 @@ it("says what is typed in a tab streamed from the server isn't kept", async () =
     site: "example.com",
     kind: "other",
     tabId: "synthetic-tab",
+    reason: "To read the project's issues.",
     startedAt: "2026-10-27T00:00:00Z",
     expiresAt: "2026-10-27T00:15:00Z",
   };
@@ -93,4 +94,5 @@ it("says what is typed in a tab streamed from the server isn't kept", async () =
     />,
   );
   await expect.element(page.getByText("What you type here isn't kept.")).toBeVisible();
+  await expect.element(page.getByText("To read the project's issues.")).toBeVisible();
 });

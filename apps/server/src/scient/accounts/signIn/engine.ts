@@ -61,6 +61,8 @@ export interface SignInOptions {
     readonly submissions: ReadonlyArray<SignInSubmission>;
     readonly submittedAt?: number | undefined;
   };
+  /** Why an agent asked the user to sign in, for the card. */
+  readonly reason?: string;
   /** Told the attempt's tab as soon as it has one. */
   readonly onTab?: (tabId: PreviewTabId) => Effect.Effect<void>;
   /** Told each page it looks at: its origin, whether it asked for anything, and for a password. */
@@ -370,6 +372,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
                 tabId: target,
                 kind: action.kind,
                 ...(number === undefined ? {} : { number }),
+                ...(options.reason === undefined ? {} : { reason: options.reason }),
                 startedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt)),
                 expiresAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt + patience.waitMs)),
               },

@@ -56,6 +56,10 @@ export type SignInCaller =
   /** The user's own press, in the invocation's thread: they see the tab and finish what's left. */
   | {
       readonly kind: "person";
+      /** The agent that asked the user to sign in (`scient_account_add`): its access applies. */
+      readonly agent?: AccountSessionScope;
+      /** Why the agent asked, for the card. */
+      readonly reason?: string;
       /** A row made just for this sign-in goes again if nothing comes of it. */
       readonly discardIfUnfinished?: boolean;
       /** After a sign-in that worked: papers waiting for it go on. */
@@ -297,8 +301,17 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
       return caller.requester.accounts === "all"
         ? account.controls.access !== "off"
         : authorizationDecision(agentAccess, account.controls, unattended).decision === "allowed";
-    case "check":
     case "person":
+      if (caller.agent) {
+        yield* authorize(
+          caller.agent,
+          { type: "account", accountId: account.accountId },
+          "sign-in",
+        );
+        return true;
+      }
+      return account.controls.access !== "off";
+    case "check":
       return account.controls.access !== "off";
   }
 });
@@ -397,7 +410,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       ? caller.scope
       : {
           threadId: invocation.threadId,
-          projectId: undefined,
+          projectId: caller.kind === "person" ? caller.agent?.projectId : undefined,
           unattended: caller.kind !== "person",
         };
   const attemptId = resume?.attemptId ?? NodeCrypto.randomUUID();
@@ -428,7 +441,10 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       });
     });
   const options: SignInOptions = {
-    ...(caller.kind === "agent" ? yield* signInCodes(session, account) : {}),
+    ...(caller.kind === "agent" || (caller.kind === "person" && caller.agent)
+      ? yield* signInCodes(session, account)
+      : {}),
+    ...(caller.kind === "person" && caller.reason ? { reason: caller.reason } : {}),
     ...(automatic(caller) ? { stopAtCode: true } : {}),
     ...(caller.kind === "agent" || caller.kind === "page" ? {} : { userRun: true }),
     ...(caller.kind === "person"

@@ -502,6 +502,8 @@ export const AccountHandoff = Schema.Struct({
   tabId: Schema.optional(TrimmedNonEmptyString),
   kind: Schema.Literals(["push", "captcha", "passkey", "code", "other"]),
   number: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{1,3}$/))),
+  /** Why an agent asked the user to sign in here. */
+  reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
   startedAt: IsoDateTime,
   expiresAt: IsoDateTime,
 });

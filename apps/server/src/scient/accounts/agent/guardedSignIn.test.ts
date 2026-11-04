@@ -557,10 +557,15 @@ const publicPage = { ...signInPage(), username: null, password: null, submit: nu
  * A person signing in on a site with nothing saved: each look shows the next page, and `typed`
  * says what the desktop captured before which look.
  */
-const typedVisit = (pages: ReadonlyArray<object>, typed: Readonly<Record<number, string>>) => {
+const typedVisit = (
+  pages: ReadonlyArray<object>,
+  typed: Readonly<Record<number, string>>,
+  caller: SignInCaller = { kind: "person" },
+) => {
   const rows = [row("typed", { secrets: {} })];
   const fake = fakeAccounts({ accounts: rows });
   const kept: string[] = [];
+  const removed: string[] = [];
   let look = 0;
   const service = AccountsService.of({
     ...fake.service,
@@ -573,6 +578,7 @@ const typedVisit = (pages: ReadonlyArray<object>, typed: Readonly<Record<number,
         return "kept" as const;
       }),
     recordUse: () => Effect.void,
+    remove: (accountId) => Effect.sync(() => void removed.push(accountId)),
   });
   const send = (password: string) =>
     keepTyped({
@@ -604,7 +610,7 @@ const typedVisit = (pages: ReadonlyArray<object>, typed: Readonly<Record<number,
         } as A;
       }),
   });
-  const run = guardedSignIn({ signIn: rows[0]!, caller: { kind: "person" } }).pipe(
+  const run = guardedSignIn({ signIn: rows[0]!, caller }).pipe(
     Effect.provideService(AccountsService, service),
     Effect.provideService(PreviewAutomationBroker, broker),
     Effect.provideService(AgentInvocationContext, {
@@ -616,7 +622,7 @@ const typedVisit = (pages: ReadonlyArray<object>, typed: Readonly<Record<number,
       issuedAt: 0,
     }),
   );
-  return { run, kept, send, attempts: fake.attempts };
+  return { run, kept, removed, send, attempts: fake.attempts };
 };
 
 it.effect("keeps the password a proven sign-in accepted, the right one after a wrong one", () =>
@@ -658,5 +664,23 @@ it.effect("keeps nothing without proof, or when the site's own page never moved 
     );
     expect((yield* elsewhere.run).outcome).toBe("signed-in");
     expect([...unproven.kept, ...elsewhere.kept]).toEqual([]);
+  }),
+);
+
+it.effect("a row made for a sign-in that never finished goes again", () =>
+  Effect.gen(function* () {
+    const visit = typedVisit(
+      [signInPage(), publicPage],
+      {},
+      {
+        kind: "person",
+        discardIfUnfinished: true,
+      },
+    );
+    expect((yield* visit.run).outcome).toBe("needs-user");
+    expect(visit.removed).toEqual(["acc_fixture_typed"]);
+    const kept = typedVisit([signInPage(), publicPage], {}, { kind: "person" });
+    yield* kept.run;
+    expect(kept.removed).toEqual([]);
   }),
 );
