@@ -138,6 +138,7 @@ function fixture(options: {
     remoteLabel: "Lab server",
     profiles: () => [{ profileId: "work", record }],
     desktopAccounts: () => [],
+    signingIn: (_profileId: string): ReadonlyArray<string> => [],
     revalidate: () => options.revalidate?.(sent.length),
     bind: async () => Redacted.make("synthetic-sender-key"),
     sendLog: async () => log,
@@ -341,4 +342,29 @@ it("keeps the key when an unlink can't reach the computer, and forgets it once w
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+it("never sends a unit with a sign-in under way, and keeps it waiting", async () => {
+  const { deps, sent, shares } = fixture({
+    log: {
+      head: 3,
+      units: [
+        { sites: ["github.com"], revision: 2, kind: "copy" },
+        { sites: ["overleaf.com"], revision: 3, kind: "copy" },
+      ],
+    },
+    jar: ["github.com", "overleaf.com"],
+  });
+  deps.signingIn = () => ["https://github.com/login"];
+  const reads: unknown[] = [];
+  const read = deps.readSessions;
+  deps.readSessions = async (input) => {
+    reads.push(input.units);
+    return read(input);
+  };
+  await deliverOnce(deps);
+  expect(sent.flatMap(({ units }) => units.map(({ sites }) => sites))).toEqual([["overleaf.com"]]);
+  // Its cookies are never even read, and the revision below it stays owed.
+  expect(reads.at(-1)).toEqual([["overleaf.com"]]);
+  expect(shares).toEqual([expect.objectContaining({ applied: 1, waiting: 1 })]);
 });

@@ -100,6 +100,8 @@ export interface DeliveryDeps {
   readonly profiles: () => ReadonlyArray<DeliveryProfile>;
   /** Desktop rows, for the university's units that never travel. */
   readonly desktopAccounts: () => AccountsSnapshot["accounts"];
+  /** Sites of the profile's rows with a sign-in under way: their tabs are the user's, not a source. */
+  readonly signingIn: (profileId: string) => ReadonlyArray<string>;
   /** Undefined while the route, destination, permission and feature still hold as planned. */
   readonly revalidate: () => string | undefined;
   /** Proves this desktop is the sender the remote knows, or becomes a new one; its key. */
@@ -227,9 +229,13 @@ export async function deliverOnce(deps: DeliveryDeps) {
       return;
     }
     const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
+    // A unit someone is signing in to goes once that sign-in ends; until then it waits.
+    const busy = registrable(deps.signingIn(profileId));
+    const underWay = (unit: PlannedUnit) =>
+      [...registrable(unit.sites)].some((site) => busy.has(site));
     for (const group of batches(plan.units)) {
       hold();
-      const copies = group.filter((unit) => unit.kind === "copy");
+      const copies = group.filter((unit) => unit.kind === "copy" && !underWay(unit));
       const read = copies.length
         ? ((
             await deps.readSessions({
@@ -243,6 +249,10 @@ export async function deliverOnce(deps: DeliveryDeps) {
       const ready: Array<{ planned: PlannedUnit; unit: SentUnit }> = [];
       for (const planned of group) {
         const { sites, revision } = planned;
+        if (underWay(planned)) {
+          outcomes.push({ unit: planned, outcome: "busy" });
+          continue;
+        }
         if (planned.kind === "delete") {
           ready.push({ planned, unit: { sites, revision, kind: "delete" } });
           continue;
@@ -294,6 +304,9 @@ const cookiesOf = (
     )
     .flatMap((entry) => entry.cookies);
 };
+
+const registrable = (sites: ReadonlyArray<string>) =>
+  new Set(sites.map((site) => siteOf(URL.parse(site)?.hostname ?? site)));
 
 const sent = (cookies: ReadonlyArray<SessionCookie>) =>
   cookies.map(({ value, ...rest }) => ({ ...rest, value: Redacted.make(value) }));
@@ -477,6 +490,17 @@ export function watchRemoteSessions(
           record: recordOf(desktop(), id),
         })),
       desktopAccounts: () => desktop()?.accounts ?? [],
+      signingIn: (profileId) => {
+        const snapshot = desktop();
+        const accounts = new Set((snapshot?.attempts ?? []).map(({ accountId }) => accountId));
+        return (snapshot?.accounts ?? []).flatMap((row) =>
+          accounts.has(row.accountId) &&
+          row.details.kind === "website" &&
+          row.details.profileId === profileId
+            ? row.details.sites
+            : [],
+        );
+      },
       revalidate: () => {
         if (token.cancelled || stopped) return "cancelled";
         const now = routeOf(registry, environmentId);
@@ -538,6 +562,8 @@ export function watchRemoteSessions(
     const remote = value(registry.get(remoteAtom));
     const key = JSON.stringify([
       route.identity,
+      // A unit held for a sign-in goes once that sign-in ends.
+      (desktop?.attempts ?? []).map(({ attemptId }) => attemptId),
       persistentProfiles().map(({ id }) => {
         const record = recordOf(desktop, id);
         return [id, record.send?.head ?? 0, record.access, record.scope, record.scriptSignIn];
