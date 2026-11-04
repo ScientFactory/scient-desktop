@@ -11,6 +11,7 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   ProjectId,
   type DesktopFillMainResult,
+  type SessionCookie,
 } from "@t3tools/contracts";
 import {
   applyUnit,
@@ -40,7 +41,12 @@ import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { mainCopyRecords } from "./mainCopies.ts";
-import { mainInsertTracker, markOwnWrites, watchForeignInserts } from "./mainInserts.ts";
+import {
+  jarGeneration,
+  mainInsertTracker,
+  markOwnWrites,
+  watchForeignInserts,
+} from "./mainInserts.ts";
 import { withCookieDebugger } from "./sessionCookies.ts";
 import { siteCookieRemovals } from "./signedInSites.ts";
 
@@ -94,15 +100,35 @@ const refusedIn = (main: Electron.Session) => {
   return sites;
 };
 
-/** A session's jar through CDP; its own writes are marked so they never count as foreign. */
+/**
+ * A session's jar through CDP; its own writes are marked so they never count as foreign. The jar
+ * is read once and read again only after a change: its own writes, or any change event.
+ */
 export function jarStore(session: Electron.Session, send: CdpSend): CookieStore {
+  let read:
+    | { readonly generation: number; readonly cookies: Promise<ReadonlyArray<SessionCookie>> }
+    | undefined;
+  const jar = () => {
+    const generation = jarGeneration(session);
+    if (read?.generation !== generation)
+      read = { generation, cookies: readJar(send).then((result) => result.cookies) };
+    return read.cookies;
+  };
+  const written = <A>(write: Promise<A>) =>
+    write.finally(() => {
+      read = undefined;
+    });
   return {
-    readUnit: async (unit) => unitCookies(unit, (await readJar(send)).cookies),
-    set: async (cookies) => {
+    readUnit: async (unit) => unitCookies(unit, await jar()),
+    set: (cookies) => {
+      read = undefined;
       markOwnWrites(session, cookies);
-      await setCookies(send, cookies);
+      return written(setCookies(send, cookies));
     },
-    remove: (cookies) => deleteCookies(send, cookies),
+    remove: (cookies) => {
+      read = undefined;
+      return written(deleteCookies(send, cookies));
+    },
   };
 }
 

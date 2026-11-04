@@ -110,12 +110,25 @@ export async function openProfileCookieJar(
       throw cause;
     }
   };
+  // Held against tabs and clears, the jar changes only by this hold's own writes: it is read once
+  // and again after each write.
+  let read: Promise<ReadonlyArray<SessionCookie>> | undefined;
   const readAll = async () => (await readJar(send)).cookies;
+  const written = <A>(write: Promise<A>) =>
+    write.finally(() => {
+      read = undefined;
+    });
   const jar: ProfileCookieJar = {
     readAll,
-    readUnit: async (unit) => unitCookies(unit, await readAll()),
-    set: (cookies) => setCookies(send, cookies),
-    remove: (cookies) => deleteCookies(send, cookies),
+    readUnit: async (unit) => unitCookies(unit, await (read ??= readAll())),
+    set: (cookies) => {
+      read = undefined;
+      return written(setCookies(send, cookies));
+    },
+    remove: (cookies) => {
+      read = undefined;
+      return written(deleteCookies(send, cookies));
+    },
     stopping,
     stalled: () => stalled,
     quarantined: () => quarantined,

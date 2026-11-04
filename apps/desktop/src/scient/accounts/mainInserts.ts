@@ -44,6 +44,8 @@ interface Changes {
   readonly upkeep: Marks;
   readonly watchers: Set<(cookie: Cookie) => void>;
   installedAt: number;
+  /** Counts every change to the jar, inserts and removals alike, by anyone. */
+  generation: number;
   onInsert?: (cookie: Cookie) => void;
 }
 const changes = new WeakMap<object, Changes>();
@@ -56,9 +58,11 @@ function changesFor(session: CookieSession): Changes {
     upkeep: { ids: new Map() },
     watchers: new Set(),
     installedAt: Date.now(),
+    generation: 0,
   };
   changes.set(session, created);
   session.cookies.on("changed", (_event, cookie, _cause, removed) => {
+    created.generation++;
     if (removed) return;
     if (take(created.own, writeId(cookie, cookie.value, cookie.session === true))) return;
     for (const watcher of created.watchers) watcher(cookie);
@@ -74,6 +78,9 @@ export function markOwnWrites(session: CookieSession, cookies: ReadonlyArray<Ses
   for (const cookie of cookies)
     mark(own, writeId(cookie, cookie.value, cookie.expires === undefined));
 }
+
+/** A number that changes whenever anything changes the session's jar. */
+export const jarGeneration = (session: CookieSession) => changesFor(session).generation;
 
 /** Marks `keepSessionCookies` giving a session cookie its expiry: the same cookie, kept. */
 export function markUpkeep(session: CookieSession, cookie: Cookie) {

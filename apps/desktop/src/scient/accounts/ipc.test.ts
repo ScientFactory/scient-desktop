@@ -346,7 +346,14 @@ function fakeJarSession() {
     ...cookie,
     session: cookie.expires === undefined,
   });
+  const reads: { count: number; after?: (() => void) | undefined } = { count: 0 };
   const send = async (method: string, params?: { cookies?: Array<Record<string, never>> }) => {
+    if (method === "Network.getAllCookies") {
+      reads.count++;
+      const after = reads.after;
+      reads.after = undefined;
+      after?.();
+    }
     if (method === "Network.getAllCookies")
       return {
         cookies: [...jar.values()].map((cookie) => ({
@@ -390,6 +397,7 @@ function fakeJarSession() {
     cookies,
     jar,
     faults,
+    reads,
     put,
     send,
     clearStorageData: vi.fn(async () => jar.clear()),
@@ -520,6 +528,24 @@ describe("fillMain", () => {
         expect([...f.main().jar.values()]).toEqual(before);
         expect([...f.profile("work").jar.values()]).toEqual(before);
       }),
+  );
+
+  it.effect("reads Main's jar once for units it leaves alone, and again after a change", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      for (const domain of [".github.com", ".gitlab.com", ".overleaf.com"]) {
+        f.profile("work").put(jarCookie({ domain }));
+        f.main().put(jarCookie({ domain }), true);
+      }
+      const first = yield* f.copy({ from: "work", sourceControls: allowed });
+      expect(first?.units.map(({ outcome }) => outcome)).toEqual(["same", "same", "same"]);
+      expect(f.main().reads.count).toBe(1);
+      // A page writing during the batch is a change event: the next unit reads the jar afresh.
+      f.main().reads.count = 0;
+      f.main().reads.after = () => f.main().put(jarCookie({ domain: ".example.com" }));
+      yield* f.copy({ from: "work", sourceControls: allowed });
+      expect(f.main().reads.count).toBe(2);
+    }),
   );
 
   it.effect("gives one copy and one conflict for two identities at once", () =>
