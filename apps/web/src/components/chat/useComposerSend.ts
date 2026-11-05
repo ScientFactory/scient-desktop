@@ -1132,15 +1132,18 @@ export function useComposerSend(input: ComposerSendInput) {
           );
           const selectedScientSkillNames = collectSelectedScientSkillNames(promptForSend);
           // Explicit actions and captured queue records retain their own admission and retry payload.
-          const compactBeforeSend = shouldCompactBeforeSend({
-            ordinaryServerSend:
-              isServerThread && !steerRequested && !directAnnotation && directPrompt === null,
-            hasCapturedQueueSubmission: Boolean(queueEdit || extractedIntent),
-            multipleModels: multipleModelSelections !== null,
-            resumeCompactionTokens,
-            keepFullHistory,
-            messageText: messageTextForSend,
-          });
+          // A fresh session drops the old conversation, so it never compacts it first.
+          const compactBeforeSend =
+            freshArm === undefined &&
+            shouldCompactBeforeSend({
+              ordinaryServerSend:
+                isServerThread && !steerRequested && !directAnnotation && directPrompt === null,
+              hasCapturedQueueSubmission: Boolean(queueEdit || extractedIntent),
+              multipleModels: multipleModelSelections !== null,
+              resumeCompactionTokens,
+              keepFullHistory,
+              messageText: messageTextForSend,
+            });
           const { missingWorktreeBaseBranch, baseBranchForWorktree, turnDispatchMode } =
             planComposerTurn({
               messageText: messageTextForSend,
