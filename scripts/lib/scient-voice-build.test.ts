@@ -9,7 +9,7 @@ import {
   WHISPER_CPP_COMMIT,
   WHISPER_CPP_VERSION,
   isStagedWhisperRuntime,
-} from "../stage-whisper-runtime.ts";
+} from "./whisper-runtime-receipt.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./scient-voice-build.ts";
 
 const temporary: string[] = [];

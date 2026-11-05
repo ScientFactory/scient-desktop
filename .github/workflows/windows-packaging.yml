@@ -155,7 +155,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: native-runtimes
-          key: windows-native-runtimes-v1-${{ steps.msvc.outputs.image }}-${{ steps.msvc.outputs.toolset }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/stage-synctex-runtime.ts') }}
+          key: windows-native-runtimes-v1-${{ steps.msvc.outputs.image }}-${{ steps.msvc.outputs.toolset }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts', 'scripts/stage-synctex-runtime.ts') }}
       # Each script runs in the shell the build gives it: whisper.cpp extracts with Git Bash's
       # GNU tar (--force-local), SyncTeX with Windows tar, which takes C: paths.
       - name: Build the voice runtime

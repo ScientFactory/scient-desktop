@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { isStagedWhisperRuntime } from "../stage-whisper-runtime.ts";
+import { isStagedWhisperRuntime } from "./whisper-runtime-receipt.ts";
 
 export interface StageScientVoiceRuntimeInput {
   readonly repoRoot: string;
