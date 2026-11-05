@@ -314,16 +314,35 @@ jobs:
             ~\AppData\Local\electron-builder\Cache
           key: ${{ steps.electron_cache.outputs.cache-primary-key }}
 
+  # Sets up beside the installer job and waits only for its WSL payload.
   qualify_wsl_runtime:
     name: Windows packaging / Packaged WSL Linux runtime
-    needs: package_windows
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
+      - name: Wait for the packaged WSL runtime
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          artifacts="repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?name=windows-packaging-wsl-runtime"
+          jobs="repos/$REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100"
+          until [ "$(gh api "$artifacts" --jq '.total_count')" -gt 0 ]; do
+            failed=$(gh api "$jobs" --jq '[.jobs[] | select((.name | endswith("Windows packaging / Installer and native runtime")) and .status == "completed" and .conclusion != "success")] | length')
+            if [ "$failed" -gt 0 ]; then echo "Windows packaging / Installer and native runtime failed." >&2; exit 1; fi
+            sleep 10
+          done
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-packaging-wsl-runtime
