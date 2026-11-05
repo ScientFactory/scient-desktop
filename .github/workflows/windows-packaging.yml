@@ -172,18 +172,7 @@ jobs:
         timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          artifacts="repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?name=windows-packaging-prerequisites"
-          jobs="repos/$REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100"
-          until [ "$(gh api "$artifacts" --jq '.total_count')" -gt 0 ]; do
-            failed=$(gh api "$jobs" --jq '[.jobs[] | select((.name | endswith("Windows packaging / Linux prerequisites")) and .status == "completed" and .conclusion != "success")] | length')
-            if [ "$failed" -gt 0 ]; then echo "Windows packaging / Linux prerequisites failed." >&2; exit 1; fi
-            sleep 5
-          done
+        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Linux prerequisites" windows-packaging-prerequisites
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-packaging-prerequisites
@@ -314,7 +303,7 @@ jobs:
   qualify_wsl_runtime:
     name: Windows packaging / Packaged WSL Linux runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 55
     permissions:
       contents: read
       actions: read
@@ -323,22 +312,12 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
+      # Longer than the installer job's own 45-minute limit, so a slow build is never cut short.
       - name: Wait for the packaged WSL runtime
-        timeout-minutes: 35
+        timeout-minutes: 50
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          artifacts="repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?name=windows-packaging-wsl-runtime"
-          jobs="repos/$REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100"
-          until [ "$(gh api "$artifacts" --jq '.total_count')" -gt 0 ]; do
-            failed=$(gh api "$jobs" --jq '[.jobs[] | select((.name | endswith("Windows packaging / Installer and native runtime")) and .status == "completed" and .conclusion != "success")] | length')
-            if [ "$failed" -gt 0 ]; then echo "Windows packaging / Installer and native runtime failed." >&2; exit 1; fi
-            sleep 10
-          done
+        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Installer and native runtime" windows-packaging-wsl-runtime
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-packaging-wsl-runtime
