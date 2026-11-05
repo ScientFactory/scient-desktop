@@ -230,13 +230,16 @@ export function resolveArchiveExtractionPlan(
     };
   }
 
+  // GNU tar reads backslash escapes in its paths, so D:\a\_temp would become D:<BEL>\_temp.
+  // It takes forward slashes on Windows, which hold no escapes.
+  const tarPath = (path: string) => (hostPlatform === "win32" ? path.replaceAll("\\", "/") : path);
   return {
     args: [
       ...(hostPlatform === "win32" ? ["--force-local"] : []),
       ...(format === "tar.gz" ? ["-xzf"] : ["-xf"]),
-      archive,
+      tarPath(archive),
       "-C",
-      destination,
+      tarPath(destination),
     ],
     command: "tar",
   };
