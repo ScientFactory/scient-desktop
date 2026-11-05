@@ -240,6 +240,21 @@ describe("a profile no longer unrestricted", () => {
     ...patch,
   });
 
+  it("never retries a copy from a profile restricted after it failed", async () => {
+    const t = setup(copied("failed"));
+    const signedInRow = row("work", ["github.com"], signedIn(AT));
+    await t.seen(snapshot([]));
+    await t.seen(snapshot([signedInRow]));
+    expect(t.timers).toHaveLength(1);
+    const timer = t.timers[0]!;
+    // Work turns Off: its copies are taken back, and its waiting retry is cancelled.
+    await t.seen(snapshot([signedInRow], [record("work", { access: "off" })]));
+    expect([t.withdrawn, t.timers.length, t.cancelled()]).toEqual([["work"], 0, 1]);
+    // Even a timer already firing copies nothing from it.
+    await timer();
+    expect(t.fills).toHaveLength(1);
+  });
+
   it("takes back its copies once when turned Off, Ask or limited to projects", async () => {
     for (const patch of [
       { access: "off" },

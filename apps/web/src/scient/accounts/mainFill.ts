@@ -188,7 +188,9 @@ export function mainFillTrigger(deps: {
   let previous: AccountsSnapshot | undefined;
   let backfill: Promise<void> | undefined;
   let stopped = false;
-  const retries = new Set<() => void>();
+  /** Each waiting retry's cancel, with the profile it copies from. */
+  const retries = new Map<() => void, string>();
+  const eligible = deps.eligible ?? otherPersistentProfile;
   /** In-flight and retrying copies, by row and revision; the oldest goes first past the limit. */
   const pending = new Map<string, number>();
   const keyOf = (row: AccountSummary) =>
@@ -196,6 +198,11 @@ export function mainFillTrigger(deps: {
   const copy = async (row: AccountSummary, snapshot: AccountsSnapshot): Promise<void> => {
     const key = keyOf(row);
     const profileId = website(row)!.profileId!;
+    // A profile restricted since, or gone, gives Main nothing, a waiting retry included.
+    if (!eligible(profileId) || !isUnrestricted(recordOf(snapshot, profileId))) {
+      pending.delete(key);
+      return;
+    }
     const result = await deps
       .fillMain({
         environmentId: deps.environmentId,
@@ -238,7 +245,7 @@ export function mainFillTrigger(deps: {
       if (now && same && keyOf(same) === key) await copy(same, now);
       else pending.delete(key);
     }, RETRY_GAP_MS);
-    retries.add(cancel);
+    retries.set(cancel, profileId);
   };
   return {
     /** A reconnect makes the next snapshot a baseline again. */
@@ -248,13 +255,18 @@ export function mainFillTrigger(deps: {
     /** No retry runs after this. */
     stop: () => {
       stopped = true;
-      for (const cancel of retries) cancel();
+      for (const cancel of retries.keys()) cancel();
       retries.clear();
     },
     /** Resolves once this snapshot's copies are done. */
     seen: (snapshot: AccountsSnapshot) => {
       const events = previous ? signInEvents(previous, snapshot, deps.eligible) : [];
       const restricted = newlyRestricted(previous, snapshot, deps.eligible);
+      for (const [cancel, from] of retries)
+        if (restricted.includes(from)) {
+          cancel();
+          retries.delete(cancel);
+        }
       previous = snapshot;
       backfill ??= deps
         .backfill?.(snapshot)
