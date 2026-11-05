@@ -295,8 +295,6 @@ export function useScientPdfReader(input: {
       requestedSourceRef.current.revisionId === input.revisionId &&
       requestedSourceRef.current.url === input.sourceUrl;
     let candidate: ScientPdfRuntime | null = null;
-    let searchWarmupHandle: number | null = null;
-    let searchWarmupKind: "idle" | "timeout" | null = null;
     let pinchFrame: number | null = null;
     let pendingPinchFactor = 1;
     let pendingPinchOrigin: [number, number] = [0, 0];
@@ -416,31 +414,6 @@ export function useScientPdfReader(input: {
                 matchDiacritics: true,
               });
               setState((previous) => ({ ...previous, findPhase: "pending" }));
-              return;
-            }
-
-            const warmSearch = () => {
-              searchWarmupHandle = null;
-              searchWarmupKind = null;
-              if (!current || activeSearchQueryRef.current.length > 0) return;
-              runtime.eventBus.dispatch("find", {
-                source: runtime,
-                type: "",
-                query: "",
-                phraseSearch: true,
-                caseSensitive: false,
-                entireWord: false,
-                highlightAll: false,
-                findPrevious: false,
-                matchDiacritics: true,
-              });
-            };
-            if (typeof window.requestIdleCallback === "function") {
-              searchWarmupKind = "idle";
-              searchWarmupHandle = window.requestIdleCallback(warmSearch, { timeout: 1_500 });
-            } else {
-              searchWarmupKind = "timeout";
-              searchWarmupHandle = window.setTimeout(warmSearch, 750);
             }
           };
           void preparePdfPresentation({
@@ -592,10 +565,6 @@ export function useScientPdfReader(input: {
       current = false;
       abortController.abort();
       passwordRef.current = null;
-      if (searchWarmupHandle !== null) {
-        if (searchWarmupKind === "idle") window.cancelIdleCallback(searchWarmupHandle);
-        else window.clearTimeout(searchWarmupHandle);
-      }
       if (pinchFrame !== null) cancelAnimationFrame(pinchFrame);
       if (onPinchWheel) container.removeEventListener("wheel", onPinchWheel);
       const runtime = candidate;
