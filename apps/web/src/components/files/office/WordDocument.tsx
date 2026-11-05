@@ -24,8 +24,10 @@ export default function WordDocument(props: {
   bytes: ArrayBuffer;
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
+  // SCIENT-FORK: the pages past the preview's limit are left out.
+  onLimited: () => void;
 }) {
-  const { onError, bytes, onDetails } = props;
+  const { onError, bytes, onDetails, onLimited } = props;
   const [opened, setOpened] = useState<Opened>();
   const scroll = useRef<((index: number, y?: number) => void) | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
@@ -69,9 +71,12 @@ export default function WordDocument(props: {
         while (!controller.signal.aborted) {
           const step = await engine.call("layout", undefined, { signal: controller.signal });
           if (!step.done) continue;
-          if (step.pages.length > 1000) throw new Error("Preview limited to 1,000 pages.");
-          setOpened({ pages: step.pages, paint, engine });
-          onDetails(`${step.pages.length} pages`);
+          // SCIENT-FORK:START — keep the first 1,000 pages rather than replace them with an error.
+          const pages = step.pages.slice(0, 1000);
+          if (pages.length < step.pages.length) onLimited();
+          setOpened({ pages, paint, engine });
+          onDetails(`${pages.length} pages`);
+          // SCIENT-FORK:END
           break;
         }
       })
@@ -80,7 +85,7 @@ export default function WordDocument(props: {
       controller.abort();
       engine.close();
     };
-  }, [bytes, onDetails, onError]);
+  }, [bytes, onDetails, onError, onLimited]);
   if (!opened) return <FileSurfaceLoading />;
   const follow = (link: WordLink) => {
     if (link.kind === "external") {
