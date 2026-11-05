@@ -7,8 +7,9 @@ import {
   ScientDocumentPageReadiness,
   scientDocumentBlockedRequestsNote,
   scientDocumentReadinessRejection,
+  ScientDocumentPageRenderRejection,
   type DesktopDocumentPageRenderInput,
-  DesktopDocumentPageRenderOutcome,
+  type DesktopDocumentPageRenderOutcome,
   type DesktopPreviewPdfExportArtifact,
 } from "@t3tools/contracts";
 import * as NodeFSP from "node:fs/promises";
@@ -237,9 +238,9 @@ const appendNotesScript = (notes: ReadonlyArray<string>) => `
 const decodeReadiness = Schema.decodeUnknownEffect(ScientDocumentPageReadiness);
 
 const rejected = (
-  reason: Extract<DesktopDocumentPageRenderOutcome, { _tag: "rejected" }>["reason"],
+  reason: ScientDocumentPageRenderRejection["reason"],
   detail: string,
-): DesktopDocumentPageRenderOutcome => ({
+): ScientDocumentPageRenderRejection => ({
   _tag: "rejected",
   reason,
   detail: detail.slice(0, 2_048),
@@ -247,7 +248,7 @@ const rejected = (
 
 class DocumentPageRejection extends Schema.TaggedError<DocumentPageRejection>()(
   "DocumentPageRejection",
-  { outcome: DesktopDocumentPageRenderOutcome },
+  { outcome: ScientDocumentPageRenderRejection },
 ) {}
 
 const ensureProtocol = (

@@ -24,7 +24,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as CodexErrors from "effect-codex-app-server/errors";
 
@@ -34,7 +33,10 @@ import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
 } from "../../provider/ScientProviderInstanceSeams.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
@@ -47,8 +49,6 @@ import {
   managedRuntimeDowngradeMessage,
   managedRuntimeSwitchPlan,
 } from "./ManagedProviderRuntimeActions.ts";
-
-const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);
 
 const DEFAULT_CODEX_BINARY = "codex";
 

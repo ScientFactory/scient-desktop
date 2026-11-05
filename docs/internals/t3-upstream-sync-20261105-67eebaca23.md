@@ -83,7 +83,8 @@ rules off, and Scient does the same for its own code (`23a3578c6d`, about 300 di
   Scient's copy and its duplicate tests are removed; Scient's guard against toggling a truncated
   file stays, marked.
 - **Context window (#27935):** the snapshot logic moved to client-runtime. Scient's live cost field
-  moves with it, marked.
+  and its test move with it, marked, and Scient's compact-before-send check uses T3's
+  `COMPACT_COMMAND_PATTERN`.
 - **Saved service access (#26464):** T3 removed `usePrimarySessionState`. Scient's onboarding,
   custom models and provider enable action read `useEnvironmentSessionState`, as T3's settings do.
 - Composer Markdown markers (#30421), worktree setup status (#28832), Changes base (#30085), touch

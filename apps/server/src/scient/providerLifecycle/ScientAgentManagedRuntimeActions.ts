@@ -18,7 +18,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
@@ -39,13 +38,14 @@ import {
   type ConfiguredRuntimeProbe,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   QualifiedRpcManagedRuntime,
   type ManagedRpcQualification,
 } from "./QualifiedRpcManagedRuntime.ts";
-
-const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);
 
 type Dependencies = ConstructorParameters<typeof ManagedScientAgentRuntime>[1];
 

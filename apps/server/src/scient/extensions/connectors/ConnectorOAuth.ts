@@ -31,10 +31,8 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { type ConnectorFetch, ConnectorEgressRejected } from "./ConnectorOutbound.ts";
+import { type ConnectorFetch, isConnectorEgressRejected } from "./ConnectorOutbound.ts";
 import { isProtectableCredential } from "./ConnectorRedaction.ts";
-
-const isConnectorEgressRejected = Schema.is(ConnectorEgressRejected);
 
 export const CONNECTOR_OAUTH_CALLBACK_PATH = "/oauth/connectors/callback";
 const PENDING_SIGN_IN_TTL_MS = 10 * 60_000;
@@ -108,7 +106,7 @@ export class ConnectorOAuthError extends Schema.TaggedError<ConnectorOAuthError>
   },
 ) {}
 
-const isConnectorOAuthError = Schema.is(ConnectorOAuthError);
+export const isConnectorOAuthError = Schema.is(ConnectorOAuthError);
 
 const STANDARD_OAUTH_ERRORS: Readonly<Record<string, true>> = {
   invalid_request: true,

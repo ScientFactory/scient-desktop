@@ -318,13 +318,20 @@ const recordingSpawner = (spawned: Array<ChildProcess.StandardCommand>) =>
   });
 
 /** The environment a spawned child would really see. */
-const effectiveChildEnvironment = (
-  command: ChildProcess.StandardCommand,
-  inherited: NodeJS.ProcessEnv,
-) => ({
-  ...(command.options.extendEnv === false ? {} : inherited),
+const effectiveChildEnvironment = (command: ChildProcess.StandardCommand) => ({
+  ...(command.options.extendEnv === false ? {} : process.env),
   ...command.options.env,
 });
+
+// A leak would copy the server's real process environment, so the canaries go there rather
+// than through HostProcess.Environment. Returns the restore.
+const setServerCanaries = () => {
+  const names = ["T3CODE_PROBE_CANARY", "SCIENT_PROBE_CANARY"] as const;
+  for (const name of names) process.env[name] = "server-internal";
+  return () => {
+    for (const name of names) delete process.env[name];
+  };
+};
 
 /** A custom OMP executable, a gate and a resolution with a recording spawner. */
 const probeFixture = Effect.fn("probeFixture")(function* () {
@@ -378,22 +385,19 @@ describe("configured Scient Agent health probe", () => {
 
   it.live("runs with the filtered OMP environment, never the server's internals", () =>
     Effect.gen(function* () {
-      const serverEnvironment = {
-        ...(yield* HostProcess.Environment),
-        T3CODE_PROBE_CANARY: "server-internal",
-        SCIENT_PROBE_CANARY: "server-internal",
-      };
       const { baseDir, resolve, versionProbes } = yield* probeFixture();
+      const restoreServerEnvironment = setServerCanaries();
       try {
         expect((yield* resolve).summary.source).toBe("custom");
         const [probe] = versionProbes();
         expect(probe?.options.extendEnv).toBe(false);
-        const names = Object.keys(effectiveChildEnvironment(probe!, serverEnvironment));
+        const names = Object.keys(effectiveChildEnvironment(probe!));
         expect(names.filter((name) => /^(T3CODE|SCIENT)_/iu.test(name))).toEqual([
           "SCIENT_AGENT_ROOT",
         ]);
       } finally {
         NodeFS.rmSync(baseDir, { recursive: true, force: true });
+        restoreServerEnvironment();
       }
     }),
   );

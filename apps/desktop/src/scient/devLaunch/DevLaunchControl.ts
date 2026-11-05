@@ -6,6 +6,8 @@ import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
@@ -142,7 +144,7 @@ export function noteDevLaunchRendererReady(ready: boolean, senderId: number | un
 }
 
 export const start = Effect.gen(function* () {
-  const config = readDevLaunchControlConfig(process.env);
+  const config = readDevLaunchControlConfig(yield* HostProcess.Environment);
   if (config === null) return;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const electronApp = yield* ElectronApp.ElectronApp;

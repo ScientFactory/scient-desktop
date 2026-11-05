@@ -47,7 +47,7 @@ export class ConnectorEgressRejected extends Schema.TaggedError<ConnectorEgressR
   },
 ) {}
 
-const isConnectorEgressRejected = Schema.is(ConnectorEgressRejected);
+export const isConnectorEgressRejected = Schema.is(ConnectorEgressRejected);
 
 // undici stays external to the CLI bundle; only `require` loads it from disk
 // inside a single executable (see outboundHttp.ts).

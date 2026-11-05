@@ -1,3 +1,4 @@
+import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
 import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
   resolveSelectableProviderInstanceEntry,
@@ -99,6 +100,6 @@ export function shouldCompactBeforeSend(input: {
     !input.multipleModels &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
-    !/^\/compact(?:\s|$)/i.test(input.messageText.trim())
+    !COMPACT_COMMAND_PATTERN.test(input.messageText.trim())
   );
 }

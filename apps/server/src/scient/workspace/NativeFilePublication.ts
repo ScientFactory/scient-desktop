@@ -120,7 +120,7 @@ export interface NativeFilePublicationRequest {
 }
 class NativeFilePublicationError extends Schema.TaggedError<NativeFilePublicationError>()(
   "NativeFilePublicationError",
-  { message: Schema.String, result: Schema.NullOr(Result) },
+  { message: Schema.String, result: Schema.optional(Result) },
 ) {}
 
 /** A server running from the app's archive. macOS calls its folder `Resources`. */
@@ -223,7 +223,6 @@ function helperServer(helperPath: string): HelperServer {
     answering?.reject(
       new NativeFilePublicationError({
         message: `Native publication reply unknown: ${reason}, stderr=${stderr}`,
-        result: null,
       }),
     );
     answering = undefined;
@@ -261,7 +260,6 @@ function helperServer(helperPath: string): HelperServer {
         waiter.reject(
           new NativeFilePublicationError({
             message: `Native publication reply unknown: exit=${served[1]}, stderr=${stderr}`,
-            result: null,
           }),
         );
       reply = "";
@@ -300,7 +298,6 @@ export async function invokeNativeHelper(
   if (!NodePath.isAbsolute(helperPath))
     throw new NativeFilePublicationError({
       message: "Native helper path must be host-owned and absolute.",
-      result: null,
     });
   const body =
     HostProcess.Platform.defaultValue() === "win32" &&
@@ -349,7 +346,6 @@ export async function invokeNativeHelper(
       reject(
         new NativeFilePublicationError({
           message: `Native publication reply unknown: ${spawnError?.message ?? `exit=${code}, signal=${signal}, stderr=${stderr}`}`,
-          result: null,
         }),
       );
     } else resolve(stdout);
@@ -363,7 +359,6 @@ function parseResult(value: string): NativeFilePublicationResult {
   } catch {
     throw new NativeFilePublicationError({
       message: "Invalid native publication reply; namespace outcome unknown.",
-      result: null,
     });
   }
 }
@@ -397,7 +392,6 @@ export async function nativeFilePublicationCapabilities(helperPath: string, root
   if (rootPath !== undefined && (!NodePath.isAbsolute(rootPath) || rootPath.includes("\0")))
     throw new NativeFilePublicationError({
       message: "Native capability root must be an absolute path.",
-      result: null,
     });
   const key = await capabilitiesKey(helperPath, rootPath);
   const known = key === null ? undefined : knownCapabilities.get(key);
@@ -413,7 +407,6 @@ export async function nativeFilePublicationCapabilities(helperPath: string, root
   } catch {
     throw new NativeFilePublicationError({
       message: "Invalid native publication capability reply.",
-      result: null,
     });
   }
   if (key !== null) knownCapabilities.set(key, capabilities);
@@ -425,7 +418,6 @@ function validatePaths(
   if (!NodePath.isAbsolute(paths.rootPath) || !NodePath.isAbsolute(paths.recordPath))
     throw new NativeFilePublicationError({
       message: "Native roots must be canonical absolute paths.",
-      result: null,
     });
   const components = paths.parentRelativePath.split(
     HostProcess.Platform.defaultValue() === "win32" ? /[\\/]/u : "/",
@@ -433,12 +425,11 @@ function validatePaths(
   if (NodePath.isAbsolute(paths.parentRelativePath) || components.some((part) => part === ".."))
     throw new NativeFilePublicationError({
       message: "Parent must be a canonical root-relative directory.",
-      result: null,
     });
   if (
     [paths.rootPath, paths.parentRelativePath, paths.recordPath].some((path) => path.includes("\0"))
   )
-    throw new NativeFilePublicationError({ message: "Invalid native binding path.", result: null });
+    throw new NativeFilePublicationError({ message: "Invalid native binding path." });
 }
 export async function bindNativeFilePublication(
   helperPath: string,
@@ -552,7 +543,6 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   if (!name || name === "." || name === ".." || separators.test(name))
     throw new NativeFilePublicationError({
       message: "Native directory names must be single components.",
-      result: null,
     });
   return [
     "--directory=1",
@@ -641,14 +631,12 @@ async function nativePrivateRetentionDirectory(
   if (!NodePath.isAbsolute(absolutePath) || absolutePath.includes("\0"))
     throw new NativeFilePublicationError({
       message: "Retention directory must be an absolute host-owned path.",
-      result: null,
     });
   const destination = NodePath.normalize(absolutePath);
   const parent = NodePath.dirname(destination);
   if (parent === destination)
     throw new NativeFilePublicationError({
       message: "A volume root cannot be a private retention directory.",
-      result: null,
     });
   if (await alreadyPrivate(destination)) return destination;
   // Taken before the helper looks: a change after it moves the change time past this.
@@ -718,7 +706,6 @@ function nativeFilePublicationArguments(
     if (!name || name === "." || name === ".." || separators.test(name))
       throw new NativeFilePublicationError({
         message: "Native entry names must be single components.",
-        result: null,
       });
   }
   return [
@@ -796,12 +783,10 @@ export async function withNativeFilePublicationLease<T>(
   )
     throw new NativeFilePublicationError({
       message: "A publication lease needs an absolute host helper and 1–256 bound parents.",
-      result: null,
     });
   if (options.signal?.aborted)
     throw new NativeFilePublicationError({
       message: "Publication lease acquisition cancelled.",
-      result: null,
     });
   const arguments_ = ["--lease=1", options.mode];
   for (const binding of bindings) {
@@ -837,7 +822,7 @@ export async function withNativeFilePublicationLease<T>(
       }
     | undefined;
   const failProtocol = (message: string) => {
-    protocolError ??= new NativeFilePublicationError({ message, result: null });
+    protocolError ??= new NativeFilePublicationError({ message });
     if (!acquired) ready.reject(protocolError);
   };
   child.stdout.setEncoding("utf8");
@@ -868,7 +853,6 @@ export async function withNativeFilePublicationLease<T>(
             ready.reject(
               new NativeFilePublicationError({
                 message: "Publication lease acquisition cancelled.",
-                result: null,
               }),
             );
           } else {
@@ -896,7 +880,6 @@ export async function withNativeFilePublicationLease<T>(
                 new NativeFilePublicationError({
                   message:
                     "Native command did not retire with a complete reply; namespace outcome unknown.",
-                  result: null,
                 }),
             );
           else command.result.resolve(command.reply);
@@ -931,7 +914,6 @@ export async function withNativeFilePublicationLease<T>(
         protocolError ??
           new NativeFilePublicationError({
             message: "Native lease ended before command retirement; namespace outcome unknown.",
-            result: null,
           }),
       );
       pending = undefined;
@@ -944,7 +926,6 @@ export async function withNativeFilePublicationLease<T>(
       ready.reject(
         new NativeFilePublicationError({
           message: "Publication lease acquisition cancelled.",
-          result: null,
         }),
       );
       child.kill();
@@ -978,18 +959,15 @@ export async function withNativeFilePublicationLease<T>(
     if ((parentRequired && !covered) || !recordCovered)
       throw new NativeFilePublicationError({
         message: "Namespace mutation requires an exclusive lease on every actual parent.",
-        result: null,
       });
     if (pending)
       throw new NativeFilePublicationError({
         message: "Native commands must retire serially inside a publication lease.",
-        result: null,
       });
     const payload = Buffer.from(`${arguments_.join("\0")}\0`, "utf8");
     if (payload.length > 65536)
       throw new NativeFilePublicationError({
         message: "Native command frame exceeds the bound.",
-        result: null,
       });
     const frame = Buffer.allocUnsafe(payload.length + 4);
     frame.writeUInt32BE(payload.length);
@@ -1012,7 +990,6 @@ export async function withNativeFilePublicationLease<T>(
           protocolError ??
           new NativeFilePublicationError({
             message: "Native publication ownership is not held.",
-            result: null,
           })
         );
     },
@@ -1032,7 +1009,6 @@ export async function withNativeFilePublicationLease<T>(
       if (!binding || !name || name === "." || name === ".." || /[/\\:\0]/u.test(name))
         throw new NativeFilePublicationError({
           message: "Removal needs a held directory and a single name.",
-          result: null,
         });
       return runArguments(
         ["--remove=1", operation, binding.parentIdentity.dev, binding.parentIdentity.ino, name],
@@ -1062,7 +1038,6 @@ export async function withNativeFilePublicationLease<T>(
         protocolError ??
         new NativeFilePublicationError({
           message: "Native publication lease failed to retire.",
-          result: null,
         })
       );
   }

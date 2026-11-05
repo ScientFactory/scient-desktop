@@ -60,7 +60,7 @@ export class OverleafGitError extends Schema.TaggedError<OverleafGitError>()("Ov
 const isOverleafGitError = Schema.is(OverleafGitError);
 const fail = (reason: OverleafGitFailureReason, detail = "", exitCode: number | null = null) =>
   new OverleafGitError({ reason, detail, exitCode });
-const scratchFailure = (cause: unknown) =>
+const runtimeFailure = (cause: unknown) =>
   fail("runtime-failed", cause instanceof Error ? cause.message : String(cause));
 
 /**
@@ -484,9 +484,9 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         // A token lives only in its own command's scratch, removed with it.
         const scratch =
           input.token === undefined
-            ? yield* Effect.tryPromise({ try: () => scratchRoot.shared(), catch: scratchFailure })
+            ? yield* Effect.tryPromise({ try: () => scratchRoot.shared(), catch: runtimeFailure })
             : yield* Effect.acquireRelease(
-                Effect.tryPromise({ try: () => scratchRoot.create(), catch: scratchFailure }),
+                Effect.tryPromise({ try: () => scratchRoot.create(), catch: runtimeFailure }),
                 (directory) =>
                   Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
               );
@@ -558,13 +558,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
           windows,
         });
       }),
-    ).pipe(
-      Effect.mapError((cause) =>
-        isOverleafGitError(cause)
-          ? cause
-          : fail("runtime-failed", cause instanceof Error ? cause.message : String(cause)),
-      ),
-    );
+    ).pipe(Effect.mapError((cause) => (isOverleafGitError(cause) ? cause : runtimeFailure(cause))));
   });
 
   // Only a success is remembered: installing Git later must not need a restart.

@@ -48,7 +48,7 @@ import { extractToolParameters } from "./toolParameters.ts";
 import { ConnectorCredentialStore } from "./ConnectorCredentialStore.ts";
 import {
   applySignIn,
-  ConnectorOAuthError,
+  isConnectorOAuthError,
   ConnectorOAuthFlows,
   type ConnectorOAuthMaterial,
   type ConnectorOAuthSession,
@@ -63,7 +63,7 @@ import {
 import {
   checkConnectorUrl,
   type ConnectorEgressPolicy,
-  ConnectorEgressRejected,
+  isConnectorEgressRejected,
   CONNECTOR_CONTROL_TIMEOUT_MS,
   CONNECTOR_CONTROL_MAX_RESPONSE_BYTES,
   controlFetch,
@@ -93,10 +93,6 @@ import {
   type ConnectorStateData,
   makeConnectorStateStore,
 } from "./ConnectorStateStore.ts";
-
-const isConnectorEgressRejected = Schema.is(ConnectorEgressRejected);
-
-const isConnectorOAuthError = Schema.is(ConnectorOAuthError);
 
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */

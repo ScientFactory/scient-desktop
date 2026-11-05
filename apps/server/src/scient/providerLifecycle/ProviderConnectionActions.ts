@@ -106,3 +106,5 @@ export class ProviderConnectionActionError extends Schema.TaggedError<ProviderCo
     afterSignIn: Schema.optional(Schema.Boolean),
   },
 ) {}
+
+export const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);

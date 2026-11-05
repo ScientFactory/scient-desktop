@@ -10,11 +10,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
@@ -28,8 +30,6 @@ import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import { antigravityAuthUsesBrowser } from "../../provider/antigravityAuthSupport.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
 import { ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE } from "./antigravityAuthDiagnostics.ts";
-
-const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);
 
 function isTerminalAuthPhase(
   phase: ProviderAuthState["phase"],
