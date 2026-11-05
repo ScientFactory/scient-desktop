@@ -285,7 +285,8 @@ export function watchRemoteSessions(
       readSessions,
       now: () => new Date().toISOString(),
     }).then(
-      () => "delivered" as const,
+      // Units the remote couldn't take yet (busy, failed) are tried again like a failed run.
+      ({ waiting }) => (waiting ? ("waiting" as const) : ("delivered" as const)),
       // A changed route, permission or control stops a run; that is no failure.
       (cause: unknown) =>
         isDeliveryStopped(cause)
@@ -302,7 +303,10 @@ export function watchRemoteSessions(
       retry = undefined;
       setFailure(undefined);
     } else if (outcome !== "stopped" && !stopped) {
-      setFailure({ reason: outcome, at: new Date().toISOString() });
+      // The units waiting show on the computer's line; only a failed request is a failure.
+      setFailure(
+        outcome === "waiting" ? undefined : { reason: outcome, at: new Date().toISOString() },
+      );
       const wait = RETRY_MS[retries];
       if (wait !== undefined && retry === undefined) {
         retries += 1;

@@ -113,9 +113,10 @@ const multiSiteRows = (accounts: AccountsSnapshot["accounts"], profileId: string
 
 /**
  * One delivery to one remote, from durable state only: each persistent profile's send log, its
- * jar now, and what the remote applied. Revalidates before every batch.
+ * jar now, and what the remote applied. Revalidates before every batch. Resolves with how many
+ * units still wait (busy, failed or not restored there), which the caller retries.
  */
-export async function deliverOnce(deps: DeliveryDeps) {
+export async function deliverOnce(deps: DeliveryDeps): Promise<{ readonly waiting: number }> {
   const check = () => {
     const stopped = deps.revalidate();
     if (stopped !== undefined) throw new DeliveryStopped({ message: stopped });
@@ -132,7 +133,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
   const recordOf = (profileId: string) =>
     deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
     defaultBrowserProfileRecord(profileId);
-  const deliverProfile = async (profileId: string) => {
+  const deliverProfile = async (profileId: string): Promise<number> => {
     check();
     // A fresh desktop record each time: a profile restricted meanwhile switches to the withdrawal.
     const record = recordOf(profileId);
@@ -185,8 +186,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
         hold();
         await batch([], plan.kind === "units" ? plan.mode : "replace");
       }
-      if (plan.kind === "units") await recordShare(deps, key, profileId, plan, []);
-      return;
+      return plan.kind === "units" ? recordShare(deps, key, profileId, plan, []) : 0;
     }
     const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
     // A unit someone is signing in to goes once that sign-in ends; until then it waits. Asked
@@ -245,18 +245,20 @@ export async function deliverOnce(deps: DeliveryDeps) {
         );
       }
     }
-    await recordShare(deps, key, profileId, plan, outcomes);
+    return recordShare(deps, key, profileId, plan, outcomes);
   };
+  let waiting = 0;
   for (const { profileId } of deps.profiles())
     for (let attempt = 0; ; attempt += 1)
       try {
-        await deliverProfile(profileId);
+        waiting += await deliverProfile(profileId);
         break;
       } catch (cause) {
         // Changed controls: plan the profile again, which withdraws it if it is now restricted.
         if (!isControlsChanged(cause)) throw cause;
         if (attempt >= 2) throw new DeliveryStopped({ message: "controls keep changing" });
       }
+  return { waiting };
 }
 
 type SentUnit = AccountSessionsReceiveInput["units"][number];
@@ -326,4 +328,5 @@ async function recordShare(
       ),
     ].slice(0, 50),
   });
+  return waiting.length;
 }

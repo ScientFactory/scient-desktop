@@ -14,6 +14,7 @@ const LAB = EnvironmentId.make("lab");
 const state = vi.hoisted(() => ({
   calls: [] as string[],
   failReceives: 0,
+  busyReceives: 0,
   profiles: [{ id: "work", name: "Work", kind: "persistent" }] as Array<Record<string, string>>,
   settingsListeners: new Set<() => void>(),
 }));
@@ -94,6 +95,10 @@ vi.mock("./accountsState", () => ({
         state.failReceives -= 1;
         return "fail";
       }
+      if (state.busyReceives > 0) {
+        state.busyReceives -= 1;
+        return { units: [{ sites: ["github.com"], revision: 1, outcome: "busy" }] };
+      }
       return { units: [{ sites: ["github.com"], revision: 1, outcome: "copied" }] };
     }),
     profileShared: command("shared", () => ({})),
@@ -167,6 +172,25 @@ it("retries a delivery that failed with nothing changed, then clears its failure
   await vi.waitFor(() => expect(registry.get(deliveryFailuresAtom).has(LAB)).toBe(false));
   expect(state.calls.filter((call) => call === "receive:work")).toHaveLength(1);
   expect(state.calls).toContain("shared:work");
+  stop();
+});
+
+it("retries a unit the remote answered busy, with nothing changed and no failure shown", async () => {
+  state.failReceives = 0;
+  // Main's controls-only batch takes the first answer; Work's unit gets "busy".
+  state.busyReceives = 2;
+  const registry = AtomRegistry.make();
+  snapshots(registry);
+  const stop = watchRemoteSessions(registry, LAB, MAC);
+  await vi.waitFor(() => expect(state.calls).toContain("shared:work"));
+  expect(state.calls.filter((call) => call === "receive:work")).toHaveLength(1);
+  expect(registry.get(deliveryFailuresAtom).has(LAB)).toBe(false);
+  // The tab there closed; nothing here changed: the watcher's own retry sends it.
+  await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
+  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.waitFor(() =>
+    expect(state.calls.filter((call) => call === "receive:work")).toHaveLength(2),
+  );
   stop();
 });
 
