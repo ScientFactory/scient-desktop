@@ -38,7 +38,9 @@ fresh session each run.
 
 - **Composer:** `/clear` sits beside Scient's `/fork` in the slash menu. Scient's send flow arms
   it, passes `freshContext` to the turn plan and the turn start, and disarms it once the turn is
-  accepted. Queue edits, extracted queue intents and direct prompts never arm it.
+  accepted. Queue edits, extracted queue intents and direct prompts never arm it. Scient's own
+  resume-compaction check also skips a fresh send (`472b2d3a26`, found in review), so a stale
+  thread never compacts the conversation the fresh session drops.
 - **Queue:** a queued fresh message keeps Scient's queue parts and uses T3's rule: it may skip
   compaction but never steers into a running turn.
 - **Orchestrator:** T3's context boundary, provider-thread choice and steer refusals are taken.
