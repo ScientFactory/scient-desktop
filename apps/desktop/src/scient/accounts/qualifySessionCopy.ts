@@ -46,6 +46,10 @@ const electronJar = (send: CdpSend, session: Electron.Session): ElectronJar => (
     (
       (await send("Network.getCookies", { urls: [url] })) as { cookies: { name: string }[] }
     ).cookies.map((cookie) => cookie.name),
+  setOverHttp: async (name) =>
+    void (await send("Network.setCookies", {
+      cookies: [{ name, value: "synthetic", url: "http://a.qualify.test/" }],
+    })),
 });
 
 const CASES: ReadonlyArray<QualifyCase<ElectronJar>> = [

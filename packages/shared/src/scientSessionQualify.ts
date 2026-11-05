@@ -15,6 +15,11 @@ export interface QualifyJar {
   readonly remove: (cookies: ReadonlyArray<SessionCookie>) => Promise<void>;
   /** The cookie names a request to `url` would carry, read past the adapter under test. */
   readonly sentTo: (url: string) => Promise<ReadonlyArray<string>>;
+  /**
+   * Where the browser takes a raw write: an http:// page setting `name`, past the adapter's own
+   * secure handling. A browser must refuse a `__Secure-` cookie from there.
+   */
+  readonly setOverHttp?: (name: string) => Promise<void>;
 }
 
 /** Returns why the case failed, or nothing. */
@@ -80,8 +85,11 @@ export const COPY_CASES: ReadonlyArray<QualifyCase<QualifyJar>> = [
       const read = [...(await prefixed(b, "__Host-x")), ...(await prefixed(b, "__Secure-y"))];
       if (!sameUnit(written, read)) return "a prefixed cookie read back different";
       await b.set([hostCookie("__Secure-z", { secure: false })]).catch(() => undefined);
-      return named(await b.read(), "__Secure-z").some((cookie) => !cookie.secure)
-        ? "a non-secure __Secure- cookie was accepted"
+      if (named(await b.read(), "__Secure-z").some((cookie) => !cookie.secure))
+        return "a non-secure __Secure- cookie was accepted";
+      await b.setOverHttp?.("__Secure-h").catch(() => undefined);
+      return named(await b.read(), "__Secure-h").length
+        ? "a __Secure- cookie from an http:// page was accepted"
         : undefined;
     },
   ],
