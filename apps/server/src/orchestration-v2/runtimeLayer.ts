@@ -10,6 +10,7 @@ import * as AttachmentReservationReconciliation from "./AttachmentReservationRec
 import * as AttachmentRollbackPruneService from "./AttachmentRollbackPruneService.ts";
 import * as ThreadFileRelease from "./scient-fork/ThreadFileRelease.ts";
 // SCIENT-FORK:END
+import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -450,6 +451,9 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  WorktreeBranchSync.layer.pipe(
+    Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
+  ),
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
   layerManagedProjectFoldersProvided,
