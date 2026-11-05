@@ -44,7 +44,7 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
           }
           return { ...base, accounts: [...server.accounts] } as AccountsSnapshot;
         },
-        catch: (error) => new Cause.UnknownError(error),
+        catch: (error) => new Cause.UnknownError(error, "Synthetic snapshot failure"),
       }),
     ),
   );
