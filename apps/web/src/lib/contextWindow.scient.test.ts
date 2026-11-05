@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
-import { deriveLatestContextWindowSnapshot } from "./contextWindow";
+import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 
 describe("provider cost alongside turn context", () => {
   it("keeps authoritative session cost while live counters own the context meter", () => {
