@@ -374,6 +374,11 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
           yield* write(JSON.stringify({ ...current, revision: "damaged" }));
           expect(yield* bulk(w.checkout)).toBe("changed");
 
+          // Without a version this release knows, the same fields prove nothing.
+          const { schemaVersion: _version, ...unversioned } = current;
+          yield* write(JSON.stringify({ ...unversioned, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+
           // A folder path a readable record couldn't have names no folder.
           yield* write(
             JSON.stringify({

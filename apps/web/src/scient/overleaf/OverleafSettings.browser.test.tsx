@@ -128,14 +128,14 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     await expect.element(page.getByText("No folder is linked.")).toBeVisible();
   });
 
-  it("shows each unreadable record's folder and state, and keeps a newer release's unfinished one", async () => {
+  it("shows each unreadable record's folder and state, and keeps a newer release's unsettled one", async () => {
     reset(true);
     projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
     const newer = {
       recordId: "r-newer",
       kind: "newer" as const,
       folder: "/work/thesis/paper",
-      unfinished: true,
+      unfinished: null,
       holds: "checkout" as const,
       setAside: "held" as const,
     };
@@ -165,7 +165,9 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     await expect.element(page.getByText("/work/thesis/paper")).toBeVisible();
     await expect
       .element(
-        page.getByText(/A newer version of Scient made this link, and its last sync didn't finish/),
+        page.getByText(
+          /A newer version of Scient made this link, and this version can't tell whether its last sync finished/,
+        ),
       )
       .toBeVisible();
     // The kept record has no action; only the damaged one can be set aside, knowingly.

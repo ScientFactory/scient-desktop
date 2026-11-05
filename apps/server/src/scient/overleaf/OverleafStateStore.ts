@@ -237,10 +237,14 @@ const unreadableShows = (value: unknown): OverleafUnreadableShows => {
   const staging = objectField(value, "stagingPaths");
   const applying = apply === undefined ? null : apply !== null;
   const staged = Array.isArray(staging) ? staging.length > 0 : null;
+  // Without a version number the record may be any release's, which may keep pending work
+  // in fields this release has never seen. A newer number still holds its checkout back.
+  const version = objectField(value, "schemaVersion");
+  const versioned = Number.isInteger(version) && (version as number) >= 1;
   const unfinished =
     applying === true || staged === true
       ? true
-      : applying === false && staged === false
+      : versioned && applying === false && staged === false
         ? false
         : null;
   return { folder, unfinished };
