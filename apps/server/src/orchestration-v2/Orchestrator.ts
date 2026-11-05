@@ -2215,8 +2215,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         switchPlan.transition.type === "restart_and_resume" &&
         activeProviderThread !== undefined &&
         activeProviderThread.nativeThreadRef !== null;
-      // SCIENT-FORK:START — a same-instance queued run resumes the active native history.
+      // SCIENT-FORK:START — a same-instance queued run resumes the active native history; a fresh
+      // run never does.
       const canResumeNativeHistory =
+        !freshContext &&
         activeProviderThread?.nativeThreadRef != null &&
         (canResumeAcrossInstances ||
           (queuedProviderThread.nativeThreadRef === null &&
