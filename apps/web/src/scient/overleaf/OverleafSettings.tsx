@@ -307,40 +307,48 @@ function OverleafUnreadableRecords(props: {
           ? "Scient can't read one of its Overleaf link records."
           : `Scient can't read ${records.length} of its Overleaf link records.`}
       </p>
-      {records.map((record) => {
-        const lines = unreadableRecordLines(record);
-        const error = errors.get(record.recordId);
-        return (
-          <div key={record.recordId} className="grid gap-1" data-unreadable-record>
-            <p className="break-all text-xs font-medium text-foreground">
-              {record.folder ?? "Folder not recorded"}
-            </p>
-            <p className="text-xs text-muted-foreground">{lines.state}</p>
-            <p className="text-xs text-muted-foreground">{lines.holds}</p>
-            {record.setAside === "held" ? null : (
-              <div>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={busy !== null}
-                  onClick={() => setAside(record)}
-                >
-                  {record.setAside === "confirm" ? "Set aside anyway" : "Set aside"}
-                </Button>
-              </div>
-            )}
-            {error ? (
-              <p className="text-xs text-destructive" role="alert">
-                {error}
+      {records.some((record) => record.setAside !== "held") ? (
+        <p className="text-xs text-muted-foreground">
+          Setting a record aside moves it to a recovery folder, and nothing on Overleaf changes. The
+          link's kept copies stay on disk, but Scient can no longer list or restore them.
+        </p>
+      ) : null}
+      <div className="grid divide-y divide-border">
+        {records.map((record) => {
+          const lines = unreadableRecordLines(record);
+          const error = errors.get(record.recordId);
+          return (
+            <div
+              key={record.recordId}
+              className="grid gap-1 py-2 first:pt-0 last:pb-0"
+              data-unreadable-record
+            >
+              <p className="break-all text-xs font-medium text-foreground">
+                {record.folder ?? "Folder not recorded"}
               </p>
-            ) : null}
-          </div>
-        );
-      })}
-      <p className="text-xs text-muted-foreground">
-        Setting aside moves the record to a recovery folder, and nothing on Overleaf changes. The
-        link's kept copies stay on disk, but Scient can no longer list or restore them.
-      </p>
+              <p className="text-xs text-muted-foreground">{lines.state}</p>
+              <p className="text-xs text-muted-foreground">{lines.holds}</p>
+              {record.setAside === "held" ? null : (
+                <div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={busy !== null}
+                    onClick={() => setAside(record)}
+                  >
+                    {record.setAside === "confirm" ? "Set aside anyway" : "Set aside"}
+                  </Button>
+                </div>
+              )}
+              {error ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

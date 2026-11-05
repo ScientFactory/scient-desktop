@@ -41,7 +41,7 @@ export class CheckoutRecoveryRequiredError extends Schema.TaggedError<CheckoutRe
       case "unreadable-record":
         return "Scient can't read one of its Overleaf link records, so it won't change project files in bulk. Set it aside in Settings › Synced folders › Overleaf, then try again.";
       case "newer-unfinished-record":
-        return "A newer version of Scient left an Overleaf sync unfinished, so this version won't change project files in bulk. Finish that sync in the newer version, then try again.";
+        return "A newer version of Scient left an Overleaf sync unfinished, so this version won't change project files in bulk. Finish that sync in the newer version, then try again. The record is listed in Settings › Synced folders › Overleaf.";
       default:
         return "An Overleaf sync in this project did not finish. Recover it before changing the project's files in bulk.";
     }
