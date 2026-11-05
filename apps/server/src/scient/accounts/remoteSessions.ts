@@ -108,6 +108,16 @@ function withApplied(
   ].slice(-RECEIVED_UNITS_LIMIT);
 }
 
+const isCopy = (unit: { readonly outcome: string }) =>
+  unit.outcome === "copied" || unit.outcome === "same";
+
+/** Deletes a unit's cookies; true once none is left. */
+const clearUnit = async (jar: ProfileCookieJar, sites: ReadonlyArray<string>) => {
+  const present = await jar.readUnit(sites);
+  if (present.length) await jar.remove(present);
+  return (await jar.readUnit(sites)).length === 0;
+};
+
 const fromSent = (cookie: AccountSessionsReceiveInput["units"][number]["cookies"]) =>
   (cookie ?? []).map(({ value, ...rest }): SessionCookie => ({
     ...rest,
@@ -122,11 +132,7 @@ async function receiveUnit(
 ): Promise<SessionReceiveOutcome> {
   const sites = unitSites(unit.sites);
   if (jar.openTabSites().some((site) => sites.has(site))) return "busy";
-  if (unit.kind === "delete") {
-    const present = await jar.readUnit(unit.sites);
-    if (present.length) await jar.remove(present);
-    return (await jar.readUnit(unit.sites)).length ? "failed" : "deleted";
-  }
+  if (unit.kind === "delete") return (await clearUnit(jar, unit.sites)) ? "deleted" : "failed";
   const outcome = await applyUnit(jar, {
     unit: unit.sites,
     source: fromSent(unit.cookies),
@@ -252,9 +258,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
       .find((record) => record.profileId === profileId)
       ?.received?.find((candidate) => candidate.source === source);
     if (!entry) return 0;
-    const copies = entry.units.filter(
-      (unit) => unit.outcome === "copied" || unit.outcome === "same",
-    );
+    const copies = entry.units.filter(isCopy);
     // Only a unit still holding exactly this sender's copy goes; a later change is someone's.
     const deleted = copies.length
       ? yield* withJar(profileId, async (jar) =>
@@ -515,13 +519,12 @@ export const makeRemoteSessions = Effect.gen(function* () {
         const applied = result.flatMap((unit, index) => {
           if (!RECORDED.has(unit.outcome)) return [];
           const sent = input.units[index]!;
-          const copy = unit.outcome === "copied" || unit.outcome === "same";
           return [
             {
               sites: unit.sites,
               revision: unit.revision,
               outcome: unit.outcome as ReceivedUnit["outcome"],
-              ...(copy
+              ...(isCopy(unit)
                 ? {
                     fingerprint: unitFingerprint(
                       unitCookies(unit.sites, fromSent(sent.cookies)),
@@ -611,11 +614,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
     site: string,
   ) {
     return yield* exclusive(
-      withJar(profileId, async (jar) => {
-        const present = await jar.readUnit([site]);
-        if (present.length) await jar.remove(present);
-        return { signedOut: (await jar.readUnit([site])).length === 0 };
-      }),
+      withJar(profileId, async (jar) => ({ signedOut: await clearUnit(jar, [site]) })),
     );
   });
 
@@ -674,8 +673,7 @@ export const markNeedsYou = Effect.fn("RemoteSessions.markNeedsYou")(function* (
     const next = received.map((entry) => ({
       ...entry,
       units: entry.units.map((unit) => {
-        const copy = unit.outcome === "copied" || unit.outcome === "same";
-        if (!copy || !unitSites(unit.sites).has(site)) return unit;
+        if (!isCopy(unit) || !unitSites(unit.sites).has(site)) return unit;
         label = entry.label;
         if ((unit.needsYou !== undefined) === (page === "refused")) return unit;
         changed = true;

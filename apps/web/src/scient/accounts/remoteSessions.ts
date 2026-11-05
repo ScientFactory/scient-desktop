@@ -63,13 +63,12 @@ export function allowedRoute(
   }
 }
 
-/** Why a delivery failed, in words safe to show: never a cookie, a key or a server's message. */
-export type DeliveryFailureReason = "refused" | "failed";
-
 /** A request of the delivery that the remote or this desktop answered with an error. */
 class DeliveryFailed extends Schema.TaggedError<DeliveryFailed>()("DeliveryFailed", {
   reason: Schema.Literals(["refused", "failed"]),
 }) {}
+/** Why a delivery failed, in words safe to show: never a cookie, a key or a server's message. */
+export type DeliveryFailureReason = DeliveryFailed["reason"];
 const isDeliveryFailed = Schema.is(DeliveryFailed);
 const isDeliveryStopped = Schema.is(DeliveryStopped);
 
@@ -223,7 +222,7 @@ export function watchRemoteSessions(
     const desktop = () => value(registry.get(desktopAtom));
     const outcome = await deliverOnce({
       source: primaryId,
-      label: readEnvironment(primaryId)?.serverConfig?.environment.label ?? "this computer",
+      label: desktopLabel(primaryId),
       remoteId: environmentId,
       remoteLabel: route.label,
       profiles: () =>
