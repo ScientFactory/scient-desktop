@@ -1,36 +1,16 @@
 #!/usr/bin/env node
-// Qualifies Scient's session copy on this platform's Electron, in a dev app. USAGE below is the
-// full usage and expected output (lint caps comments at four lines); it also prints with --help.
-const USAGE = `Usage, with a dev app running and its remote debugging port known:
+// Qualifies Scient's session copy on this platform's Electron, in a dev app; --help prints usage.
+const USAGE = `Usage, with a dev app running on a known remote debugging port:
 
-  node apps/desktop/scripts/qualify-session-copy.mjs --port 9372
+  node apps/desktop/scripts/qualify-session-copy.mjs --port 9372 [--environment <id>]
 
-It finds the app window through http://127.0.0.1:<port>/json/list, runs
-window.desktopBridge.accounts.qualifySessionCopy() there, and prints one line per case:
+Runs the dev app's cookie-copy qualification and prints one PASS or FAIL line per case, then
+"N passed, M failed"; it exits 0 only when every case passes. Only synthetic .test cookies are
+written, into throwaway partitions the app clears afterwards; your profiles are never touched.
 
-  PASS  1 isolation
-  PASS  2 host-only
-  ...
-  PASS 12 skip
-  PASS 13 navigation first
-  PASS 14 partitioned navigation first
-  14 passed, 0 failed
-
-A failing case reads, for example:
-
-  FAIL  9 exact delete: deleting one partition's cookie did not leave the other two
-
-It exits 0 when every case passes and 1 otherwise. The app writes only synthetic cookies for
-qualify.test into two throwaway partitions (persist:scient-qualify-{a,b}-<uuid>) and clears them
-afterwards; the user's profiles are never read or written. Needs Node 22 or later.
-
-With --environment <id>, the same dev app asks that connected computer's server to run cases
-1-9 on its own browser, plus "helper page" and "persistence", in two throwaway server-browser
-profiles (scient-qualify-{a,b}-<uuid>) it deletes afterwards, failure or not:
-
-  node apps/desktop/scripts/qualify-session-copy.mjs --port 9372 --environment <id>
-
-The remote server must be a development one: started with --dev-url (or VITE_DEV_SERVER_URL).`;
+With --environment, that connected computer's server runs the shared cases on its own browser
+instead, in throwaway profiles it deletes afterwards. It must be a development server (started
+with --dev-url or VITE_DEV_SERVER_URL). Needs Node 22 or later.`;
 const portFlag = process.argv.indexOf("--port");
 const port = Number(portFlag === -1 ? Number.NaN : process.argv[portFlag + 1]);
 const environmentFlag = process.argv.indexOf("--environment");

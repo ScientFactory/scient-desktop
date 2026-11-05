@@ -39,6 +39,10 @@
       "types": "./src/scientSessionCookies.ts",
       "import": "./src/scientSessionCookies.ts"
     },
+    "./scientSessionQualify": {
+      "types": "./src/scientSessionQualify.ts",
+      "import": "./src/scientSessionQualify.ts"
+    },
     "./scientSessionDelivery": {
       "types": "./src/scientSessionDelivery.ts",
       "import": "./src/scientSessionDelivery.ts"
