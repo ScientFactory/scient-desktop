@@ -17,6 +17,7 @@ import {
   type SessionCookie,
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 import {
   hasAccountRow,
@@ -73,10 +74,13 @@ export interface DeliveryDeps {
 }
 
 /** Stops a run: every await checks it, so nothing more is sent once it is set. */
-export class DeliveryStopped extends Error {}
+export class DeliveryStopped extends Schema.TaggedError<DeliveryStopped>()("DeliveryStopped", {
+  message: Schema.String,
+}) {}
 
 /** The profile's controls changed after its plan was made. */
-class ControlsChanged extends DeliveryStopped {}
+class ControlsChanged extends Schema.TaggedError<ControlsChanged>()("ControlsChanged", {}) {}
+const isControlsChanged = Schema.is(ControlsChanged);
 
 const sameProfileControls = (a: BrowserProfileRecord, b: BrowserProfileRecord) =>
   a.access === b.access &&
@@ -111,7 +115,7 @@ const multiSiteRows = (accounts: AccountsSnapshot["accounts"], profileId: string
 export async function deliverOnce(deps: DeliveryDeps) {
   const check = () => {
     const stopped = deps.revalidate();
-    if (stopped !== undefined) throw new DeliveryStopped(stopped);
+    if (stopped !== undefined) throw new DeliveryStopped({ message: stopped });
   };
   const university = universitySites(deps.desktopAccounts());
   check();
@@ -230,7 +234,8 @@ export async function deliverOnce(deps: DeliveryDeps) {
         break;
       } catch (cause) {
         // Changed controls: plan the profile again, which withdraws it if it is now restricted.
-        if (!(cause instanceof ControlsChanged) || attempt >= 2) throw cause;
+        if (!isControlsChanged(cause)) throw cause;
+        if (attempt >= 2) throw new DeliveryStopped({ message: "controls keep changing" });
       }
 }
 

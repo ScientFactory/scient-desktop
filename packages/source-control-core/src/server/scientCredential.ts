@@ -1,7 +1,7 @@
-import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 /** A host credential lent to a Scient connector, with the account it was checked to belong to. */
 export interface SourceControlCredential {
@@ -13,9 +13,10 @@ export interface SourceControlCredential {
 }
 
 /** Carries no cause or text from the source, so nothing it says can hold a credential. */
-export class SourceControlCredentialError extends Data.TaggedError("SourceControlCredentialError")<{
-  readonly host: string;
-}> {
+export class SourceControlCredentialError extends Schema.TaggedError<SourceControlCredentialError>()(
+  "SourceControlCredentialError",
+  { host: Schema.String },
+) {
   override get message(): string {
     return `Source Control could not hand over its credential for ${this.host} right now. Retry shortly.`;
   }

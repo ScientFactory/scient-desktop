@@ -9,6 +9,7 @@ import {
   type AccountSummary,
   type AccountsSnapshot,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
@@ -34,13 +35,16 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
   const accounts = (label: string) => label.startsWith("accounts:");
   const snapshotFamily = Atom.family((_key: string) =>
     Atom.make(
-      Effect.tryPromise(async () => {
-        await server.gate;
-        if (server.failNext) {
-          server.failNext = false;
-          throw new Error("Synthetic snapshot failure");
-        }
-        return { ...base, accounts: [...server.accounts] } as AccountsSnapshot;
+      Effect.tryPromise({
+        try: async () => {
+          await server.gate;
+          if (server.failNext) {
+            server.failNext = false;
+            throw new Error("Synthetic snapshot failure");
+          }
+          return { ...base, accounts: [...server.accounts] } as AccountsSnapshot;
+        },
+        catch: (error) => new Cause.UnknownError(error),
       }),
     ),
   );

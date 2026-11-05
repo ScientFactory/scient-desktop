@@ -15,6 +15,7 @@ import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassifi
 import { shareable } from "@t3tools/shared/scientSessionCookies";
 import { deliverOnce, DeliveryStopped } from "@t3tools/shared/scientSessionDelivery";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { readDesktopSecondaryBootstraps } from "~/connection/desktopLocal";
@@ -66,13 +67,11 @@ export function allowedRoute(
 export type DeliveryFailureReason = "refused" | "failed";
 
 /** A request of the delivery that the remote or this desktop answered with an error. */
-class DeliveryFailed extends Error {
-  readonly reason: DeliveryFailureReason;
-  constructor(reason: DeliveryFailureReason) {
-    super("The request failed.");
-    this.reason = reason;
-  }
-}
+class DeliveryFailed extends Schema.TaggedError<DeliveryFailed>()("DeliveryFailed", {
+  reason: Schema.Literals(["refused", "failed"]),
+}) {}
+const isDeliveryFailed = Schema.is(DeliveryFailed);
+const isDeliveryStopped = Schema.is(DeliveryStopped);
 
 const failureReason = (result: { readonly _tag: string; readonly cause?: unknown }) => {
   const error = Cause.isCause(result.cause) ? Cause.squash(result.cause) : result.cause;
@@ -98,7 +97,7 @@ const call = async <I, A, E>(
   input: I,
 ): Promise<A> => {
   const result = await command.run(registry, { environmentId, input });
-  if (result._tag !== "Success") throw new DeliveryFailed(failureReason(result));
+  if (result._tag !== "Success") throw new DeliveryFailed({ reason: failureReason(result) });
   return result.value;
 };
 
@@ -123,7 +122,7 @@ async function bindSender(
   if (bound.key)
     await call(registry, accountsState.keepSenderKey, primaryId, { environmentId, key: bound.key });
   const key = bound.key ?? kept.key;
-  if (!key) throw new DeliveryStopped("unbound");
+  if (!key) throw new DeliveryStopped({ message: "unbound" });
   return key;
 }
 
@@ -290,9 +289,9 @@ export function watchRemoteSessions(
       () => "delivered" as const,
       // A changed route, permission or control stops a run; that is no failure.
       (cause: unknown) =>
-        cause instanceof DeliveryStopped
+        isDeliveryStopped(cause)
           ? ("stopped" as const)
-          : cause instanceof DeliveryFailed
+          : isDeliveryFailed(cause)
             ? cause.reason
             : ("failed" as const),
     );

@@ -8,7 +8,7 @@ import {
   type CookieStore,
 } from "@t3tools/shared/scientSessionCookies";
 import { siteOf } from "@t3tools/shared/scientSiteMatch";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import type { BrowserContext, Page } from "playwright-core";
 
 /** One persistent server-browser profile's jar, held against new tabs and clears while open. */
@@ -36,10 +36,10 @@ const independentReads = new WeakMap<ProfileCookieJar, IndependentReads>();
 /** The qualification's own reads of a jar this module opened; never used by delivery. */
 export const independentReadsOf = (jar: ProfileCookieJar) => independentReads.get(jar);
 
-export class ProfileCookiesError extends Data.TaggedError("ProfileCookiesError")<{
-  readonly profileId: string;
-  readonly cause: unknown;
-}> {
+export class ProfileCookiesError extends Schema.TaggedError<ProfileCookiesError>()(
+  "ProfileCookiesError",
+  { profileId: Schema.String, cause: Schema.Defect() },
+) {
   override get message() {
     return "This computer's browser could not open the profile's sign-ins.";
   }
@@ -48,7 +48,11 @@ export class ProfileCookiesError extends Data.TaggedError("ProfileCookiesError")
 /** A cookie operation, or a helper page's opening or closing, longer than this has stalled. */
 const COOKIE_OPERATION_DEADLINE_MS = 30_000;
 
-class CookieOperationStalled extends Error {}
+class CookieOperationStalled extends Schema.TaggedError<CookieOperationStalled>()(
+  "CookieOperationStalled",
+  {},
+) {}
+const isCookieOperationStalled = Schema.is(CookieOperationStalled);
 
 /** Rejects once `ms` passes; the operation itself may still be running. */
 const withinDeadline = <A>(operation: Promise<A>, ms: number) => {
@@ -78,7 +82,7 @@ export async function openProfileCookieJar(
     try {
       return await withinDeadline(operation(), deadlineMs);
     } catch (cause) {
-      if (cause instanceof CookieOperationStalled) {
+      if (isCookieOperationStalled(cause)) {
         stalled = true;
         if (lifecycle) quarantined = true;
       }
@@ -109,7 +113,7 @@ export async function openProfileCookieJar(
         false,
       );
     } catch (cause) {
-      if (cause instanceof CookieOperationStalled && current === helper) {
+      if (isCookieOperationStalled(cause) && current === helper) {
         current = undefined;
         await closeHelper(helper.page);
       }
