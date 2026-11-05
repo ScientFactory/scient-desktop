@@ -80,6 +80,9 @@ export class DeliveryStopped extends Schema.TaggedError<DeliveryStopped>()("Deli
 
 /** The profile's controls changed after its plan was made. */
 class ControlsChanged extends Schema.TaggedError<ControlsChanged>()("ControlsChanged", {}) {}
+
+/** The desktop could not read a jar: a failed run, retried; never read as an empty jar. */
+class JarUnreadable extends Schema.TaggedError<JarUnreadable>()("JarUnreadable", {}) {}
 const isControlsChanged = Schema.is(ControlsChanged);
 
 const sameProfileControls = (a: BrowserProfileRecord, b: BrowserProfileRecord) =>
@@ -120,6 +123,12 @@ export async function deliverOnce(deps: DeliveryDeps) {
   const university = universitySites(deps.desktopAccounts());
   check();
   const key = await deps.bind();
+  // An unreadable jar plans, acknowledges and deletes nothing.
+  const readJar = async (input: Parameters<ReadSessions>[0]) => {
+    const read = await deps.readSessions(input);
+    if (!read) throw new JarUnreadable();
+    return read.units;
+  };
   const recordOf = (profileId: string) =>
     deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
     defaultBrowserProfileRecord(profileId);
@@ -145,7 +154,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
     const join = multiSiteRows(deps.desktopAccounts(), profileId);
     hold();
     const jar = isShareable
-      ? ((await deps.readSessions({ profileId, join }))?.units ?? []).filter(({ sites }) =>
+      ? (await readJar({ profileId, join })).filter(({ sites }) =>
           hasAccountRow(sites, deps.desktopAccounts(), profileId),
         )
       : [];
@@ -188,12 +197,7 @@ export async function deliverOnce(deps: DeliveryDeps) {
       hold();
       const copies = group.filter((unit) => unit.kind === "copy" && !underWay(unit));
       const read = copies.length
-        ? ((
-            await deps.readSessions({
-              profileId,
-              units: copies.map((unit) => unit.sites),
-            })
-          )?.units ?? [])
+        ? await readJar({ profileId, units: copies.map((unit) => unit.sites) })
         : [];
       hold();
       const ready: Array<{ planned: PlannedUnit; unit: SentUnit }> = [];

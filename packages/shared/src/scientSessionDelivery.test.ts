@@ -14,7 +14,7 @@ import {
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Redacted from "effect/Redacted";
 
-import { deliverOnce, DeliveryStopped } from "./scientSessionDelivery.ts";
+import { deliverOnce, DeliveryStopped, type DeliveryDeps } from "./scientSessionDelivery.ts";
 
 const MAC = EnvironmentId.make("macbook");
 const LAB = EnvironmentId.make("lab");
@@ -75,11 +75,11 @@ function fixture(options: {
     },
     withdraw: vi.fn(async () => undefined),
     shared: async (_profileId: string, share: unknown) => void shares.push(share),
-    readSessions: async (input: { units?: ReadonlyArray<ReadonlyArray<string>> }) => ({
+    readSessions: (async (input) => ({
       units: options.jar
         .filter((site) => !input.units || input.units.some((unit) => unit.includes(site)))
         .map((site) => ({ sites: [site], cookies: [cookie(site)] })),
-    }),
+    })) as DeliveryDeps["readSessions"],
     now: () => "2026-11-04T10:14:00.000Z",
   };
   return { deps, sent, shares };
@@ -259,4 +259,32 @@ it("never sends a unit with a sign-in under way, and keeps it waiting", async ()
   // Its cookies are never even read, and the revision below it stays owed.
   expect(reads.at(-1)).toEqual([["overleaf.com"]]);
   expect(shares).toEqual([expect.objectContaining({ applied: 1, waiting: 1 })]);
+});
+
+it("never reads an unreadable jar as empty: nothing is acknowledged or deleted", async () => {
+  const log: ProfileSendLog = {
+    head: 2,
+    units: [{ sites: ["github.com"], revision: 2, kind: "copy" }],
+  };
+  // The unit read fails after planning.
+  const late = fixture({ log, jar: ["github.com"] });
+  const read = late.deps.readSessions;
+  late.deps.readSessions = async (input) => (input.units ? null : read(input));
+  await expect(deliverOnce(late.deps)).rejects.toThrow();
+  expect([late.sent, late.shares]).toEqual([[], []]);
+  // The inventory read fails while reconciling: no copy the remote holds is planned away.
+  const reconciling = fixture({
+    log,
+    applied: {
+      bound: true,
+      units: [{ sites: ["github.com"], revision: 1, outcome: "copied" }],
+    },
+    jar: ["github.com"],
+  });
+  reconciling.deps.profiles = () => [
+    { profileId: "work", record: defaultBrowserProfileRecord("work") },
+  ];
+  reconciling.deps.readSessions = async () => null;
+  await expect(deliverOnce(reconciling.deps)).rejects.toThrow();
+  expect([reconciling.sent, reconciling.shares]).toEqual([[], []]);
 });
