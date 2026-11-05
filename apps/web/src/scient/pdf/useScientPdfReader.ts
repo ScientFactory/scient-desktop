@@ -1,7 +1,11 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { afterChatInputQuiet, waitForChatInputQuiet } from "../writing/inputPriority";
+import {
+  afterChatInputQuiet,
+  chatInputQuietDelay,
+  waitForChatInputQuiet,
+} from "../writing/inputPriority";
 
 import {
   createPdfRuntime,
@@ -335,7 +339,7 @@ export function useScientPdfReader(input: {
 
     void loadingTask.promise
       .then(async (document) => {
-        await waitForChatInputQuiet(abortController.signal);
+        if (chatInputQuietDelay() > 0) await waitForChatInputQuiet(abortController.signal);
         if (!isRequested()) return;
         const runtime = createPdfRuntime({
           container,
