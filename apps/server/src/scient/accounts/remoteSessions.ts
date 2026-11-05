@@ -111,6 +111,11 @@ function withApplied(
 const isCopy = (unit: { readonly outcome: string }) =>
   unit.outcome === "copied" || unit.outcome === "same";
 
+const overlapping = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) => {
+  const sites = unitSites(a);
+  return [...unitSites(b)].some((site) => sites.has(site));
+};
+
 /** Deletes a unit's cookies; true once none is left. */
 const clearUnit = async (jar: ProfileCookieJar, sites: ReadonlyArray<string>) => {
   const present = await jar.readUnit(sites);
@@ -536,6 +541,12 @@ export const makeRemoteSessions = Effect.gen(function* () {
           };
         });
         const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;
+        // A sender owns a unit, to delete it later, only by writing it: equal cookies found here
+        // ("same") keep a claim it already held, and never make a new one.
+        const claimed = (sites: ReadonlyArray<string>) =>
+          (entry?.units ?? []).some(
+            (held) => held.fingerprint !== undefined && overlapping(held.sites, sites),
+          );
         const applied = result.flatMap((unit, index) => {
           if (!RECORDED.has(unit.outcome)) return [];
           const sent = input.units[index]!;
@@ -544,7 +555,7 @@ export const makeRemoteSessions = Effect.gen(function* () {
               sites: unit.sites,
               revision: unit.revision,
               outcome: unit.outcome as ReceivedUnit["outcome"],
-              ...(isCopy(unit)
+              ...(unit.outcome === "copied" || (unit.outcome === "same" && claimed(unit.sites))
                 ? {
                     fingerprint: unitFingerprint(
                       unitCookies(unit.sites, fromSent(sent.cookies)),
@@ -555,12 +566,22 @@ export const makeRemoteSessions = Effect.gen(function* () {
             },
           ];
         });
+        // What this sender wrote is no longer another sender's copy, whatever its digest.
+        const written = applied.filter(
+          (unit) => unit.outcome === "copied" || unit.outcome === "deleted",
+        );
+        const disowned = (unit: ReceivedUnit): ReceivedUnit => {
+          if (!unit.fingerprint || !written.some(({ sites }) => overlapping(sites, unit.sites)))
+            return unit;
+          const { fingerprint: _, ...rest } = unit;
+          return rest;
+        };
         if (applied.length)
           yield* accounts.updateReceived(input.profileId, (record) => ({
             received: (record.received ?? []).map((candidate) =>
               candidate.source === input.source
                 ? { ...candidate, units: withApplied(candidate.units, applied) }
-                : candidate,
+                : { ...candidate, units: candidate.units.map(disowned) },
             ),
           }));
         return { units: result };

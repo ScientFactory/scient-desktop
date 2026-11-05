@@ -411,6 +411,42 @@ describe("receiving a desktop's sign-ins", () => {
     }),
   );
 
+  it.effect("owns only what it wrote: a unit found here, or since written by another, stays", () =>
+    Effect.gen(function* () {
+      const { remote, jars } = yield* setup();
+      const takeBack = (revision: number) =>
+        remote.receive(
+          desktop,
+          batch([{ sites: ["github.com"], revision, kind: "delete", copyOnly: true }]),
+        );
+      // Signed in here before the desktop's first copy, to the same session: it isn't the copy's.
+      jars.set(WORK, [cookie()]);
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(1)])))).toEqual(["same"]);
+      yield* takeBack(2);
+      expect(jars.get(WORK)).toHaveLength(1);
+      expect(
+        yield* remote.withdraw(desktop, { source: MAC, key: keys.desktop, all: true }),
+      ).toEqual({ deleted: 0 });
+      expect(jars.get(WORK)).toHaveLength(1);
+
+      // Copied, then written by another computer, even back to the same cookies: that one's now.
+      keys.desktop = (yield* remote.bind(desktop, { source: MAC, label: "MacBook" })).key!;
+      jars.set(WORK, []);
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(3)])))).toEqual(["copied"]);
+      const PC = EnvironmentId.make("pc-1");
+      const pcKey = (yield* remote.bind(desktop, { source: PC, label: "PC" })).key!;
+      const fromPc = (revision: number, value: string) =>
+        remote.receive(
+          desktop,
+          batch([copy(revision, [cookie({ value })])], { source: PC, key: pcKey, label: "PC" }),
+        );
+      expect(outcomes(yield* fromPc(1, "synthetic-other"))).toEqual(["copied"]);
+      expect(outcomes(yield* fromPc(2, cookie().value))).toEqual(["copied"]);
+      yield* takeBack(4);
+      expect(jars.get(WORK)?.map(({ value }) => value)).toEqual([cookie().value]);
+    }),
+  );
+
   it.effect("withdraws every copy from a sender, and sweeps a revoked sender's", () =>
     Effect.gen(function* () {
       const { remote, jars, revoked, accounts } = yield* setup();
