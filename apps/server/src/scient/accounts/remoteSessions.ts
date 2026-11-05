@@ -541,28 +541,32 @@ export const makeRemoteSessions = Effect.gen(function* () {
           };
         });
         const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;
-        // A sender owns a unit, to delete it later, only by writing it: equal cookies found here
-        // ("same") keep a claim it already held, and never make a new one.
-        const claimed = (sites: ReadonlyArray<string>) =>
-          (entry?.units ?? []).some(
-            (held) => held.fingerprint !== undefined && overlapping(held.sites, sites),
-          );
+        // A sender owns a unit, to delete it later, only by writing it. A "same" keeps a claim it
+        // already held on exactly these sites, while they still hold what it wrote; it never
+        // makes, widens or refreshes one.
+        const sameSites = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+          [...unitSites(a)].sort().join(" ") === [...unitSites(b)].sort().join(" ");
         const applied = result.flatMap((unit, index) => {
           if (!RECORDED.has(unit.outcome)) return [];
-          const sent = input.units[index]!;
+          const sent = unitFingerprint(
+            unitCookies(unit.sites, fromSent(input.units[index]!.cookies)),
+            nowSeconds,
+          );
+          const kept = (entry?.units ?? []).find(
+            (held) => held.fingerprint === sent && sameSites(held.sites, unit.sites),
+          );
+          const fingerprint =
+            unit.outcome === "copied"
+              ? sent
+              : unit.outcome === "same"
+                ? kept?.fingerprint
+                : undefined;
           return [
             {
               sites: unit.sites,
               revision: unit.revision,
               outcome: unit.outcome as ReceivedUnit["outcome"],
-              ...(unit.outcome === "copied" || (unit.outcome === "same" && claimed(unit.sites))
-                ? {
-                    fingerprint: unitFingerprint(
-                      unitCookies(unit.sites, fromSent(sent.cookies)),
-                      nowSeconds,
-                    ),
-                  }
-                : {}),
+              ...(fingerprint === undefined ? {} : { fingerprint }),
             },
           ];
         });

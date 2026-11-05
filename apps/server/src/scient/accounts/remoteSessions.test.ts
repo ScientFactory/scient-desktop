@@ -447,6 +447,33 @@ describe("receiving a desktop's sign-ins", () => {
     }),
   );
 
+  it.effect("never widens or refreshes a claim on a same: what it didn't write stays", () =>
+    Effect.gen(function* () {
+      const { remote, jars } = yield* setup();
+      const takeBack = (revision: number, sites = ["github.com"]) =>
+        remote.receive(desktop, batch([{ sites, revision, kind: "delete", copyOnly: true }]));
+      // Copied, then signed in again here: the desktop now sends that same new session.
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(1)])))).toEqual(["copied"]);
+      const here = cookie({ value: "signed-in-here" });
+      jars.set(WORK, [here]);
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(2, [here])])))).toEqual(["same"]);
+      yield* takeBack(3);
+      expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["signed-in-here"]);
+
+      // A claim on GitHub never stretches to a site merged into its unit later.
+      jars.set(WORK, []);
+      expect(outcomes(yield* remote.receive(desktop, batch([copy(4)])))).toEqual(["copied"]);
+      const own = cookie({ domain: ".example.test", value: "own-example" });
+      jars.set(WORK, [...jars.get(WORK)!, own]);
+      const merged = ["github.com", "example.test"];
+      expect(
+        outcomes(yield* remote.receive(desktop, batch([copy(5, jars.get(WORK)!, merged)]))),
+      ).toEqual(["same"]);
+      yield* takeBack(6, merged);
+      expect(jars.get(WORK)?.map(({ value }) => value)).toContain("own-example");
+    }),
+  );
+
   it.effect("withdraws every copy from a sender, and sweeps a revoked sender's", () =>
     Effect.gen(function* () {
       const { remote, jars, revoked, accounts } = yield* setup();
