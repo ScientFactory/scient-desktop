@@ -4,7 +4,10 @@ Web PDF.js 6.4.299 carries `patches/pdfjs-dist@6.4.299.patch`. Its global text-l
 selection listeners must not repeatedly reappend idle selection markers or read
 PDF-only selection geometry while the user edits chat or another writing surface.
 Keep the standard and legacy viewer builds aligned. The direct web dependency is
-version-pinned; server PDF.js versions are separate. Before removing this patch,
+version-pinned; server PDF.js versions are separate. The patched TextLayerBuilder
+also exposes a beforeAppend gate so asynchronous text completion and accessibility
+layout yield to chat input; cancellation must prevent a stale layer from appending.
+Before removing this patch,
 run the real-text-layer selection isolation and retained-selection browser tests,
 and qualify typing while scrolling a large PDF.
 

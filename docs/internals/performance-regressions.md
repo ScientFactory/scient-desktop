@@ -2,6 +2,15 @@
 
 ## Chat input takes priority
 
+Browser guest sign-in detection checks input metadata before reading visibility
+geometry. Pages with no possible username, password or one-time-code field must
+not force layout after ordinary DOM changes. Registration-page refusal still
+runs after visibility filtering, so hidden password fields cannot suppress a login.
+
+PDF text-layer completion waits for chat input to become quiet before appending
+and enabling accessibility layout, even when its worker started before typing.
+Closing a document cancels that completion without appending a stale layer.
+
 The pinned PDF.js 6.4.299 patch makes text-selection resets idempotent and skips
 PDF-only selection geometry when no PDF text layer intersects the selection.
 Typing or selecting in another editor must not move PDF selection-marker DOM

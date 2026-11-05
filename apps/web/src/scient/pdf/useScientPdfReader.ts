@@ -325,7 +325,8 @@ export function useScientPdfReader(input: {
       onProgress: (loaded, total) => {
         if (!isRequested() || runtimeRef.current) return;
         latestProgress = total && total > 0 ? Math.min(loaded / total, 1) : null;
-        cancelProgress ??= afterChatInputQuiet(() => {
+        if (cancelProgress) return;
+        cancelProgress = afterChatInputQuiet(() => {
           cancelProgress = undefined;
           if (!isRequested() || runtimeRef.current) return;
           setState((previous) =>

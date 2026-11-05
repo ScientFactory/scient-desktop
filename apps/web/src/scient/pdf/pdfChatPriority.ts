@@ -1,5 +1,20 @@
-import type { PDFViewer } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
-import { afterChatInputQuiet, chatInputQuietDelay } from "../writing/inputPriority";
+import type { PDFViewer, TextLayerBuilder } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
+import {
+  afterChatInputQuiet,
+  chatInputQuietDelay,
+  waitForChatInputQuiet,
+} from "../writing/inputPriority";
+
+// The pinned PDF.js patch gates asynchronous text-layer completion as well as queued drawing.
+export function prioritizePdfTextCompletion(builder: typeof TextLayerBuilder): void {
+  builder.beforeAppend = (signal) => {
+    if (chatInputQuietDelay() <= 0) return;
+    const lifetime = signal ?? new AbortController().signal;
+    return waitForChatInputQuiet(lifetime).catch((error: unknown) => {
+      if (!lifetime.aborted) throw error;
+    });
+  };
+}
 
 type PdfWorkHost = {
   update: PDFViewer["update"];
