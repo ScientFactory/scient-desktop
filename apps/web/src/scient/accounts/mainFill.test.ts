@@ -8,6 +8,7 @@ import {
   type AccountSummary,
   type DesktopFillMainResult,
 } from "@t3tools/contracts";
+import { AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -18,12 +19,14 @@ import {
   mainFillTrigger,
   replaceAllowedSince,
   withdrawFromMain,
+  settleVia,
   withdrawnRows,
 } from "./mainFill";
 
 const state = vi.hoisted(() => ({
   snapshot: undefined as unknown,
   filled: [] as unknown[],
+  rowCommand: (_kind: string, _input: unknown): Promise<unknown> => Promise.resolve(),
 }));
 vi.mock("~/hooks/useSettings", () => ({
   getClientSettings: () => ({
@@ -38,6 +41,10 @@ vi.mock("./accountsState", () => ({
     snapshot: () => ({}),
     readSnapshot: { run: async () => ({ _tag: "Success", value: state.snapshot }) },
     mainFilled: { run: async (_registry: unknown, input: unknown) => state.filled.push(input) },
+    remove: { run: (_registry: unknown, input: unknown) => state.rowCommand("remove", input) },
+    sessionEnded: {
+      run: (_registry: unknown, input: unknown) => state.rowCommand("signed out", input),
+    },
   },
 }));
 
@@ -346,6 +353,35 @@ describe("a profile no longer unrestricted", () => {
       snapshot([], [record("work", { access: "off" }), record("default", { access: "off" })]),
     );
     expect(t.withdrawn).toEqual(["work"]);
+  });
+});
+
+describe("settleVia", () => {
+  it("stops changing Main's rows once the profile is allowed again", async () => {
+    const copy = { signIn: { state: "unknown" as const, at: AT, from: "copy" as const } };
+    const first = row("default", ["github.com"], copy);
+    const second = row("default", ["gitlab.com"], copy);
+    const sent: unknown[] = [];
+    let release = () => {};
+    let live = true;
+    // The first command waits; any later one answers at once.
+    state.rowCommand = (_kind, input) => {
+      sent.push(input);
+      if (sent.length > 1) return Promise.resolve();
+      return new Promise((resolve) => (release = () => resolve(undefined)));
+    };
+    const settle = settleVia(
+      AtomRegistry.make(),
+      environmentId,
+      () => [first, second],
+      () => live,
+    )([["github.com"], ["gitlab.com"]]);
+    await Promise.resolve();
+    live = false;
+    release();
+    await settle;
+    expect(sent).toEqual([{ environmentId, input: { accountId: first.accountId } }]);
+    state.rowCommand = () => Promise.resolve();
   });
 });
 

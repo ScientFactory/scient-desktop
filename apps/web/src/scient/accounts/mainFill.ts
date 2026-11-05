@@ -349,6 +349,28 @@ export const takeBackVia =
     (await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } }))._tag ===
     "Success";
 
+/** Main's row changes once its copies are withdrawn; a profile allowed again keeps the rest. */
+export const settleVia =
+  (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    accounts: () => ReadonlyArray<AccountSummary> | undefined,
+    live: () => boolean,
+  ) =>
+  async (units: ReadonlyArray<ReadonlyArray<string>>) => {
+    const current = accounts();
+    if (!current) return;
+    const { remove, signedOut } = withdrawnRows(current, units);
+    for (const accountId of remove) {
+      if (!live()) return;
+      await accountsState.remove.run(registry, { environmentId, input: { accountId } });
+    }
+    for (const accountId of signedOut) {
+      if (!live()) return;
+      await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
+    }
+  };
+
 /** Starts trigger 2 for the primary environment, where the desktop writes Main. */
 export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
@@ -393,15 +415,7 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           window.desktopBridge?.accounts?.withdrawFromMain?.({ ...input, environmentId }) ??
           Promise.resolve(null),
         takeBack: takeBackVia(registry, environmentId),
-        settle: async (units) => {
-          const snapshot = read();
-          if (!snapshot) return;
-          const { remove, signedOut } = withdrawnRows(snapshot.accounts, units);
-          for (const accountId of remove)
-            await accountsState.remove.run(registry, { environmentId, input: { accountId } });
-          for (const accountId of signedOut)
-            await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
-        },
+        settle: settleVia(registry, environmentId, () => read()?.accounts, live),
       }),
   });
   const unsubscribe = registry.subscribe(
