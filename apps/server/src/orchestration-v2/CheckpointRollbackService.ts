@@ -156,8 +156,11 @@ export const layer: Layer.Layer<
         checkpoint === undefined ||
         scope === undefined ||
         checkpoint.scopeId !== scope.id ||
-        // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
-        !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false)
+        // SCIENT-FORK:START — a conversation-only rewind does not need the file snapshot,
+        // but a rolled-back run's boundary is gone whatever its snapshot status.
+        !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false) ||
+        (targetAttempt !== undefined && context.rolledBackAttemptIds.includes(targetAttempt.id))
+        // SCIENT-FORK:END
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",
@@ -295,8 +298,10 @@ export const layer: Layer.Layer<
               providerThreadTurns,
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+      // SCIENT-FORK: only a ready checkpoint has a Git ref to delete.
+      const staleRefs = staleCheckpoints.filter((stale) => stale.status === "ready");
+      if (staleRefs.length > 0) {
+        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleRefs });
       }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

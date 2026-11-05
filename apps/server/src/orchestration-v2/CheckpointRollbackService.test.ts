@@ -943,23 +943,43 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
       Effect.gen(function* () {
         const history = yield* seedRollbackHistory;
         const sql = yield* SqlClient.SqlClient;
+        // Checkpoint 7 belongs to an already rolled-back run, as records written before
+        // snapshot-less boundaries were marked stale can.
         yield* sql`UPDATE orchestration_v2_projection_checkpoints
           SET status = 'error', payload_json = json_set(payload_json, '$.status', 'error')
-          WHERE checkpoint_id = ${history.checkpointId(2)}`;
+          WHERE checkpoint_id IN (${history.checkpointId(2)}, ${history.checkpointId(4)},
+            ${history.checkpointId(7)})`;
+        const expectRefused = (ordinal: number, restoreFiles?: boolean) =>
+          Effect.gen(function* () {
+            const refused = yield* Effect.flip(history.rollback(ordinal, restoreFiles));
+            assert.instanceOf(refused, CheckpointRollbackService.CheckpointRollbackExecutionError);
+            assert.equal(refused.reason, "rollback-target-invalid");
+          });
 
-        const refused = yield* Effect.flip(history.rollback(2));
-        assert.instanceOf(refused, CheckpointRollbackService.CheckpointRollbackExecutionError);
-        assert.equal(refused.reason, "rollback-target-invalid");
+        yield* expectRefused(2);
+        yield* expectRefused(7, false);
         assert.deepEqual(history.rollbackCounts, []);
 
         yield* history.rollback(2, false);
         assert.deepEqual(history.rollbackCounts, [4]);
         assert.deepEqual(history.restored, []);
-        const runs = yield* history.store.getThreadRecords(history.threadId, ["runs"]);
+        assert.sameMembers(history.deletedRefs, [3, 5, 6].map(history.checkpointId));
+        const records = yield* history.store.getThreadRecords(history.threadId, [
+          "runs",
+          "checkpoints",
+        ]);
         assert.deepEqual(
-          runs.runs.filter((run) => run.status !== "rolled_back").map((run) => run.ordinal),
+          records.runs.filter((run) => run.status !== "rolled_back").map((run) => run.ordinal),
           [1, 2],
         );
+        assert.equal(
+          records.checkpoints.find((checkpoint) => checkpoint.id === history.checkpointId(4))
+            ?.status,
+          "stale",
+        );
+
+        yield* expectRefused(4, false);
+        assert.deepEqual(history.rollbackCounts, [4]);
       }),
     );
     // SCIENT-FORK:END

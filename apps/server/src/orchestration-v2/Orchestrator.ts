@@ -13375,6 +13375,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its provider turn is unavailable.`,
           });
         }
+        // SCIENT-FORK: snapshot-less checkpoints of rolled-back runs may not have been marked stale.
+        if (targetRun.status === "rolled_back") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its run was rolled back.`,
+          });
+        }
         if (targetProviderTurn.providerThreadId !== providerThread.id) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
