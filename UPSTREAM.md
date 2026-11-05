@@ -2038,6 +2038,11 @@ still draws the pages, and its files keep marked seams:
 | `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                     |
 | `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                     |
 
+Selected text on a page or slide quotes into chat as an Office quote (`OfficeCitation`, with the
+other quote kinds in `packages/contracts/src/fileCitations.ts`). `FilePreviewPanel.tsx` gives the
+reader its file and conversation (`OfficeFileContext`), and `AssistantCitationChip.tsx` names,
+links and reopens the quote in its existing Scient blocks.
+
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
 replace Scient's rather than run beside it.

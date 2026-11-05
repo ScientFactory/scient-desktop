@@ -1,5 +1,6 @@
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import {
+  use,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -22,6 +23,13 @@ import { normalizePdfZoom, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { DocumentReaderControls } from "../writing/DocumentReaderControls";
 import { OfficeFindMarks } from "./OfficeFindMarks";
 import { OfficeThumbnails } from "./OfficeThumbnails";
+import {
+  OfficeFileContext,
+  OfficeQuoteActions,
+  officeQuoteSource,
+  takeOfficeReveal,
+  useOfficeReveal,
+} from "./officeQuote";
 import type { OfficeFindHit } from "./wordFind";
 
 import "../pdf/scientPdfReader.css";
@@ -91,6 +99,11 @@ export function ScientOfficeReader(props: {
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [focusRequest, setFocusRequest] = useState(0);
+  const [content, setContent] = useState<HTMLDivElement | null>(null);
+  // A quote opened from the chat: its page, and its text marked there until the reader is used.
+  const reveal = useOfficeReveal(use(OfficeFileContext));
+  const quoted = reveal && reveal.page <= office.pages.length ? reveal : null;
+  const revealed = useRef<typeof reveal>(null);
   const current = office.pages[Math.min(page, office.pages.length - 1)];
   const fit = current && width > 48 ? (width - 48) / current.width : 1;
   const chosen = zoom === "fit" ? normalizePdfZoom(fit) : zoom;
@@ -158,6 +171,13 @@ export function ScientOfficeReader(props: {
     );
     return () => run.abort();
   }, [findIn, query]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the pages' DOM node to a quote the chat asked this file's reader to show, once its page is laid out
+  useEffect(() => {
+    if (!quoted || revealed.current === quoted) return;
+    revealed.current = quoted;
+    scrollRef.current?.(quoted.page - 1);
+  }, [quoted, scrollRef]);
 
   const keyboardAction = useRef<(command: string, factor?: number) => boolean>(() => false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps keyboardAction holding the latest shortcut handler
@@ -239,7 +259,13 @@ export function ScientOfficeReader(props: {
             onError={props.onError}
           />
         ) : null}
-        <div className="scient-pdf-content">
+        <div
+          ref={setContent}
+          className="scient-pdf-content"
+          onPointerDown={() => {
+            if (quoted) takeOfficeReveal(quoted);
+          }}
+        >
           <OfficePages
             pages={office.pages}
             paint={office.paint}
@@ -250,7 +276,7 @@ export function ScientOfficeReader(props: {
             onPageChange={setPage}
             onError={props.onError}
             overlay={(index) => (
-              <>
+              <div className="absolute inset-0" {...officeQuoteSource(index)}>
                 {props.overlay?.(index)}
                 {hits?.some((hit) => hit.index === index) ? (
                   <OfficeFindMarks
@@ -258,9 +284,16 @@ export function ScientOfficeReader(props: {
                     active={active?.index === index ? active.nth : null}
                   />
                 ) : null}
-              </>
+                {quoted?.page === index + 1 ? (
+                  <OfficeFindMarks query={quoted.text} active={0} everywhere />
+                ) : null}
+              </div>
             )}
             {...(props.footer ? { footer: props.footer } : {})}
+          />
+          <OfficeQuoteActions
+            viewport={content}
+            unit={office.kind === "presentation" ? "slide" : "page"}
           />
         </div>
       </div>

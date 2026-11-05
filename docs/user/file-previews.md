@@ -180,6 +180,15 @@ not yet relocate an already open file automatically.
 - If the integrated browser is unavailable or an HTML preview fails, Scient
   opens the source instead.
 
+Word (`.docx`) and PowerPoint (`.pptx`) files open in a reader with the PDF reader's
+controls: the page number and steps, zoom (buttons, pinch, the PDF reader's zoom keys,
+**Fit width** and actual size), a sidebar of pages, and search (**⌘F**), which marks every
+match. Their text can be
+selected, copied and quoted (see [Message Scient](composer.md#quote-a-word-page-or-slide)).
+A very long document shows its first 1,000 pages, and a paragraph, table or header too
+long to lay out quickly ends the preview there; both say **Preview limited**. Open the file
+in Word or PowerPoint for the rest.
+
 To save a project Markdown file as a PDF, expand the editor's formatting tools
 and choose **More actions → Export → PDF**. Scient saves your latest edits,
 exports exactly that saved version with its project images, and asks where to
