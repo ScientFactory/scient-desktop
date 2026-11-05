@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -67,7 +67,9 @@ import { ResourceTelemetryDiagnostics } from "../components/settings/ResourceTel
 import { useResourceTelemetry } from "./resourceTelemetryState";
 // SCIENT-FORK:END
 
-class MonitorError extends Data.TaggedError("MonitorError")<{ readonly message: string }> {}
+class MonitorError extends Schema.TaggedError<MonitorError>()("MonitorError", {
+  message: Schema.String,
+}) {}
 
 const environmentId = EnvironmentId.make("remote");
 const startError = "The resource monitor is not available.";

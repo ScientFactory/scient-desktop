@@ -9,7 +9,6 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -191,12 +190,14 @@ export const recordContextHistory = Effect.fn("ContextHistory.record")(function*
     return { ...handoff, historySource: source };
   }
   const id = ContextHandoffId.make(`legacy-event:${event.id}`);
+  // The body is copied, never referenced: event pruning deletes the event it came from.
+  // The stored event text is preferred because it is the lossless original.
   yield* sql`
     INSERT OR IGNORE INTO scient_handoff_legacy_sources (source_id, event_id, payload_json)
     VALUES (${id},
       (SELECT event_id FROM orchestration_events WHERE event_id = ${event.id}),
-      CASE WHEN EXISTS (SELECT 1 FROM orchestration_events WHERE event_id = ${event.id})
-        THEN NULL ELSE ${encodeHandoff(handoff)} END)
+      COALESCE((SELECT payload_json FROM orchestration_events WHERE event_id = ${event.id}),
+        ${encodeHandoff(handoff)}))
   `;
   if (handoff.history === undefined)
     return {
@@ -482,11 +483,17 @@ const selectCapturedContextHistory = Effect.fn("ContextHistory.selectCaptured")(
   };
 });
 
-class UncommittedContextHistorySelection extends Data.TaggedError(
+type CapturedContextHistorySelection = Effect.Success<
+  ReturnType<typeof selectCapturedContextHistory>
+>;
+
+// Rollback signal only: the selection never leaves this module or gets encoded.
+class UncommittedContextHistorySelection extends Schema.TaggedError<UncommittedContextHistorySelection>()(
   "UncommittedContextHistorySelection",
-)<{
-  readonly selected: Effect.Success<ReturnType<typeof selectCapturedContextHistory>>;
-}> {}
+  {
+    selected: Schema.declare((_: unknown): _ is CapturedContextHistorySelection => true),
+  },
+) {}
 
 /** A plan whose handoff event is not committed yet (a fit check before a start)
  * reads its membership from a capture that is rolled back after selection. */

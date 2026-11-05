@@ -108,6 +108,7 @@ interface ManagedProviderRuntimeActivation {
   readonly replacedRelativePath: string | null;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedProviderRuntimeError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);

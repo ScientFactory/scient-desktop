@@ -42,12 +42,28 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
   const order: string[] = [];
+  const urls: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
         if (input.command === "npm") {
           // SCIENT-FORK: block the retained installer fixture instead of an upstream archive.
           if (options.beforeDownload) yield* options.beforeDownload;
+          const packageSpec = input.args.at(-1) ?? "";
+          urls.push(packageSpec);
+          // Only 1.1.0's server package is published.
+          if (!packageSpec.includes("/v1.1.0/")) {
+            return {
+              stdout: "",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(1),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }
           order.push("install");
           const prefix = input.args[input.args.indexOf("--prefix") + 1];
           if (prefix === undefined) return yield* Effect.die("missing npm prefix");
@@ -133,7 +149,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       ),
     ),
   );
-  return { selfUpdate, order };
+  return { selfUpdate, order, urls };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -192,11 +208,17 @@ it.layer(NodeServices.layer)("server self update", (it) => {
 
   it.effect("lets a user start an update, but only to stable without nightly", () =>
     Effect.gen(function* () {
-      const { selfUpdate, order } = yield* makeHarness({
+      const { selfUpdate, order, urls } = yield* makeHarness({
         policy: {
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { updates: { mode: "auto", allowNightly: false } },
+          limits: {
+            updates: {
+              mode: "auto",
+              allowNightly: false,
+              feedUrl: "https://updates.example.com/scient/",
+            },
+          },
         },
       });
       expect(
@@ -204,7 +226,16 @@ it.layer(NodeServices.layer)("server self update", (it) => {
           .reason,
       ).toBe("Example Corp manages Scient updates. Only stable releases can be installed.");
       expect(order).toEqual([]);
+      // The mirror publishes only 1.1.0's server package.
+      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
+        "Could not install Scient server 1.2.0 from Example Corp's update mirror. Check that it publishes v1.2.0/scient-server-1.2.0.tgz.",
+      );
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      // npm installs the package from the policy's mirror, not GitHub.
+      expect(urls).toEqual([
+        "https://updates.example.com/scient/v1.2.0/scient-server-1.2.0.tgz",
+        "https://updates.example.com/scient/v1.1.0/scient-server-1.1.0.tgz",
+      ]);
     }),
   );
 

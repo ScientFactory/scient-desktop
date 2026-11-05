@@ -194,12 +194,11 @@ function makeHarness(options?: {
           makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
-      getProviderManagedRuntimeActionsForInstance: () => Effect.sync(() => undefined),
-      getProviderSkillActionsForInstance: () => Effect.sync(() => undefined),
-      getProviderPluginActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
+      getProviderSkillActionsForInstance: () => Effect.undefined,
+      getProviderPluginActionsForInstance: () => Effect.undefined,
       recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => SubscriptionRef.get(providersRef),

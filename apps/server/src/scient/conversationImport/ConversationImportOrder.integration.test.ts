@@ -24,9 +24,10 @@ import {
   CONVERSATION_IMPORT_JOURNAL_FILE,
 } from "./ConversationImportJournal.ts";
 
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as Secrets from "../../auth/ServerSecretStore.ts";
 import * as Projections from "../../orchestration-v2/ProjectionStore.ts";
-import * as Maintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as LegacyImporter from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Snapshot from "../conversationExport/ConversationSnapshotService.ts";
 import { PNG, makePackage, zipBytesPromise } from "../conversationFile/scic.test-fixtures.ts";
@@ -54,8 +55,10 @@ const decodeImportIds = Schema.decodeEffect(ConversationImportIds);
 const encodeUnknownJournalJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const TestLayer = Layer.mergeAll(
-  Staging.layer({ sweepOnTimer: false }).pipe(Layer.provide(Secrets.layer)),
-  Maintenance.layer,
+  Staging.layer({ sweepOnTimer: false }).pipe(
+    Layer.provide(AssetSigner.layer.pipe(Layer.provide(Secrets.layer))),
+  ),
+  ProjectionReplay.layer,
   Snapshot.layer.pipe(Layer.provide(LegacyImporter.layer)),
 ).pipe(Layer.provideMerge(nativeImportTestLayer()));
 
@@ -264,7 +267,7 @@ it.live(
       );
       assert.deepEqual(yield* staging.confirm(request, principal()), result);
       assert.deepEqual(yield* projections.getThreadProjection(result.threadId), projection);
-      yield* (yield* Maintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(yield* projections.getThreadProjection(result.threadId), projection);
       const exported = makePackage((yield* capture()).snapshot, attachments);
       const reimportRequest = yield* stage(
@@ -381,7 +384,7 @@ it.live(
         yield* (yield* Projections.ProjectionStoreV2).getThreadProjection(result.threadId),
         edited,
       );
-      yield* (yield* Maintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         yield* (yield* Projections.ProjectionStoreV2).getThreadProjection(result.threadId),
         edited,
@@ -491,7 +494,7 @@ it.live(
         undefined,
       );
       assert.deepEqual(yield* importer.importConversation(lease, request), completion);
-      yield* (yield* Maintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         yield* (yield* Projections.ProjectionStoreV2).getThreadProjection(ids.threadId),
         projection,

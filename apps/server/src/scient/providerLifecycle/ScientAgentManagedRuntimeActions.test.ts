@@ -273,10 +273,13 @@ describe("managed Scient Agent activation", () => {
         yield* gate
           .acquireProcess(identity, { target: scientAgentTarget, kind: "session" })
           .pipe(Effect.provideService(Scope.Scope, conversation));
-        const failure = yield* Effect.tryPromise(() =>
-          runtime.install({ artifact, signal: new AbortController().signal }),
-        ).pipe(Effect.flip);
-        expect(String(failure.cause)).toContain("open conversation");
+        const failure = yield* Effect.promise(() =>
+          runtime.install({ artifact, signal: new AbortController().signal }).then(
+            () => undefined,
+            (cause: unknown) => cause,
+          ),
+        );
+        expect(String(failure)).toContain("open conversation");
         // The previous runtime stays selected.
         const status = yield* Effect.promise(() => runtime.status(artifact));
         expect(status.installed && status.selected).toBe(true);
@@ -320,6 +323,16 @@ const effectiveChildEnvironment = (command: ChildProcess.StandardCommand) => ({
   ...command.options.env,
 });
 
+// A leak would copy the server's real process environment, so the canaries go there rather
+// than through HostProcess.Environment. Returns the restore.
+const setServerCanaries = () => {
+  const names = ["T3CODE_PROBE_CANARY", "SCIENT_PROBE_CANARY"] as const;
+  for (const name of names) process.env[name] = "server-internal";
+  return () => {
+    for (const name of names) delete process.env[name];
+  };
+};
+
 /** A custom OMP executable, a gate and a resolution with a recording spawner. */
 const probeFixture = Effect.fn("probeFixture")(function* () {
   const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-agent-probe-"));
@@ -333,7 +346,7 @@ const probeFixture = Effect.fn("probeFixture")(function* () {
     baseDir,
     // The driver passes the already filtered Scient Agent process environment.
     environment: {
-      PATH: process.env.PATH ?? "",
+      PATH: (yield* HostProcess.Environment).PATH ?? "",
       HOME: baseDir,
       SCIENT_AGENT_ROOT: NodePath.join(baseDir, "native-state"),
     },
@@ -372,9 +385,8 @@ describe("configured Scient Agent health probe", () => {
 
   it.live("runs with the filtered OMP environment, never the server's internals", () =>
     Effect.gen(function* () {
-      const canaries = ["T3CODE_PROBE_CANARY", "SCIENT_PROBE_CANARY"] as const;
-      for (const name of canaries) process.env[name] = "server-internal";
       const { baseDir, resolve, versionProbes } = yield* probeFixture();
+      const restoreServerEnvironment = setServerCanaries();
       try {
         expect((yield* resolve).summary.source).toBe("custom");
         const [probe] = versionProbes();
@@ -384,8 +396,8 @@ describe("configured Scient Agent health probe", () => {
           "SCIENT_AGENT_ROOT",
         ]);
       } finally {
-        for (const name of canaries) delete process.env[name];
         NodeFS.rmSync(baseDir, { recursive: true, force: true });
+        restoreServerEnvironment();
       }
     }),
   );
@@ -443,7 +455,7 @@ describe("managed Scient Agent activation check", () => {
             executablePath: executable,
             expectedVersion: "0.1.0",
             cwd,
-            environment: { PATH: process.env.PATH ?? "", HOME: root },
+            environment: { PATH: (yield* HostProcess.Environment).PATH ?? "", HOME: root },
             activations: [],
           }).pipe(
             Effect.provideServiceEffect(OmpExecutableGate, makeOmpExecutableGate()),
@@ -492,9 +504,13 @@ it.live("rolls back a failed RPC check and removes only the native installation"
       );
       failQualification = true;
       const candidate = { ...artifact, version: "0.2.0", catalogRevision: "scient:0.2.0:test" };
-      yield* Effect.tryPromise(() =>
-        runtime.install({ artifact: candidate, signal: new AbortController().signal }),
-      ).pipe(Effect.flip);
+      const rejected = yield* Effect.promise(() =>
+        runtime.install({ artifact: candidate, signal: new AbortController().signal }).then(
+          () => false,
+          () => true,
+        ),
+      );
+      expect(rejected).toBe(true);
       const status = yield* Effect.promise(() => runtime.status(candidate));
       expect(status).toMatchObject({ activeVersion: "0.1.0", selected: true, installed: true });
       expect(status.launchPath).toBe(runtime.launchPath(artifact));
@@ -533,7 +549,7 @@ for (const { name, info, expectedVersion } of [
             executablePath: executable,
             expectedVersion,
             cwd: root,
-            environment: { PATH: process.env.PATH ?? "" },
+            environment: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
             activations: [],
           }).pipe(
             Effect.provideServiceEffect(OmpExecutableGate, makeOmpExecutableGate()),

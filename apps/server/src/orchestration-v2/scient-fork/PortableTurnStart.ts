@@ -116,16 +116,13 @@ export const startFrozenConversationFork = Effect.fn(
   });
   if (portableReason === undefined && frozen !== undefined) {
     // Without the live source (deleted or unreadable) the frozen turns are all there is.
-    const liveSourceTurns = yield* input.projectionStore
-      .getThreadRecords(frozen.sourceThreadId, ["providerTurns"])
-      .pipe(
-        Effect.map((records) => records.providerTurns),
-        Effect.orElseSucceed(() => []),
-      );
+    const liveSource = yield* input.projectionStore
+      .getThreadRecords(frozen.sourceThreadId, ["runs", "attempts", "providerTurns"])
+      .pipe(Effect.orElseSucceed(() => ({ runs: [], attempts: [], providerTurns: [] })));
     const forked = yield* Effect.result(
       session.forkThread({
         sourceProviderThread: frozen.sourceProviderThread,
-        sourceProviderTurns: frozenForkSourceTurns(frozen, liveSourceTurns),
+        sourceProviderTurns: frozenForkSourceTurns(frozen, liveSource),
         providerTurnId: frozen.providerTurnId,
         targetThreadId: input.threadId,
         modelSelection: run.modelSelection,

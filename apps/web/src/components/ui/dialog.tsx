@@ -232,7 +232,7 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       className={cn(
-        "wrap-anywhere font-heading leading-none",
+        "wrap-anywhere font-heading leading-snug",
         size === "caption"
           ? "text-xs font-normal text-muted-foreground"
           : cn(

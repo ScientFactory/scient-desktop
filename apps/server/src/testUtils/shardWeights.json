@@ -334,7 +334,6 @@
   "src/orchestration-v2/ThreadStream.test.ts": 0.867,
   "src/orchestration-v2/ThreadTitleRegenerationService.test.ts": 3.674,
   "src/orchestration-v2/ThreadTransportPerformance.test.ts": 0.908,
-  "src/orchestration-v2/TurnItemCompaction.test.ts": 1.733,
   "src/orchestration-v2/TurnItemPositionStore.test.ts": 1.493,
   "src/orchestration-v2/TurnStartReads.test.ts": 1.91,
   "src/orchestration-v2/UserFacingErrors.test.ts": 0.473,

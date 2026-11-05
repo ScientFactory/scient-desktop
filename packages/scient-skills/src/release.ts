@@ -35,6 +35,7 @@ const verifiedFiles = new WeakMap<SkillRelease, ReadonlyMap<string, Uint8Array>>
 const compareStrings = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/scient-skills has no Effect runtime; this is a local validation throw.
 class SkillReleaseValidationError extends Error {
   override readonly name = "SkillReleaseValidationError";
 }

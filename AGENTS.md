@@ -21,7 +21,7 @@ to adopt automatically.
   and its integration points before adding equivalent behavior in app code.
 - `.repos/`: read-only reference implementations; do not edit or import from them.
 
-Read `.repos/effect-smol/LLMS.md` before writing Effect code.
+Read `.repos/effect/LLMS.md` before writing Effect code.
 Architecture details: `docs/internals/overview.md`.
 Terminology: `docs/internals/glossary.md`.
 

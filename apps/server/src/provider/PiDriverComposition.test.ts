@@ -437,6 +437,7 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
           "model with space",
           "--thinking",
           "high",
+          "--offline",
           "--no-extensions",
           "--extension",
           path.join(host.paths.stateDir, "pi", "extensions", "scient-custom-models.mjs"),

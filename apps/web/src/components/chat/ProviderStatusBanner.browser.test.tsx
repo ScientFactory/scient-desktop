@@ -1,10 +1,17 @@
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { type ReactNode } from "react";
 
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getProviderStatusBannerKey, ProviderStatusBanner } from "./ProviderStatusBanner";
+
+const environmentId = EnvironmentId.make("environment-local");
 
 function warningProvider(): ServerProvider {
   return {
@@ -58,7 +65,11 @@ describe("ProviderStatusBanner", () => {
 
     const markup = await renderMarkup(
       _fixture,
-      <ProviderStatusBanner status={warningProvider()} onDismiss={() => {}} />,
+      <ProviderStatusBanner
+        environmentId={environmentId}
+        status={warningProvider()}
+        onDismiss={() => {}}
+      />,
     );
 
     expect(markup).toContain('role="alert"');
@@ -73,6 +84,7 @@ describe("ProviderStatusBanner", () => {
     const markup = await renderMarkup(
       _fixture,
       <ProviderStatusBanner
+        environmentId={environmentId}
         status={{ ...warningProvider(), status: "error" }}
         onDismiss={() => {}}
       />,
@@ -122,7 +134,14 @@ describe("ProviderStatusBanner", () => {
     expect(getProviderStatusBannerKey(installing)).toBeNull();
     expect(getProviderStatusBannerKey(installed)).toBeNull();
     expect(
-      await renderMarkup(_fixture, <ProviderStatusBanner status={missing} onDismiss={() => {}} />),
+      await renderMarkup(
+        _fixture,
+        <ProviderStatusBanner
+          environmentId={environmentId}
+          status={missing}
+          onDismiss={() => {}}
+        />,
+      ),
     ).toBe("");
   });
 
@@ -151,7 +170,7 @@ describe("ProviderStatusBanner", () => {
 
     const markup = await renderMarkup(
       _fixture,
-      <ProviderStatusBanner status={failed} onDismiss={() => {}} />,
+      <ProviderStatusBanner environmentId={environmentId} status={failed} onDismiss={() => {}} />,
     );
     expect(getProviderStatusBannerKey(failed)).not.toBeNull();
     expect(markup).toContain("Cursor setup failed");
@@ -170,7 +189,7 @@ describe("ProviderStatusBanner", () => {
 
     const markup = await renderMarkup(
       _fixture,
-      <ProviderStatusBanner status={failed} onDismiss={() => {}} />,
+      <ProviderStatusBanner environmentId={environmentId} status={failed} onDismiss={() => {}} />,
     );
     expect(getProviderStatusBannerKey(failed)).not.toBeNull();
     expect(markup).toContain("Cursor provider failed its health check.");

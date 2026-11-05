@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -64,7 +65,7 @@ export const fixture = Effect.fnUntraced(function* (suffix: string, workspace?: 
     instanceId,
     settings: { enabled: true, binaryPath: binary!, launchArgs: "", customModels: [] },
     environment: {
-      PATH: process.env.PATH,
+      PATH: (yield* HostProcess.Environment).PATH,
       HOME: root,
       PI_CODING_AGENT_DIR: profile,
       PI_TELEMETRY: "0",

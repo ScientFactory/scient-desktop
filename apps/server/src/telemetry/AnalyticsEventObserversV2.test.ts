@@ -236,7 +236,7 @@ describe("native V2 analytics", () => {
                   streamChanges: Stream.empty,
                 }),
                 Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.sync(() => undefined),
+                  getInstance: () => Effect.undefined,
                 }),
                 Layer.mock(ProjectionStoreV2)({}),
               ),
@@ -299,7 +299,7 @@ describe("native V2 analytics", () => {
                 streamChanges: Stream.empty,
               }),
               Layer.mock(ProviderInstanceRegistry)({
-                getInstance: () => Effect.sync(() => undefined),
+                getInstance: () => Effect.undefined,
               }),
               Layer.mock(ProjectionStoreV2)({}),
             ),
@@ -377,7 +377,7 @@ describe("native V2 analytics", () => {
                   streamChanges: Stream.empty,
                 }),
                 Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.sync(() => undefined),
+                  getInstance: () => Effect.undefined,
                 }),
                 Layer.mock(ProjectionStoreV2)({
                   getThreadShell: () =>

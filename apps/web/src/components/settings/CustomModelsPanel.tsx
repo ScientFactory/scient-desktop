@@ -52,7 +52,6 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironments, useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { isElectron } from "~/env";
-import { usePrimarySessionState } from "~/environments/primary";
 import { useEnvironmentSessionState } from "~/state/session";
 import { resolvePrimaryOperateAccess, resolveRemoteOperateAccess } from "~/providerOperateAccess";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -123,13 +122,13 @@ export function CustomModelsContent(props: ContentProps) {
 }
 
 function PrimaryCustomModelsContent(props: ContentProps) {
-  const session = usePrimarySessionState();
+  const session = useEnvironmentSessionState(props.environmentId);
   const access = resolvePrimaryOperateAccess({
     isPrimary: true,
     hasDesktopBridge: false,
     session: session.data,
     isPending: session.isPending,
-    hasError: session.error !== null,
+    hasError: session.hasError,
   });
   return access === "granted" ? (
     <EditableCustomModelsContent {...props} />

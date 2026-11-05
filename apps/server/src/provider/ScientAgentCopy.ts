@@ -36,12 +36,12 @@ export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, stri
   ],
   // Keys worth keeping go into Scient Accounts; request_secret stays for one-time secrets.
   [
-    'A secret: call `request_secret` yourself. Pass its `secretRef` to a T3 tool, or use `delivery: "file"` for a shell command.',
-    'A secret: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key to keep, or `request_secret` for a one-time secret (pass its `secretRef` to a T3 tool, or use `delivery: "file"` for a shell command).',
+    "only the user can give: call `request_secret`, not a chat ask or a handoff.",
+    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key to keep, or `request_secret` for a one-time one, not a chat ask or a handoff.",
   ],
   [
-    "Asked how to provide a secret: call this now, do not explain instead.",
-    "Asked how to provide a secret: ask now with this or `scient_account_add`, do not explain instead.",
+    "Asked how to give one: call now.",
+    "Asked how to give one: ask now with this or `scient_account_add`.",
   ],
   // Scient chat renders chart and diagram fences inline.
   [

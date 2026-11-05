@@ -429,6 +429,38 @@ it.effect("requires an update before running an older activated managed installa
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("updates an older supported managed installation to the pinned release on startup", () =>
+  Effect.gen(function* () {
+    const first = yield* makeHarness();
+    yield* first.installation.start;
+    yield* terminalState(first.installation);
+    const executable = yield* first.installation.resolve();
+    const oldDirectory = `${first.installation.managedDirectory}/0.156.0`;
+    yield* first.fs.rename(executable.managedVersionDirectory!, oldDirectory);
+    for (const name of ["codex-package.json", ".install-complete.json"]) {
+      const file = `${oldDirectory}/${name}`;
+      yield* first.fs.writeFileString(
+        file,
+        (yield* first.fs.readFileString(file)).replaceAll("0.156.1", "0.156.0"),
+      );
+    }
+    yield* first.fs.writeFileString(
+      `${first.installation.managedDirectory}/active.json`,
+      '{"version":"0.156.0"}',
+    );
+    // SCIENT-FORK:START — Scient's passive installer never updates or downloads at startup.
+    const passive = yield* makeHarness({ baseDir: first.baseDir, options: { initialize: false } });
+    expect((yield* passive.installation.state).operationId).toBeNull();
+    expect(passive.downloads()).toBe(0);
+    // SCIENT-FORK:END
+    const restarted = yield* makeHarness({ baseDir: first.baseDir });
+    expect((yield* restarted.installation.state).operationId).not.toBeNull();
+    expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
+    expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
+    expect(restarted.downloads()).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("rejects corrupted downloads without publishing a runtime", () =>
   Effect.gen(function* () {
     const { installation, fs } = yield* makeHarness({

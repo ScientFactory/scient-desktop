@@ -11,6 +11,7 @@ export interface ParsedSkillDocument {
   readonly instructions: string;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/scient-skills has no Effect runtime; this is a local validation throw.
 class SkillDocumentError extends Error {
   override readonly name = "SkillDocumentError";
 }

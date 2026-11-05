@@ -16,7 +16,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -59,19 +59,21 @@ export function resolveWorkspaceFileLinkOpenTarget(path: string): "browser" | "f
     : "file";
 }
 
-export class BrowserPreviewUnavailableError extends Data.TaggedError(
+export class BrowserPreviewUnavailableError extends Schema.TaggedError<BrowserPreviewUnavailableError>()(
   "BrowserPreviewUnavailableError",
-)<{
-  readonly message: string;
-}> {}
+  { message: Schema.String },
+) {}
 
-export class BrowserSettingsReadError extends Data.TaggedError("BrowserSettingsReadError")<{
-  readonly cause: unknown;
-}> {
+export class BrowserSettingsReadError extends Schema.TaggedError<BrowserSettingsReadError>()(
+  "BrowserSettingsReadError",
+  { cause: Schema.Defect() },
+) {
   override get message(): string {
     return "Saved browser settings could not be loaded.";
   }
 }
+
+export const isBrowserSettingsReadError = Schema.is(BrowserSettingsReadError);
 
 export type OpenPreviewMutation<E = unknown> = (input: {
   readonly environmentId: EnvironmentId;
@@ -115,7 +117,7 @@ export async function openUrlInPreview<E>(input: {
   );
   if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   // SCIENT-FORK:END
-  if (defaults instanceof BrowserSettingsReadError) {
+  if (isBrowserSettingsReadError(defaults)) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
   // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.

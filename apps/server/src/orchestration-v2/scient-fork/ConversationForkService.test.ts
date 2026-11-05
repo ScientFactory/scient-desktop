@@ -28,7 +28,7 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerConfig } from "../../config.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
@@ -621,9 +621,9 @@ it.effect(
         limit: 1,
       });
       assert.deepEqual(afterDelete.items, [boundary]);
-      const rebuilt = yield* Effect.service(ProjectionMaintenance.ProjectionMaintenanceV2).pipe(
+      const rebuilt = yield* Effect.service(ProjectionReplay.ProjectionReplay).pipe(
         Effect.flatMap((maintenance) => maintenance.rebuild),
-        Effect.provide(ProjectionMaintenance.layer),
+        Effect.provide(ProjectionReplay.layer),
       );
       assert.isTrue(rebuilt.valid);
       assert.deepEqual(

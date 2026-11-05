@@ -343,10 +343,16 @@ describe("PiProvider", () => {
         ),
       );
 
-      // The discovery session is an ephemeral `--mode rpc` launch of the
+      // The discovery session is an ephemeral, offline `--mode rpc` launch of the
       // configured binary, carrying the caller's environment.
       const rpcSpawn = spawns.find((spawn) => spawn.args.includes("--mode"));
-      assert.deepEqual(rpcSpawn?.args, ["--mode", "rpc", "--no-session", "--no-extensions"]);
+      assert.deepEqual(rpcSpawn?.args, [
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--offline",
+        "--no-extensions",
+      ]);
       assert.equal(rpcSpawn?.env.PI_TOKEN, "test");
 
       assert.equal(snapshot.status, "ready");

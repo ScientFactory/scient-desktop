@@ -40,7 +40,7 @@ import {
   layer as idAllocatorLayer,
 } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./ProjectionReplay.ts";
 import type { ProviderAdapterV2Error } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
@@ -278,7 +278,7 @@ it.live(
                 event.payload.nativeAcceptance === "pending",
             ),
           );
-          yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+          yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
           const rebuilt = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(
             rebuilt.providerTurns.find((turn) => turn.id === receipt.id),
@@ -287,7 +287,7 @@ it.live(
           assert.lengthOf(peer.state.prompts, 0);
         }).pipe(
           Effect.provide(
-            ProjectionMaintenance.layer.pipe(
+            ProjectionReplay.layer.pipe(
               Layer.provideMerge(
                 ProviderReplayHarness.layerWithRegistry(
                   { name, runtimePolicyOverride: { cwd } },

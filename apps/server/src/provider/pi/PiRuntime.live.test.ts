@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
 import { PiSettings } from "@t3tools/provider-pi/settings";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -46,7 +47,11 @@ it.live.skipIf(!binary)(
           `import fs from 'node:fs'; fs.writeFileSync(${json(marker)}, 'unexpected'); export default function() {}`,
         );
         const settings = decodePiSettings({ enabled: true, binaryPath: binary! });
-        const env = { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: profile };
+        const env = {
+          PATH: (yield* HostProcess.Environment).PATH,
+          HOME: root,
+          PI_CODING_AGENT_DIR: profile,
+        };
         // SCIENT-FORK:START — the old signature was
         // `checkPiProviderStatus(settings, env, makeRpcClient, cwd)`; these call
         // sites passed `undefined` for the client, so dropping the argument keeps

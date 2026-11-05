@@ -98,7 +98,7 @@ export const writeOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.writeFile
     const extensionPath = path.join(input.directory, `${input.name}.mjs`);
     const contents = yield* Effect.try({
       try: () => ({
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        // @effect-diagnostics-next-line globalJsonInEffect:off
         bootstrap: JSON.stringify(input.bootstrap),
         source: input.source(bootstrapPath),
       }),

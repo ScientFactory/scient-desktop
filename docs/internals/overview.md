@@ -69,8 +69,8 @@ select known environment-local checkouts; the group itself does not store inheri
 
 ## Durable intent and side effects
 
-The event log is the source of truth for orchestration state. The
-[v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
+Orchestration state is decided as events, and projections are the source of truth once they apply
+them. The [v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
 plans durable events and effects; provider execution belongs to the effect services.
 [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
 the accepted command receipt, and outbox effects in one database transaction. Subscribers receive
@@ -95,6 +95,23 @@ boundary forks freeze a Git checkpoint before committing fork intent. Provider e
 provisioning follow committed outbox intent. External process calls do not run inside the EventSink
 SQL transaction. Effects tied to a lost provider process cannot simply replay; recovery retires them
 before admitting new work.
+
+The event log only keeps what live readers need: about a day of history for reconnect replay and
+command-id retries.
+[ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes
+older events the projections cover, so projections cannot be rebuilt from the log. It keeps each
+stream's newest event (high-water marks, stream versions, snapshot sequences), `thread.created`
+(the legacy importer's marker), every `running` run update (Codex usage history reads the first
+of each attempt), and prompt anchors that retained subagent rows reference. Scient also keeps the
+V1 import events (`migration:v1:*`), which V1 source reconciliation compares edits against; see
+[EventPruneRetention](../../apps/server/src/orchestration-v2/scient-fork/EventPruneRetention.ts).
+A client whose cursor is below both its thread's newest event and the recorded pruned-through
+sequence missed pruned events, so it resumes from a snapshot; an idle thread's cursor resumes
+without one. Resumes recheck that sequence after reading the replay, since a pass can prune during
+the read. V2 command
+receipts stay for idempotency: a retry older than the retained history is still deduplicated,
+but its replay comes back without the pruned events. Receipts of imported legacy commands are
+removed once their threads are imported.
 
 ## Shared client runtime
 

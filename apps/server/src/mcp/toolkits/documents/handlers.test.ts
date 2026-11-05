@@ -22,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -92,7 +93,9 @@ const assetLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
-  ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
+  AssetSigner.layer.pipe(
+    Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
+  ),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 async function fixture(prefix: string): Promise<string> {

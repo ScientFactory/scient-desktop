@@ -41,6 +41,7 @@ import * as Queue from "effect/Queue";
 
 import {
   AVAILABLE_CONNECTION_STATE,
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   type NetworkStatus,
   type PreparedConnection,
@@ -92,7 +93,11 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
   const readResponse = { wait: Effect.void as Effect.Effect<void>, missing: false };
   const supervisor = EnvironmentSupervisor.of({
     // SCIENT-FORK:END
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {

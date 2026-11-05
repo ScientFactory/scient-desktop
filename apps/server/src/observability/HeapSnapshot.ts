@@ -8,8 +8,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+
+class HeapSnapshotWriteError extends Schema.TaggedError<HeapSnapshotWriteError>()(
+  "HeapSnapshotWriteError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not write a heap snapshot to ${this.path}.`;
+  }
+}
 
 // SCIENT-FORK: retained owner-only snapshot publication test invokes the production writer.
 export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
@@ -23,10 +33,13 @@ export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true }
     // publish it only once the mode is set.
     const partialPath = `${path}.partial`;
     yield* Effect.annotateCurrentSpan({ path });
-    yield* Effect.try(() => {
-      NodeV8.writeHeapSnapshot(partialPath);
-      NodeFS.chmodSync(partialPath, 0o600);
-      NodeFS.renameSync(partialPath, path);
+    yield* Effect.try({
+      try: () => {
+        NodeV8.writeHeapSnapshot(partialPath);
+        NodeFS.chmodSync(partialPath, 0o600);
+        NodeFS.renameSync(partialPath, path);
+      },
+      catch: (cause) => new HeapSnapshotWriteError({ path, cause }),
     }).pipe(Effect.tapError(() => fs.remove(partialPath, { force: true }).pipe(Effect.ignore)));
     yield* Effect.logInfo("Wrote heap snapshot.", { path });
   },

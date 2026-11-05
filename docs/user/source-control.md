@@ -152,6 +152,8 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
   action
 - Rewrite a pull request's title and description from the review itself, in Markdown, with a
   preview before you save
+- Where you can edit a description, tick its checkboxes from the Summary tab (the Overview tab on
+  mobile)
 - Rewrite your own comments the same way, wherever they are shown
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
@@ -289,6 +291,11 @@ are in place. A toast tracks progress and lets you cancel; if the clone fails, r
 toast or from the banner above the composer. When the host refuses the machine's SSH key, Scient
 clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
 HTTPS URL.
+
+To lay clones out like [ghq](https://github.com/x-motemen/ghq), turn on **Clone into host folders**
+under **Settings → Threads** (or **Source control** on mobile). Clones then default to
+`<host>/<owner>/<repo>` under **Add project starts in**, so set that to `~/ghq` to share ghq's
+folders. You can still change the destination before cloning.
 
 **Git is required only for source-control operations** — Ordinary folders, chat, files, terminals,
 browser tools, compute, and agents continue to work without Git. Cloning, branches, worktrees,

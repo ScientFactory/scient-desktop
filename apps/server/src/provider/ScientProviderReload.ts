@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
-import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 
@@ -16,16 +16,14 @@ export function makeScientProviderReload(deps: {
   readonly instanceRegistry: ProviderInstanceRegistry.ProviderInstanceRegistryShape;
   readonly layerScope: Scope.Scope;
   readonly syncLiveSources: Effect.Effect<unknown, never, Scope.Scope>;
-  readonly getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>>;
+  readonly getLiveInstances: Effect.Effect<ReadonlyMap<ProviderInstanceId, ProviderInstance>>;
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
   readonly refreshOneSource: (
-    providerSource: ProviderSnapshotSource,
+    instance: ProviderInstance,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
-  readonly readRefreshedSource: (
-    providerSource: ProviderSnapshotSource,
-  ) => Effect.Effect<ServerProvider>;
+  readonly readRefreshedSource: (instance: ProviderInstance) => Effect.Effect<ServerProvider>;
   readonly syncProvider: (provider: ServerProvider) => Effect.Effect<ReadonlyArray<ServerProvider>>;
   readonly authenticationFailuresRef: Ref.Ref<
     ReadonlyMap<ProviderInstanceId, { readonly message: string }>
@@ -35,7 +33,7 @@ export function makeScientProviderReload(deps: {
     instanceRegistry,
     layerScope,
     syncLiveSources,
-    getLiveSources,
+    getLiveInstances,
     refreshInstance,
     refreshOneSource,
     readRefreshedSource,
@@ -73,25 +71,23 @@ export function makeScientProviderReload(deps: {
   const refreshInstanceStrict = Effect.fn("ProviderRegistry.refreshInstanceStrict")(function* (
     instanceId: ProviderInstanceId,
   ) {
-    const sources = yield* getLiveSources;
-    const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-    if (!providerSource) {
+    const instance = (yield* getLiveInstances).get(instanceId);
+    if (!instance) {
       return yield* new ProviderRegistry.ProviderRegistryRefreshError({
         operation: "refresh",
         instanceId,
         message: `Provider refresh failed for ${instanceId}: no live source is available.`,
       });
     }
-    return yield* refreshOneSource(providerSource).pipe(failStrictRefresh("refresh", instanceId));
+    return yield* refreshOneSource(instance).pipe(failStrictRefresh("refresh", instanceId));
   });
 
   const refreshInstanceAfterAccountChange = Effect.fn(
     "ProviderRegistry.refreshInstanceAfterAccountChange",
   )(function* (instanceId: ProviderInstanceId) {
     const previousFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
-    const sources = yield* getLiveSources;
-    const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-    if (!providerSource) {
+    const instance = (yield* getLiveInstances).get(instanceId);
+    if (!instance) {
       return yield* new ProviderRegistry.ProviderRegistryRefreshError({
         operation: "refresh",
         instanceId,
@@ -102,9 +98,13 @@ export function makeScientProviderReload(deps: {
     // Keep the proven failure visible while the provider performs fresh
     // account verification. Clearing it first creates a false-ready window
     // and requires incomplete rollback on failure or interruption.
-    const canonicalProvider = yield* readRefreshedSource(providerSource).pipe(
+    const canonicalProvider = yield* readRefreshedSource(instance).pipe(
       failStrictRefresh("refresh", instanceId),
     );
+    // Settings can replace the instance mid-probe; its result does not verify the replacement.
+    if ((yield* instanceRegistry.getInstance(instanceId)) !== instance) {
+      return yield* refreshInstanceStrict(instanceId);
+    }
     if (previousFailure) {
       yield* Ref.update(authenticationFailuresRef, (previous) => {
         if (previous.get(instanceId) !== previousFailure) {
@@ -124,16 +124,15 @@ export function makeScientProviderReload(deps: {
     return yield* Effect.gen(function* () {
       yield* instanceRegistry.rebuildInstance(instanceId);
       yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
+      const instance = (yield* getLiveInstances).get(instanceId);
+      if (!instance) {
         return yield* new ProviderRegistry.ProviderRegistryRefreshError({
           operation: "reload",
           instanceId,
           message: `Provider reload failed for ${instanceId}: no live source is available.`,
         });
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(instance);
     }).pipe(failStrictRefresh("reload", instanceId));
   });
 

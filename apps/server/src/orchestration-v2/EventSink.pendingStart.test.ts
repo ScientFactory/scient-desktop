@@ -28,18 +28,15 @@ import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { CheckpointScopeId, TurnItemId } from "@t3tools/contracts";
 
 const stores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
 );
-const testLayer = Layer.mergeAll(
-  EventSink.layer,
-  ProjectionMaintenance.layer,
-  EffectOutbox.layer,
-).pipe(Layer.provideMerge(stores));
+const testLayer = Layer.mergeAll(EventSink.layer, EffectOutbox.layer).pipe(
+  Layer.provideMerge(stores),
+);
 const instanceId = ProviderInstanceId.make("controlled-plan-owner");
 const driver = ProviderDriverKind.make("omp");
 const seed = Effect.fnUntraced(function* () {

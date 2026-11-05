@@ -1,3 +1,4 @@
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { AttachmentToolkit } from "./attachment/tools.ts";
@@ -1344,7 +1345,7 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
       McpHttpServer.layerAttachmentToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
         Layer.provide(
           DocumentText.layer.pipe(

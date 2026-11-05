@@ -233,7 +233,9 @@ describe("controlled document request consumption", () => {
 
   it("returns typed public failures while keeping arbitrary renderer causes private", async () => {
     const host = mount(async () => {
-      throw new ScientDocumentHostExecutionError("The desktop document renderer is unavailable.");
+      throw new ScientDocumentHostExecutionError({
+        message: "The desktop document renderer is unavailable.",
+      });
     });
     host.emit(event("failed"));
     await vi.waitFor(() => expect(host.respond).toHaveBeenCalledTimes(1));

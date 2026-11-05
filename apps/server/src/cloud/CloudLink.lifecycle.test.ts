@@ -16,6 +16,7 @@ import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } fr
 import * as NetAddress from "effect/net/NetAddress";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
@@ -122,6 +123,8 @@ describe("reconcileDesiredCloudLink", () => {
         CloudLink.layer.pipe(
           Layer.provideMerge(idleHttpServer),
           Layer.provide(Layer.succeed(ConnectReachability.ConnectReachability, idleReachability)),
+          // Authorization is checked before anything is signed.
+          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "unused" })),
           Layer.provide(ManagedPolicy.layerTest()),
           Layer.provideMerge(
             ServerConfigModule.layerTest("/", { prefix: "t3-cloud-reconcile-test-" }).pipe(
@@ -152,6 +155,7 @@ describe("reconcileDesiredCloudLink", () => {
           applyConfig: unusedSecretStoreOperation,
           recoveryRequests: Stream.empty,
           requestRecovery: () => Effect.void,
+          restartConnector: () => Effect.succeed(false),
           tunnelConnected: Stream.empty,
           inspectConnector: Effect.succeed(null),
           readinessChanged: Stream.empty,
@@ -256,6 +260,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
                 }),
               ),
             ),
+            Layer.provide(EnvironmentKeys.layer),
             Layer.provide(ManagedPolicy.layerTest()),
           ),
         ),
@@ -286,6 +291,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
               }),
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
+            restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
             inspectConnector: Effect.succeed(null),
             readinessChanged: Stream.empty,

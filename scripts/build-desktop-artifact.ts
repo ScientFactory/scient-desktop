@@ -787,6 +787,15 @@ export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedError<De
   }
 }
 
+export class DesktopBuildArtifactCopyError extends Schema.TaggedError<DesktopBuildArtifactCopyError>()(
+  "DesktopBuildArtifactCopyError",
+  { from: Schema.String, to: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to copy build artifact ${this.from} to ${this.to}.`;
+  }
+}
+
 export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<DesktopBuildNoArtifactsProducedError>()(
   "DesktopBuildNoArtifactsProducedError",
   {
@@ -1129,8 +1138,20 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
       });
     for (const file of expected) {
       const source = path.join(input.sourceDir, file);
-      const info = yield* Effect.tryPromise(() => NodeFSP.lstat(source));
-      const parent = yield* Effect.tryPromise(() => NodeFSP.lstat(path.dirname(source)));
+      const info = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(source),
+        catch: (cause) =>
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite cannot be inspected: ${file}: ${String(cause)}`,
+          }),
+      });
+      const parent = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(path.dirname(source)),
+        catch: (cause) =>
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite folder cannot be inspected: ${file}: ${String(cause)}`,
+          }),
+      });
       if (
         !info.isFile() ||
         info.isSymbolicLink() ||
@@ -2467,7 +2488,7 @@ const NativeMarkerManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
-const decodeNativeMarkerManifest = Schema.decodeUnknownSync(
+const decodeNativeMarkerManifest = Schema.decodeUnknownOption(
   Schema.fromJsonString(NativeMarkerManifest),
 );
 
@@ -2507,13 +2528,12 @@ const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (pa
   if (!(yield* exists(manifestPath))) return false;
   const source = yield* fs.readFileString(manifestPath).pipe(Effect.orElseSucceed(() => ""));
   if (source === "") return false;
-  const manifest = yield* Effect.try(() => decodeNativeMarkerManifest(source)).pipe(
-    Effect.orElseSucceed(() => null),
-  );
-  if (manifest === null) return false;
-  return Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }).some(
-    (dependency) => dependency.startsWith("node-gyp-build"),
-  );
+  const manifest = decodeNativeMarkerManifest(source);
+  if (Option.isNone(manifest)) return false;
+  return Object.keys({
+    ...manifest.value.dependencies,
+    ...manifest.value.optionalDependencies,
+  }).some((dependency) => dependency.startsWith("node-gyp-build"));
 });
 
 export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservingSymlinks")(
@@ -4585,7 +4605,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.verbose,
   );
 
-  const nativePreviewSetting = process.env.SCIC_PREVIEW_ENABLE_NATIVE;
+  const env = yield* HostProcess.Environment;
+  const nativePreviewSetting = env.SCIC_PREVIEW_ENABLE_NATIVE;
   if (
     nativePreviewSetting !== undefined &&
     nativePreviewSetting !== "0" &&
@@ -4614,7 +4635,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
               platform: options.platform,
               arch: options.arch,
               channel: previewChannel,
-              manifestPath: process.env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
+              manifestPath: env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
               repoRoot,
             });
             const nativePath = await buildConversationPreview({
@@ -5120,13 +5141,15 @@ export const copyDesktopBuildArtifacts = Effect.fn("copyDesktopBuildArtifacts")(
     // overwrite a directory with a file or a file with a directory, and only merges into
     // an existing directory, so a stale entry of either type must go first.
     yield* fs.remove(to, { recursive: true, force: true });
-    yield* Effect.tryPromise(() =>
-      NodeFSP.cp(from, to, {
-        recursive: true,
-        force: true,
-        verbatimSymlinks: true,
-      }),
-    );
+    yield* Effect.tryPromise({
+      try: () =>
+        NodeFSP.cp(from, to, {
+          recursive: true,
+          force: true,
+          verbatimSymlinks: true,
+        }),
+      catch: (cause) => new DesktopBuildArtifactCopyError({ from, to, cause }),
+    });
     copiedArtifacts.push(to);
   }
 

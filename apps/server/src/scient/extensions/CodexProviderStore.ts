@@ -27,6 +27,7 @@ import {
   readContainedPluginIcon,
 } from "./LocalPluginContents.ts";
 import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
+import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { makeCodexStoreIcons } from "./CodexStoreIcons.ts";
 
@@ -405,7 +406,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       : undefined;
     const localIcon =
       !bundledIcon && root && (info?.logo || info?.composerIcon) && includeIcon
-        ? yield* Effect.tryPromise(() =>
+        ? yield* tryLocalPluginRead(() =>
             readContainedPluginIcon(root, (info?.logo || info?.composerIcon)!),
           ).pipe(Effect.orElseSucceed(() => undefined))
         : undefined;
@@ -615,7 +616,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       source && (source.type === "local" || source.type === "git")
         ? (source.path ?? undefined)
         : undefined;
-    return Effect.tryPromise(() => codexSkillRoot(root, pluginCacheRoot, file)).pipe(
+    return tryLocalPluginRead(() => codexSkillRoot(root, pluginCacheRoot, file)).pipe(
       Effect.orElseSucceed(() => undefined),
     );
   };
@@ -640,7 +641,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const root = yield* localKeyRoot(detail, item, installed);
         const requiredKeys =
           installed && root
-            ? yield* Effect.tryPromise(() => readLocalPluginRequiredKeys(root)).pipe(
+            ? yield* tryLocalPluginRead(() => readLocalPluginRequiredKeys(root)).pipe(
                 Effect.orElseSucceed(() => undefined),
               )
             : undefined;
@@ -688,7 +689,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const remotePluginId = item.plugin.remotePluginId;
         const text =
           root && skill.path
-            ? yield* Effect.tryPromise(() => readContainedPluginText(root, skill.path!)).pipe(
+            ? yield* tryLocalPluginRead(() => readContainedPluginText(root, skill.path!)).pipe(
                 Effect.mapError(() => ({
                   message: "This skill must stay within its plugin and be at most 256 KB.",
                 })),

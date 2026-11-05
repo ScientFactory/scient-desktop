@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir .",
     "extensions:icons:generate": "node generate-extension-brand-icons.mjs"
   },
@@ -31,7 +31,6 @@
     "@types/yauzl": "^3.4.0",
     "esbuild": "0.28.2",
     "postject": "1.0.0-alpha.6",
-    "typescript": "catalog:",
     "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"
   }

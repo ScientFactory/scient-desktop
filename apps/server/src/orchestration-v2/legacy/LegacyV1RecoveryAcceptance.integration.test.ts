@@ -40,7 +40,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import * as ProviderRecovery from "../ProviderRuntimeRecoveryService.ts";
 import { SCIENT_MIGRATIONS } from "../scient-fork/scientMigrator.ts";
 import {
@@ -137,7 +137,7 @@ const backupDatabase = Effect.fn("MigrationAcceptance.backupDatabase")(function*
   sourcePath: string,
   destinationPath: string,
 ) {
-  yield* Effect.tryPromise(async () => {
+  yield* Effect.promise(async () => {
     const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
     try {
       await NodeSqlite.backup(database, destinationPath);
@@ -295,14 +295,14 @@ it.live(
             ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }).pipe(Layer.orDie),
           );
           const recovery = ProviderRecovery.layer.pipe(Layer.provideMerge(services));
-          const bootLayer = ProjectionMaintenance.layer.pipe(Layer.provideMerge(recovery));
+          const bootLayer = ProjectionReplay.layer.pipe(Layer.provideMerge(recovery));
           return yield* Effect.scoped(
             Effect.gen(function* () {
               const importer = yield* LegacyV1ThreadImporter;
               const orchestrator = yield* OrchestratorV2;
               const sink = yield* EventSinkV2;
               const sql = yield* SqlClient.SqlClient;
-              const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+              const maintenance = yield* ProjectionReplay.ProjectionReplay;
               yield* runOrderedV2StartupPhases({
                 importLegacyShells: importer.reconcileShells.pipe(
                   Effect.andThen(cutOverLegacyQueues),
@@ -456,7 +456,7 @@ it.live(
           sourceQueue,
         );
         // Restoring into a separate profile must not replace work completed after the backup.
-        yield* Effect.try(() => {
+        yield* Effect.sync(() => {
           const database = new NodeSqlite.DatabaseSync(config.dbPath, { readOnly: true });
           try {
             assert.equal(
@@ -474,7 +474,7 @@ it.live(
             database.close();
           }
         });
-        yield* Effect.try(() => {
+        yield* Effect.sync(() => {
           const database = new NodeSqlite.DatabaseSync(
             path.join(restoredConfig.stateDir, "state.sqlite"),
             { readOnly: true },

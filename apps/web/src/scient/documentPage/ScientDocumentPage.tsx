@@ -24,7 +24,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { resolveMarkdownDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
 import { isMermaidSyntaxError } from "../diagrams/mermaidRecovery";
-import { MermaidRenderError, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
+import { isMermaidRenderError, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { isScientMathCodeClassName } from "../math/remarkScientMath";
 import { renderCachedScientMath } from "../math/ScientMath";
 import { scientMathMarkdownText, scientMathRemarkPluginsForMessage } from "../math/scientMathText";
@@ -186,7 +186,7 @@ type DiagramState =
  * means the page did not finish and must not be printed.
  */
 function isMermaidContentError(cause: unknown): boolean {
-  if (cause instanceof MermaidRenderError) {
+  if (isMermaidRenderError(cause)) {
     return (
       isMermaidSyntaxError(cause.cause) ||
       (cause.cause instanceof Error &&
@@ -204,7 +204,7 @@ function isMermaidContentError(cause: unknown): boolean {
 }
 
 function mermaidErrorDetail(cause: unknown): string {
-  if (cause instanceof MermaidRenderError) return cause.details;
+  if (isMermaidRenderError(cause)) return cause.details;
   return cause instanceof Error && cause.message ? cause.message : "Mermaid could not render it.";
 }
 
