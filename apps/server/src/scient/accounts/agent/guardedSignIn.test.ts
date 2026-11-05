@@ -51,6 +51,35 @@ const university = (id: string, entityId: string): AccountSummary =>
 const at = (state: NonNullable<AccountSummary["signIn"]>["state"], when = 0) => ({
   signIn: { state, at: iso(when) },
 });
+const signInPage = (origin = "https://example.com") => ({
+  origin,
+  username: "#user",
+  password: "#password",
+  otp: null,
+  submit: "button",
+  challenge: null,
+  signedIn: false,
+});
+
+/** The services a sign-in runs with: Accounts, the fake browser, and a user's run. */
+const withFixture = <A, E>(
+  effect: Effect.Effect<A, E, AccountsService | PreviewAutomationBroker | AgentInvocationContext>,
+  service: AccountsService["Service"],
+  broker: PreviewAutomationBroker["Service"],
+) =>
+  effect.pipe(
+    Effect.provideService(AccountsService, service),
+    Effect.provideService(PreviewAutomationBroker, broker),
+    Effect.provideService(AgentInvocationContext, {
+      ...scope,
+      environmentId: EnvironmentId.make("env-fixture"),
+      providerSessionId: "user-run:thread-fixture",
+      providerInstanceId: ProviderInstanceId.make("scient"),
+      capabilities: new Set(["preview", "accounts"] as const),
+      issuedAt: 0,
+    }),
+  );
+
 const check: SignInCaller = { kind: "check" };
 const page: SignInCaller = { kind: "page", scope };
 const paper = (accounts: "all" | ReadonlyArray<AccountId>): SignInCaller => ({
@@ -109,17 +138,7 @@ const world = (
             yield* Deferred.await(gate.open);
           }
         }
-        if (request.operation === "evaluate")
-          return {
-            origin: "https://example.com",
-            url,
-            username: "#user",
-            password: "#password",
-            otp: null,
-            submit: "button",
-            challenge: null,
-            signedIn: false,
-          } as A;
+        if (request.operation === "evaluate") return { ...signInPage(), url } as A;
         return {
           tabId: "tab-fixture",
           tabs: [{ tabId: "tab-fixture", url, profileId: "default", ownedByCaller: true }],
@@ -349,18 +368,7 @@ const codeSite = (rows: Array<AccountSummary>) => {
       }),
   });
   const run = (signIn: AccountSummary, caller: SignInCaller) =>
-    guardedSignIn({ signIn, caller }).pipe(
-      Effect.provideService(AccountsService, service),
-      Effect.provideService(PreviewAutomationBroker, broker),
-      Effect.provideService(AgentInvocationContext, {
-        ...scope,
-        environmentId: EnvironmentId.make("env-fixture"),
-        providerSessionId: "user-run:thread-fixture",
-        providerInstanceId: ProviderInstanceId.make("scient"),
-        capabilities: new Set(["preview", "accounts"] as const),
-        issuedAt: 0,
-      }),
-    );
+    guardedSignIn({ signIn, caller }).pipe((effect) => withFixture(effect, service, broker));
   return { run, site, attempts: fake.attempts };
 };
 
@@ -447,15 +455,7 @@ const universityVisit = (rows: Array<AccountSummary>, checkSees: string) => {
             String(input.expression).includes("finalUrl")
               ? { finalUrl: checkSees, title: "", passwordField: false, deniedText: false }
               : seen.phase === "idp"
-                ? {
-                    origin: "https://idp.example.edu",
-                    username: "#user",
-                    password: "#password",
-                    otp: null,
-                    submit: "button",
-                    challenge: null,
-                    signedIn: false,
-                  }
+                ? signInPage("https://idp.example.edu")
                 : {
                     origin: "https://www.nature.com",
                     url: "https://www.nature.com/",
@@ -480,18 +480,7 @@ const universityVisit = (rows: Array<AccountSummary>, checkSees: string) => {
         continued = true;
       }),
     },
-  }).pipe(
-    Effect.provideService(AccountsService, service),
-    Effect.provideService(PreviewAutomationBroker, broker),
-    Effect.provideService(AgentInvocationContext, {
-      ...scope,
-      environmentId: EnvironmentId.make("env-fixture"),
-      providerSessionId: "user-run:thread-fixture",
-      providerInstanceId: ProviderInstanceId.make("scient"),
-      capabilities: new Set(["preview", "accounts"] as const),
-      issuedAt: 0,
-    }),
-  );
+  }).pipe((effect) => withFixture(effect, service, broker));
   return { run, seen, continued: () => continued };
 };
 
@@ -538,15 +527,6 @@ it.effect("a link back that the check can't confirm is no sign-in", () =>
   }),
 );
 
-const signInPage = (origin = "https://example.com") => ({
-  origin,
-  username: "#user",
-  password: "#password",
-  otp: null,
-  submit: "button",
-  challenge: null,
-  signedIn: false,
-});
 const signedInPage = { ...signInPage(), username: null, password: null, signedIn: true };
 const publicPage = { ...signInPage(), username: null, password: null, submit: null };
 
@@ -613,17 +593,8 @@ const typedVisit = (
         } as A;
       }),
   });
-  const run = guardedSignIn({ signIn: rows[0]!, caller }).pipe(
-    Effect.provideService(AccountsService, service),
-    Effect.provideService(PreviewAutomationBroker, broker),
-    Effect.provideService(AgentInvocationContext, {
-      ...scope,
-      environmentId: EnvironmentId.make("env-fixture"),
-      providerSessionId: "user-run:thread-fixture",
-      providerInstanceId: ProviderInstanceId.make("scient"),
-      capabilities: new Set(["preview", "accounts"] as const),
-      issuedAt: 0,
-    }),
+  const run = guardedSignIn({ signIn: rows[0]!, caller }).pipe((effect) =>
+    withFixture(effect, service, broker),
   );
   return { run, kept, removed, send, attempts: fake.attempts };
 };

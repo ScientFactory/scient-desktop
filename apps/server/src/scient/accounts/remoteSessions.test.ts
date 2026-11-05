@@ -121,7 +121,10 @@ const setup = Effect.fn("RemoteSessionsTest.setup")(function* () {
   );
   const { key } = yield* remote.bind(desktop, { source: MAC, label: "MacBook" });
   keys.desktop = key!;
-  return { ...fixture, revoked, changes, looked, lookups, remote, accounts: service };
+  /** What this computer recorded applying from the desktop, for Work. */
+  const applied = () =>
+    remote.applied(desktop, { source: MAC, key: keys.desktop, profileId: WORK });
+  return { ...fixture, revoked, changes, looked, lookups, remote, applied, accounts: service };
 });
 
 /** The key this computer issued the desktop when the test began. */
@@ -153,7 +156,7 @@ const outcomes = (result: { units: ReadonlyArray<{ outcome: string }> }) =>
 describe("receiving a desktop's sign-ins", () => {
   it.effect("applies a newer revision once; an older one replayed is stale", () =>
     Effect.gen(function* () {
-      const { remote, jars } = yield* setup();
+      const { remote, applied, jars } = yield* setup();
       expect(outcomes(yield* remote.receive(desktop, batch([copy(5)])))).toEqual(["copied"]);
       const deleted = yield* remote.receive(
         desktop,
@@ -163,12 +166,8 @@ describe("receiving a desktop's sign-ins", () => {
       // The copy read before the sign-out arrives late: it must not bring the site back.
       expect(outcomes(yield* remote.receive(desktop, batch([copy(5)])))).toEqual(["stale"]);
       expect(jars.get(WORK)).toEqual([]);
-      const applied = yield* remote.applied(desktop, {
-        source: MAC,
-        key: keys.desktop,
-        profileId: WORK,
-      });
-      expect(applied).toEqual({
+      const recorded = yield* applied();
+      expect(recorded).toEqual({
         bound: true,
         units: [{ sites: ["github.com"], revision: 6, outcome: "deleted" }],
       });
@@ -177,7 +176,7 @@ describe("receiving a desktop's sign-ins", () => {
 
   it.effect("leaves a unit with an open tab for the next delivery, for copies and deletions", () =>
     Effect.gen(function* () {
-      const { remote, tabs, jars } = yield* setup();
+      const { remote, applied, tabs, jars } = yield* setup();
       tabs.set(WORK, ["github.com"]);
       for (const mode of ["fill", "replace"] as const)
         expect(outcomes(yield* remote.receive(desktop, batch([copy(1)], { mode })))).toEqual([
@@ -187,9 +186,7 @@ describe("receiving a desktop's sign-ins", () => {
       expect(outcomes(yield* remote.receive(desktop, deleting))).toEqual(["busy"]);
       expect(jars.get(WORK)).toBeUndefined();
       // Nothing was recorded, so it comes again.
-      expect(
-        (yield* remote.applied(desktop, { source: MAC, key: keys.desktop, profileId: WORK })).units,
-      ).toEqual([]);
+      expect((yield* applied()).units).toEqual([]);
     }),
   );
 
@@ -208,7 +205,7 @@ describe("receiving a desktop's sign-ins", () => {
 
   it.effect("reports a unit whose operation stalled busy, and gives the hold back at once", () =>
     Effect.gen(function* () {
-      const { remote, jars, hooks } = yield* setup();
+      const { remote, applied, jars, hooks } = yield* setup();
       hooks.afterSet = () => {
         hooks.afterSet = undefined;
         hooks.stalled = true;
@@ -220,12 +217,8 @@ describe("receiving a desktop's sign-ins", () => {
       expect(outcomes(result)).toEqual(["busy", "busy"]);
       expect(jars.get(WORK)?.map(({ domain }) => domain)).toEqual([".github.com"]);
       // Nothing was recorded: both units come again with the next delivery.
-      const applied = yield* remote.applied(desktop, {
-        source: MAC,
-        key: keys.desktop,
-        profileId: WORK,
-      });
-      expect(applied.units).toEqual([]);
+      const recorded = yield* applied();
+      expect(recorded.units).toEqual([]);
     }),
   );
 
@@ -264,7 +257,7 @@ describe("receiving a desktop's sign-ins", () => {
 
   it.effect("fails a copy a page changed meanwhile, and its restore leaves the page's cookie", () =>
     Effect.gen(function* () {
-      const { remote, jars, hooks } = yield* setup();
+      const { remote, applied, jars, hooks } = yield* setup();
       hooks.afterSet = (profileId) => {
         hooks.afterSet = undefined;
         jars.set(profileId, [
@@ -277,9 +270,7 @@ describe("receiving a desktop's sign-ins", () => {
         "restore-failed",
       ]);
       expect(jars.get(WORK)?.map(({ name }) => name)).toEqual(["page"]);
-      expect(
-        (yield* remote.applied(desktop, { source: MAC, key: keys.desktop, profileId: WORK })).units,
-      ).toEqual([]);
+      expect((yield* applied()).units).toEqual([]);
     }),
   );
 
@@ -520,16 +511,12 @@ describe("receiving a desktop's sign-ins", () => {
 
   it.effect("returns names and numbers only", () =>
     Effect.gen(function* () {
-      const { remote, accounts } = yield* setup();
+      const { remote, applied, accounts } = yield* setup();
       const result = yield* remote.receive(desktop, batch([copy(1)]));
-      const applied = yield* remote.applied(desktop, {
-        source: MAC,
-        key: keys.desktop,
-        profileId: WORK,
-      });
+      const recorded = yield* applied();
       const listed = yield* remote.list(WORK);
       const snapshot = yield* accounts.snapshot;
-      for (const value of [result, applied, listed, snapshot]) {
+      for (const value of [result, recorded, listed, snapshot]) {
         expect(JSON.stringify(value)).not.toContain("synthetic-desktop");
         expect(JSON.stringify(value)).not.toContain("fingerprint");
       }
