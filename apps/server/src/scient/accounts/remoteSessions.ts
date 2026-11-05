@@ -142,8 +142,9 @@ async function receiveUnit(
   const sites = unitSites(unit.sites);
   if (jar.openTabSites().some((site) => sites.has(site))) return "busy";
   if (unit.kind === "delete" && unit.copyOnly) {
-    // Only a unit still holding exactly the sender's copy goes; a later change is someone's.
-    await withdrawCopies(
+    // Only a unit still holding exactly the sender's copy goes; a later change is someone's, and
+    // stays theirs: "kept", which disowns nobody.
+    const removed = await withdrawCopies(
       jar,
       copies.flatMap(({ sites: held, fingerprint }) =>
         fingerprint && [...unitSites(held)].some((site) => sites.has(site))
@@ -152,7 +153,7 @@ async function receiveUnit(
       ),
       () => Date.now() / 1000,
     );
-    return "deleted";
+    return removed.length || (await jar.readUnit(unit.sites)).length === 0 ? "deleted" : "kept";
   }
   if (unit.kind === "delete") return (await clearUnit(jar, unit.sites)) ? "deleted" : "failed";
   const outcome = await applyUnit(jar, {
