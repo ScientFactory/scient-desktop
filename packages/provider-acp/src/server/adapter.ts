@@ -2621,6 +2621,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
+              // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+              if (flavor.continuationSilence !== undefined) yield* failSilentContinuationWork;
+              // SCIENT-FORK:END
               if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
@@ -4088,6 +4091,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.toolPresentation?.outlivesTurn?.(tool.toolCallId) !== true
             );
           });
+        // Work that settles on silence has no native prompt to fail when the runtime dies.
+        const failSilentContinuationWork = Effect.gen(function* () {
+          const context = yield* Ref.get(activeTurn);
+          if (context !== null && settlesOnSilence(context) && context.promptSettled) {
+            yield* finalizeTurn(
+              context,
+              "failed",
+              makeProviderFailure({ class: "transport_error" }),
+            );
+          }
+          const waiting = turnAttached;
+          turnAttached = yield* Deferred.make<boolean>();
+          yield* Deferred.succeed(waiting, false);
+          if ((yield* Ref.get(activeTurn)) !== null) return;
+          yield* Ref.update(continuationGeneration, (value) => value + 1);
+          yield* Ref.set(wakeBuffer, []);
+          yield* Ref.set(continuationRequested, false);
+          yield* terminalizeCarryoverSubagents(yield* Ref.getAndSet(carryoverSubagents, null));
+        });
         // SCIENT-FORK:END
 
         const rearmDeferredFinalize =
@@ -5253,7 +5275,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          if (!followsAgentWorkState) return true;
+          // SCIENT-FORK:START — post-turn work without an end marker can ask before its turn attaches.
+          if (!followsAgentWorkState && flavor.continuationSilence === undefined) return true;
+          // SCIENT-FORK:END
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
@@ -6857,7 +6881,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
+              if (
+                (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
+                // SCIENT-FORK:START — see awaitRequestTurn.
+                flavor.continuationSilence !== undefined
+                // SCIENT-FORK:END
+              ) {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;
               }
@@ -8222,6 +8251,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!context.promptSettled || context.finalized || context.interrupted) return;
             if (context.silenceWatched === true) return;
             context.silenceWatched = true;
+            // No native prompt is in flight, so Steer and soft interrupt see a settled wire.
+            yield* Deferred.succeed(context.promptWireSettled, undefined);
             const silenceMillis = () =>
               Duration.toMillis(continuationSilence(context.lastOutputUpdate));
             const watchedFrom = yield* Clock.currentTimeMillis;

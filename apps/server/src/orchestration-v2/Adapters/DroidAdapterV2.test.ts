@@ -849,6 +849,17 @@ function onPrompt(message) {
         return reply(answering, { stopReason: "end_turn" });
       }
       update({ sessionUpdate: "tool_call", toolCallId: "check", title: "Execute", kind: "execute", status: "pending", rawInput: { command: "sleep 90" } });
+    } else if (next === "die") {
+      process.exit(7);
+    } else if (next === "ask") {
+      request("session/request_permission", {
+        toolCall: { toolCallId: "edit", title: "Edit file", kind: "edit", status: "pending" },
+        options: [{ optionId: "once", name: "Allow once", kind: "allow_once" }, { optionId: "no", name: "Decline", kind: "reject_once" }],
+      }).then(() => {
+        update({ sessionUpdate: "tool_call_update", toolCallId: "edit", status: "completed", rawOutput: { text: "edited" } });
+        update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "completed", rawOutput: { text: "Slept." } });
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Edited." } });
+      });
     } else {
       update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " Checked." } });
       update({ sessionUpdate: "tool_call_update", toolCallId: "check", status: "completed", rawOutput: { text: "done" } });
@@ -1231,6 +1242,123 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
         assert.equal(yield* Queue.size(h.continuations), 0);
       }),
     ),
+  );
+  it.effect.each(
+    (["while Droid works on after its turn", "between turns"] as const).map((when) => ({
+      caseTitle: `ends a Droid 1.2.0 background Task when Droid dies ${when}`,
+      working: when === "while Droid works on after its turn",
+    })),
+  )("$caseTitle", ({ working }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: backgroundTaskBody,
+          environment: { SECOND_BACKGROUND: "1" },
+        });
+        const watch = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "subagent.updated" &&
+          event.subagent.nativeTaskRef?.nativeId === "task-2" &&
+          event.subagent.status !== "running";
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        if (working) {
+          yield* h.signal("finished");
+          yield* Queue.take(h.continuations);
+          yield* h.continueTurn(2);
+          yield* untilRecorded(
+            h,
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "check",
+          );
+        }
+        yield* h.signal("die");
+        if (working) {
+          const ended = yield* h.terminal;
+          assert.deepEqual([ended.status, ended.failure?.class], ["failed", "transport_error"]);
+        }
+        yield* untilRecorded(h, watch);
+      }),
+    ),
+  );
+  it.effect("answers a Droid permission request made after its turn in the work Droid starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        // Droid asks before it reports the sub-agent's end, so nothing else offers the work.
+        yield* h.signal("ask");
+        yield* Queue.take(h.continuations);
+        yield* h.continueTurn(2);
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === "task" &&
+            event.subagent.status === "completed",
+        );
+        yield* TestClock.adjust("41 seconds");
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.isTrue(
+          h.recorded.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.runId === RunId.make("droid-run-2") &&
+              event.message.text === "Edited.",
+          ),
+        );
+        assert.deepEqual(
+          (yield* h.readLog!())
+            .filter((message) => message.result?.outcome)
+            .map((message) => message.result?.outcome),
+          [{ outcome: "selected", optionId: "once" }],
+        );
+      }),
+    ),
+  );
+  it.effect(
+    "consumes a Steer held across the silent end of work Droid started after its turn",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* h.signal("finished");
+          yield* Queue.take(h.continuations);
+          yield* h.continueTurn(2);
+          yield* h.signal("checked");
+          yield* untilRecorded(
+            h,
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "check" &&
+              event.turnItem.status === "completed",
+          );
+          const running = h.recorded.findLast(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          );
+          if (running?.type !== "provider_turn.updated")
+            return yield* Effect.die("Missing the continuation turn");
+          const lease = yield* h.runtime.reserveDroidSteer!({
+            attemptId: RunAttemptId.make("droid-attempt-2"),
+            providerTurnId: running.providerTurn.id,
+            revision: "steer",
+          });
+          if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
+          yield* TestClock.adjust("41 seconds");
+          assert.equal((yield* h.terminal).status, "completed");
+          assert.isTrue(
+            yield* h.runtime.consumeDroidSteer!({
+              providerThread: h.providerThread,
+              providerTurnId: running.providerTurn.id,
+              droidSteerLease: lease,
+            }),
+          );
+        }),
+      ),
   );
   it.effect(
     "forgets unfinished Tasks after completion and uses the configured next-turn window",

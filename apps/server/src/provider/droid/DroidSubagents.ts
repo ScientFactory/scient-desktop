@@ -242,7 +242,11 @@ export function observeDroidSubagentToolCall(
       tracker.subagents.set(id, subagent);
       if (tracker.subagents.size > MAX_TRACKED_SUBAGENTS) {
         const oldest = [...tracker.subagents.values()].find((entry) => entry.state === "ended");
-        if (oldest) tracker.subagents.delete(oldest.toolCallId);
+        if (oldest) {
+          tracker.subagents.delete(oldest.toolCallId);
+          for (const [alias, entry] of tracker.background)
+            if (entry === oldest) tracker.background.delete(alias);
+        }
       }
       events.push(
         {
