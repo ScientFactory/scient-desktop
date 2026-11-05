@@ -55,6 +55,7 @@ layer("059_OrchestrationV2", (it) => {
         [81, "RepairBooleanSettledOverride"],
         [82, "DropOrchestrationEventCorrelationIndex"],
         [83, "DelegatedRecoveryIndexes"],
+        [84, "ScheduledTaskThreadMode"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
