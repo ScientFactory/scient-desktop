@@ -5070,7 +5070,7 @@ function ChatViewContent(props: ChatViewProps) {
                 );
               }}
             >
-              Revert and keep changes
+              {revertFilesUnavailable ? "Rewind chat" : "Revert and keep changes"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

@@ -291,8 +291,8 @@ inside it, or a folder that contains it, since
 restoring would erase their changes. A thread that works in the project directory
 rewinds the conversation only. When Scient could not save a snapshot of the files
 before that message, such as in a folder that is not a Git repository or whose
-changed files are too large, the conversation still rewinds but **Revert files too**
-is not offered. The selected prompt and its attachments return to the composer for editing and
+changed files are too large, the dialog offers only **Rewind chat**, which leaves
+the files as they are. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
 
 This removes the selected message and later conversation from the active thread
