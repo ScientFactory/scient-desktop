@@ -3,7 +3,14 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { FileSurfaceLoading } from "../fileSurfaceChrome";
-import { OfficePages, type PaintPage } from "./OfficePages";
+import type { PaintPage } from "./OfficePages";
+// SCIENT-FORK:START
+import {
+  ScientOfficeReader,
+  showBitmap,
+  type OfficeReaderDocument,
+} from "~/scient/office/ScientOfficeReader";
+// SCIENT-FORK:END
 import { createWorkerClient } from "./worker-rpc";
 import {
   layerFont,
@@ -18,6 +25,8 @@ type Opened = {
   pages: readonly WordPageSize[];
   paint: PaintPage;
   engine: ReturnType<typeof createWorkerClient<WordMethods>>;
+  // SCIENT-FORK: the reader's sidebar and find.
+  reader: Pick<OfficeReaderDocument, "thumbnail" | "find">;
 };
 
 export default function WordDocument(props: {
@@ -60,13 +69,38 @@ export default function WordDocument(props: {
       canvas.height = bitmap.height;
       context.transferFromImageBitmap(bitmap);
     };
+    // SCIENT-FORK:START — thumbnails leave the pages built around the view, and find waits for the
+    // whole document's layout, which places every match on its page.
+    const laidOut = Promise.withResolvers<void>();
+    const reader: Opened["reader"] = {
+      thumbnail: async (index, canvas, scale, signal) => {
+        const ratio = window.devicePixelRatio || 1;
+        const bitmap = await engine.call(
+          "paint",
+          { index, scale, ratio, thumbnail: true },
+          { key: `thumbnail:${index}`, signal },
+        );
+        if (bitmap) showBitmap(canvas, bitmap, signal);
+      },
+      find: async (query, signal) => {
+        await laidOut.promise;
+        const hits = await engine.call("find", { query }, { signal });
+        return hits.filter((hit) => hit.index < 1000);
+      },
+    };
+    // SCIENT-FORK:END
     void engine
       .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
       .then(async (first) => {
         if (controller.signal.aborted) return;
-        setOpened({ pages: first.pages, paint, engine });
+        setOpened({ pages: first.pages, paint, engine, reader }); // SCIENT-FORK: reader
         onDetails(`${first.pages.length}${first.loading ? "+" : ""} pages`);
-        if (!first.loading) return;
+        // SCIENT-FORK:START
+        if (!first.loading) {
+          laidOut.resolve();
+          return;
+        }
+        // SCIENT-FORK:END
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         while (!controller.signal.aborted) {
           const step = await engine.call("layout", undefined, { signal: controller.signal });
@@ -74,8 +108,9 @@ export default function WordDocument(props: {
           // SCIENT-FORK:START — keep the first 1,000 pages rather than replace them with an error.
           const pages = step.pages.slice(0, 1000);
           if (pages.length < step.pages.length) onLimited();
-          setOpened({ pages, paint, engine });
+          setOpened({ pages, paint, engine, reader });
           onDetails(`${pages.length} pages`);
+          laidOut.resolve();
           // SCIENT-FORK:END
           break;
         }
@@ -100,12 +135,12 @@ export default function WordDocument(props: {
       .catch(onError);
   };
   return (
-    <OfficePages
-      pages={opened.pages}
-      paint={opened.paint}
-      label="Page"
+    // SCIENT-FORK:START — Scient's reader draws the pages with its controls, sidebar and find.
+    <ScientOfficeReader
+      document={{ kind: "document", pages: opened.pages, paint: opened.paint, ...opened.reader }}
       scrollRef={scroll}
       onError={onError}
+      // SCIENT-FORK:END
       overlay={(index) => (
         <WordTextLayer
           engine={opened.engine}
@@ -145,6 +180,7 @@ function WordTextLayer(props: {
         const text = (
           <span
             dir={span.dir}
+            data-office-aside={span.aside} // SCIENT-FORK
             role={span.link ? "link" : undefined}
             tabIndex={span.link ? 0 : undefined}
             aria-label={span.title}

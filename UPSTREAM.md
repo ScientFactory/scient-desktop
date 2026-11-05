@@ -2024,3 +2024,20 @@ measurements before taking either.
 
 The limits (not the 1,000-page change) are offered to T3 as pingdotgg/t3code#32040 (issue #32039).
 If it merges, take T3's version and drop the marked lines in `officeArchive.ts` and its test.
+
+## Office reader
+
+Word and PowerPoint files read with the PDF reader's controls: page number, zoom (buttons, keys
+and pinch), a sidebar of pages and find. The reader is `apps/web/src/scient/office`; T3's viewer
+still draws the pages, and its files keep marked seams:
+
+| T3 file                                              | Seam                                                                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `office/OfficePages.tsx`                             | `zoom` and `onWidth`; zooming keeps the middle of the view; wide pages scroll sideways; 2^25-pixel canvases                                                         |
+| `office/WordDocument.tsx`, `Presentation.tsx`        | `ScientOfficeReader` instead of `OfficePages`; thumbnail paints and find. Presentation drops T3's previous/next slide bar, which the reader's page controls replace |
+| `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                     |
+| `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                     |
+
+When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
+worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
+replace Scient's rather than run beside it.
