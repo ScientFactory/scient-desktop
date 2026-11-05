@@ -11,7 +11,7 @@ import {
   createProviderVersionAdvisory,
   type ProviderMaintenanceResolutionContext,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-import { droidMaintenance, piMaintenance, withDroidReleaseVersion } from "./piDroidMaintenance.ts";
+import { droidMaintenance, withDroidReleaseVersion } from "./droidMaintenance.ts";
 
 const context = (path: string): ProviderMaintenanceResolutionContext => ({
   binaryPath: path,
@@ -21,32 +21,7 @@ const context = (path: string): ProviderMaintenanceResolutionContext => ({
   platform: "linux",
 });
 
-it.layer(NodeServices.layer)("Pi/Droid maintenance", (it) => {
-  it.effect("uses the owning Pi npm prefix without updating extensions", () =>
-    Effect.gen(function* () {
-      const result = yield* piMaintenance.resolve(
-        context("/opt/custom/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"),
-      );
-      expect(result.update?.executable).toBe("npm");
-      expect(result.update?.args).toContain("/opt/custom");
-      expect(result.update?.args).toContain("@earendil-works/pi-coding-agent@latest");
-    }),
-  );
-  it.effect("does not silently migrate a legacy Pi package", () =>
-    Effect.gen(function* () {
-      const result = yield* piMaintenance.resolve(
-        context("/opt/custom/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"),
-      );
-      expect(result.packageName).toBe("@earendil-works/pi-coding-agent");
-      expect(result.update).toBeNull();
-    }),
-  );
-  it.effect("leaves unknown Pi installations manual-only", () =>
-    Effect.gen(function* () {
-      expect((yield* piMaintenance.resolve(context("/tools/pi"))).update).toBeNull();
-      expect((yield* piMaintenance.resolve(null)).update).toBeNull();
-    }),
-  );
+it.layer(NodeServices.layer)("Droid maintenance", (it) => {
   it.effect("updates a standalone Droid at its exact installation path", () =>
     Effect.gen(function* () {
       const result = yield* droidMaintenance.resolve(context("/home/test/.local/bin/droid"));

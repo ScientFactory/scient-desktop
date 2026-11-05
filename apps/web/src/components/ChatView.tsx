@@ -65,7 +65,10 @@ import {
   useScientRightPanelOpeners,
 } from "~/scient/rightPanel/useScientRightPanelOpeners";
 import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
-import { type OptimisticUserMessage } from "~/scient/threadQueue/optimisticQueuePresentation";
+import {
+  optimisticTimelineMessages,
+  type OptimisticUserMessage,
+} from "~/scient/threadQueue/optimisticQueuePresentation";
 import { useLegacyQueueRecoveryError } from "~/scient/threadQueue/useLegacyQueueRecoveryError";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import {
@@ -1891,8 +1894,12 @@ function ChatViewContent(props: ChatViewProps) {
           { ...codexFeedbackMessage(submission, "assistant"), runId: null },
         ],
   );
+  // SCIENT-FORK:START — a queue-admission preview shows in the queue strip, not the timeline.
+  const timelineOptimisticMessages = optimisticTimelineMessages(optimisticUserMessages);
+  // SCIENT-FORK:END
   const timelineEntriesInput = {
-    optimisticMessages: optimisticUserMessages,
+    // SCIENT-FORK: without queue-admission previews.
+    optimisticMessages: timelineOptimisticMessages,
     anchoredMessages: anchoredTimelineMessages,
     attachmentUrlById: timelineAttachmentUrlById,
     ...(serverProjection === null
@@ -1913,7 +1920,8 @@ function ChatViewContent(props: ChatViewProps) {
     ...timelineEntriesInput,
     visibleTurnItems: serverTimelineRows,
   });
-  const draftTimelineEntries = optimisticUserMessages.map(
+  // SCIENT-FORK: without queue-admission previews.
+  const draftTimelineEntries = timelineOptimisticMessages.map(
     (message) =>
       ({
         id: message.id,

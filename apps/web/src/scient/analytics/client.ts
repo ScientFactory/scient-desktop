@@ -3,11 +3,7 @@ import {
   getEnvironmentScientAnalyticsStatus,
   recordEnvironmentScientAnalyticsEvent,
 } from "@t3tools/client-runtime/state/scient-analytics";
-import type {
-  ScientAnalyticsStatus,
-  ScientAnalyticsUiEvent,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { ScientAnalyticsUiEvent, EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 import * as Option from "effect/Option";
 
@@ -84,10 +80,4 @@ export function useRecordScientAnalytics() {
       event,
     );
   };
-}
-
-export function readScientAnalyticsStatus(
-  prepared: PreparedConnection,
-): Promise<ScientAnalyticsStatus> {
-  return gate.readStatus(prepared);
 }
