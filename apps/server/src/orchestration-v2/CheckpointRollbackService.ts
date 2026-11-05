@@ -1,6 +1,7 @@
 import {
   CheckpointId,
   CheckpointScopeId,
+  checkpointSupportsRewind,
   CommandId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
@@ -155,7 +156,8 @@ export const layer: Layer.Layer<
         checkpoint === undefined ||
         scope === undefined ||
         checkpoint.scopeId !== scope.id ||
-        checkpoint.status !== "ready"
+        // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
+        !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false)
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",

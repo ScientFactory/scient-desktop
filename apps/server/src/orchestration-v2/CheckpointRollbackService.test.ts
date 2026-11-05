@@ -813,7 +813,7 @@ const seedRollbackHistory = Effect.gen(function* () {
       ),
     ),
   );
-  const rollback = (ordinal: number) =>
+  const rollback = (ordinal: number, restoreFiles?: boolean) =>
     Effect.gen(function* () {
       const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
       yield* service.execute({
@@ -821,6 +821,7 @@ const seedRollbackHistory = Effect.gen(function* () {
         providerThreadId,
         scopeId,
         checkpointId: checkpointId(ordinal),
+        ...(restoreFiles === undefined ? {} : { restoreFiles }),
       });
     }).pipe(Effect.provide(serviceLayer));
 
@@ -936,5 +937,31 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           );
         }),
     );
+
+    // SCIENT-FORK:START — a turn whose file snapshot failed still rewinds the conversation.
+    it.effect("rewinds the conversation, never the files, to a turn without a snapshot", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE orchestration_v2_projection_checkpoints
+          SET status = 'error', payload_json = json_set(payload_json, '$.status', 'error')
+          WHERE checkpoint_id = ${history.checkpointId(2)}`;
+
+        const refused = yield* Effect.flip(history.rollback(2));
+        assert.instanceOf(refused, CheckpointRollbackService.CheckpointRollbackExecutionError);
+        assert.equal(refused.reason, "rollback-target-invalid");
+        assert.deepEqual(history.rollbackCounts, []);
+
+        yield* history.rollback(2, false);
+        assert.deepEqual(history.rollbackCounts, [4]);
+        assert.deepEqual(history.restored, []);
+        const runs = yield* history.store.getThreadRecords(history.threadId, ["runs"]);
+        assert.deepEqual(
+          runs.runs.filter((run) => run.status !== "rolled_back").map((run) => run.ordinal),
+          [1, 2],
+        );
+      }),
+    );
+    // SCIENT-FORK:END
   },
 );

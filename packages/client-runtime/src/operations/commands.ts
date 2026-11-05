@@ -4,6 +4,7 @@ import {
   CommandId,
   CheckpointId,
   CheckpointScopeId,
+  checkpointSupportsRewind,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
   type ThreadForkCommand,
@@ -1008,7 +1009,11 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
           ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
           : candidate.appRunOrdinal === input.turnCount,
       );
-    if (checkpoint === undefined || checkpoint.status !== "ready") {
+    if (
+      checkpoint === undefined ||
+      // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
+      !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false)
+    ) {
       const target =
         input.checkpointId === undefined
           ? `run ordinal ${input.turnCount ?? "unknown"}`

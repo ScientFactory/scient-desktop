@@ -136,7 +136,7 @@ import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
+import { checkpointSupportsRewind, type UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
@@ -2049,6 +2049,15 @@ function ChatViewContent(props: ChatViewProps) {
   const threadStartCheckpointReady =
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
+  // SCIENT-FORK:START — without a captured snapshot only the conversation rewinds.
+  const pendingRevertCheckpoint =
+    pendingRevert === null
+      ? undefined
+      : findRevertCheckpoint(serverProjection?.checkpoints ?? [], pendingRevert.turnCount);
+  const revertFilesUnavailable =
+    pendingRevertCheckpoint !== undefined &&
+    !checkpointSupportsRewind(pendingRevertCheckpoint, true);
+  // SCIENT-FORK:END
 
   const workspaceMutationId = deriveWorkspaceMutationId(
     serverVisibleTurnItems,
@@ -5019,6 +5028,9 @@ function ChatViewContent(props: ChatViewProps) {
             <AlertDialogDescription>
               Rewind chat to before this message. Your prompt and attachments return to the
               composer.
+              {revertFilesUnavailable
+                ? " Your files stay as they are: Scient could not save a snapshot of them from before this message."
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ScientRevertDialogDiagnostics
@@ -5031,20 +5043,22 @@ function ChatViewContent(props: ChatViewProps) {
             >
               Cancel
             </AlertDialogClose>
-            <Button
-              variant="destructive"
-              disabled={isRevertingCheckpoint}
-              onClick={() => {
-                if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                void onRevertToTurnCountStable(
-                  pendingRevert.turnCount,
-                  pendingRevert.messageId,
-                  true,
-                );
-              }}
-            >
-              Revert files too
-            </Button>
+            {revertFilesUnavailable ? null : (
+              <Button
+                variant="destructive"
+                disabled={isRevertingCheckpoint}
+                onClick={() => {
+                  if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
+                  void onRevertToTurnCountStable(
+                    pendingRevert.turnCount,
+                    pendingRevert.messageId,
+                    true,
+                  );
+                }}
+              >
+                Revert files too
+              </Button>
+            )}
             <Button
               disabled={isRevertingCheckpoint}
               onClick={() => {

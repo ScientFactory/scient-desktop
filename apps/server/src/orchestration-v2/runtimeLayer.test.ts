@@ -1246,6 +1246,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             [],
           );
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+          // SCIENT-FORK:START — only a rolled-back boundary refuses a conversation-only rewind.
+          const conversationOnly = orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make(`runtime-rollback-${status}-conversation`),
+            threadId,
+            checkpointId,
+            scopeId: scope.id,
+            restoreFiles: false,
+          });
+          if (status === "stale") {
+            const staleError = yield* conversationOnly.pipe(Effect.flip);
+            assert.instanceOf(staleError, Orchestrator.OrchestratorDispatchError);
+            assert.equal(
+              staleError.cause,
+              `Checkpoint ${checkpointId} is stale and cannot be restored.`,
+            );
+          } else {
+            assert.deepEqual(
+              (yield* conversationOnly).storedEvents.map((stored) => stored.event.type),
+              ["thread.metadata-updated", "checkpoint.rollback-requested"],
+            );
+          }
+          // SCIENT-FORK:END
         }
       }
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
