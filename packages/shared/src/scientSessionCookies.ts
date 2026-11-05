@@ -531,6 +531,8 @@ export interface PlannedUnit {
   readonly sites: ReadonlyArray<string>;
   readonly revision: number;
   readonly kind: "copy" | "delete";
+  /** A delete that takes back only the remote's copy from this desktop. */
+  readonly copyOnly?: true | undefined;
 }
 
 export type DeliveryPlan =
@@ -617,13 +619,19 @@ export function planDelivery(input: {
       );
     const jarRevision = log?.jar !== undefined && inJar ? log.jar : -1;
     const revision = Math.max(entry?.revision ?? -1, jarRevision);
-    const kind = entry && entry.revision >= jarRevision ? entry.kind : "copy";
+    const fromEntry = entry !== undefined && entry.revision >= jarRevision;
+    const kind = fromEntry ? entry.kind : "copy";
     const held = applied.units.filter((unit) => overlaps(unit.sites, sites));
     const appliedRevision = held.length ? Math.min(...held.map((unit) => unit.revision)) : -1;
     if (revision <= Math.max(appliedRevision, floor)) continue;
     // Nothing to copy: the jar no longer has the unit.
     if (kind === "copy" && !inJar) continue;
-    units.push({ sites, revision, kind });
+    units.push({
+      sites,
+      revision,
+      kind,
+      ...(fromEntry && entry.copyOnly ? { copyOnly: true } : {}),
+    });
   }
   return { kind: "units", mode: "replace", units, head };
 }

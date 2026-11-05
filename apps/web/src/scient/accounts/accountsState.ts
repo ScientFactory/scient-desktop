@@ -208,6 +208,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsProfileSignedOut,
     ...lane,
   }),
+  mainWithdrawn: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainWithdrawn",
+    tag: WS_METHODS.accountsMainWithdrawn,
+    ...lane,
+  }),
   profileResend: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:profileResend",
     tag: WS_METHODS.accountsProfileResend,

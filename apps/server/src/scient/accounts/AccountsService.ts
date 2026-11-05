@@ -144,6 +144,11 @@ export interface AccountsServiceShape {
     profileId: BrowserProfileId,
     site: string,
   ) => Effect.Effect<number, AccountsError>;
+  /**
+   * Main gave back a restricted profile's copy of a unit: a delete revision other computers apply
+   * only to their copy of it, as Main sent it. Unlike Sign out, Main may copy the unit again.
+   */
+  readonly mainWithdrawn: (sites: ReadonlyArray<string>) => Effect.Effect<number, AccountsError>;
   /** A whole-jar revision: after an import or refresh into the profile, or Send again. */
   readonly profileResend: (profileId: BrowserProfileId) => Effect.Effect<number, AccountsError>;
   readonly profileSendLog: (

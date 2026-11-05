@@ -204,7 +204,15 @@ export async function deliverOnce(deps: DeliveryDeps) {
           continue;
         }
         if (planned.kind === "delete") {
-          ready.push({ planned, unit: { sites, revision, kind: "delete" } });
+          ready.push({
+            planned,
+            unit: {
+              sites,
+              revision,
+              kind: "delete",
+              ...(planned.copyOnly ? { copyOnly: true } : {}),
+            },
+          });
           continue;
         }
         const cookies = cookiesOf(read, planned);

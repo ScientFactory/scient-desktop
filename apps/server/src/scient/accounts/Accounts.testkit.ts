@@ -248,6 +248,7 @@ export function fakeAccounts(
     chooseProfile: () => unsupported,
     mainFilled: () => unsupported,
     profileSignedOut: () => unsupported,
+    mainWithdrawn: () => unsupported,
     profileResend: () => unsupported,
     profileSendLog: () => unsupported,
     profileShared: () => unsupported,

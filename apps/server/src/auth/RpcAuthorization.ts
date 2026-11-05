@@ -165,6 +165,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsProfileSendLog]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileResend]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileSignedOut]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMainWithdrawn]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileShared]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfilesUnshared]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSessionsBind]: AuthSettingsWriteScope,

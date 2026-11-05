@@ -671,5 +671,20 @@ it.effect("agrees with the desktop's sender on revisions: link, sign out, link a
     expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
     expect(values()).toEqual(["synthetic-again"]);
     expect(Redacted.value(sender.key!)).not.toBe(Redacted.value(keys.desktop));
+
+    // Taken back, as Main gives back a restricted profile's copy: only the copy as sent goes.
+    sender.jar = [];
+    sender.log = issueUnit(sender.log, ["github.com"], "delete", { copyOnly: true });
+    expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
+    expect(values()).toEqual([]);
+    // A sign-in made here since is this computer's own, and stays.
+    sender.jar = [cookie({ value: "synthetic-third" })];
+    sender.log = issueUnit(sender.log, ["github.com"], "copy");
+    yield* deliver();
+    jars.set(WORK, [cookie({ value: "signed-in-here" })]);
+    sender.jar = [];
+    sender.log = issueUnit(sender.log, ["github.com"], "delete", { copyOnly: true });
+    expect(yield* deliver()).toMatchObject({ applied: sender.log.head, waiting: 0 });
+    expect(values()).toEqual(["signed-in-here"]);
   }),
 );

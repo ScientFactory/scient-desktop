@@ -51,6 +51,7 @@ import {
   AccountSessionsForgetInput,
   AccountSessionsBindResult,
   AccountProfileSignedOutInput,
+  AccountMainWithdrawnInput,
   AccountSessionsApplied,
   AccountSessionsAppliedInput,
   AccountSessionsList,
@@ -128,6 +129,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileSendLog: "accounts.profiles.sendLog",
   accountsProfileResend: "accounts.profiles.resend",
   accountsProfileSignedOut: "accounts.profiles.signedOut",
+  accountsMainWithdrawn: "accounts.main.withdrawn",
   accountsProfileShared: "accounts.profiles.shared",
   accountsProfilesUnshared: "accounts.profiles.unshared",
   accountsSessionsBind: "accounts.sessions.bind",
@@ -468,6 +470,11 @@ export const WsAccountsProfileResendRpc = accountRpc(
 export const WsAccountsProfileSignedOutRpc = accountRpc(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfileSignedOut,
   AccountProfileSignedOutInput,
+  AccountProfileRevision,
+);
+export const WsAccountsMainWithdrawnRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsMainWithdrawn,
+  AccountMainWithdrawnInput,
   AccountProfileRevision,
 );
 export const WsAccountsProfileSharedRpc = accountRpc(

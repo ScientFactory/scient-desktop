@@ -211,7 +211,9 @@ or 2FA key goes. Decisions use revisions, never clocks:
 - **Send log.** Each desktop profile record keeps `send`: one counter, and the newest revision per
   unit, written in the commit that records the action (`sendLog.ts`, from `commit`): a newer sign-in
   action (`isNewerAction`, the one seam for item 4's `by: "action"`), Main's copy (`mainFilled`),
-  Accounts' Sign out (`accounts.profiles.signedOut`, a delete), an import or Send again
+  Accounts' Sign out (`accounts.profiles.signedOut`, a delete), Main giving back a restricted
+  profile's copy (`accounts.main.withdrawn`, a `copyOnly` delete: a remote removes only its copy
+  as sent, by digest, and Main keeps no sign-out), an import or Send again
   (`accounts.profiles.resend`, the whole jar), and a profile turning restricted (`withdrawn`) or
   shareable again (the jar). Past 5,000 copies the log falls back to a jar revision; a deletion
   is never dropped until every computer in `sharedWith` applied it. Unlinking removes the computer

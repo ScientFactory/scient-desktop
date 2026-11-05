@@ -335,8 +335,12 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           warn("Couldn't take a profile's copies back", cause);
           return null;
         });
+      if (!result?.units.length) return;
+      // Other computers take back their copy of what Main gave back, unlike a sign-out there.
+      for (const sites of result.units)
+        await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } });
       const snapshot = read();
-      if (!result?.units.length || !snapshot) return;
+      if (!snapshot) return;
       const { remove, signedOut } = withdrawnRows(snapshot.accounts, result.units);
       for (const accountId of remove)
         await accountsState.remove.run(registry, { environmentId, input: { accountId } });

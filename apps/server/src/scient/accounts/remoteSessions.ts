@@ -124,14 +124,31 @@ const fromSent = (cookie: AccountSessionsReceiveInput["units"][number]["cookies"
     value: Redacted.value(value),
   }));
 
-/** One unit into this computer's jar, after the sender's binding and controls were checked. */
+/**
+ * One unit into this computer's jar, after the sender's binding and controls were checked.
+ * `copies` are the sender's applied copies here, for a delete that takes back only those.
+ */
 async function receiveUnit(
   jar: ProfileCookieJar,
   unit: AccountSessionsReceiveInput["units"][number],
   mode: AccountSessionsReceiveInput["mode"],
+  copies: ReadonlyArray<ReceivedUnit>,
 ): Promise<SessionReceiveOutcome> {
   const sites = unitSites(unit.sites);
   if (jar.openTabSites().some((site) => sites.has(site))) return "busy";
+  if (unit.kind === "delete" && unit.copyOnly) {
+    // Only a unit still holding exactly the sender's copy goes; a later change is someone's.
+    await withdrawCopies(
+      jar,
+      copies.flatMap(({ sites: held, fingerprint }) =>
+        fingerprint && [...unitSites(held)].some((site) => sites.has(site))
+          ? [{ sites: held, fingerprint }]
+          : [],
+      ),
+      () => Date.now() / 1000,
+    );
+    return "deleted";
+  }
   if (unit.kind === "delete") return (await clearUnit(jar, unit.sites)) ? "deleted" : "failed";
   const outcome = await applyUnit(jar, {
     unit: unit.sites,
@@ -482,9 +499,12 @@ export const makeRemoteSessions = Effect.gen(function* () {
                 outcomes.set(unit, jar.stalled() ? "busy" : "failed");
                 continue;
               }
-              const outcome = await receiveUnit(jar, unit, input.mode).catch(
-                (): SessionReceiveOutcome => "failed",
-              );
+              const outcome = await receiveUnit(
+                jar,
+                unit,
+                input.mode,
+                (entry?.units ?? []).filter(isCopy),
+              ).catch((): SessionReceiveOutcome => "failed");
               if (jar.quarantined()) lost = { unit, before };
               outcomes.set(
                 unit,

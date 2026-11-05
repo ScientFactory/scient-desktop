@@ -111,6 +111,21 @@ describe("the send log other computers follow", () => {
     }),
   );
 
+  it.effect("takes back other computers' copy of what Main gave back, without a sign-out", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const MAIN = BrowserProfileId.make(DEFAULT_BROWSER_PROFILE_ID);
+      yield* service.profileShared(MAIN, shared("lab", 0));
+      const revision = yield* service.mainWithdrawn(["github.com"]);
+      expect((yield* service.profileSendLog(MAIN)).units).toEqual([
+        { sites: ["github.com"], revision, kind: "delete", copyOnly: true },
+      ]);
+      // Unlike Sign out, Main may copy the site again.
+      const { profiles } = yield* service.snapshot;
+      expect(profiles.find(({ profileId }) => profileId === MAIN)?.main).toBeUndefined();
+    }),
+  );
+
   it.effect("keeps a deletion until every computer it goes to applied it", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
@@ -152,9 +167,9 @@ describe("deletions an offline computer still needs", () => {
       needsYou: [],
     });
     // The bound is 5,000 copies; 3 tells the same story.
-    let log = issueUnit(undefined, ["signed-out.test"], "delete", 3);
+    let log = issueUnit(undefined, ["signed-out.test"], "delete", { limit: 3 });
     for (let index = 0; index < 4; index += 1)
-      log = issueUnit(log, [`site${index}.test`], "copy", 3);
+      log = issueUnit(log, [`site${index}.test`], "copy", { limit: 3 });
     // Past the bound, copies fall back to the whole jar; the deletion stays.
     expect(log.jar).toBe(log.head);
     expect(log.units).toEqual([{ sites: ["signed-out.test"], revision: 1, kind: "delete" }]);

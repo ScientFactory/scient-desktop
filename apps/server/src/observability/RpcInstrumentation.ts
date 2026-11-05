@@ -337,6 +337,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsProfileSendLog]: "accounts",
   [WS_METHODS.accountsProfileResend]: "accounts",
   [WS_METHODS.accountsProfileSignedOut]: "accounts",
+  [WS_METHODS.accountsMainWithdrawn]: "accounts",
   [WS_METHODS.accountsProfileShared]: "accounts",
   [WS_METHODS.accountsProfilesUnshared]: "accounts",
   [WS_METHODS.accountsSessionsBind]: "accounts",

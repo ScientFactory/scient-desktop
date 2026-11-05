@@ -363,6 +363,8 @@ export const ProfileSendLog = Schema.Struct({
       sites: SessionUnitSites,
       revision: SessionRevision,
       kind: Schema.Literals(["copy", "delete"]),
+      /** A delete that takes back only this computer's copy, while it still holds what it wrote. */
+      copyOnly: Schema.optional(Schema.Literal(true)),
     }),
   ),
   /** When the profile stopped being shareable, so other computers drop its copies. */
@@ -981,6 +983,9 @@ export const AccountProfileSignedOutInput = Schema.Struct({
   site: SessionSite,
 });
 
+/** Main gave back a restricted profile's copy: other computers take back theirs of it. */
+export const AccountMainWithdrawnInput = Schema.Struct({ sites: SessionUnitSites });
+
 export const AccountProfileSendLogInput = Schema.Struct({ profileId: BrowserProfileId });
 
 /** A whole-jar revision: after an import or a refresh into the profile, or Send again. */
@@ -1042,6 +1047,7 @@ const SessionsBatch = Schema.Struct({
       sites: SessionUnitSites,
       revision: SessionRevision,
       kind: Schema.Literals(["copy", "delete"]),
+      copyOnly: Schema.optional(Schema.Literal(true)),
       cookies: Schema.optional(
         Schema.Array(SentSessionCookie).check(Schema.isMaxLength(SENT_COOKIES_LIMIT)),
       ),

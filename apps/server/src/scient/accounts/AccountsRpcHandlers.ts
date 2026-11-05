@@ -312,6 +312,12 @@ export const makeAccountsRpcHandlers = ({
           .pipe(Effect.map((revision) => ({ revision }))),
         attributes,
       ),
+    [WS_METHODS.accountsMainWithdrawn]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainWithdrawn,
+        accounts.mainWithdrawn(input.sites).pipe(Effect.map((revision) => ({ revision }))),
+        attributes,
+      ),
     [WS_METHODS.accountsProfileResend]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsProfileResend,
@@ -580,6 +586,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         chooseProfile: unavailable,
         mainFilled: unavailable,
         profileSignedOut: unavailable,
+        mainWithdrawn: unavailable,
         profileResend: unavailable,
         profileSendLog: unavailable,
         profileShared: unavailable,

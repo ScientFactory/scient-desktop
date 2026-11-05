@@ -1096,6 +1096,13 @@ export const layer = Layer.effect(
           ),
         ),
       ),
+      mainWithdrawn: Effect.fn("AccountsService.mainWithdrawn")((sites) =>
+        locked(
+          issue(DEFAULT_BROWSER_PROFILE_ID, (log) =>
+            issueUnit(log, sites, "delete", { copyOnly: true }),
+          ),
+        ),
+      ),
       profileResend: Effect.fn("AccountsService.profileResend")((profileId) =>
         locked(issue(profileId, issueJar)),
       ),
