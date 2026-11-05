@@ -27,7 +27,8 @@ The rules every change here keeps. The sections below explain each one.
   browser work. No code takes an outer lock while holding an inner one.
 - **Withdraw only what we wrote.** A Main copy is taken back only while Main's unit still holds
   that exact copy (`withdrawCopies`, by digest). A receiver deletes a sender's unit only while the
-  unit still holds exactly the sender's copy. A unit missing from a jar is never deleted for its
+  sender owns it, by having written it (a `same` keeps an earlier claim and never makes one, and
+  another sender's write ends it), and the unit still holds exactly the sender's copy. A unit missing from a jar is never deleted for its
   absence, and a cookie a site wrote since stays.
 - **Copies follow user actions.** Copies into Main and to other computers come from these
   triggers only: a newer `signed-in` action (`by: "action"`), an import or Refresh, Send again,
@@ -593,7 +594,9 @@ minutes at 400 ms. A university counts as signed in only once `checkAccountNow` 
 before anything is recorded; then the return tab and leftovers close and waiting papers continue.
 `snapshot.attempts` lists the tabs of running and pending attempts; `authorizePreviewTab` refuses
 every guarded preview operation on them, and on a university's own sign-in pages, and
-`scient_account_browser_session` refuses a site with an attempt under way. While an attempt runs,
+`scient_account_browser_session` refuses a site with an attempt under way, and any site of a
+profile an attempt runs or waits in (the attempt's `profileId`), checked right before the cookie
+read: cookies belong to the profile, and a sign-in may have reached any site. While an attempt runs,
 the desktop's capture of its tab goes to `accounts.keepTyped` (`signInKeeps.ts`); after the
 sign-in is proven, a typed password is kept only when it is the one password the person submitted
 in the attempt, captured before the sign-in finished, with no password field back on its page and
