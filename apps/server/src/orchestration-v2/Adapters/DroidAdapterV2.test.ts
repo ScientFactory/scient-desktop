@@ -136,6 +136,7 @@ const harness = Effect.fnUntraced(function* (
     readonly sensitiveValues?: ReadonlyArray<string>;
     readonly onPeer?: (peer: Effect.Success<ReturnType<typeof scriptedDroid>>) => void;
     readonly makeControlClient?: DroidControlClientFactory;
+    readonly beforeContinuationSettled?: () => Effect.Effect<void>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -293,6 +294,9 @@ const harness = Effect.fnUntraced(function* (
         rejectedAuthentication.push(message);
       }),
     ...(scenario?.makeControlClient ? { makeControlClient: scenario.makeControlClient } : {}),
+    ...(scenario?.beforeContinuationSettled
+      ? { testHooks: { beforeContinuationSettled: scenario.beforeContinuationSettled } }
+      : {}),
     continuationRequests: {
       offer: (request) => Queue.offer(continuations, request).pipe(Effect.asVoid),
     },
@@ -1281,6 +1285,33 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       }),
     ),
   );
+  it.effect(
+    "fails work Droid started after its turn when Droid dies while that work attaches",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const attaching = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const h = yield* harness(false, false, false, undefined, {
+            body: backgroundTaskBody,
+            beforeContinuationSettled: () =>
+              Deferred.succeed(attaching, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+          });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* h.signal("finished");
+          yield* Queue.take(h.continuations);
+          const started = yield* Effect.forkScoped(h.continueTurn(2));
+          yield* Deferred.await(attaching);
+          yield* h.signal("die");
+          yield* h.nativeTerminated;
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(started);
+          const ended = yield* h.terminal;
+          assert.deepEqual([ended.status, ended.failure?.class], ["failed", "transport_error"]);
+        }),
+      ),
+  );
   it.effect("answers a Droid permission request made after its turn in the work Droid starts", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1298,7 +1329,10 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
             event.subagent.nativeTaskRef?.nativeId === "task" &&
             event.subagent.status === "completed",
         );
-        yield* TestClock.adjust("41 seconds");
+        // Its last output is text, so it ends 20 s later, before the watcher's first 40 s wait.
+        yield* TestClock.adjust("19 seconds");
+        assert.lengthOf(terminals(h), 1);
+        yield* TestClock.adjust("2 seconds");
         assert.equal((yield* h.terminal).status, "completed");
         assert.isTrue(
           h.recorded.some(

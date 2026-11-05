@@ -822,6 +822,9 @@ export interface AcpAdapterV2Options {
     // SCIENT-FORK:START — Droid teardown scheduling tests hold the drained hard teardown.
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     // SCIENT-FORK:END
+    // SCIENT-FORK:START — a provider continuation is attached, its wake traffic not yet settled.
+    readonly beforeContinuationSettled?: () => Effect.Effect<void>;
+    // SCIENT-FORK:END
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
       readonly requestId?: string;
@@ -1663,6 +1666,8 @@ interface ActiveAcpTurn {
   lastOutputUpdate?: EffectAcpSchema.SessionUpdate;
   lastOutputAt?: number;
   silenceWatched?: boolean;
+  /** Wakes the silence watcher, whose deadline the new output may move earlier. */
+  silenceOutput?: Deferred.Deferred<void> | undefined;
   // SCIENT-FORK:END
 }
 
@@ -5679,6 +5684,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (settlesOnSilence(context) && acpRootSessionUpdateIngestsOutput(notification)) {
             context.lastOutputUpdate = update;
             context.lastOutputAt = yield* Clock.currentTimeMillis;
+            const watcher = context.silenceOutput;
+            context.silenceOutput = undefined;
+            if (watcher !== undefined) yield* Deferred.succeed(watcher, undefined);
           }
           // SCIENT-FORK:END
           if (
@@ -8256,17 +8264,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const silenceMillis = () =>
               Duration.toMillis(continuationSilence(context.lastOutputUpdate));
             const watchedFrom = yield* Clock.currentTimeMillis;
+            const sleepUntilOutput = Effect.fnUntraced(function* (millis: number) {
+              const output = yield* Deferred.make<void>();
+              context.silenceOutput = output;
+              yield* Effect.raceFirst(
+                Effect.sleep(Duration.millis(millis)),
+                Deferred.await(output),
+              );
+            });
             yield* Effect.gen(function* () {
               while (!context.finalized && !context.interrupted) {
+                // The runtime died before this watcher started, so its termination missed it.
+                if (yield* Ref.get(runtimeRestartRequired)) {
+                  return yield* finalizeTurn(
+                    context,
+                    "failed",
+                    makeProviderFailure({ class: "transport_error" }),
+                  );
+                }
                 const now = yield* Clock.currentTimeMillis;
                 const quietFor = now - Math.max(watchedFrom, context.lastOutputAt ?? watchedFrom);
                 if (quietFor < silenceMillis()) {
-                  yield* Effect.sleep(Duration.millis(silenceMillis() - quietFor));
+                  yield* sleepUntilOutput(silenceMillis() - quietFor);
                 } else if (
                   continuationWorkOpen(context) ||
                   (yield* Ref.get(pendingRuntimeRequests)).size > 0
                 ) {
-                  yield* Effect.sleep(Duration.millis(silenceMillis()));
+                  yield* sleepUntilOutput(silenceMillis());
                 } else {
                   return yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
                 }
@@ -8862,6 +8886,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
                 Effect.map((drained) => drained.length),
               );
+              // SCIENT-FORK:START — see testHooks.beforeContinuationSettled.
+              yield* options.testHooks?.beforeContinuationSettled?.() ?? Effect.void;
+              // SCIENT-FORK:END
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
               if (drainedWakeCount === 0) {
