@@ -288,3 +288,54 @@ it("never reads an unreadable jar as empty: nothing is acknowledged or deleted",
   await expect(deliverOnce(reconciling.deps)).rejects.toThrow();
   expect([reconciling.sent, reconciling.shares]).toEqual([[], []]);
 });
+
+it("holds back a unit whose sign-in begins mid-delivery, during a read or between batches", async () => {
+  const log: ProfileSendLog = {
+    head: 3,
+    units: [
+      { sites: ["github.com"], revision: 2, kind: "copy" },
+      { sites: ["overleaf.com"], revision: 3, kind: "copy" },
+    ],
+  };
+  // Begins while the units' cookies are read.
+  const during = fixture({ log, jar: ["github.com", "overleaf.com"] });
+  let signing: string[] = [];
+  during.deps.signingIn = () => signing;
+  const read = during.deps.readSessions;
+  during.deps.readSessions = async (input) => {
+    if (input.units) signing = ["https://github.com/login"];
+    return read(input);
+  };
+  await deliverOnce(during.deps);
+  expect(during.sent.flatMap(({ units }) => units.map(({ sites }) => sites))).toEqual([
+    ["overleaf.com"],
+  ]);
+  expect(during.shares).toEqual([expect.objectContaining({ applied: 1, waiting: 1 })]);
+  // Begins while an earlier batch of the same read is sent: the next batch holds it back.
+  const between = fixture({ log, jar: ["github.com", "overleaf.com"] });
+  between.deps.readSessions = async () => ({
+    units: [
+      // 1,000 cookies fill the first batch alone.
+      {
+        sites: ["github.com"],
+        cookies: Array.from({ length: 1_000 }, (_, index) => ({
+          ...cookie("github.com"),
+          name: `c${index}`,
+        })),
+      },
+      { sites: ["overleaf.com"], cookies: [cookie("overleaf.com")] },
+    ],
+  });
+  let busy: string[] = [];
+  between.deps.signingIn = () => busy;
+  const receive = between.deps.receive;
+  between.deps.receive = async (input) => {
+    busy = ["https://www.overleaf.com/login"];
+    return receive(input);
+  };
+  await deliverOnce(between.deps);
+  expect(between.sent.map(({ units }) => units.map(({ sites }) => sites))).toEqual([
+    [["github.com"]],
+  ]);
+  expect(between.shares).toEqual([expect.objectContaining({ applied: 2, waiting: 1 })]);
+});

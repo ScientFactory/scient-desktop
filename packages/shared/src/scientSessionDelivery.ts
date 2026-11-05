@@ -189,10 +189,12 @@ export async function deliverOnce(deps: DeliveryDeps) {
       return;
     }
     const outcomes: Array<{ unit: PlannedUnit; outcome: string }> = [];
-    // A unit someone is signing in to goes once that sign-in ends; until then it waits.
-    const busy = unitSites(deps.signingIn(profileId));
-    const underWay = (unit: PlannedUnit) =>
-      [...unitSites(unit.sites)].some((site) => busy.has(site));
+    // A unit someone is signing in to goes once that sign-in ends; until then it waits. Asked
+    // afresh each time, so a sign-in that begins mid-delivery holds its units back too.
+    const underWay = (unit: PlannedUnit) => {
+      const busy = unitSites(deps.signingIn(profileId));
+      return [...unitSites(unit.sites)].some((site) => busy.has(site));
+    };
     for (const group of batches(plan.units)) {
       hold();
       const copies = group.filter((unit) => unit.kind === "copy" && !underWay(unit));
@@ -228,11 +230,17 @@ export async function deliverOnce(deps: DeliveryDeps) {
       }
       for (const part of byCookies(ready)) {
         hold();
+        const sending = part.filter(({ planned }) => {
+          if (!underWay(planned)) return true;
+          outcomes.push({ unit: planned, outcome: "busy" });
+          return false;
+        });
+        if (sending.length === 0) continue;
         const result = await batch(
-          part.map(({ unit }) => unit),
+          sending.map(({ unit }) => unit),
           plan.mode,
         );
-        part.forEach(({ planned }, index) =>
+        sending.forEach(({ planned }, index) =>
           outcomes.push({ unit: planned, outcome: result.units[index]?.outcome ?? "failed" }),
         );
       }
