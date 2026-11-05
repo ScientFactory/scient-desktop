@@ -39,6 +39,7 @@ vi.mock("./pdfSaveCopyNotification", () => ({
 
 const documentProxy = {
   numPages: 2,
+  annotationStorage: { size: 0 },
   getOutline: async () => [],
   getPage: async () => ({
     getTextContent: async () => ({ items: [{ str: "text" }] }),
