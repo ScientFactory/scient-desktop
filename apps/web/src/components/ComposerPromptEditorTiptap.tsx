@@ -136,6 +136,7 @@ import type { ComposerDraftContextRecords } from "./composerContextPresentation"
 // SCIENT-FORK:START — content direction and per-draft cursor memory.
 import { useContentDirection } from "~/scient/bidi/ContentDirectionScope";
 import { rememberComposerCursor } from "~/scient/threadQueue/rememberedComposerCursor";
+import { InputPriority } from "~/scient/writing/inputPriority";
 
 export { rememberedComposerCursor } from "~/scient/threadQueue/rememberedComposerCursor";
 // SCIENT-FORK:END
@@ -785,6 +786,7 @@ function createComposerExtensions(richText: boolean) {
       strike: false,
     }),
     ComposerUndoGroupingExtension,
+    InputPriority.configure({ chat: true }),
     ComposerTextDirectionExtension,
     ComposerMentionExtension,
     ComposerSkillExtension,
@@ -1059,13 +1061,16 @@ function ComposerPromptEditorTiptapInner(
     "aria-placeholder": placeholder,
   };
 
+  const [initialContent] = useState(() =>
+    buildDocJson(value, (name) => composerSkillMeta(skills, name), {
+      styling: richText,
+      literalText,
+    }),
+  );
   const editor = useEditor(
     {
       extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
-      content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
-        styling: richText,
-        literalText,
-      }),
+      content: initialContent,
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,

@@ -34,6 +34,19 @@ export const runtimeModeConfig: Record<
 
 export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 
+const compatibleModeSets = Array.from({ length: 1 << runtimeModeOptions.length }, (_, mask) =>
+  runtimeModeOptions.filter((_, index) => mask & (1 << index)),
+);
+type ResolvedRuntimeModeOption = {
+  mode: RuntimeMode;
+  disabledReason?: string;
+} & (typeof runtimeModeConfig)[RuntimeMode];
+const unmanagedPolicyKey = {};
+const optionsByPolicy = new WeakMap<
+  object,
+  WeakMap<ReadonlyArray<RuntimeMode>, ResolvedRuntimeModeOption[]>
+>();
+
 /** The modes a provider supports (all when it reports none) and the mode a thread really runs in. */
 export function resolveCompatibleRuntimeMode(
   runtimeMode: RuntimeMode,
@@ -41,7 +54,12 @@ export function resolveCompatibleRuntimeMode(
 ) {
   const modes =
     supportedRuntimeModes && supportedRuntimeModes.length > 0
-      ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
+      ? compatibleModeSets[
+          runtimeModeOptions.reduce(
+            (mask, mode, index) => mask | (supportedRuntimeModes.includes(mode) ? 1 << index : 0),
+            0,
+          )
+        ]!
       : runtimeModeOptions;
   return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
 }
@@ -49,10 +67,20 @@ export function resolveCompatibleRuntimeMode(
 export function resolveRuntimeModeOptions(
   modes: ReadonlyArray<RuntimeMode>,
   managedPolicy: ManagedPolicySummary | undefined,
-) {
-  return modes.map((mode) => {
+): ReadonlyArray<ResolvedRuntimeModeOption> {
+  const key = managedPolicy ?? unmanagedPolicyKey;
+  let cache = optionsByPolicy.get(key);
+  if (!cache) {
+    cache = new WeakMap();
+    optionsByPolicy.set(key, cache);
+  }
+  const cached = cache.get(modes);
+  if (cached) return cached;
+  const options = modes.map((mode) => {
     const option = { mode, ...runtimeModeConfig[mode] };
     const disabledReason = managedRuntimeModeDenial(managedPolicy, mode);
     return disabledReason === undefined ? option : { ...option, disabledReason };
   });
+  cache.set(modes, options);
+  return options;
 }

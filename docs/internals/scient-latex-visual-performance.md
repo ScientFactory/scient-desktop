@@ -143,7 +143,12 @@ bibliography or source-wide counter controls invalidate the count. Deleted targe
 positions and manual contents entries retain conservative recounting.
 
 Offscreen measurement and formula warming wait for an input pause and the end of
-composition or dragging. Visible layout and explicit math editing stay immediate.
+composition or dragging in either Visual or the chat composer. Both editors
+register with the shared writing input-priority extension so speculative TeX
+work also yields while writing a message, including visible formula warming.
+Explicit math editing stays immediate once focus returns to the document.
+This scheduling rule does not bound the mounted
+document's memory or establish typing latency under system memory pressure.
 Paragraph remeasurement retains flow-unit identities when line dimensions and
 break constraints are unchanged. If their mapped source ranges and placements
 also agree, paging keeps its current decorations without publishing another

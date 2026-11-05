@@ -9,7 +9,7 @@ import {
   pagedPositionAtPoint,
   readLatexVisibleReadingTarget,
 } from "./latexPagedGeometry";
-import { afterLatexInputQuiet, latexInputQuietDelay } from "./latexInputPriority";
+import { afterInputQuiet, inputQuietDelay } from "../writing/inputPriority";
 
 /** Whether a transaction may add, remove or replace top-level blocks. */
 function changesTopLevel(transaction: Transaction): boolean {
@@ -270,11 +270,12 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             // The page planner measures natural copies and supplies intrinsic heights.
             // Revealing every live block as well repeats that work and invalidates layout.
             if (pagedLayoutProgress.has(view)) return;
-            if (latexInputQuietDelay(view.dom) > 0) {
-              cancelQuiet = afterLatexInputQuiet(() => {
+            // Offscreen measurement shares the renderer with chat typing.
+            if (inputQuietDelay() > 0) {
+              cancelQuiet = afterInputQuiet(() => {
                 cancelQuiet = undefined;
                 scheduleMeasure();
-              }, view.dom);
+              });
               return;
             }
             if (view.dom.hasAttribute("data-latex-loading")) {

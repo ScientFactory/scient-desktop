@@ -12,9 +12,24 @@ export interface ClockStore<A> {
 // setTimeout fires immediately for delays beyond a signed 32-bit int.
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
+type RenderClockScheduler = (notify: () => void) => () => void;
+let scheduleRenderClock: RenderClockScheduler = (notify) => {
+  notify();
+  return () => {};
+};
+
+export function configureRenderClockScheduling(schedule: RenderClockScheduler): () => void {
+  const previous = scheduleRenderClock;
+  scheduleRenderClock = schedule;
+  return () => {
+    if (scheduleRenderClock === schedule) scheduleRenderClock = previous;
+  };
+}
+
 function makeTickStore<A>(read: () => A, periodMs: number): ClockStore<A> {
   let value = read();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelNotification: (() => void) | undefined;
   const listeners = new Set<() => void>();
 
   // Each tick lands on a wall-clock boundary so every subscriber updates in
@@ -23,11 +38,16 @@ function makeTickStore<A>(read: () => A, periodMs: number): ClockStore<A> {
     timer = setTimeout(
       () => {
         timer = undefined;
-        const next = read();
-        if (next !== value) {
-          value = next;
-          for (const listener of listeners) listener();
-        }
+        cancelNotification?.();
+        cancelNotification = scheduleRenderClock(() => {
+          cancelNotification = undefined;
+          if (listeners.size === 0) return;
+          const next = read();
+          if (next !== value) {
+            value = next;
+            for (const listener of listeners) listener();
+          }
+        });
         // Listeners may unsubscribe (stopping the clock) or resubscribe (arming
         // a fresh timer) while notified; only continue a clock nobody re-armed.
         if (listeners.size > 0 && timer === undefined) schedule();
@@ -48,6 +68,8 @@ function makeTickStore<A>(read: () => A, periodMs: number): ClockStore<A> {
         if (listeners.size === 0) {
           clearTimeout(timer);
           timer = undefined;
+          cancelNotification?.();
+          cancelNotification = undefined;
         }
       };
     },

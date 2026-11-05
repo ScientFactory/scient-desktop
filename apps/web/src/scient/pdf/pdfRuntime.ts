@@ -21,6 +21,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 
 import { createPdfResizeSettlement } from "./pdfResizeSettlement";
+import { prioritizePdfWork } from "./pdfChatPriority";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -160,6 +161,7 @@ export function createPdfRuntime(input: {
     supportsPinchToZoom: true,
   };
   const viewer = new PDFViewer(viewerOptions);
+  prioritizePdfWork(viewer, viewerLifetime.signal);
 
   linkService.setViewer(viewer);
   linkService.setDocument(input.document);

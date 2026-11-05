@@ -2,11 +2,7 @@ import { fakeTimers as _fixtureFakeTimers } from "../../../test/render";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  afterLatexInputQuiet,
-  LatexInputPriority,
-  latexInputQuietDelay,
-} from "./latexInputPriority";
+import { afterInputQuiet, InputPriority, inputQuietDelay } from "../writing/inputPriority";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.editor?.destroy();
@@ -16,13 +12,45 @@ async function _cleanupFixture0(_fixture: _Fixture) {
 const mount = (_fixture: _Fixture) => {
   _fixture.editor = new Editor({
     element: document.createElement("div"),
-    extensions: [StarterKit, LatexInputPriority],
+    extensions: [StarterKit, InputPriority],
     content: "<p>Writing</p>",
   });
   return _fixture.editor.view.dom;
 };
 
 describe("editing priority over speculative rendering", () => {
+  it("holds renderer-wide work during input in another editor and releases it on destroy", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+    _fixture.stack.use(_fixtureFakeTimers());
+    const visualRoot = mount(_fixture);
+    const composer = new Editor({
+      element: document.createElement("div"),
+      extensions: [StarterKit, InputPriority],
+      content: "<p>Chat</p>",
+    });
+    _fixture.cleanup.defer(() => {
+      if (!composer.isDestroyed) composer.destroy();
+    });
+    const work = vi.fn();
+    composer.view.dom.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    expect(inputQuietDelay(visualRoot)).toBe(0);
+    afterInputQuiet(work);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(work).not.toHaveBeenCalled();
+    composer.view.dom.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(work).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(work).toHaveBeenCalledOnce();
+    composer.view.dom.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    const afterDestroy = vi.fn();
+    afterInputQuiet(afterDestroy);
+    composer.destroy();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(afterDestroy).toHaveBeenCalledOnce();
+  });
+
   it("waits for nested input to become quiet and allows cancelled work to stay cancelled", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -34,8 +62,8 @@ describe("editing priority over speculative rendering", () => {
     nested.dispatchEvent(new Event("beforeinput", { bubbles: true }));
     const work = vi.fn();
     const cancelled = vi.fn();
-    afterLatexInputQuiet(work, root);
-    afterLatexInputQuiet(cancelled, root)();
+    afterInputQuiet(work, root);
+    afterInputQuiet(cancelled, root)();
     await vi.advanceTimersByTimeAsync(100);
     expect(work).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(100);
@@ -50,7 +78,7 @@ describe("editing priority over speculative rendering", () => {
     const root = mount(_fixture);
     const work = vi.fn();
     root.dispatchEvent(new Event("compositionstart", { bubbles: true }));
-    afterLatexInputQuiet(work, root);
+    afterInputQuiet(work, root);
     await vi.advanceTimersByTimeAsync(1000);
     expect(work).not.toHaveBeenCalled();
     root.dispatchEvent(new Event("compositionend", { bubbles: true }));
@@ -62,7 +90,7 @@ describe("editing priority over speculative rendering", () => {
     expect(work).toHaveBeenCalledOnce();
     _fixture.editor!.destroy();
     _fixture.editor = undefined;
-    expect(latexInputQuietDelay()).toBe(0);
+    expect(inputQuietDelay()).toBe(0);
   });
 });
 

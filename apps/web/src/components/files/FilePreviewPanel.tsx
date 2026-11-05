@@ -2,6 +2,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useLayoutEffect } from "react";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import { revealFileEditorSelection, type SourceSelectionReveal } from "./fileEditorSourceReveal";
+import { useChatPriorityScroll } from "~/scient/writing/useChatPriorityScroll";
 import {
   SourceCitationActions,
   type SourceCaretQuote,
@@ -1558,6 +1559,7 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
+  const prioritizeChat = useChatPriorityScroll();
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -2540,7 +2542,7 @@ export default function FilePreviewPanel({
           byte file.
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div ref={prioritizeChat} className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
           // While a file this panel saves is being renamed, it takes no edits:

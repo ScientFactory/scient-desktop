@@ -1,0 +1,68 @@
+diff --git a/legacy/web/pdf_viewer.mjs b/legacy/web/pdf_viewer.mjs
+index 001fdcab4aa0966a555ffcde3f3881e80ac5c299..c2a76ffe42957f26ecf05c0581c88195eb6721f1 100644
+--- a/legacy/web/pdf_viewer.mjs
++++ b/legacy/web/pdf_viewer.mjs
+@@ -11228,10 +11228,14 @@ class TextLayerBuilder {
+     this.#selectionChangeAC = new AbortController();
+     const signal = globalAbortSignal ? AbortSignal.any([this.#selectionChangeAC.signal, globalAbortSignal]) : this.#selectionChangeAC.signal;
+     const reset = (end, textLayer) => {
+-      textLayer.append(end);
+-      end.style.width = "";
+-      end.style.height = "";
+-      textLayer.classList.remove("selecting");
++      if (end !== textLayer.lastChild) {
++        textLayer.append(end);
++      }
++      if (end.style.width) end.style.width = "";
++      if (end.style.height) end.style.height = "";
++      if (textLayer.classList.contains("selecting")) {
++        textLayer.classList.remove("selecting");
++      }
+     };
+     let isPointerDown = false;
+     document.addEventListener("pointerdown", () => {
+@@ -11281,6 +11285,10 @@ class TextLayerBuilder {
+           reset(endDiv, textLayerDiv);
+         }
+       }
++      if (activeTextLayers.size === 0) {
++        prevRange = null;
++        return;
++      }
+       if (isFirefoxOrModernChromium === undefined) {
+         isFirefoxOrModernChromium = getComputedStyle(this.#textLayers.values().next().value).getPropertyValue("-moz-user-select") === "none";
+         if (!isFirefoxOrModernChromium) {
+diff --git a/web/pdf_viewer.mjs b/web/pdf_viewer.mjs
+index e4a6b24652d1ed233dc3de1b746188a246e5fb9e..9760a8ca25cfa52e529624204c0153bcaabddf97 100644
+--- a/web/pdf_viewer.mjs
++++ b/web/pdf_viewer.mjs
+@@ -6275,10 +6275,14 @@ class TextLayerBuilder {
+     this.#selectionChangeAC = new AbortController();
+     const signal = globalAbortSignal ? AbortSignal.any([this.#selectionChangeAC.signal, globalAbortSignal]) : this.#selectionChangeAC.signal;
+     const reset = (end, textLayer) => {
+-      textLayer.append(end);
+-      end.style.width = "";
+-      end.style.height = "";
+-      textLayer.classList.remove("selecting");
++      if (end !== textLayer.lastChild) {
++        textLayer.append(end);
++      }
++      if (end.style.width) end.style.width = "";
++      if (end.style.height) end.style.height = "";
++      if (textLayer.classList.contains("selecting")) {
++        textLayer.classList.remove("selecting");
++      }
+     };
+     let isPointerDown = false;
+     document.addEventListener("pointerdown", () => {
+@@ -6328,6 +6332,10 @@ class TextLayerBuilder {
+           reset(endDiv, textLayerDiv);
+         }
+       }
++      if (activeTextLayers.size === 0) {
++        prevRange = null;
++        return;
++      }
+       if (isFirefoxOrModernChromium === undefined) {
+         isFirefoxOrModernChromium = getComputedStyle(this.#textLayers.values().next().value).getPropertyValue("-moz-user-select") === "none";
+         if (!isFirefoxOrModernChromium) {

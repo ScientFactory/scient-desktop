@@ -1,6 +1,7 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { textDirection } from "~/textDirection";
+import { prioritizeChatInput } from "~/scient/writing/inputPriority";
 
 import { ScientVoiceCommentControl } from "~/scient/voice/ScientVoiceCommentControl";
 import { buildVoiceDraftReplacement } from "~/scient/voice/voiceComposerInsert";
@@ -27,6 +28,15 @@ export function AssistantCitationCommentEditor({
   const [comment, setComment] = useState(citation.comment ?? "");
   const [voiceBusy, setVoiceBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const observeInput = (element: HTMLTextAreaElement | null) => {
+    textareaRef.current = element;
+    if (!element) return;
+    const stop = prioritizeChatInput(element);
+    return () => {
+      stop();
+      textareaRef.current = null;
+    };
+  };
   useImperativeHandle(inputRef, () => textareaRef.current!, []);
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submissionBlocked = voiceBusy || commentTooLong;
@@ -61,7 +71,7 @@ export function AssistantCitationCommentEditor({
       }}
     >
       <textarea
-        ref={textareaRef}
+        ref={observeInput}
         aria-label="Comment on selected text"
         aria-description={keyboardDescription}
         aria-invalid={commentTooLong || undefined}

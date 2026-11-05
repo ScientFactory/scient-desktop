@@ -189,6 +189,8 @@
 }
 
 .scient-pdf-viewer-container .pdfViewer.removePageBorders .page {
+  /* PDF.js supplies page dimensions, so offscreen ink need not join chat layout. */
+  content-visibility: auto;
   margin: 0 auto 8px;
   border: 0;
   box-shadow: 0 1px 5px rgb(0 0 0 / 16%);

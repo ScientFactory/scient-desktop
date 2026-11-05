@@ -248,7 +248,7 @@ import { afterEditorPaint } from "./afterEditorPaint";
 import { observeLatexWidth } from "./observeLatexWidth";
 import { createEditorBackgroundTask } from "./editorBackgroundTask";
 import { processVisualDocument } from "./visualProcessing";
-import { LatexInputPriority } from "./latexInputPriority";
+import { InputPriority } from "../writing/inputPriority";
 import { createVisualTypingJournal, prepareVisualTypingRecovery } from "./visualTypingJournal";
 import { visualDocumentJson } from "./visualDocumentJson";
 import { visualProjectionCache } from "./visualProjectionCache";
@@ -7180,7 +7180,7 @@ function LatexVisualEditorReady(
     LatexProseCompletion.configure({ context: readCompletionContext }),
     LatexStructuredSelection.configure({ source: structuredSelectionSource }),
     LatexVisualSearch,
-    LatexInputPriority,
+    InputPriority,
     LatexPageMarkers,
     LatexPagedPresentation.configure({ source: readSetupSource }),
     LatexReadingAnchor.configure({ syncLayout: syncZoomLayout }),
