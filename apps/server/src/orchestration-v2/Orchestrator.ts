@@ -3,6 +3,7 @@ import {
   type ContextHandoffItem,
 } from "./scient-fork/ContextHistoryCandidates.ts";
 import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
+import { checkpointSupportsRewind } from "@t3tools/contracts";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -13508,7 +13509,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} was not found.`,
         });
       }
-      if (targetCheckpoint.status !== "ready") {
+      // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
+      if (!checkpointSupportsRewind(targetCheckpoint, command.restoreFiles !== false)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -13566,6 +13568,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             commandType: command.type,
             cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its provider turn is unavailable.`,
+          });
+        }
+        // SCIENT-FORK: snapshot-less checkpoints of rolled-back runs may not have been marked stale.
+        if (targetRun.status === "rolled_back") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its run was rolled back.`,
           });
         }
         if (targetProviderTurn.providerThreadId !== providerThread.id) {
