@@ -1,6 +1,6 @@
 # Overleaf agent tools
 
-Agents reach Overleaf manual sync through seven Scient tools
+Agents reach Overleaf manual sync through eight Scient tools
 (`apps/server/src/mcp/toolkits/overleaf/`). They call the same `OverleafSync`
 service as the routes ([engine](scient-overleaf-engine.md#service-and-routes)),
 as the calling thread: the service resolves the thread's workspace, and a thread
