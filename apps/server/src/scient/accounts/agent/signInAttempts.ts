@@ -38,8 +38,6 @@ export interface Typed {
   /** When each origin last asked for anything, and for a password, in the order of `seen`. */
   readonly fieldsSeen: Map<string, number>;
   readonly passwordSeen: Map<string, number>;
-  /** Every origin the tab reached, a single sign-on service's included: the user's until it ends. */
-  readonly visited: Set<string>;
   readonly scientTyped: Set<string>;
   submitted: number;
   /** Set once the sign-in worked: what arrives after can't be the password it followed. */

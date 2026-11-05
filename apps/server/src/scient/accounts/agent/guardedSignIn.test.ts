@@ -380,7 +380,10 @@ it.effect("a paper stopped at a code waits there; the press resumes it, one pass
       outcome: "needs-user",
       pending: true,
     });
-    expect([...attempts.values()]).toMatchObject([{ tabId: "tab-fixture", state: "pending" }]);
+    // In its tab's profile, whose sessions stay there while it waits.
+    expect([...attempts.values()]).toMatchObject([
+      { tabId: "tab-fixture", state: "pending", profileId: "default" },
+    ]);
     // Nothing automatic tries again while it waits.
     expect((yield* run(rows[0]!, paper("all"))).outcome).toBe("failed");
     // The person answers the code in the kept tab.

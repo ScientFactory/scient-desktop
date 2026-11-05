@@ -633,6 +633,8 @@ export const AccountSignInAttempt = Schema.Struct({
   tabId: PreviewTabId,
   accountId: AccountId,
   state: Schema.Literals(["typing", "person", "pending"]),
+  /** The tab's profile: none of its sessions leaves it while the attempt lasts. */
+  profileId: Schema.optional(BrowserProfileId),
 });
 export type AccountSignInAttempt = typeof AccountSignInAttempt.Type;
 

@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import {
   AccountId,
+  BrowserProfileId,
   EnvironmentId,
   EventId,
   ProjectId,
@@ -185,28 +186,43 @@ it.effect("exports no session for a site the user is signing in to", () =>
       );
     expect(refused).toMatchObject({ reason: "denied" });
     expect(refused.message).toContain("signing in to this site");
-    // Its single sign-on service, reached on the way, stays the user's too.
-    const { typed } = yield* fake.service.signInAttempts;
-    typed.set("attempt-1", {
+    // Its tab has gone on to a single sign-on service no row names and no look has seen: no
+    // session leaves the profile, through a fresh tab either.
+    yield* fake.service.setAttempt({
+      attemptId: "attempt-1",
       threadId,
       tabId: "tab-1",
-      sites: ["example.com"],
-      university: false,
       accountId: account.accountId,
-      fieldsSeen: new Map(),
-      passwordSeen: new Map(),
-      visited: new Set(["https://www.example.com", "https://login.federation.test"]),
-      scientTyped: new Set(),
-      submitted: 0,
-      signedIn: false,
-      seen: 2,
+      state: "person",
+      profileId: BrowserProfileId.make("default"),
     });
+    const reached: string[] = [];
+    const broker = {
+      invoke: (request: { readonly operation: string }) =>
+        Effect.sync(() => {
+          reached.push(request.operation);
+          return request.operation === "status"
+            ? {
+                available: true,
+                visible: true,
+                tabId: null,
+                url: null,
+                title: null,
+                loading: false,
+                profiles: [{ id: "default", name: "Main" }],
+                tabs: [
+                  { tabId: "tab-1", url: "https://login.federation.test/", profileId: "default" },
+                ],
+              }
+            : { tabId: "tab-2" };
+        }),
+    } as unknown as PreviewAutomationBroker["Service"];
     const redirected = yield* accountAgentOperations
-      .scient_account_browser_session({ url: "https://federation.test/" })
+      .scient_account_browser_session({ url: "https://federation.test/", profileId: "default" })
       .pipe(
         Effect.flip,
         Effect.provideService(AccountsService, fake.service),
-        Effect.provideService(PreviewAutomationBroker, {} as PreviewAutomationBroker["Service"]),
+        Effect.provideService(PreviewAutomationBroker, broker),
         Effect.provideService(AccountSessionFiles, {} as AccountSessionFiles["Service"]),
         Effect.provideService(AgentInvocationContext, {
           environmentId: EnvironmentId.make("env-fixture"),
@@ -217,6 +233,9 @@ it.effect("exports no session for a site the user is signing in to", () =>
           issuedAt: 0,
         }),
       );
-    expect(redirected).toMatchObject({ reason: "denied" });
+    expect(redirected.message).toBe(
+      "The user is signing in on this tab. Wait for scient_account_sign_in.",
+    );
+    expect(reached).not.toContain("accountCookies");
   }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
 );

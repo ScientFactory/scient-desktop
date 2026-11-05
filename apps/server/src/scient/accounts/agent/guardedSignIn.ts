@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import {
   AccountsError,
+  BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
   type AccountKeepTypedInput,
@@ -334,6 +335,8 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
         };
   const attemptId = resume?.attemptId ?? NodeCrypto.randomUUID();
   const university = universityDetails(account.details);
+  /** The attempt tab's profile, as the engine opened it. */
+  let tabProfile: string | undefined;
   const register = (tabId: PreviewTabId, state: AccountSignInAttempt["state"]) =>
     Effect.suspend(() => {
       if (!typedIn.has(attemptId) && account.details.kind === "website")
@@ -344,7 +347,6 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
           university: university !== undefined,
           accountId: account.accountId,
           fieldsSeen: new Map(),
-          visited: new Set(),
           passwordSeen: new Map(),
           scientTyped: new Set(),
           submitted: 0,
@@ -357,6 +359,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
         tabId,
         accountId: account.accountId,
         state,
+        ...(tabProfile === undefined ? {} : { profileId: BrowserProfileId.make(tabProfile) }),
       });
     });
   const options: SignInOptions = {
@@ -370,14 +373,15 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       ? { person: { ...PERSON, learnOrigins: university !== undefined } }
       : {}),
     ...(resume ? { resume } : {}),
-    onTab: (tabId) =>
-      register(tabId, caller.kind === "person" ? "person" : "typing").pipe(
+    onTab: (tabId, profileId) => {
+      tabProfile = profileId;
+      return register(tabId, caller.kind === "person" ? "person" : "typing").pipe(
         Effect.andThen(request.onTab?.(tabId) ?? Effect.void),
-      ),
+      );
+    },
     onPage: (page) => {
       const typed = typedIn.get(attemptId);
       if (!typed) return;
-      typed.visited.add(page.origin);
       if (page.fields) typed.fieldsSeen.set(page.origin, typed.seen);
       if (page.password) typed.passwordSeen.set(page.origin, typed.seen);
       typed.seen++;

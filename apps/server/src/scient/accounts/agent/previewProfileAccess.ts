@@ -57,7 +57,7 @@ export const profileUnavailable = () =>
  * Tabs whose contents are the user's while they sign in: an attempt's tab, and a university's own
  * sign-in pages, whose address can carry the sign-in's state. No agent reads, drives or lists them.
  */
-export const privateTabs = Effect.fn("AccountsAgent.privateTabs")(function* () {
+const privateTabs = Effect.fn("AccountsAgent.privateTabs")(function* () {
   const accounts = yield* AccountsService;
   const signingIn = new Set((yield* accounts.attempts).map((attempt) => attempt.tabId));
   const { accounts: rows } = yield* accounts.snapshot;

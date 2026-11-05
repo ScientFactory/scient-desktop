@@ -64,7 +64,7 @@ export interface SignInOptions {
   /** Why an agent asked the user to sign in, for the card. */
   readonly reason?: string;
   /** Told the attempt's tab as soon as it has one. */
-  readonly onTab?: (tabId: PreviewTabId) => Effect.Effect<void>;
+  readonly onTab?: (tabId: PreviewTabId, profileId: string | undefined) => Effect.Effect<void>;
   /** Told each page it looks at: its origin, whether it asked for anything, and for a password. */
   readonly onPage?: (page: {
     readonly origin: string;
@@ -157,7 +157,8 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       message: "No browser tab is available for sign-in.",
     });
   const target = opened.tabId;
-  if (options.onTab) yield* options.onTab(target);
+  if (options.onTab)
+    yield* options.onTab(target, opened.tabs?.find((tab) => tab.tabId === target)?.profileId);
   const password = secrets.password === undefined ? undefined : Redacted.value(secrets.password);
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
   const decide = (page: SignInDetection) => {
