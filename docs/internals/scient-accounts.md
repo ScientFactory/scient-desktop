@@ -27,8 +27,9 @@ The rules every change here keeps. The sections below explain each one.
   browser work. No code takes an outer lock while holding an inner one.
 - **Withdraw only what we wrote.** A Main copy is taken back only while Main's unit still holds
   that exact copy (`withdrawCopies`, by digest). A receiver deletes a sender's unit only while the
-  sender owns it, by having written it (a `same` keeps an earlier claim and never makes one, and
-  another sender's write ends it), and the unit still holds exactly the sender's copy. A unit missing from a jar is never deleted for its
+  sender owns it, by having written it (a `same` keeps an earlier claim on exactly the same sites and
+  digest, and never makes, widens or refreshes one; another sender's write ends it, and a
+  take-back that finds nothing of its own answers `kept`, ending nobody's), and the unit still holds exactly the sender's copy. A unit missing from a jar is never deleted for its
   absence, and a cookie a site wrote since stays.
 - **Copies follow user actions.** Copies into Main and to other computers come from these
   triggers only: a newer `signed-in` action (`by: "action"`), an import or Refresh, Send again,
@@ -247,8 +248,10 @@ or 2FA key goes. Decisions use revisions, never clocks:
   `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit; the
   desktop drops its key only once that is confirmed, so a computer unlinked while offline is
   proven and reconciled when linked again. The session that bound a sender gets a new key if it
-  lost the bind answer. On the remote, Forget this computer (`accounts.sessions.forget`) deletes a
-  sender's copies and registration, so a reinstalled desktop can bind again. A
+  lost the bind answer. On the remote, Forget this computer (`accounts.sessions.forget`) deletes the
+  copies a sender wrote and its registration, so a reinstalled desktop can bind again. A unit a
+  copy found already there (`same`, unclaimed) is the remote's own: only signing out there
+  removes it. A
   remote drops a sender, and its copies, when the session it last proved its key over is revoked
   (it watches session removals) or after `SENDER_KEEP_DAYS` (30) days without it, checked at start
   and daily. Only units still holding exactly the sender's copy are deleted.

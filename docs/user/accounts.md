@@ -106,7 +106,8 @@ Each profile goes to its namesake there (Main to Main), for the sites you have i
 only. Profiles that are Off, limited to projects or kept from scripts stay here, and their copies
 leave. Passwords, two-factor keys and your university's sign-in never go. If a site refuses a copy,
 press **Sign in there** once. Copies leave when you remove that computer here while it is connected,
-press **Forget this computer** there, or this computer stays away 30 days. Programs running as you
+press **Forget this computer** there, or this computer stays away 30 days. A sign-in that was
+already there when a copy arrived is that computer's own: sign out there to remove it. Programs running as you
 on that computer can read them.
 
 ## Papers behind a subscription
