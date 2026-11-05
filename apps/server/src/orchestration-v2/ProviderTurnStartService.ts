@@ -785,11 +785,6 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus, shouldStartProviderTurn } = runControls;
 
-      // A side chat shares its parent's worktree; the turn that gets its context asks before acting.
-      const supervisedSideChatTurn =
-        projection.thread.lineage.sideChat === true &&
-        (sideChatHandoff !== undefined ||
-          !projection.runs.some((previous) => previous.ordinal < run.ordinal));
       const admittedRuntimePolicy = providerWork?.runtimePolicy ?? run.steeringRuntimePolicy;
       const resolvedPolicy = yield* (
         admittedRuntimePolicy
@@ -797,11 +792,8 @@ export const layer: Layer.Layer<
           : runtimePolicy.resolve({
               thread: {
                 ...projection.thread,
-                runtimeMode: supervisedSideChatTurn
-                  ? "approval-required"
-                  : (run.runtimeMode ??
-                    run.legacyQueue?.runtimeMode ??
-                    projection.thread.runtimeMode),
+                runtimeMode:
+                  run.runtimeMode ?? run.legacyQueue?.runtimeMode ?? projection.thread.runtimeMode,
                 interactionMode:
                   run.interactionMode ??
                   run.legacyQueue?.interactionMode ??
