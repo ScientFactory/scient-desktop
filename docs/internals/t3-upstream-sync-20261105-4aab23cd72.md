@@ -91,9 +91,46 @@ No events or fields change.
 
 ## Agent context
 
-The MCP tool list grows by 320 bytes (`mcpToolListJsonBytes` 47,498 → 47,818): T3's thread tools
-gain `freshContext`, and its scheduled-task tools gain `freshSession`.
+The MCP tool list agents receive grows by 320 bytes: T3's thread tools gain `freshContext`, and
+its scheduled-task tools gain `freshSession`. Scient's measured list goes from 84,595 to 84,915
+bytes (`agentContextBudget.scient.json`; T3's own budget moves the same 320 bytes).
 
 ## Model manifest
 
 No change.
+
+## Verification
+
+Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state.
+
+- **Static checks:**
+  - Typecheck: every package, each run on its own.
+  - `vp check`: no errors; 5 warnings that main already has.
+  - `vp run knip:check` and `vp run brand:check`: pass.
+  - The seam check (`--base origin/main --head HEAD`) and upstream provenance at `4aab23cd72`
+    pass.
+  - The lockfile is unchanged from main and keeps every `hasBin` marker (125).
+- **Full suites** (run on the merge, before the fixes):
+  - server: 14,570 passed, 8 failed;
+  - packages, desktop and scripts: all passed except 2;
+  - web: 14,680 passed, 1 failed.
+
+  Every failure was checked on its own:
+  - **Fixed in this PR (4):** T3's two provider-switch tests for a queued fresh run
+    (`e984025a76`), and the migration-84 and agent-context budget tests (`8afb99bc56`). All pass
+    after the fixes, with the rest of `src/persistence` and `ProviderSwitch` (38 files).
+  - **Load timeouts that pass alone (2):** `scripts` cached-tests and the web inline audio preview.
+  - **Known on main (4):** `DeviceHubProxy.stream` and `EnvironmentFileOpen` load flakes, and
+    `LatexRealEngine` and the ssh install race, which fail on main's code on this Mac too.
+
+- **Live review on a dev app:** a fresh start, then a copy of the previous 81-thread test
+  database. Results and screenshots are in `reviews/t3-sync-4aab-20261105/RECORD.md`.
+  - **Passes:** startup and migration 84, the upgrade, a Claude turn, `/clear` with Claude and
+    with Codex, Scient's `/fork` beside it, a side chat with the parent's permissions, and the
+    scheduled-task destination choice.
+  - **Found live and fixed:** a fresh message queued behind a running turn resumed the old
+    conversation (`e984025a76`); rerun on the fix, it starts a new one.
+  - **Not driven live:** snoozing with a pending question, and worktree branch follow. Their tests
+    cover them.
+- **Review:** a light Codex review found one issue, fixed in `472b2d3a26`: a fresh send could
+  compact the old conversation first.
