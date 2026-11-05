@@ -300,8 +300,10 @@ function fillFixture(
     stateDir,
     signOutMain: (site: string) =>
       signOutMainSite(site, PRIMARY_LOCAL_ENVIRONMENT_ID).pipe(Effect.provide(layer)),
-    withdraw: (from: string) =>
-      withdrawFromMainHandler({ from }, event as never).pipe(Effect.provide(layer)),
+    withdraw: (from: string, heldOnly?: true) =>
+      withdrawFromMainHandler(heldOnly ? { from, heldOnly } : { from }, event as never).pipe(
+        Effect.provide(layer),
+      ),
   };
 }
 
@@ -413,6 +415,11 @@ describe("withdrawFromMain", () => {
       expect(f.main().jar.size).toBe(3);
       // The site rotated Overleaf's session in Main since: it is Main's own now.
       f.main().put(jarCookie({ domain: ".overleaf.com", value: "rotated" }));
+      // Listing what Main holds from it, for other computers first, removes nothing.
+      expect(yield* f.withdraw("work", true)).toEqual({
+        units: [["github.com"], ["overleaf.com"]],
+      });
+      expect(f.main().jar.size).toBe(3);
       expect(yield* f.withdraw("work")).toEqual({ units: [["github.com"]] });
       expect([...f.main().jar.values()].map(({ domain, value }) => [domain, value])).toEqual([
         [".overleaf.com", "rotated"],

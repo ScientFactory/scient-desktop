@@ -182,8 +182,11 @@ export function mainFillTrigger(deps: {
   readonly eligible?: (profileId: string) => boolean;
   /** Trigger 3, run once the environment's first snapshot arrives. */
   readonly backfill?: (snapshot: AccountsSnapshot) => Promise<void>;
-  /** A profile no longer unrestricted takes back from Main what its copies still hold there. */
-  readonly withdraw?: (profileId: string) => Promise<void>;
+  /**
+   * A profile no longer unrestricted takes back from Main what its copies still hold there; true
+   * once done. Until then it is tried again with every snapshot.
+   */
+  readonly withdraw?: (profileId: string) => Promise<boolean>;
 }) {
   let previous: AccountsSnapshot | undefined;
   let backfill: Promise<void> | undefined;
@@ -191,6 +194,9 @@ export function mainFillTrigger(deps: {
   /** Each waiting retry's cancel, with the profile it copies from. */
   const retries = new Map<() => void, string>();
   const eligible = deps.eligible ?? otherPersistentProfile;
+  /** Restricted profiles whose copies Main hasn't given back yet, and those being given back. */
+  const withdrawals = new Set<string>();
+  const withdrawing = new Set<string>();
   /** In-flight and retrying copies, by row and revision; the oldest goes first past the limit. */
   const pending = new Map<string, number>();
   const keyOf = (row: AccountSummary) =>
@@ -272,13 +278,25 @@ export function mainFillTrigger(deps: {
         .backfill?.(snapshot)
         .catch((cause: unknown) => warn("Couldn't fill Main from every profile", cause));
       const copies: Array<Promise<void>> = backfill ? [backfill] : [];
-      for (const profileId of restricted)
+      for (const profileId of restricted) withdrawals.add(profileId);
+      for (const profileId of withdrawals) {
+        // Unrestricted again: its copies may stay.
+        if (isUnrestricted(recordOf(snapshot, profileId))) withdrawals.delete(profileId);
+        if (!withdrawals.has(profileId) || withdrawing.has(profileId) || !deps.withdraw) continue;
+        withdrawing.add(profileId);
         copies.push(
           deps
-            .withdraw?.(profileId)
-            .catch((cause: unknown) => warn("Couldn't take a profile's copies back", cause)) ??
-            Promise.resolve(),
+            .withdraw(profileId)
+            .catch((cause: unknown) => {
+              warn("Couldn't take a profile's copies back", cause);
+              return false;
+            })
+            .then((done) => {
+              withdrawing.delete(profileId);
+              if (done) withdrawals.delete(profileId);
+            }),
         );
+      }
       for (const row of events) {
         const key = keyOf(row);
         if (pending.has(key)) continue;
@@ -289,6 +307,32 @@ export function mainFillTrigger(deps: {
       return Promise.all(copies).then(() => undefined);
     },
   };
+}
+
+/**
+ * Main gives back a restricted profile's copies, durably for other computers: first the revisions
+ * by which they take back theirs, for every unit Main holds from it, then Main's own, then its
+ * rows. A failure before Main's own changes nothing, so the next try starts over; false until done.
+ */
+export async function withdrawFromMain(
+  from: string,
+  deps: {
+    readonly native: (input: {
+      readonly from: string;
+      readonly heldOnly?: true;
+    }) => Promise<{ readonly units: ReadonlyArray<ReadonlyArray<string>> } | null>;
+    /** Records the copy-only delete other computers apply; true once persisted. */
+    readonly takeBack: (sites: ReadonlyArray<string>) => Promise<boolean>;
+    readonly settle: (units: ReadonlyArray<ReadonlyArray<string>>) => Promise<void>;
+  },
+): Promise<boolean> {
+  const held = await deps.native({ from, heldOnly: true });
+  if (!held) return false;
+  for (const sites of held.units) if (!(await deps.takeBack(sites))) return false;
+  const result = await deps.native({ from });
+  if (!result) return false;
+  if (result.units.length) await deps.settle(result.units);
+  return true;
 }
 
 /** Starts trigger 2 for the primary environment, where the desktop writes Main. */
@@ -328,25 +372,24 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
             mainDefaultNotice: true,
           })).then(() => undefined),
       }),
-    withdraw: async (profileId) => {
-      const result = await window.desktopBridge?.accounts
-        ?.withdrawFromMain?.({ from: profileId, environmentId })
-        .catch((cause: unknown) => {
-          warn("Couldn't take a profile's copies back", cause);
-          return null;
-        });
-      if (!result?.units.length) return;
-      // Other computers take back their copy of what Main gave back, unlike a sign-out there.
-      for (const sites of result.units)
-        await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } });
-      const snapshot = read();
-      if (!snapshot) return;
-      const { remove, signedOut } = withdrawnRows(snapshot.accounts, result.units);
-      for (const accountId of remove)
-        await accountsState.remove.run(registry, { environmentId, input: { accountId } });
-      for (const accountId of signedOut)
-        await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
-    },
+    withdraw: (profileId) =>
+      withdrawFromMain(profileId, {
+        native: (input) =>
+          window.desktopBridge?.accounts?.withdrawFromMain?.({ ...input, environmentId }) ??
+          Promise.resolve(null),
+        takeBack: async (sites) =>
+          (await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } }))
+            ._tag === "Success",
+        settle: async (units) => {
+          const snapshot = read();
+          if (!snapshot) return;
+          const { remove, signedOut } = withdrawnRows(snapshot.accounts, units);
+          for (const accountId of remove)
+            await accountsState.remove.run(registry, { environmentId, input: { accountId } });
+          for (const accountId of signedOut)
+            await accountsState.sessionEnded.run(registry, { environmentId, input: { accountId } });
+        },
+      }),
   });
   const unsubscribe = registry.subscribe(
     atom,

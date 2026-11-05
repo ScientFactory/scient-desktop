@@ -17,6 +17,7 @@ import {
   fillMainFromProfile,
   mainFillTrigger,
   replaceAllowedSince,
+  withdrawFromMain,
   withdrawnRows,
 } from "./mainFill";
 
@@ -77,6 +78,7 @@ function setup(result: DesktopFillMainResult | null = copied("copied")) {
   let current: AccountsSnapshot | undefined;
   const recorded: unknown[] = [];
   const withdrawn: string[] = [];
+  let withdrawals = true;
   const trigger = mainFillTrigger({
     environmentId,
     fillMain: async (input) => {
@@ -93,11 +95,18 @@ function setup(result: DesktopFillMainResult | null = copied("copied")) {
       };
     },
     eligible: (profileId) => profileId === "work" || profileId === "home",
-    withdraw: async (profileId) => void withdrawn.push(profileId),
+    withdraw: async (profileId) => {
+      withdrawn.push(profileId);
+      return withdrawals;
+    },
   });
   return {
     fills,
     withdrawn,
+    /** Whether a withdrawal now succeeds. */
+    withdrawalsWork: (works: boolean) => {
+      withdrawals = works;
+    },
     timers,
     recorded,
     seen: async (next: AccountsSnapshot) => {
@@ -253,6 +262,18 @@ describe("a profile no longer unrestricted", () => {
     // Even a timer already firing copies nothing from it.
     await timer();
     expect(t.fills).toHaveLength(1);
+  });
+
+  it("tries a failed withdrawal again with each snapshot until it is done", async () => {
+    const t = setup();
+    t.withdrawalsWork(false);
+    await t.seen(snapshot([], [record("work")]));
+    const off = snapshot([], [record("work", { access: "off" })]);
+    await t.seen(off);
+    t.withdrawalsWork(true);
+    await t.seen(off);
+    await t.seen(off);
+    expect(t.withdrawn).toEqual(["work", "work"]);
   });
 
   it("takes back its copies once when turned Off, Ask or limited to projects", async () => {
@@ -507,5 +528,30 @@ describe("trigger 3: the one-time back-fill", () => {
     trigger.reset();
     await trigger.seen(snapshot([]));
     expect(runs).toBe(1);
+  });
+});
+
+describe("withdrawFromMain", () => {
+  it("records other computers' take-back before Main gives anything back, and retries from the start", async () => {
+    const calls: string[] = [];
+    let persisted = false;
+    const deps = {
+      native: async (input: { readonly heldOnly?: true }) => {
+        calls.push(input.heldOnly ? "list" : "withdraw");
+        return { units: [["github.com"]] };
+      },
+      takeBack: async (sites: ReadonlyArray<string>) => {
+        calls.push(`take back ${sites.join(" ")}`);
+        return persisted;
+      },
+      settle: async () => void calls.push("rows"),
+    };
+    // The revision isn't persisted: Main keeps its copy, its receipt and its rows.
+    expect(await withdrawFromMain("work", deps)).toBe(false);
+    expect(calls).toEqual(["list", "take back github.com"]);
+    persisted = true;
+    calls.length = 0;
+    expect(await withdrawFromMain("work", deps)).toBe(true);
+    expect(calls).toEqual(["list", "take back github.com", "withdraw", "rows"]);
   });
 });

@@ -251,6 +251,8 @@ const copyRecords = Effect.gen(function* () {
 export const WithdrawMainInput = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId),
   from: BrowserProfileId,
+  /** Only the units Main holds from it, removing nothing: what other computers must take back. */
+  heldOnly: Schema.optional(Schema.Literal(true)),
 });
 
 /**
@@ -272,7 +274,8 @@ export const withdrawFromMain = Effect.fn("DesktopAccounts.withdrawFromMain")(fu
   return yield* Effect.promise(() =>
     underMainLock(environmentId, async () => {
       const copies = await records.from(environmentId, input.from);
-      if (copies.length === 0) return { units: [] };
+      if (input.heldOnly || copies.length === 0)
+        return { units: copies.map(({ sites }) => [...sites]) };
       const units = await withCookieDebugger(main.value, (send) =>
         withdrawCopies(jarStore(main.value, send), copies, () => Date.now() / 1000),
       );

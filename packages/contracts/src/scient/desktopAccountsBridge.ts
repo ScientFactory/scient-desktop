@@ -204,6 +204,8 @@ export interface DesktopAccountsBridge {
   readonly withdrawFromMain?: (input: {
     readonly from: string;
     readonly environmentId?: string;
+    /** Lists the units Main holds from `from`, removing nothing. */
+    readonly heldOnly?: true;
   }) => Promise<{ readonly units: ReadonlyArray<ReadonlyArray<string>> } | null>;
   /** Reads the primary environment's jar under the Main lock; null when refused. */
   readonly readSessions?: (
