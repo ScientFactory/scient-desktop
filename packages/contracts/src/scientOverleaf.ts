@@ -240,6 +240,8 @@ export const ScientOverleafUnreadableRecord = Schema.Struct({
   folder: Schema.NullOr(Schema.String),
   /** A sync it records stopped part-way; null when the record doesn't say. */
   unfinished: Schema.NullOr(Schema.Boolean),
+  /** Besides linking: bulk changes at its own checkout, at every checkout, or nothing more. */
+  holds: Schema.Literals(["linking", "checkout", "every-checkout"]),
   setAside: Schema.Literals(["allowed", "confirm", "held"]),
 });
 export type ScientOverleafUnreadableRecord = typeof ScientOverleafUnreadableRecord.Type;

@@ -29,7 +29,7 @@ import { captureOverleafInventory } from "./OverleafInventory.ts";
 import { classifyProbeGitFailure } from "./OverleafProtocolProbe.ts";
 import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
 import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
-import { OverleafStateStore, unreadableSetAside } from "./OverleafStateStore.ts";
+import { OverleafStateStore, unreadableHolds, unreadableSetAside } from "./OverleafStateStore.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 /** The workspace authority a connection is recorded under (contract rule 2). */
@@ -1087,6 +1087,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         kind: read._tag === "unsupported" ? "newer" : "damaged",
         folder: read.shows.folder,
         unfinished: read.shows.unfinished,
+        holds: unreadableHolds(read),
         setAside: unreadableSetAside(read),
       });
     }

@@ -47,6 +47,7 @@ import {
 } from "./OverleafConnectionState.ts";
 
 import { overleafCloudRoot } from "./overleafCloudRoots.ts";
+import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
   ensureNativePrivateRetentionDirectory,
   resolveNativeFilePublicationHelperPath,
@@ -221,14 +222,16 @@ const objectField = (value: unknown, key: string): unknown =>
 const unreadableShows = (value: unknown): OverleafUnreadableShows => {
   const root = objectField(objectField(value, "checkout"), "canonicalRoot");
   const relative = objectField(objectField(value, "folder"), "relativePath");
+  // Held to the rules a readable document's paths meet, so the folder stays inside its checkout.
   const folder =
     typeof root === "string" &&
     NodePath.isAbsolute(root) &&
+    NodePath.resolve(root) === root &&
     typeof relative === "string" &&
-    !NodePath.isAbsolute(relative)
+    (relative === "" || manuscriptPathProblem(relative) === null)
       ? relative === ""
         ? root
-        : NodePath.join(root, relative)
+        : NodePath.join(root, ...relative.split("/"))
       : null;
   const apply = objectField(value, "activeApply");
   const staging = objectField(value, "stagingPaths");
@@ -242,6 +245,21 @@ const unreadableShows = (value: unknown): OverleafUnreadableShows => {
         : null;
   return { folder, unfinished };
 };
+
+/**
+ * What an unreadable document holds back besides linking. It might record an unfinished
+ * sync, so bulk changes wait at its checkout, or at every checkout when it names none. A
+ * newer release's fields can't prove it settled, but a damaged one that shows no unfinished
+ * sync holds nothing back.
+ */
+export const unreadableHolds = (
+  read: OverleafUnreadableRead,
+): "linking" | "checkout" | "every-checkout" =>
+  read._tag === "corrupt" && read.shows.unfinished === false
+    ? "linking"
+    : read.shows.folder === null
+      ? "every-checkout"
+      : "checkout";
 
 /**
  * Whether an unreadable document may be moved aside. A newer release's document stays

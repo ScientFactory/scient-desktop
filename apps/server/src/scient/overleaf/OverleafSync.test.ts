@@ -1098,14 +1098,28 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
             reason: "records-unreadable",
           });
           expect(yield* w.service.unreadableRecords(w.at(w.main))).toEqual([
-            { recordId, kind: "newer", folder, unfinished: true, setAside: "held" },
+            {
+              recordId,
+              kind: "newer",
+              folder,
+              unfinished: true,
+              holds: "checkout",
+              setAside: "held",
+            },
           ]);
           expect(yield* setAside(true)).toEqual({ outcome: "held" });
 
           // An unparseable one names nothing and can go.
           yield* Effect.promise(() => NodeFSP.writeFile(file, "{ not json"));
           expect(yield* w.service.unreadableRecords(w.at(w.main))).toEqual([
-            { recordId, kind: "damaged", folder: null, unfinished: null, setAside: "allowed" },
+            {
+              recordId,
+              kind: "damaged",
+              folder: null,
+              unfinished: null,
+              holds: "every-checkout",
+              setAside: "allowed",
+            },
           ]);
           expect(yield* setAside(false)).toEqual({ outcome: "set-aside" });
           expect(yield* setAside(false)).toEqual({ outcome: "gone" });

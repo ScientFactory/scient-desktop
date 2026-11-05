@@ -243,21 +243,22 @@ function unreadableRecordLines(record: ScientOverleafUnreadableRecord): {
   readonly holds: string;
 } {
   const state =
-    record.setAside === "held"
-      ? "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then."
+    record.kind === "newer"
+      ? record.unfinished === true
+        ? "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then."
+        : record.unfinished === null
+          ? "A newer version of Scient made this link, and this version can't tell whether its last sync finished. Open that version to check; Scient keeps the record until then."
+          : "A newer version of Scient made this link. As far as this version can tell, its last sync finished."
       : record.setAside === "confirm"
         ? "This record is damaged, and its last sync stopped part-way. Setting it aside stops Scient guarding the files that sync left in the folder."
         : record.unfinished === false
-          ? record.kind === "newer"
-            ? "A newer version of Scient made this link. No sync is waiting on it."
-            : "This record is damaged. No sync is waiting on it."
+          ? "This record is damaged. No sync is waiting on it."
           : "This record is damaged, and it doesn't say whether a sync stopped part-way.";
+  const until = record.setAside === "held" ? "Until then" : "Until it's set aside";
   const holds =
-    record.unfinished === false
-      ? "Until it's set aside, Scient won't link folders."
-      : record.folder === null
-        ? "Until it's set aside, Scient won't link folders or change any project's files in bulk, for example when switching branches."
-        : "Until it's set aside, Scient won't link folders or change this project's files in bulk, for example when switching branches.";
+    record.holds === "linking"
+      ? `${until}, Scient won't link folders.`
+      : `${until}, Scient won't link folders or change ${record.holds === "every-checkout" ? "any" : "this"} project's files in bulk, for example when switching branches.`;
   return { state, holds };
 }
 

@@ -2785,7 +2785,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         // Removed between listing and reading: nothing pending there.
         if (read._tag === "missing") continue;
         if (read._tag !== "ready") {
-          if (read.shows.unfinished === false) continue;
+          const holds = OverleafStateStore.unreadableHolds(read);
+          if (holds === "linking") continue;
           const unreadable = new CheckoutBarrier.CheckoutRecoveryRequiredError({
             checkout: section.root,
             reason:
@@ -2793,7 +2794,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 ? "newer-unfinished-record"
                 : "unreadable-record",
           });
-          if (read.shows.folder === null) return yield* unreadable;
+          if (holds === "every-checkout" || read.shows.folder === null) return yield* unreadable;
           const owner = yield* barrier
             .current(read.shows.folder)
             .pipe(Effect.mapError(() => unreadable));

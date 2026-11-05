@@ -136,6 +136,7 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
       kind: "newer" as const,
       folder: "/work/thesis/paper",
       unfinished: true,
+      holds: "checkout" as const,
       setAside: "held" as const,
     };
     const damaged = {
@@ -143,6 +144,7 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
       kind: "damaged" as const,
       folder: "/work/grant/paper",
       unfinished: true,
+      holds: "checkout" as const,
       setAside: "confirm" as const,
     };
     let unreadable: unknown[] = [newer, damaged];

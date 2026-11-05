@@ -365,9 +365,24 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
             ),
           ).toMatchObject({ condition: "unfinished" });
 
-          // A newer release's settled record holds nothing back.
+          // A newer release's fields can't prove it settled: its checkout still waits.
           yield* write(JSON.stringify({ ...current, schemaVersion: 99 }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+          expect(yield* bulk(other)).toBe("changed");
+
+          // A damaged record that shows no unfinished sync holds nothing back.
+          yield* write(JSON.stringify({ ...current, revision: "damaged" }));
           expect(yield* bulk(w.checkout)).toBe("changed");
+
+          // A folder path a readable record couldn't have names no folder.
+          yield* write(
+            JSON.stringify({
+              ...staged,
+              revision: "damaged",
+              folder: { ...current.folder, relativePath: "../other" },
+            }),
+          );
+          expect(yield* bulk(other)).toBe("unreadable-record");
 
           // A damaged record showing staged copies goes only once the user accepts it.
           yield* write(JSON.stringify({ ...staged, revision: "damaged" }));
