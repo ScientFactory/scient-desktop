@@ -328,12 +328,31 @@ jobs:
 
 
   test:
-    name: Test
+    # SCIENT-FORK:START — three runners. Part 1 keeps the required `Test` name and runs every
+    # package parts 2 and 3 don't name, so a new package always runs.
+    name: ${{ matrix.part == 1 && 'Test' || format('Test {0}', matrix.part) }}
+    # SCIENT-FORK:END
     needs: [queue_ci, release_notes, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: ubuntu-24.04
     # SCIENT-FORK:START — retain the measured standard-runner workspace ceiling.
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: 1
+            packages: >-
+              --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web'
+              --filter '!@t3tools/mobile' --filter '!@t3tools/oxlint-plugin-t3code'
+              --filter '!@t3tools/client-runtime' --filter '!@t3tools/scripts'
+              --filter '!@scientfactory/provider-runtime' --filter '!@t3tools/shared'
+          - part: 2
+            packages: --filter @t3tools/mobile --filter @t3tools/oxlint-plugin-t3code
+          - part: 3
+            packages: >-
+              --filter @t3tools/client-runtime --filter @t3tools/scripts
+              --filter @scientfactory/provider-runtime --filter @t3tools/shared
     # SCIENT-FORK:END
     steps:
       - name: Checkout
@@ -350,16 +369,19 @@ jobs:
       # and soft-skip when it is missing. Install build-essential so that path
       # always runs in CI instead of silently no-oping.
       - name: Install C toolchain for process-tree fixtures
+        if: ${{ matrix.part == 1 }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
 
       - uses: ./.github/actions/setup-apt-mirrors
+        if: ${{ matrix.part == 1 }}
 
       # The desktop tests compile the browser secret helper. The install runs in
       # the background while Vite+ installs; the step before the tests waits for it.
       - name: Start installing browser secret helper build libraries
+        if: ${{ matrix.part == 1 }}
         run: |
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
@@ -374,26 +396,32 @@ jobs:
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
       - name: Cache Electron download
+        if: ${{ matrix.part == 1 }}
         uses: actions/cache@v6
         with:
           path: ~/.cache/electron
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
 
       - name: Ensure Electron runtime is installed
+        if: ${{ matrix.part == 1 }}
         run: vp run --filter @t3tools/desktop ensure:electron
 
       # SCIENT-FORK:START — verify exports with the actual installed Electron runtime.
       - name: Verify SVG and PNG exports in Chromium
+        if: ${{ matrix.part == 1 }}
         run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
       # SCIENT-FORK:END
 
       - name: Test preview artifact validation
+        if: ${{ matrix.part == 1 }}
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test release checks
+        if: ${{ matrix.part == 1 }}
         run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
 
       - name: Finish installing browser secret helper build libraries
+        if: ${{ matrix.part == 1 }}
         timeout-minutes: 5
         run: |
           until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
@@ -405,19 +433,64 @@ jobs:
         run: |
           set -o pipefail
           # The runner's trace writer can crash on surrogate pairs in test output.
-          vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test 2>&1 | python3 -u -c '
+          vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test 2>&1 | python3 -u -c '
           import sys
           for line in sys.stdin:
               sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
           '
       # SCIENT-FORK:END
 
+  # SCIENT-FORK:START — one set of recent main timings for every shard of this run.
+  # Each shard reads the same artifact, so all of them derive the same split. Without it
+  # (no readable recent report, or this job failed) every shard uses the checked-in weights.
+  shard_weights:
+    name: Shard weights
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      web: ${{ steps.publish.outputs.web }}
+      server: ${{ steps.publish.outputs.server }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - name: Read recent main timings
+        id: measure
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/ci-shard-weights.mjs "$RUNNER_TEMP/shard-weights"
+      - name: Upload weights
+        id: upload
+        if: ${{ steps.measure.outcome == 'success' && (steps.measure.outputs.web == 'true' || steps.measure.outputs.server == 'true') }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-shard-weights
+          path: ${{ runner.temp }}/shard-weights
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+      - name: Publish availability
+        id: publish
+        if: ${{ steps.upload.outcome == 'success' }}
+        env:
+          WEB: ${{ steps.measure.outputs.web }}
+          SERVER: ${{ steps.measure.outputs.server }}
+        run: printf 'web=%s\nserver=%s\n' "$WEB" "$SERVER" >> "$GITHUB_OUTPUT"
+  # SCIENT-FORK:END
+
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
   # release.yml mirrors this test, test_web, and test_server split.
   # SCIENT-FORK:START — duration-balanced hosted shards, JSON reports and performance suites.
   test_web:
-    needs: [queue_ci, release_notes, changes]
+    needs: [queue_ci, release_notes, changes, shard_weights]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-24.04
@@ -428,7 +501,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -466,6 +539,18 @@ jobs:
           if ldd "$browser" | grep '=> not found'; then
             node apps/web/node_modules/playwright/cli.js install-deps chromium
           fi
+
+      # SCIENT-FORK:START — the run's shared recent weights; see shard_weights.
+      - name: Download recent shard weights
+        if: ${{ needs.shard_weights.outputs.web == 'true' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-shard-weights
+          path: ${{ runner.temp }}/shard-weights
+      - name: Use recent shard weights
+        if: ${{ needs.shard_weights.outputs.web == 'true' }}
+        run: cp "$RUNNER_TEMP/shard-weights/web.json" apps/web/src/testUtils/shardWeights.json
+      # SCIENT-FORK:END
 
       - name: Test
         env:
@@ -509,8 +594,8 @@ jobs:
   # separate workers, so no two server test files ever share a machine and the
   # isolation that flag buys is preserved exactly.
   test_server:
-    # The organization allows 60 concurrent jobs; keep the measured eight-way split.
-    needs: [queue_ci, release_notes, changes]
+    # The organization allows 60 concurrent jobs; twelve runners keep each near five minutes.
+    needs: [queue_ci, release_notes, changes, shard_weights]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
@@ -521,7 +606,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -565,6 +650,18 @@ jobs:
           if ldd "$browser" | grep '=> not found'; then
             node apps/server/node_modules/playwright-core/cli.js install-deps chromium
           fi
+
+      # SCIENT-FORK:START — the run's shared recent weights; see shard_weights.
+      - name: Download recent shard weights
+        if: ${{ needs.shard_weights.outputs.server == 'true' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-shard-weights
+          path: ${{ runner.temp }}/shard-weights
+      - name: Use recent shard weights
+        if: ${{ needs.shard_weights.outputs.server == 'true' }}
+        run: cp "$RUNNER_TEMP/shard-weights/server.json" apps/server/src/testUtils/shardWeights.json
+      # SCIENT-FORK:END
 
       - name: Test
         env:
@@ -839,6 +936,11 @@ jobs:
   windows_packaging:
     needs: [queue_ci, release_notes, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}
+    # SCIENT-FORK:START — the installer job waits on its Linux prerequisites through the API.
+    permissions:
+      contents: read
+      actions: read
+    # SCIENT-FORK:END
     uses: ./.github/workflows/windows-packaging.yml
 
   remote_server_packaging:
@@ -880,7 +982,7 @@ jobs:
 
   qualification:
     name: Qualification receipt
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
+    needs: [release_notes, queue_ci, changes, shard_weights, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -915,7 +1017,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
+    needs: [release_notes, queue_ci, changes, shard_weights, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

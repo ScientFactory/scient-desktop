@@ -9,7 +9,7 @@ const GATED = {
   linux_packaging: ["linux_changed"],
 };
 const REPORTERS = ["test_web_reused", "test_server_reused"];
-const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
+const ALWAYS = ["changes", "shard_weights", "lint", "build", "test", "test_web", "test_server"];
 const JOBS = [
   "release_notes",
   "queue_ci",

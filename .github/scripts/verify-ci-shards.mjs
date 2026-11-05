@@ -9,8 +9,8 @@ const root = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
 const summary = {};
 try {
   for (const [suite, count, fallback] of [
-    ["server", 8, 0.6],
-    ["web", 3, 1],
+    ["server", 12, 0.6],
+    ["web", 6, 1],
   ]) {
     const cwd = NodePath.join(root, "apps", suite);
     process.chdir(cwd);
