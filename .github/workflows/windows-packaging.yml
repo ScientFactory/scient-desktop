@@ -147,15 +147,16 @@ jobs:
         with:
           path: native-runtimes
           key: windows-native-runtimes-v1-${{ steps.msvc.outputs.image }}-${{ steps.msvc.outputs.toolset }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/stage-synctex-runtime.ts') }}
-      # PowerShell, not Git Bash: the SyncTeX script's tar must be Windows tar, which takes C: paths.
-      - name: Build native runtimes
+      # Each script runs in the shell the build gives it: whisper.cpp extracts with Git Bash's
+      # GNU tar (--force-local), SyncTeX with Windows tar, which takes C: paths.
+      - name: Build the voice runtime
+        if: ${{ steps.native_cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: node scripts/stage-whisper-runtime.ts --platform win --arch x64 --output native-runtimes/whisper-runtime --verbose
+      - name: Build the SyncTeX runtime
         if: ${{ steps.native_cache.outputs.cache-hit != 'true' }}
         shell: pwsh
-        run: |
-          node scripts/stage-whisper-runtime.ts --platform win --arch x64 --output native-runtimes/whisper-runtime --verbose
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          node scripts/stage-synctex-runtime.ts --platform win --arch x64 --output native-runtimes/synctex-runtime --verbose
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+        run: node scripts/stage-synctex-runtime.ts --platform win --arch x64 --output native-runtimes/synctex-runtime --verbose
 
       - name: Wait for the Linux prerequisites
         shell: bash
