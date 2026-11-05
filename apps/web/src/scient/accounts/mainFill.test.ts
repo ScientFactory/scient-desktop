@@ -276,6 +276,55 @@ describe("a profile no longer unrestricted", () => {
     expect(t.withdrawn).toEqual(["work", "work"]);
   });
 
+  it("stops a withdrawal under way once the profile is allowed again, and owes a newer one", async () => {
+    const calls: string[] = [];
+    const persisted: Array<(ok: boolean) => void> = [];
+    const trigger = mainFillTrigger({
+      environmentId,
+      fillMain: async () => null,
+      current: () => undefined,
+      record: async () => undefined,
+      later: () => () => undefined,
+      eligible: (profileId) => profileId === "work",
+      withdraw: (profileId, live) =>
+        withdrawFromMain(profileId, {
+          live,
+          native: async (input) => {
+            calls.push(input.heldOnly ? "list" : "withdraw");
+            return { units: [["github.com"]] };
+          },
+          takeBack: () => {
+            calls.push("take back");
+            return new Promise<boolean>((resolve) => persisted.push(resolve));
+          },
+          settle: async () => void calls.push("rows"),
+        }),
+    });
+    const allowed = snapshot([], [record("work")]);
+    const off = snapshot([], [record("work", { access: "off" })]);
+    await trigger.seen(allowed);
+    const first = trigger.seen(off);
+    await vi.waitFor(() => expect(persisted).toHaveLength(1));
+    // Allowed while the take-back is persisted: Main keeps its copies and rows.
+    await trigger.seen(allowed);
+    persisted[0]!(true);
+    await first;
+    expect(calls).toEqual(["list", "take back"]);
+    // Off again, while a stale run still finishes: the new restriction stays owed.
+    const second = trigger.seen(off);
+    await vi.waitFor(() => expect(persisted).toHaveLength(2));
+    await trigger.seen(allowed);
+    const third = trigger.seen(off);
+    persisted[1]!(true);
+    await Promise.all([second, third]);
+    calls.length = 0;
+    const fourth = trigger.seen(off);
+    await vi.waitFor(() => expect(persisted).toHaveLength(3));
+    persisted[2]!(true);
+    await fourth;
+    expect(calls).toEqual(["list", "take back", "withdraw", "rows"]);
+  });
+
   it("takes back its copies once when turned Off, Ask or limited to projects", async () => {
     for (const patch of [
       { access: "off" },
@@ -545,6 +594,7 @@ describe("withdrawFromMain", () => {
         return persisted;
       },
       settle: async () => void calls.push("rows"),
+      live: () => true,
     };
     // The revision isn't persisted: Main keeps its copy, its receipt and its rows.
     expect(await withdrawFromMain("work", deps)).toBe(false);

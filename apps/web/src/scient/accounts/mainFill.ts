@@ -184,9 +184,10 @@ export function mainFillTrigger(deps: {
   readonly backfill?: (snapshot: AccountsSnapshot) => Promise<void>;
   /**
    * A profile no longer unrestricted takes back from Main what its copies still hold there; true
-   * once done. Until then it is tried again with every snapshot.
+   * once done. Until then it is tried again with every snapshot. `live` turns false once the
+   * profile is unrestricted again: nothing more is taken back after that.
    */
-  readonly withdraw?: (profileId: string) => Promise<boolean>;
+  readonly withdraw?: (profileId: string, live: () => boolean) => Promise<boolean>;
 }) {
   let previous: AccountsSnapshot | undefined;
   let backfill: Promise<void> | undefined;
@@ -194,9 +195,11 @@ export function mainFillTrigger(deps: {
   /** Each waiting retry's cancel, with the profile it copies from. */
   const retries = new Map<() => void, string>();
   const eligible = deps.eligible ?? otherPersistentProfile;
-  /** Restricted profiles whose copies Main hasn't given back yet, and those being given back. */
-  const withdrawals = new Set<string>();
+  /** Restricted profiles whose copies Main hasn't given back yet, each with its restriction's
+   * generation, and those being given back. */
+  const withdrawals = new Map<string, number>();
   const withdrawing = new Set<string>();
+  let generation = 0;
   /** In-flight and retrying copies, by row and revision; the oldest goes first past the limit. */
   const pending = new Map<string, number>();
   const keyOf = (row: AccountSummary) =>
@@ -278,22 +281,24 @@ export function mainFillTrigger(deps: {
         .backfill?.(snapshot)
         .catch((cause: unknown) => warn("Couldn't fill Main from every profile", cause));
       const copies: Array<Promise<void>> = backfill ? [backfill] : [];
-      for (const profileId of restricted) withdrawals.add(profileId);
-      for (const profileId of withdrawals) {
-        // Unrestricted again: its copies may stay.
+      for (const profileId of restricted) withdrawals.set(profileId, ++generation);
+      for (const [profileId, current] of withdrawals) {
+        // Unrestricted again: its copies may stay, and a withdrawal under way stops.
         if (isUnrestricted(recordOf(snapshot, profileId))) withdrawals.delete(profileId);
         if (!withdrawals.has(profileId) || withdrawing.has(profileId) || !deps.withdraw) continue;
         withdrawing.add(profileId);
+        const live = () => withdrawals.get(profileId) === current;
         copies.push(
           deps
-            .withdraw(profileId)
+            .withdraw(profileId, live)
             .catch((cause: unknown) => {
               warn("Couldn't take a profile's copies back", cause);
               return false;
             })
             .then((done) => {
               withdrawing.delete(profileId);
-              if (done) withdrawals.delete(profileId);
+              // A newer restriction's withdrawal is still owed.
+              if (done && live()) withdrawals.delete(profileId);
             }),
         );
       }
@@ -324,16 +329,25 @@ export async function withdrawFromMain(
     /** Records the copy-only delete other computers apply; true once persisted. */
     readonly takeBack: (sites: ReadonlyArray<string>) => Promise<boolean>;
     readonly settle: (units: ReadonlyArray<ReadonlyArray<string>>) => Promise<void>;
+    /** False once the profile is unrestricted again: checked before every step that changes. */
+    readonly live: () => boolean;
   },
 ): Promise<boolean> {
   const held = await deps.native({ from, heldOnly: true });
-  if (!held) return false;
-  for (const sites of held.units) if (!(await deps.takeBack(sites))) return false;
+  if (!held || !deps.live()) return false;
+  for (const sites of held.units) if (!(await deps.takeBack(sites)) || !deps.live()) return false;
   const result = await deps.native({ from });
-  if (!result) return false;
+  if (!result || !deps.live()) return false;
   if (result.units.length) await deps.settle(result.units);
   return true;
 }
+
+/** The take-back command as a withdrawal sees it: persisted only on a Success. */
+export const takeBackVia =
+  (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
+  async (sites: ReadonlyArray<string>) =>
+    (await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } }))._tag ===
+    "Success";
 
 /** Starts trigger 2 for the primary environment, where the desktop writes Main. */
 export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
@@ -372,14 +386,13 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
             mainDefaultNotice: true,
           })).then(() => undefined),
       }),
-    withdraw: (profileId) =>
+    withdraw: (profileId, live) =>
       withdrawFromMain(profileId, {
+        live,
         native: (input) =>
           window.desktopBridge?.accounts?.withdrawFromMain?.({ ...input, environmentId }) ??
           Promise.resolve(null),
-        takeBack: async (sites) =>
-          (await accountsState.mainWithdrawn.run(registry, { environmentId, input: { sites } }))
-            ._tag === "Success",
+        takeBack: takeBackVia(registry, environmentId),
         settle: async (units) => {
           const snapshot = read();
           if (!snapshot) return;
