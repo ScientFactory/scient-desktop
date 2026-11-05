@@ -280,6 +280,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       panelAnimationsActive: false,
       panelAnimationDurationMs: 0,
       keepFullHistory: true,
+      freshSessionAvailable: false,
       resumeCompactionTokens: null,
       showPlanFollowUpPrompt: false,
       usageLimitsKey: null,
