@@ -47,6 +47,9 @@ fresh session each run.
   session gets a new session ID. Scient's lazy history read for forks and imports applies only
   before the latest fresh boundary, like T3's legacy import read. Scient's held-Droid filter stays
   on the restart handoff.
+- **Queued fresh runs:** Scient lets a queued run on the same provider resume the active native
+  history. A fresh run never does (`e984025a76`); otherwise a fresh message queued behind a
+  running turn carried the old conversation on (found live and by T3's provider-switch tests).
 - **Scheduled tasks:** T3's thread mode and its settings merge as upstream.
 
 ### Threads
