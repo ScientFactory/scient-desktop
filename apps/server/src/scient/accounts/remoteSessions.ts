@@ -571,10 +571,15 @@ export const makeRemoteSessions = Effect.gen(function* () {
             },
           ];
         });
-        // What this sender wrote is no longer another sender's copy, whatever its digest.
-        const written = applied.filter(
-          (unit) => unit.outcome === "copied" || unit.outcome === "deleted",
-        );
+        // What this sender wrote is no longer another sender's copy, whatever its digest. A
+        // copy-only take-back removes only this sender's own copy, so it disowns no one.
+        const written = result.filter((unit, index) => {
+          const sent = input.units[index]!;
+          return (
+            unit.outcome === "copied" ||
+            (unit.outcome === "deleted" && !(sent.kind === "delete" && sent.copyOnly))
+          );
+        });
         const disowned = (unit: ReceivedUnit): ReceivedUnit => {
           if (!unit.fingerprint || !written.some(({ sites }) => overlapping(sites, unit.sites)))
             return unit;

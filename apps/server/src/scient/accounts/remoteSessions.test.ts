@@ -500,6 +500,28 @@ describe("receiving a desktop's sign-ins", () => {
       }),
   );
 
+  it.effect("keeps another writer's claim on a site a wider take-back left untouched", () =>
+    Effect.gen(function* () {
+      const { remote, jars } = yield* setup();
+      const PC = EnvironmentId.make("pc-1");
+      const pcKey = (yield* remote.bind(desktop, { source: PC, label: "PC" })).key!;
+      const fromPc = { source: PC, key: pcKey, label: "PC" };
+      const takeBack = (revision: number, sites: ReadonlyArray<string>, overrides = {}) =>
+        remote.receive(
+          desktop,
+          batch([{ sites: [...sites], revision, kind: "delete", copyOnly: true }], overrides),
+        );
+      yield* remote.receive(desktop, batch([copy(1)]));
+      const pcs = [cookie({ domain: ".example.test", value: "synthetic-pc" })];
+      yield* remote.receive(desktop, batch([copy(1, pcs, ["example.test"])], fromPc));
+      // The Mac takes back GitHub over both sites: the PC's example.test stays the PC's.
+      yield* takeBack(2, ["github.com", "example.test"]);
+      expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-pc"]);
+      expect(outcomes(yield* takeBack(2, ["example.test"], fromPc))).toEqual(["deleted"]);
+      expect(jars.get(WORK)).toEqual([]);
+    }),
+  );
+
   it.effect("withdraws every copy from a sender, and sweeps a revoked sender's", () =>
     Effect.gen(function* () {
       const { remote, jars, revoked, accounts } = yield* setup();
