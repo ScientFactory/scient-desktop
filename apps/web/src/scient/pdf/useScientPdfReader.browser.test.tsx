@@ -51,17 +51,20 @@ function Probe({
   revisionId,
   loadAttempt,
   candidateReady,
+  contentKey,
 }: {
   fixture: _Fixture;
   url: string;
   revisionId: string;
   loadAttempt: number;
   candidateReady: boolean;
+  contentKey: string | null;
 }) {
   const current = useScientPdfReader({
     documentKey: "same-document",
     revisionId,
     sourceUrl: url,
+    contentKey,
     loadAttempt,
     candidateReady,
     onSourceInvalidated: _fixture.refresh,
@@ -79,6 +82,7 @@ async function render(
   revisionId = url,
   loadAttempt = 0,
   candidateReady = true,
+  contentKey: string | null = null,
 ) {
   await act(
     async () =>
@@ -89,6 +93,7 @@ async function render(
           revisionId={revisionId}
           loadAttempt={loadAttempt}
           candidateReady={candidateReady}
+          contentKey={contentKey}
         />,
       ),
   );
@@ -273,6 +278,22 @@ it("treats a changed immutable revision as a replacement even when its capabilit
     revisionId: "revision-b",
     sourceUrl: "shared-url",
   });
+});
+it("keeps the loaded PDF when only its signed URL is renewed", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await render(_fixture, "signed-1", "same", 0, true, "file:1");
+  await load(_fixture, 0);
+  await publish(_fixture, 0);
+  await render(_fixture, "signed-2", "same", 0, true, "file:1");
+  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(_fixture.reader.presentationCurrent).toBe(true);
+  expect(_fixture.reader.presentation).toMatchObject({ sourceUrl: "signed-2" });
+
+  await render(_fixture, "signed-3", "same", 0, true, "file:2");
+  expect(mocks.load).toHaveBeenCalledTimes(2);
 });
 it("discards obsolete preparations without ever replacing the current page with stale output", async () => {
   await using _fixture = _createFixture();

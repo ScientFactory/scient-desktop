@@ -1603,6 +1603,12 @@ describe("AssetAccess", () => {
         revision: { size: 9 },
       });
       expect(yield* resolveAsset(token, "private-notes.pdf")).toBeNull();
+      const renewed = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: pdfPath },
+        workspaceRoot: root,
+      });
+      expect(result.fileRevision).toEqual(expect.any(String));
+      expect(renewed.fileRevision).toBe(result.fileRevision);
 
       yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF-1.7\nchanged"));
       const staleAsset = yield* resolveAsset(token, "paper.pdf");
@@ -1624,6 +1630,7 @@ describe("AssetAccess", () => {
           refreshedSuffix.slice(refreshedSeparator + 1),
         ),
       ).toMatchObject({ revision: { size: 16 } });
+      expect(refreshed.fileRevision).not.toBe(result.fileRevision);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -2017,6 +2024,7 @@ describe("AssetAccess", () => {
         revision: { size: 4 },
       });
       expect(yield* resolveAsset(suffix.slice(0, separatorIndex), "sibling.png")).toBeNull();
+      expect(issued.fileRevision).toEqual(expect.any(String));
 
       const replacementPath = path.join(root, "replacement.png");
       yield* fileSystem.writeFile(replacementPath, new Uint8Array([137, 80, 78, 71]));

@@ -40,7 +40,7 @@ import { useRetainedPdfSource } from "./useRetainedPdfSource";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { observePdfCopy } from "./pdfCopyAnalytics";
 import { PdfThumbnail } from "./PdfThumbnail";
-import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
+import { pdfContentKey, webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
 import { parseSafePdfExternalUrl, stepPdfZoom, type PdfSidebarMode } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
@@ -362,6 +362,8 @@ function LoadedScientPdfReader(props: {
     onSourceInvalidated: props.refreshSource,
     revisionId: requestedRevisionId,
     sourceUrl: props.sourceAsset.url,
+    // An edited copy's blob URL is its only identity.
+    contentKey: edit.url ? null : pdfContentKey(props.source, props.sourceAsset),
     candidateReady: props.interactionReady,
     loadAttempt: props.loadAttempt,
     container,
