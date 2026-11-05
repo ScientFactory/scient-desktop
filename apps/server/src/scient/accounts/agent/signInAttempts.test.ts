@@ -54,6 +54,7 @@ it.effect("drops what a person typed when the server shuts down", () =>
       university: false,
       accountId: AccountId.make("acc_example01"),
       fieldsSeen: new Map(),
+      visited: new Set(),
       passwordSeen: new Map(),
       scientTyped: new Set(),
       submitted: 0,

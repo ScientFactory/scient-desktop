@@ -185,5 +185,38 @@ it.effect("exports no session for a site the user is signing in to", () =>
       );
     expect(refused).toMatchObject({ reason: "denied" });
     expect(refused.message).toContain("signing in to this site");
+    // Its single sign-on service, reached on the way, stays the user's too.
+    const { typed } = yield* fake.service.signInAttempts;
+    typed.set("attempt-1", {
+      threadId,
+      tabId: "tab-1",
+      sites: ["example.com"],
+      university: false,
+      accountId: account.accountId,
+      fieldsSeen: new Map(),
+      passwordSeen: new Map(),
+      visited: new Set(["https://www.example.com", "https://login.federation.test"]),
+      scientTyped: new Set(),
+      submitted: 0,
+      signedIn: false,
+      seen: 2,
+    });
+    const redirected = yield* accountAgentOperations
+      .scient_account_browser_session({ url: "https://federation.test/" })
+      .pipe(
+        Effect.flip,
+        Effect.provideService(AccountsService, fake.service),
+        Effect.provideService(PreviewAutomationBroker, {} as PreviewAutomationBroker["Service"]),
+        Effect.provideService(AccountSessionFiles, {} as AccountSessionFiles["Service"]),
+        Effect.provideService(AgentInvocationContext, {
+          environmentId: EnvironmentId.make("env-fixture"),
+          threadId,
+          providerSessionId: "session-fixture",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["accounts", "preview"] as const),
+          issuedAt: 0,
+        }),
+      );
+    expect(redirected).toMatchObject({ reason: "denied" });
   }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
 );

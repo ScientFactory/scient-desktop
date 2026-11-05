@@ -20,7 +20,7 @@ import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
+import { anySiteMatches, siteOf } from "@t3tools/shared/scientSiteMatch";
 import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
@@ -31,7 +31,7 @@ import { AccountCookies, netscapeCookieJar } from "./cookies.ts";
 import { AccountSessionFiles, credentialContents, shellQuote } from "./sessionFiles.ts";
 import { accountRequest } from "./request.ts";
 import { accountSessionScope } from "./scope.ts";
-import { authorizePreviewProfile } from "./previewProfileAccess.ts";
+import { authorizePreviewProfile, privateTabs } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
 import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { fillField } from "./fillField.ts";
@@ -276,14 +276,23 @@ export const accountAgentOperations = {
     // The session at a university's sign-in service opens its mail and records too.
     if (isUniversitySignInService(rows, input.url))
       return yield* fail("denied", "A university's sign-in stays in the browser.");
-    // A sign-in under way on the site is the user's until it ends.
-    const signingIn = new Set((yield* accounts.attempts).map((attempt) => attempt.accountId));
+    // A sign-in under way on the site is the user's until it ends, and so is any site its tab
+    // reached on the way, such as a single sign-on service.
+    const attempts = yield* accounts.attempts;
+    const signingIn = new Set(attempts.map((attempt) => attempt.accountId));
+    const { typed } = yield* accounts.signInAttempts;
+    const requested = siteOf(new URL(input.url).hostname);
     if (
       rows.some(
         (row) =>
           signingIn.has(row.accountId) &&
           row.details.kind === "website" &&
           anySiteMatches(row.details.sites, input.url),
+      ) ||
+      attempts.some((attempt) =>
+        [...(typed.get(attempt.attemptId)?.visited ?? [])].some(
+          (origin) => URL.canParse(origin) && siteOf(new URL(origin).hostname) === requested,
+        ),
       )
     )
       return yield* fail("denied", "The user is signing in to this site. Wait for the sign-in.");
@@ -304,9 +313,10 @@ export const accountAgentOperations = {
       yield* authorize(scope, { type: "account", accountId: account.accountId }, "browser-session");
     const profile = yield* authorizePreviewProfile(scope, status, open, "browser-session");
     const target: AccountTarget = { type: "profile", profileId: profile.profileId };
+    const hidden = yield* privateTabs();
     const operation = Effect.gen(function* () {
       const existing = status.tabs?.find(
-        (tab) => tab.ownedByCaller && tab.profileId === profile.profileId,
+        (tab) => tab.ownedByCaller && tab.profileId === profile.profileId && !hidden(tab),
       );
       const opened = existing
         ? { tabId: existing.tabId }

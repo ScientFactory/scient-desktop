@@ -344,6 +344,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
           university: university !== undefined,
           accountId: account.accountId,
           fieldsSeen: new Map(),
+          visited: new Set(),
           passwordSeen: new Map(),
           scientTyped: new Set(),
           submitted: 0,
@@ -376,6 +377,7 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
     onPage: (page) => {
       const typed = typedIn.get(attemptId);
       if (!typed) return;
+      typed.visited.add(page.origin);
       if (page.fields) typed.fieldsSeen.set(page.origin, typed.seen);
       if (page.password) typed.passwordSeen.set(page.origin, typed.seen);
       typed.seen++;

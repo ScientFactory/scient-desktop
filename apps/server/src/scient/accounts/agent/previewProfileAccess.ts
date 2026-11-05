@@ -57,13 +57,19 @@ export const profileUnavailable = () =>
  * Tabs whose contents are the user's while they sign in: an attempt's tab, and a university's own
  * sign-in pages, whose address can carry the sign-in's state. No agent reads, drives or lists them.
  */
-const privateTabs = Effect.fn("AccountsAgent.privateTabs")(function* () {
+export const privateTabs = Effect.fn("AccountsAgent.privateTabs")(function* () {
   const accounts = yield* AccountsService;
   const signingIn = new Set((yield* accounts.attempts).map((attempt) => attempt.tabId));
   const { accounts: rows } = yield* accounts.snapshot;
   return (tab: { readonly tabId: string; readonly url?: string | null | undefined }) =>
     signingIn.has(tab.tabId) || (typeof tab.url === "string" && onUniversitySignIn(rows, tab.url));
 });
+
+const signingInHere = () =>
+  new AccountsError({
+    reason: "denied",
+    message: "The user is signing in on this tab. Wait for scient_account_sign_in.",
+  });
 
 /** The preview tabs this session may see: in a profile it may use, and none a user signs in on. */
 export const visiblePreviewSessions = Effect.fn("AccountsAgent.visiblePreviewSessions")(function* (
@@ -96,11 +102,7 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
   if (!tab || !profileVisible(session)(tab.profileId)) return yield* profileUnavailable();
   // What the user types while signing in is theirs: no agent reads or drives that tab, the one
   // that started the sign-in included, and a university's own sign-in pages stay closed after.
-  if ((yield* privateTabs())(tab))
-    return yield* new AccountsError({
-      reason: "denied",
-      message: "The user is signing in on this tab. Wait for scient_account_sign_in.",
-    });
+  if ((yield* privateTabs())(tab)) return yield* signingInHere();
   // Autofill fills every tab for the user; a tab holding a sign-in this agent may not use stays
   // closed to it while it shows that site (a page may change its address without clearing the
   // form), so the agent cannot read the filled password.
@@ -166,6 +168,8 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
       input.reuseExistingTab !== false
         ? status.tabs?.find((tab) => tab.tabId === (input.tabId ?? status.tabId))
         : undefined;
+    // Opening reuses a tab only while no one signs in on it.
+    if (existing && (yield* privateTabs())(existing)) return yield* signingInHere();
     const profile =
       input.profileId === undefined
         ? undefined

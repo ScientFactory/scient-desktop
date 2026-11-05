@@ -293,6 +293,15 @@ it.effect(
           toolkit
             .handle("preview_act", { tabId: "sign-in-tab", action: "click", selector: "a" })
             .pipe(Stream.unwrap, Stream.runDrain),
+        // Opening would reuse the tab, named or current.
+        () =>
+          toolkit
+            .handle("preview_open", { tabId: "sign-in-tab", url: "https://example.org/" })
+            .pipe(Stream.unwrap, Stream.runDrain),
+        () =>
+          toolkit
+            .handle("preview_open", { url: "https://example.org/" })
+            .pipe(Stream.unwrap, Stream.runDrain),
       ];
       const refused = Effect.forEach(reads, (read) =>
         read().pipe(
