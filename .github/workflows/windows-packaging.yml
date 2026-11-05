@@ -50,6 +50,13 @@ jobs:
       contents: read
       actions: read
     steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       # Caches here are saved only by pushes to main and read by every run. A pull request
       # saving its own copies fills the repository's 10 GB cache and evicts main's.
       # T3's build check needs the Spectre libraries folder of the latest MSVC toolset, so
