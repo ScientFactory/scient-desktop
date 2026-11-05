@@ -224,19 +224,14 @@ function makeRegistry(
       invalidateModelCaches: () => Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
-      getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
-      getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
-      getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+      getProviderConnectionActionsForInstance: () => Effect.undefined,
+      getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
+      getProviderSkillActionsForInstance: () => Effect.undefined,
       // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
-      getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+      getProviderPluginActionsForInstance: () => Effect.undefined,
       recordProviderNativeInventory: () => Ref.get(providersRef),
       // SCIENT-FORK:END
       getVoiceTranscriptCorrectionForInstance: () =>
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState,

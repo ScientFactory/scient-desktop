@@ -8,7 +8,7 @@ import {
 
 describe("PullRequestFilterOptions", () => {
   it("round-trips hosted labels and authors through the RPC JSON codec", () => {
-    const options: typeof PullRequestFilterOptions.Type = {
+    const options: PullRequestFilterOptions = {
       labels: [{ name: "bug", color: "d73a4a" }],
       authors: [
         {

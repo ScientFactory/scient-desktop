@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
@@ -203,7 +204,7 @@ const harness = Effect.fnUntraced(function* (
       binaryPath: scripted?.binaryPath ?? binary,
     }),
     environment: {
-      PATH: process.env.PATH,
+      PATH: (yield* HostProcess.Environment).PATH,
       ...(scenario?.idleMillis === undefined
         ? {}
         : { SCIENT_DROID_TURN_IDLE_TIMEOUT_MS: String(scenario.idleMillis) }),

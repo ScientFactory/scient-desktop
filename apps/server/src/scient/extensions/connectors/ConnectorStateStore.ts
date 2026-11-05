@@ -349,9 +349,14 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
             "migrated connected services exceed the state size limit; the file was left unchanged",
             { path: statePath },
           ).pipe(Effect.as(loaded))
-        : yield* Effect.tryPromise(() =>
-            writeExtensionState(statePath, migratedText, platform),
-          ).pipe(
+        : yield* Effect.tryPromise({
+            try: () => writeExtensionState(statePath, migratedText, platform),
+            catch: () =>
+              new ExtensionsError({
+                reason: "state-unavailable",
+                message: "Connected services could not be saved.",
+              }),
+          }).pipe(
             Effect.as({ ...loaded, migrated: false }),
             Effect.catch(() =>
               Effect.logWarning("migrated connected services could not be saved yet", {

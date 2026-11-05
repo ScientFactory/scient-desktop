@@ -113,6 +113,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Scient conversation-fork architecture](./internals/scient-fork-divergence.md)
 - [Context handoffs and delivery budgets](./internals/context-handoffs.md)
+- [Mobile layout](./internals/mobile-layout.md)
 - [Mobile navigation headers](./internals/mobile-navigation.md)
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)

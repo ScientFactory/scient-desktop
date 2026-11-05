@@ -30,8 +30,7 @@ export const layer = Layer.succeed(
           // SCIENT-FORK:END
         },
       }),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-    resolve: () => Effect.succeed(undefined),
+    resolve: () => Effect.undefined,
     touch: () => Effect.void,
     replaceSkillScope: () => Effect.void,
     revokeProviderSession: () => Effect.void,

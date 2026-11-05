@@ -182,6 +182,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "the local network opens",
+      // SCIENT-FORK:START — the hint names this installation's resolved command, not a bare `t3`.
+      prints: " pair --base-dir <baseDir>`. Use the code on your other device.",
+      // SCIENT-FORK:END
       installed: true,
       env: "T3CODE_LAN=false\n",
       args: ["--lan"],
@@ -338,7 +341,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         ),
       );
       if (input.prints !== undefined) {
-        expect(lines.join("\n")).toContain(input.prints);
+        expect(lines.join("\n")).toContain(input.prints.replace("<baseDir>", baseDir));
       }
       expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
       expect({ installs, restarts }).toEqual({

@@ -926,13 +926,13 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         // Add retention only after the binding commits. A crash before binding leaves a sweepable
         // orphan; adopting it earlier would misclassify unreferenced bytes as retained history.
         yield* commitBinding(transition.binding, "publish").pipe(
-          Effect.catch((cause) =>
+          Effect.tapError(() =>
             fileSystem
               .remove(publishedRevisionDirectory, {
                 recursive: true,
                 force: true,
               })
-              .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
+              .pipe(Effect.ignore),
           ),
         );
         yield* recordPublishedRevision({

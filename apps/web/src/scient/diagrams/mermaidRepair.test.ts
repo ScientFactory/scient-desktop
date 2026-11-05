@@ -64,17 +64,23 @@ describe("Mermaid repair requests", () => {
 
 describe("Mermaid renderer diagnostics", () => {
   it("separates a short UI summary from useful parser details, without a stack", () => {
-    const error = new MermaidRenderError(new Error("Parse error on line 2:\nA[\n ^\nExpecting ]"));
+    const error = new MermaidRenderError({
+      cause: new Error("Parse error on line 2:\nA[\n ^\nExpecting ]"),
+    });
     expect(error.message).toBe("Parse error on line 2:");
     expect(error.details).toBe("Parse error on line 2:\nA[\n ^\nExpecting ]");
     expect(error.details).not.toContain("at ");
   });
 
   it("bounds unexpectedly long diagnostics and handles unknown failures", () => {
-    expect(new MermaidRenderError(new Error("x".repeat(10_000))).message).toHaveLength(240);
-    expect(new MermaidRenderError(new Error("x".repeat(10_000))).details).toBe(
+    expect(new MermaidRenderError({ cause: new Error("x".repeat(10_000)) }).message).toHaveLength(
+      240,
+    );
+    expect(new MermaidRenderError({ cause: new Error("x".repeat(10_000)) }).details).toBe(
       `${"x".repeat(8_000)}\n[Error truncated]`,
     );
-    expect(new MermaidRenderError(null).details).toBe("Mermaid could not render this diagram.");
+    expect(new MermaidRenderError({ cause: null }).details).toBe(
+      "Mermaid could not render this diagram.",
+    );
   });
 });

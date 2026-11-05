@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientPluginRegistryShape } from "./ExtensionsServices.ts";
 import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginContents.ts";
+import { tryLocalPluginRead } from "./LocalPluginFiles.ts";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 const decodePath = Schema.decodeUnknownOption(Schema.Struct({ path: Schema.String }));
@@ -57,7 +58,7 @@ export function makePluginContents(
         input.entryId || provider.driver === "codex"
           ? actions.store?.contents?.(input.entryId ?? input.pluginId!)
           : localRoot(input, actions).pipe(
-              Effect.flatMap((root) => Effect.tryPromise(() => readLocalPluginContents(root))),
+              Effect.flatMap((root) => tryLocalPluginRead(() => readLocalPluginContents(root))),
             );
       if (!operation) return yield* unavailable("This agent does not expose plugin contents.");
       return yield* Effect.raceFirst(
@@ -83,7 +84,7 @@ export function makePluginContents(
           ? actions.store?.skillDocument?.(input.entryId ?? input.pluginId!, input.skillId)
           : localRoot(input, actions).pipe(
               Effect.flatMap((root) =>
-                Effect.tryPromise(() => readLocalPluginSkill(root, input.skillId)),
+                tryLocalPluginRead(() => readLocalPluginSkill(root, input.skillId)),
               ),
             );
       if (!operation) return yield* unavailable("This agent does not expose skill documents.");

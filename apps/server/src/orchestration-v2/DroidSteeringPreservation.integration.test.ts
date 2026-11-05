@@ -1,4 +1,5 @@
 /** Native causal preservation cases; no injected provider receipts or scheduling replacements. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as NodeUtil from "node:util";
 import * as Logger from "effect/Logger";
@@ -196,7 +197,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const fs = yield* FileSystem.FileSystem;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   // Optional synthetic receipts survive the test reporter suppressing successful stdout.
-  const receiptDirectory = process.env.DROID_STEER_RECEIPTS;
+  const receiptDirectory = (yield* HostProcess.Environment).DROID_STEER_RECEIPTS;
   if (receiptDirectory !== undefined)
     yield* fs.makeDirectory(receiptDirectory, { recursive: true });
   const record = (phase: string, value: unknown) =>
@@ -274,7 +275,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       enabled: true,
       binaryPath: peer.binaryPath,
     }),
-    environment: { PATH: process.env.PATH },
+    environment: { PATH: (yield* HostProcess.Environment).PATH },
     sensitiveEnvironmentValues: [],
     makeRuntime: (input: Parameters<DroidAdapterV2Options["makeRuntime"]>[0]) =>
       makeDroidAcpRuntime({

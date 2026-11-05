@@ -21,14 +21,12 @@ const MARKDOWN_IMPORT_MAX_BYTES = 16 * 1024 * 1024;
  * A failure whose message is already written for the person importing.
  * `terminal`: sending the same file again cannot succeed; it has to be opened again.
  */
-export class ConversationImportNotice extends Error {
-  constructor(
-    message: string,
-    readonly terminal = false,
-  ) {
-    super(message);
-  }
-}
+export class ConversationImportNotice extends Schema.TaggedError<ConversationImportNotice>()(
+  "ConversationImportNotice",
+  { message: Schema.String, terminal: Schema.optional(Schema.Boolean) },
+) {}
+
+export const isConversationImportNotice = Schema.is(ConversationImportNotice);
 
 /** Why a chosen file cannot be sent at all, or null when it can. */
 export function importFileProblem(fileName: string, sizeBytes: number): string | null {
@@ -106,7 +104,7 @@ function plainServerMessage(error: ScientConversationImportError): string | null
 
 /** What to tell the person about a failed step, without internal detail. */
 export function importFailureMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof ConversationImportNotice) return cause.message;
+  if (isConversationImportNotice(cause)) return cause.message;
   if (isConversationImportError(cause)) {
     return plainServerMessage(cause) ?? FALLBACK_BY_REASON[cause.reason] ?? fallback;
   }
@@ -138,9 +136,9 @@ export function desktopUploadOutcome(
   result: DesktopConversationFileUploadResult | undefined,
 ): { readonly _tag: "uploaded" } | { readonly _tag: "stopped" } | ConversationImportNotice {
   if (result === undefined) {
-    return new ConversationImportNotice(
-      "This Scient can't send opened files. Choose the file instead.",
-    );
+    return new ConversationImportNotice({
+      message: "This Scient can't send opened files. Choose the file instead.",
+    });
   }
   if (result._tag === "uploaded") return result;
   switch (result.reason) {
@@ -148,14 +146,19 @@ export function desktopUploadOutcome(
     case "cancelled":
       return { _tag: "stopped" };
     case "rejected":
-      return new ConversationImportNotice("The destination didn't accept the file. Try again.");
+      return new ConversationImportNotice({
+        message: "The destination didn't accept the file. Try again.",
+      });
     case "file-unavailable":
     case "file-changed":
-      return new ConversationImportNotice("Open the file again to import it.", true);
+      return new ConversationImportNotice({
+        message: "Open the file again to import it.",
+        terminal: true,
+      });
     case "invalid-url":
     case "network-failed":
-      return new ConversationImportNotice(
-        "The file couldn't be sent. Check the connection and try again.",
-      );
+      return new ConversationImportNotice({
+        message: "The file couldn't be sent. Check the connection and try again.",
+      });
   }
 }

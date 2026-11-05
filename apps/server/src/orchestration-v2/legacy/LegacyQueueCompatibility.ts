@@ -52,12 +52,14 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
       if (document.items.length > 0) return yield* recoveryError();
       if (!document.migrated) {
         const config = yield* ServerConfig;
-        const legacy = yield* Effect.tryPromise(() =>
-          listScientThreadQueue({
-            stateDir: config.stateDir,
-            threadId,
-          }),
-        ).pipe(Effect.mapError(() => recoveryError()));
+        const legacy = yield* Effect.tryPromise({
+          try: () =>
+            listScientThreadQueue({
+              stateDir: config.stateDir,
+              threadId,
+            }),
+          catch: () => recoveryError(),
+        });
         if (legacy.items.length > 0) return yield* recoveryError();
       }
     }
