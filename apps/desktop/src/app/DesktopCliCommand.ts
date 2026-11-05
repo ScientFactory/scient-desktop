@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -60,11 +61,13 @@ export class DesktopCliCommand extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopCliCommand") {}
 
-/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Read the live env: shell discovery patches PATH after startup, and Windows variable
+  // names are case-insensitive only on process.env, not on Config's copy of it.
+  const env = yield* HostProcess.Environment;
   const path = environment.path;
   const windows = environment.platform === "win32";
   const commandName = SCIENT_DESKTOP_IDENTITY.cliCommandName;
@@ -100,15 +103,15 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
-  const powershell = (env: Record<string, string>) =>
+  const powershell = (overrides: Record<string, string>) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const root = process.env.SystemRoot ?? process.env.WINDIR;
+        const root = env.SystemRoot ?? env.WINDIR;
         const handle = yield* spawner.spawn(
           ChildProcess.make(
             root ? `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : "powershell.exe",
             ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_USER_PATH_SCRIPT],
-            { stdin: "ignore", stderr: "ignore", env, extendEnv: true },
+            { stdin: "ignore", stderr: "ignore", env: overrides, extendEnv: true },
           ),
         );
         const [stdout, exitCode] = yield* Effect.all(
@@ -143,7 +146,10 @@ export const make = Effect.gen(function* () {
   const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
     function* (target: string) {
       if ((yield* fs.stat(target)).type !== "File") return false;
-      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFSP.constants.X_OK));
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.access(target, NodeFSP.constants.X_OK),
+        catch: () => fail(`${target} is not executable.`),
+      });
       return true;
     },
     Effect.orElseSucceed(() => false),
@@ -151,7 +157,7 @@ export const make = Effect.gen(function* () {
 
   /** The `scient` a new shell runs, by PATH order, or none. */
   const firstOnPath = Effect.gen(function* () {
-    for (const directory of pathEntries(process.env.PATH, ":")) {
+    for (const directory of pathEntries(env.PATH, ":")) {
       const candidate = path.join(directory, commandName);
       if (yield* isExecutableFile(candidate)) return Option.some(candidate);
     }
@@ -280,7 +286,7 @@ export const make = Effect.gen(function* () {
       );
       return yield* state;
     }
-    const onPath = pathEntries(process.env.PATH, ":");
+    const onPath = pathEntries(env.PATH, ":");
     const candidates = directories;
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),

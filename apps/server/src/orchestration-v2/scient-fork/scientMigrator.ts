@@ -3,8 +3,8 @@
  * receipts, and remap import-17 only for its exact known prefix. Reject gaps, renamed entries, and
  * future IDs before the high-water-mark Migrator can silently accept them.
  */
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -39,11 +39,14 @@ import Migration026 from "./migrations/026_CompactArchivedProjectionHandoffs.ts"
 import Migration027 from "./migrations/027_BrowserHistory.ts";
 import Migration028 from "./migrations/028_CopyLegacyHandoffSources.ts";
 
-export class ScientMigrationError extends Data.TaggedError("ScientMigrationError")<{
-  readonly kind: "BadState" | "Duplicates" | "Failed" | "ImportError" | "Locked";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ScientMigrationError extends Schema.TaggedError<ScientMigrationError>()(
+  "ScientMigrationError",
+  {
+    kind: Schema.Literals(["BadState", "Duplicates", "Failed", "ImportError", "Locked"]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 const fromMigrationError = (error: Migrator.MigrationError): ScientMigrationError =>
   new ScientMigrationError({

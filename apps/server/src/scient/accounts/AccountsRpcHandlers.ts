@@ -423,7 +423,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         disconnectOnePassword: missingService,
         importPasswords: unavailable,
         fillValues: unavailable,
-        filledTab: Effect.fn("AccountsService.filledTab")(() => Effect.sync(() => undefined)),
+        filledTab: Effect.fn("AccountsService.filledTab")(() => Effect.undefined),
         matchSignIn: unavailable,
         forSession: unavailable,
         authorize: unavailable,

@@ -4,15 +4,18 @@
  * session here only while no ACP process holds it.
  */
 import { DroidClient, ProcessTransport, SettingsLevel } from "@factory/droid-sdk/node";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 
 const DROID_CONTROL_ERROR_TAG = "DroidControlError";
-export class DroidControlError extends Data.TaggedError(DROID_CONTROL_ERROR_TAG)<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {
+export class DroidControlError extends Schema.TaggedError<DroidControlError>()(
+  DROID_CONTROL_ERROR_TAG,
+  {
+    cause: Schema.optional(Schema.Defect()),
+    detail: Schema.String,
+  },
+) {
   static readonly is = Predicate.isTagged(DROID_CONTROL_ERROR_TAG);
 }
 

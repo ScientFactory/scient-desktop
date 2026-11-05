@@ -1353,7 +1353,7 @@ describe("loaded native Pi serialized request guard", () => {
         assert.notProperty(launch.env, "T3_MCP_BEARER_TOKEN");
         assert.include(launch.args, extensionPath);
         const source = yield* fs.readFileString(extensionPath);
-        const h = yield* Effect.tryPromise(() => loadContextGuard(source));
+        const h = yield* Effect.promise(() => loadContextGuard(source));
         h.setNativeTokens(80_000);
         assert.equal(
           decodeBudget(h.request({ messages: [], max_tokens: 50_000 })).max_tokens,

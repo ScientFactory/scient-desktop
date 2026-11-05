@@ -9,16 +9,12 @@ import { makeGitScratch } from "./OverleafGitScratch.ts";
 import { withExecutor, windowsCompilerCommand } from "./OverleafGitExecutor.testkit.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+const SYSTEM_ROOT = process.env.SystemRoot ?? "C:\\Windows";
+
 const acl = (path: string) =>
   JSON.parse(
     NodeChildProcess.execFileSync(
-      NodePath.join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      ),
+      NodePath.join(SYSTEM_ROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       [
         "-NoLogo",
         "-NoProfile",
@@ -31,7 +27,7 @@ const acl = (path: string) =>
         env: {
           ...process.env,
           PSModulePath: NodePath.join(
-            process.env.SystemRoot ?? "C:\\Windows",
+            SYSTEM_ROOT,
             "System32",
             "WindowsPowerShell",
             "v1.0",
@@ -68,9 +64,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
             '#include <stdio.h>\nint main(void) { puts("git version 2.38.0"); return 0; }\n',
           );
           windowsCompilerCommand("cl.exe /nologo /W4 /WX old.c /Fe:git.exe", directories[3]!);
+          const inherited = yield* HostProcess.Environment;
           const environment = {
-            ...process.env,
-            PATH: [...directories, process.env.PATH ?? process.env.Path].join(";"),
+            ...inherited,
+            PATH: [...directories, inherited.PATH ?? inherited.Path].join(";"),
             PATHEXT: ".CMD;.EXE",
           };
           const git = yield* make({ runtimeRoot, publicationHelper }).pipe(
@@ -88,10 +85,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
   it.effect("creates scratch and token files private even under a broadly inherited parent", () =>
     withExecutor(({ work, publicationHelper }) =>
       Effect.gen(function* () {
-        NodeChildProcess.execFileSync(
-          NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
-          [work, "/grant", "*S-1-5-32-545:(OI)(CI)R"],
-        );
+        NodeChildProcess.execFileSync(NodePath.join(SYSTEM_ROOT, "System32", "icacls.exe"), [
+          work,
+          "/grant",
+          "*S-1-5-32-545:(OI)(CI)R",
+        ]);
         const scratch = yield* Effect.promise(() =>
           makeGitScratch(NodePath.join(work, "runtime"), true, publicationHelper),
         );
@@ -112,8 +110,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
         }
         const root = NodePath.join(work, "broad");
         NodeFS.mkdirSync(root);
-        const exit = yield* Effect.tryPromise(() => makeGitScratch(root, true)).pipe(Effect.exit);
-        expect(exit._tag).toBe("Failure");
+        const rejected = yield* Effect.promise(() =>
+          makeGitScratch(root, true).then(
+            () => false,
+            () => true,
+          ),
+        );
+        expect(rejected).toBe(true);
       }),
     ),
   );

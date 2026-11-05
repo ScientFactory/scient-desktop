@@ -13,7 +13,6 @@ import type {
   ServerProviderMcpServerStatus,
   ServerProviderPlugin,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -23,6 +22,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
@@ -175,9 +175,10 @@ export function parseCodexMcpServers(
  * A listing Codex answered only in part. Treated like a failed listing, so
  * a subset never replaces the last complete inventory.
  */
-export class CodexInventoryIncomplete extends Data.TaggedError("CodexInventoryIncomplete")<{
-  readonly message: string;
-}> {}
+export class CodexInventoryIncomplete extends Schema.TaggedError<CodexInventoryIncomplete>()(
+  "CodexInventoryIncomplete",
+  { message: Schema.String },
+) {}
 
 /** `plugin/installed`; omit `cwds` for the plugins every workspace sees. */
 const requestCodexInstalled = Effect.fn("requestCodexInstalled")(function* (
@@ -348,8 +349,10 @@ const startCodexMcpSignIn = Effect.fn("startCodexMcpSignIn")(function* (
   } satisfies ProviderMcpSignInAttempt;
 });
 
+const isCodexInventoryIncomplete = Schema.is(CodexInventoryIncomplete);
+
 const listingFailure = (fallback: string) => (cause: unknown) => ({
-  message: cause instanceof CodexInventoryIncomplete ? cause.message : fallback,
+  message: isCodexInventoryIncomplete(cause) ? cause.message : fallback,
   cause,
 });
 

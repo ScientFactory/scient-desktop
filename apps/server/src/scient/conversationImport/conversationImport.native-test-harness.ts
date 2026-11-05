@@ -181,9 +181,7 @@ export function nativeImportRuntimeTestLayer(
   const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
     Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
-    Layer.provide(
-      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.sync(() => undefined) }),
-    ),
+    Layer.provide(Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.undefined })),
     Layer.orDie,
   );
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(

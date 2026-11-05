@@ -173,9 +173,7 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
     return yield* Effect.gen(function* () {
       const rendered = yield* renderCapture(invocation, record, inputRelativeUrl);
       const bytes = yield* validateDocumentRender(record, rendered).pipe(
-        Effect.andThen((validated) =>
-          confirmCapturedSourceCurrent(record).pipe(Effect.as(validated)),
-        ),
+        Effect.tap(() => confirmCapturedSourceCurrent(record)),
         Effect.mapError(exportErrorToToolError),
       );
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;

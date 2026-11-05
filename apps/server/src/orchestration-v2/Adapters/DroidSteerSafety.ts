@@ -1,8 +1,8 @@
 // SCIENT-FORK:START — native Droid readiness is a lease, never a persisted execution authority.
 import type { ProviderTurnId, RunAttemptId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import {
   mergeToolCallState,
@@ -16,10 +16,16 @@ import {
 } from "../../provider/droid/DroidSubagents.ts";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 
-export class DroidSteerDeferred extends Data.TaggedError("DroidSteerDeferred") {}
-export class DroidSteerUncertain extends Data.TaggedError("DroidSteerUncertain")<{
-  readonly message: string;
-}> {}
+export class DroidSteerDeferred extends Schema.TaggedError<DroidSteerDeferred>()(
+  "DroidSteerDeferred",
+  {},
+) {}
+export class DroidSteerUncertain extends Schema.TaggedError<DroidSteerUncertain>()(
+  "DroidSteerUncertain",
+  { message: Schema.String },
+) {}
+export const isDroidSteerDeferred = Schema.is(DroidSteerDeferred);
+export const isDroidSteerUncertain = Schema.is(DroidSteerUncertain);
 
 export function makeDroidSteerSafety() {
   const tasks = makeDroidSubagentTracker();
@@ -301,7 +307,7 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
                   ),
                   Effect.catchTags({
                     ProviderAdapterInterruptError: (error) =>
-                      error.cause instanceof DroidSteerDeferred
+                      isDroidSteerDeferred(error.cause)
                         ? Effect.succeed(false)
                         : Effect.fail(error),
                   }),

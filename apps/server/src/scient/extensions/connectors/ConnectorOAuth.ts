@@ -31,7 +31,7 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { type ConnectorFetch, ConnectorEgressRejected } from "./ConnectorOutbound.ts";
+import { type ConnectorFetch, isConnectorEgressRejected } from "./ConnectorOutbound.ts";
 import { isProtectableCredential } from "./ConnectorRedaction.ts";
 
 export const CONNECTOR_OAUTH_CALLBACK_PATH = "/oauth/connectors/callback";
@@ -93,14 +93,20 @@ export const decodeOAuthMaterial = (bytes: Uint8Array): ConnectorOAuthMaterial |
 const asClientInformation = (client: Readonly<Record<string, unknown>>) =>
   client as unknown as OAuthClientInformationMixed;
 
-export class ConnectorOAuthError extends Error {
-  override readonly name = "ConnectorOAuthError";
-  readonly reason: "limit-reached" | "registration-unsupported" | "sign-in-failed" | "unreachable";
-  constructor(reason: ConnectorOAuthError["reason"], message: string) {
-    super(message);
-    this.reason = reason;
-  }
-}
+export class ConnectorOAuthError extends Schema.TaggedError<ConnectorOAuthError>()(
+  "ConnectorOAuthError",
+  {
+    reason: Schema.Literals([
+      "limit-reached",
+      "registration-unsupported",
+      "sign-in-failed",
+      "unreachable",
+    ]),
+    message: Schema.String,
+  },
+) {}
+
+export const isConnectorOAuthError = Schema.is(ConnectorOAuthError);
 
 const STANDARD_OAUTH_ERRORS: Readonly<Record<string, true>> = {
   invalid_request: true,
@@ -127,10 +133,10 @@ const validateResource = async (serverUrl: string | URL, advertised?: string): P
   const canonical = resourceUrlFromServerUrl(serverUrl);
   if (advertised === undefined) return canonical;
   if (!checkResourceAllowed({ requestedResource: canonical, configuredResource: advertised })) {
-    throw new ConnectorOAuthError(
-      "sign-in-failed",
-      "The service advertised a protected resource that does not match its address.",
-    );
+    throw new ConnectorOAuthError({
+      reason: "sign-in-failed",
+      message: "The service advertised a protected resource that does not match its address.",
+    });
   }
   return new URL(advertised);
 };
@@ -142,28 +148,32 @@ export const isGrantLost = (error: unknown): boolean =>
   error instanceof UnauthorizedClientError;
 
 const classifyFailure = (error: unknown, fallback: string): ConnectorOAuthError => {
-  if (error instanceof ConnectorOAuthError) return error;
-  if (error instanceof ConnectorEgressRejected) {
-    return new ConnectorOAuthError("unreachable", error.message);
+  if (isConnectorOAuthError(error)) return error;
+  if (isConnectorEgressRejected(error)) {
+    return new ConnectorOAuthError({ reason: "unreachable", message: error.message });
   }
   if (
     error instanceof Error &&
     error.message.includes("does not support dynamic client registration")
   ) {
-    return new ConnectorOAuthError(
-      "registration-unsupported",
-      "This service does not support automatic client registration. Add it again with your own OAuth client ID.",
-    );
+    return new ConnectorOAuthError({
+      reason: "registration-unsupported",
+      message:
+        "This service does not support automatic client registration. Add it again with your own OAuth client ID.",
+    });
   }
   if (error instanceof OAuthError) {
     // Only standard codes are echoed; vendor-chosen text never reaches messages.
     const code = STANDARD_OAUTH_ERRORS[error.errorCode] === true ? ` (${error.errorCode})` : "";
-    return new ConnectorOAuthError("sign-in-failed", `${fallback}${code}.`);
+    return new ConnectorOAuthError({ reason: "sign-in-failed", message: `${fallback}${code}.` });
   }
   if (error instanceof TypeError || (error instanceof Error && error.name === "TimeoutError")) {
-    return new ConnectorOAuthError("unreachable", "The sign-in server could not be reached.");
+    return new ConnectorOAuthError({
+      reason: "unreachable",
+      message: "The sign-in server could not be reached.",
+    });
   }
-  return new ConnectorOAuthError("sign-in-failed", `${fallback}.`);
+  return new ConnectorOAuthError({ reason: "sign-in-failed", message: `${fallback}.` });
 };
 
 /**
@@ -334,10 +344,11 @@ export class ConnectorOAuthFlows {
     this.prune();
     this.cancelConnector(input.connectorId);
     if (this.pending.size + this.starting.size >= MAX_PENDING_SIGN_INS) {
-      throw new ConnectorOAuthError(
-        "limit-reached",
-        "Too many sign-ins are in progress. Finish or wait for one to expire, then try again.",
-      );
+      throw new ConnectorOAuthError({
+        reason: "limit-reached",
+        message:
+          "Too many sign-ins are in progress. Finish or wait for one to expire, then try again.",
+      });
     }
     const reservation = Symbol(input.connectorId);
     this.starting.set(input.connectorId, reservation);
@@ -356,10 +367,11 @@ export class ConnectorOAuthFlows {
   ): Promise<{ readonly authorizationUrl: string; readonly expiresAt: number }> {
     const ownSecret = input.material.ownClient?.clientSecret;
     if (ownSecret !== undefined && !isProtectableCredential(ownSecret)) {
-      throw new ConnectorOAuthError(
-        "sign-in-failed",
-        "The stored OAuth client secret is shorter than Scient can keep out of agent output (16 characters). Remove the service and add it again with a longer client secret.",
-      );
+      throw new ConnectorOAuthError({
+        reason: "sign-in-failed",
+        message:
+          "The stored OAuth client secret is shorter than Scient can keep out of agent output (16 characters). Remove the service and add it again with a longer client secret.",
+      });
     }
     const state = NodeCrypto.randomBytes(32).toString("base64url");
     const redirectUri = `${input.callbackOrigin}${CONNECTOR_OAUTH_CALLBACK_PATH}`;
@@ -439,29 +451,33 @@ export class ConnectorOAuthFlows {
         discovery === undefined ||
         usedClient === undefined
       ) {
-        throw new ConnectorOAuthError("sign-in-failed", "The service did not start a sign-in.");
+        throw new ConnectorOAuthError({
+          reason: "sign-in-failed",
+          message: "The service did not start a sign-in.",
+        });
       }
     } catch (error) {
       throw classifyFailure(error, "Sign-in could not be started");
     }
     if (authorizationUrl.protocol !== "https:" && authorizationUrl.protocol !== "http:") {
-      throw new ConnectorOAuthError(
-        "sign-in-failed",
-        "The service returned an unusable sign-in page.",
-      );
+      throw new ConnectorOAuthError({
+        reason: "sign-in-failed",
+        message: "The service returned an unusable sign-in page.",
+      });
     }
     const issuedSecret = registeredClient?.client_secret;
     if (typeof issuedSecret === "string" && !isProtectableCredential(issuedSecret)) {
-      throw new ConnectorOAuthError(
-        "sign-in-failed",
-        "The service registered a client secret shorter than Scient can keep out of agent output (16 characters), so Scient will not use it.",
-      );
+      throw new ConnectorOAuthError({
+        reason: "sign-in-failed",
+        message:
+          "The service registered a client secret shorter than Scient can keep out of agent output (16 characters), so Scient will not use it.",
+      });
     }
     if (this.starting.get(input.connectorId) !== reservation) {
-      throw new ConnectorOAuthError(
-        "sign-in-failed",
-        "A newer sign-in or a disconnect replaced this one.",
-      );
+      throw new ConnectorOAuthError({
+        reason: "sign-in-failed",
+        message: "A newer sign-in or a disconnect replaced this one.",
+      });
     }
     const expiresAt = this.now() + PENDING_SIGN_IN_TTL_MS;
     this.pending.set(state, {
@@ -525,13 +541,19 @@ export class ConnectorOAuthFlows {
         pending.discovery.resourceMetadata,
       );
       if (result !== "AUTHORIZED" || tokens === undefined) {
-        throw new ConnectorOAuthError("sign-in-failed", "The service did not issue a token.");
+        throw new ConnectorOAuthError({
+          reason: "sign-in-failed",
+          message: "The service did not issue a token.",
+        });
       }
     } catch (error) {
       throw classifyFailure(error, "Sign-in could not be completed");
     }
     if (resource === undefined) {
-      throw new ConnectorOAuthError("sign-in-failed", "Sign-in could not be completed.");
+      throw new ConnectorOAuthError({
+        reason: "sign-in-failed",
+        message: "Sign-in could not be completed.",
+      });
     }
     const metadata = pending.discovery.authorizationServerMetadata;
     return {

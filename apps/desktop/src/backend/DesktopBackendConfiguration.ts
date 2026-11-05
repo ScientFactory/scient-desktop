@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -574,6 +575,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const backendExposure = yield* serverExposure.backendConfig;
+    const env = yield* HostProcess.Environment;
 
     const bootstrap = {
       mode: "desktop" as const,
@@ -624,7 +626,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
-        ...scientAnalyticsMetadata(environment, process.env.SCIENT_ANALYTICS_ENABLED),
+        ...scientAnalyticsMetadata(environment, env.SCIENT_ANALYTICS_ENABLED),
         ELECTRON_RUN_AS_NODE: "1",
         // SCIENT-FORK:START — Scient state directory and safety envelope.
         ...scientPrimaryBackendEnv(environment),
@@ -658,6 +660,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  const env = yield* HostProcess.Environment;
 
   // wslhost loopback forwarding is unreliable on some Windows hosts; advertise the WSL IP instead.
   const wslBindHost = "0.0.0.0";
@@ -731,19 +734,19 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const forwardedEnv: Record<string, string> = {};
   const forwardedEnvNames: string[] = [];
   for (const name of WSL_FORWARDED_ENV_NAMES) {
-    const value = process.env[name];
+    const value = env[name];
     if (value !== undefined && value.length > 0) {
       forwardedEnv[name] = value;
       forwardedEnvNames.push(name);
     }
   }
 
-  // Build an explicit copy of process.env minus both desktop home aliases
+  // Build an explicit copy of the host env minus both desktop home aliases
   // (dev-runner exports the Windows-side base dir for the primary; if either
   // leaks into the WSL backend the Linux side can resolve a Windows path via
   // /mnt/c, share the primary database, and collide on environment ids).
   const parentEnvWithoutDesktopHome: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(env)) {
     if (key === "T3CODE_HOME" || key === "SCIENT_NEXT_HOME") continue;
     parentEnvWithoutDesktopHome[key] = value;
   }
@@ -761,13 +764,13 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...parentEnvWithoutDesktopHome,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
-      ...scientAnalyticsMetadata(environment, process.env.SCIENT_ANALYTICS_ENABLED),
+      ...scientAnalyticsMetadata(environment, env.SCIENT_ANALYTICS_ENABLED),
       // SCIENT-FORK:START — Scient WSL state directory and safety envelope.
       ...scientWslBackendEnv(environment),
       // SCIENT-FORK:END
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env excludes both desktop home aliases; merging process.env would restore them.
+    // env excludes both desktop home aliases; merging the host env would restore them.
     extendEnv: false,
     bootstrap,
     bootstrapDelivery: "stdin" as const,

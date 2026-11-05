@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { Paper } from "./paperLookup.ts";
 
 /** Below this much text a PDF is a scan, which says nothing about whose paper it is. */
@@ -9,6 +10,14 @@ const PAGES_READ = 2;
 /** A supplement repeats the paper's title, so only its own heading gives it away. */
 const SUPPLEMENT_HEADING =
   /^\W*(?:supplementary|supporting|supplemental)\s+(?:materials?|information|data|appendix)/iu;
+
+class PdfFactsReadError extends Schema.TaggedError<PdfFactsReadError>()("PdfFactsReadError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "Could not read the PDF.";
+  }
+}
 
 export interface PdfFacts {
   readonly pages: number;
@@ -48,32 +57,35 @@ export function pdfVerdict(
 
 /** What a PDF says about itself; nothing when it can't be parsed. */
 export const readPdfFacts = (bytes: Uint8Array) =>
-  Effect.tryPromise(async (): Promise<PdfFacts> => {
-    const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const task = getDocument({
-      // pdf.js takes the buffer for its worker, and the caller still needs the bytes.
-      data: Uint8Array.from(bytes),
-      disableAutoFetch: true,
-      disableFontFace: true,
-      useSystemFonts: false,
-      verbosity: 0,
-    });
-    try {
-      const document = await task.promise;
-      const parts: string[] = [];
-      let firstPage = "";
-      const metadata = await document.getMetadata().catch(() => undefined);
-      const title = metadata?.metadata?.get("dc:title");
-      if (typeof title === "string") parts.push(title);
-      for (let number = 1; number <= Math.min(PAGES_READ, document.numPages); number += 1) {
-        const page = await document.getPage(number);
-        const content = await page.getTextContent();
-        const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
-        if (number === 1) firstPage = text;
-        parts.push(text);
+  Effect.tryPromise({
+    try: async (): Promise<PdfFacts> => {
+      const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const task = getDocument({
+        // pdf.js takes the buffer for its worker, and the caller still needs the bytes.
+        data: Uint8Array.from(bytes),
+        disableAutoFetch: true,
+        disableFontFace: true,
+        useSystemFonts: false,
+        verbosity: 0,
+      });
+      try {
+        const document = await task.promise;
+        const parts: string[] = [];
+        let firstPage = "";
+        const metadata = await document.getMetadata().catch(() => undefined);
+        const title = metadata?.metadata?.get("dc:title");
+        if (typeof title === "string") parts.push(title);
+        for (let number = 1; number <= Math.min(PAGES_READ, document.numPages); number += 1) {
+          const page = await document.getPage(number);
+          const content = await page.getTextContent();
+          const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
+          if (number === 1) firstPage = text;
+          parts.push(text);
+        }
+        return { pages: document.numPages, text: parts.join(" "), firstPage };
+      } finally {
+        await task.destroy();
       }
-      return { pages: document.numPages, text: parts.join(" "), firstPage };
-    } finally {
-      await task.destroy();
-    }
+    },
+    catch: (cause) => new PdfFactsReadError({ cause }),
   }).pipe(Effect.orElseSucceed(() => undefined));

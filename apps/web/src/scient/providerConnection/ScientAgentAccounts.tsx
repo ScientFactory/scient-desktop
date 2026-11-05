@@ -17,6 +17,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -41,7 +42,9 @@ import {
 
 const ACCOUNT_METHOD = "scient_agent_account";
 
-class SignInInterrupted extends Error {}
+class SignInInterrupted extends Schema.TaggedError<SignInInterrupted>()("SignInInterrupted", {}) {}
+
+const isSignInInterrupted = Schema.is(SignInInterrupted);
 
 type Pending =
   | { readonly kind: "sign-in" | "sign-out"; readonly account: string }
@@ -136,7 +139,7 @@ export function ScientAgentAccounts(props: {
       (cause: unknown) => cause,
     );
     setPending(null);
-    if (failure !== null && !(failure instanceof SignInInterrupted)) {
+    if (failure !== null && !isSignInInterrupted(failure)) {
       fail(failure, `Scient could not start the ${account.name} sign-in.`);
     }
   };

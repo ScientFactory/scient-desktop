@@ -619,6 +619,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`67eebaca23f8f7bc46e8817434087fc9c5acf8e3` is recorded in
+[the 2026-11-05 67eebaca23 receipt](docs/internals/t3-upstream-sync-20261105-67eebaca23.md).
+Literal merge `db85f90ef1a339864f8b33da730b3fca03959fe0` has owned base
+`adbdf535ee91f0db7c3105273b66af672e998432` and the frozen official target as parents, retaining
+the 32 official commits after `a21d788752`. T3's stricter Effect rules now cover Scient's own code
+(typed Schema errors, typed `Effect.try` failures, environment through `HostProcess.Environment`),
+idle agent tabs free a slot at the server's tab limit, silent Antigravity prompts time out, and
+clones can use host/owner/repo folders. No migrations. Release remains separate.
+
+The previous committed alignment through
 `a21d788752695764028e6d26ba924f3963e05806` is recorded in
 [the 2026-11-05 a21d788752 receipt](docs/internals/t3-upstream-sync-20261105-a21d788752.md).
 Literal merge `de156f96e8b0e9a55a7231bd39f7e4cdf3d097aa` has owned base
@@ -629,7 +639,7 @@ agents ask for secrets through the card, Claude tool calls can render MCP Apps o
 server, and T3's merge of Scient's Pi stop-order fix retires Scient's copy. No migrations. Release
 remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `7c22e24e3fa1a3bb3a95f27aea000067f198fe7f` is recorded in
 [the 2026-11-04 7c22e24e3f receipt](docs/internals/t3-upstream-sync-20261104-7c22e24e3f.md).
 Literal merge `6d16ce63d44f32164b9157b43537d319c792e812` has owned base

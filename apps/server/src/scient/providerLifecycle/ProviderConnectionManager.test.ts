@@ -194,9 +194,9 @@ function makeHarness(options?: {
           makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
-      getProviderManagedRuntimeActionsForInstance: () => Effect.sync(() => undefined),
-      getProviderSkillActionsForInstance: () => Effect.sync(() => undefined),
-      getProviderPluginActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
+      getProviderSkillActionsForInstance: () => Effect.undefined,
+      getProviderPluginActionsForInstance: () => Effect.undefined,
       recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

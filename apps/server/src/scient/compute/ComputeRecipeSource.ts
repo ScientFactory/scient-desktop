@@ -26,7 +26,12 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const TTL = 60 * 60 * 1000;
 const RETRY = 5 * 60 * 1000;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ComputeRecipeCatalog));
-class RecipeUnavailable extends Error {}
+class RecipeUnavailable extends Schema.TaggedError<RecipeUnavailable>()("RecipeUnavailable", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+const isRecipeUnavailable = Schema.is(RecipeUnavailable);
 
 export interface ComputeRecipeSource {
   latest(): ComputeRecipe | null;
@@ -180,11 +185,11 @@ export function makeComputeRecipeSource(input: {
       redirect: "error",
       ...(tag ? { headers: { "If-None-Match": tag } } : {}),
     }).catch((cause) => {
-      throw new RecipeUnavailable("Compute update source is unavailable.", { cause });
+      throw new RecipeUnavailable({ message: "Compute update source is unavailable.", cause });
     });
     if (response.status === 304) return { text: null, etag: tag };
     if (!response.ok || !response.body)
-      throw new RecipeUnavailable("Compute update catalog is unavailable.");
+      throw new RecipeUnavailable({ message: "Compute update catalog is unavailable." });
     const reader = response.body.getReader();
     let bytes = 0;
     const chunks: Uint8Array[] = [];
@@ -197,7 +202,7 @@ export function makeComputeRecipeSource(input: {
         chunks.push(result.value);
       }
     } catch (cause) {
-      throw new RecipeUnavailable("Compute update download was interrupted.", { cause });
+      throw new RecipeUnavailable({ message: "Compute update download was interrupted.", cause });
     } finally {
       await reader.cancel().catch(() => undefined);
     }
@@ -334,7 +339,7 @@ export function makeComputeRecipeSource(input: {
       if (
         action !== "install" ||
         current ||
-        !(cause instanceof RecipeUnavailable) ||
+        !isRecipeUnavailable(cause) ||
         catalog.withdrawn.includes(recipeIdentity(bundled))
       )
         throw cause;

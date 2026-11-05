@@ -59,6 +59,7 @@ function acceptedValue(value: unknown): unknown {
     : undefined;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; DeliveryFailure is a local throw sentinel.
 class DeliveryFailure extends Error {
   readonly errorClass: string;
 
