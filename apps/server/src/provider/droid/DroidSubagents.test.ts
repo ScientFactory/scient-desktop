@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
   droidSubagentActivity,
+  droidSubagentOutlivesTurn,
   endDroidSubagents,
   makeDroidSubagentTracker,
   observeDroidSubagentToolCall,
@@ -102,6 +103,26 @@ describe("Droid sub-agents", () => {
     );
     expect(brief(done.events)).toEqual(["task.completed completed: Slept."]);
     expect(droidSubagentActivity(tracker).open).toBe(0);
+  });
+
+  it("keeps Droid 1.2.0's background sub-agent open past its turn until Droid ends its call", () => {
+    const tracker = makeDroidSubagentTracker();
+    observeDroidSubagentToolCall(tracker, task("t", "Sleep"), TURN);
+    observeDroidSubagentToolCall(
+      tracker,
+      task("t", "Sleep", { status: "inProgress", text: "Running in background" }),
+      TURN,
+    );
+    expect(endDroidSubagents(tracker, "turn-ended")).toEqual([]);
+    expect(droidSubagentOutlivesTurn(tracker, "t")).toBe(true);
+    // After the turn Droid names only the call id, not the Task it belongs to.
+    const done = observeDroidSubagentToolCall(
+      tracker,
+      call("t", { status: "completed", text: "Slept." }),
+      TurnId.make("turn-2"),
+    );
+    expect(brief(done.events)).toEqual(["task.completed completed: Slept."]);
+    expect(droidSubagentOutlivesTurn(tracker, "t")).toBe(false);
   });
 
   it("leaves calls that are not about a sub-agent alone", () => {

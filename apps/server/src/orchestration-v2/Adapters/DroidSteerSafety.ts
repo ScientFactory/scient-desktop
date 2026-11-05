@@ -104,6 +104,7 @@ type DroidSteerOwnerTurn = {
   readonly finalized: boolean;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   readonly tools: ReadonlyMap<string, unknown>;
+  readonly toolPresentation?: { readonly outlivesTurn?: (toolCallId: string) => boolean };
 };
 
 type DroidSteerRuntimeMethods = Pick<
@@ -227,10 +228,12 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
         }
       }
     },
-    /** A new root prompt owns readiness; its predecessor's tools are retired. */
+    /** A new root prompt owns readiness; its predecessor's tools retire, unless they outlive it. */
     adopt(context: Turn) {
       if (enabled) {
-        for (const id of droidOwner?.droidSteerSafety?.toolIds() ?? []) retiredDroidToolIds.add(id);
+        const previous = droidOwner;
+        for (const id of previous?.droidSteerSafety?.toolIds() ?? [])
+          if (previous?.toolPresentation?.outlivesTurn?.(id) !== true) retiredDroidToolIds.add(id);
         while (retiredDroidToolIds.size > 2_000)
           retiredDroidToolIds.delete(retiredDroidToolIds.values().next().value!);
         invalidateDroidSteer();

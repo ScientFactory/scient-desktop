@@ -339,6 +339,14 @@ export interface AcpAdapterV2ToolPresentation {
   readonly finish: (
     status: "completed" | "interrupted" | "failed" | "cancelled",
   ) => ReadonlyArray<AcpAdapterV2SubagentUpdate>;
+  // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+  /** True for an open call that keeps running after its turn, such as a background launch. */
+  readonly outlivesTurn?: (toolCallId: string) => boolean;
+  /** The next turn's presentation, still following work that outlived this turn. */
+  readonly continueInto?: (
+    input: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => AcpAdapterV2ToolPresentation;
+  // SCIENT-FORK:END
 }
 
 /**
@@ -635,7 +643,7 @@ export interface AcpAdapterV2Flavor {
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-  /** Stateful protocol presentation belongs to one native turn. */
+  /** Stateful protocol presentation belongs to one native turn, or continues into the next. */
   readonly createToolPresentation?: (
     input: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => AcpAdapterV2ToolPresentation;
@@ -704,6 +712,16 @@ export interface AcpAdapterV2Flavor {
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
   readonly enablePostSettleContinuation?: boolean;
+  // SCIENT-FORK:START — agent-initiated work without an end marker settles on silence.
+  /**
+   * Ends a provider continuation turn once the agent has been silent this long with no root
+   * tool or agent request open, given the last update that carried output. For agents that
+   * keep working after a prompt ends but never mark where that work stops.
+   */
+  readonly continuationSilence?: (
+    lastOutput: EffectAcpSchema.SessionUpdate | undefined,
+  ) => Duration.Input;
+  // SCIENT-FORK:END
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
   /**
@@ -1641,6 +1659,11 @@ interface ActiveAcpTurn {
   /** Clock millis of the prompt's last progress, for `promptInactivityTimeout`. */
   lastProgressAt: number;
   inactivityWatchdog: Fiber.Fiber<void> | undefined;
+  // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+  lastOutputUpdate?: EffectAcpSchema.SessionUpdate;
+  lastOutputAt?: number;
+  silenceWatched?: boolean;
+  // SCIENT-FORK:END
 }
 
 const makeDisabledDroidSteerSupervision = <
@@ -1861,6 +1884,9 @@ type AcpCarryoverSubagents = {
   /** The root's subscriber keeps ingesting, so late child terminals can still project. */
   readonly projectsLateTerminals: boolean;
   readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
+  // SCIENT-FORK:START — see AcpAdapterV2ToolPresentation.continueInto.
+  readonly toolPresentation?: AcpAdapterV2ToolPresentation | undefined;
+  // SCIENT-FORK:END
 };
 
 type PendingRuntimeRequest = {
@@ -4048,9 +4074,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
 
+        // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+        const settlesOnSilence = (context: ActiveAcpTurn): boolean =>
+          flavor.continuationSilence !== undefined &&
+          flavor.deferFinalizeForBackgroundWork !== true &&
+          acpIsProviderContinuationMessage(context.input.message);
+        const continuationWorkOpen = (context: ActiveAcpTurn): boolean =>
+          openAgentRequests.size > 0 ||
+          [...context.tools.values()].some((tool) => {
+            const status = toolStatus(tool.status);
+            return (
+              (status === "pending" || status === "running" || status === "waiting") &&
+              context.toolPresentation?.outlivesTurn?.(tool.toolCallId) !== true
+            );
+          });
+        // SCIENT-FORK:END
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+            // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+            if (settlesOnSilence(context)) return yield* scheduleDeferredFinalize(context);
+            // SCIENT-FORK:END
             if (!flavor.deferFinalizeForBackgroundWork) return;
             if (!context.promptSettled || context.finalized) return;
             if (hasDeferredBackgroundWork(context)) return;
@@ -5606,6 +5651,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           // The activeSessionId yield may let idle/prompt settlement finalize this context.
           if (context.finalized) return;
+          // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+          if (settlesOnSilence(context) && acpRootSessionUpdateIngestsOutput(notification)) {
+            context.lastOutputUpdate = update;
+            context.lastOutputAt = yield* Clock.currentTimeMillis;
+          }
+          // SCIENT-FORK:END
           if (
             context.promptSettled &&
             !acpIsProviderContinuationMessage(context.input.message) &&
@@ -8134,6 +8185,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 sessionId,
                 projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
                 subagents: subagentsRequiringCarryover,
+                // SCIENT-FORK:START — see AcpAdapterV2ToolPresentation.continueInto.
+                toolPresentation: context.toolPresentation,
+                // SCIENT-FORK:END
               });
             }
           }
@@ -8162,6 +8216,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         scheduleDeferredFinalize = Effect.fn("scheduleDeferredFinalize")(function* (context) {
+          // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+          const continuationSilence = flavor.continuationSilence;
+          if (settlesOnSilence(context) && continuationSilence !== undefined) {
+            if (!context.promptSettled || context.finalized || context.interrupted) return;
+            if (context.silenceWatched === true) return;
+            context.silenceWatched = true;
+            const silenceMillis = () =>
+              Duration.toMillis(continuationSilence(context.lastOutputUpdate));
+            const watchedFrom = yield* Clock.currentTimeMillis;
+            yield* Effect.gen(function* () {
+              while (!context.finalized && !context.interrupted) {
+                const now = yield* Clock.currentTimeMillis;
+                const quietFor = now - Math.max(watchedFrom, context.lastOutputAt ?? watchedFrom);
+                if (quietFor < silenceMillis()) {
+                  yield* Effect.sleep(Duration.millis(silenceMillis() - quietFor));
+                } else if (
+                  continuationWorkOpen(context) ||
+                  (yield* Ref.get(pendingRuntimeRequests)).size > 0
+                ) {
+                  yield* Effect.sleep(Duration.millis(silenceMillis()));
+                } else {
+                  return yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
+                }
+              }
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+            yield* options.testHooks?.onDeferredFinalizeScheduled?.(silenceMillis()) ?? Effect.void;
+            return;
+          }
+          // SCIENT-FORK:END
           if (!flavor.deferFinalizeForBackgroundWork) return;
           if (!context.promptSettled || context.finalized || context.interrupted) return;
           if (hasDeferredBackgroundWork(context)) return;
@@ -8575,11 +8658,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 new Map(current).set(requestedSessionId, initialNativeMetadata),
               );
             }
+            // SCIENT-FORK:START — see AcpAdapterV2ToolPresentation.continueInto.
+            const carriedPresentationOwner = yield* Ref.get(carryoverSubagents);
+            const carriedToolPresentation =
+              carriedPresentationOwner?.sessionId === requestedSessionId
+                ? carriedPresentationOwner.toolPresentation
+                : undefined;
+            const toolPresentation =
+              carriedToolPresentation?.continueInto?.(turnInput) ??
+              flavor.createToolPresentation?.(turnInput);
+            // SCIENT-FORK:END
             const context: ActiveAcpTurn = {
               ...(droidSteerApplication?.enabled !== true
                 ? {}
                 : { droidSteerSafety: droidSteerApplication.makeSafety() }),
-              toolPresentation: flavor.createToolPresentation?.(turnInput),
+              toolPresentation,
               input: turnInput,
               providerTurnId,
               nativeThreadId: requestedSessionId,
@@ -8741,6 +8834,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
               if (drainedWakeCount === 0) {
+                // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+                if (settlesOnSilence(context)) {
+                  yield* scheduleDeferredFinalize(context);
+                  return;
+                }
+                // SCIENT-FORK:END
                 if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
                   if (hasDeferredBackgroundWork(context)) {
                     yield* rearmDeferredFinalize(context);

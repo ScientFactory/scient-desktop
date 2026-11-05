@@ -63,6 +63,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
 import type { DroidControlClientFactory } from "../../provider/droid/DroidControl.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -197,6 +198,8 @@ const harness = Effect.fnUntraced(function* (
   const toolLogBlocked = yield* Deferred.make<void>();
   const releaseToolLog = yield* Deferred.make<void>();
   const rejectedAuthentication: string[] = [];
+  const continuations =
+    yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
   const adapter = yield* makeDroidAdapterV2({
     instanceId,
     settings: yield* decodeDroidSettings({
@@ -290,6 +293,9 @@ const harness = Effect.fnUntraced(function* (
         rejectedAuthentication.push(message);
       }),
     ...(scenario?.makeControlClient ? { makeControlClient: scenario.makeControlClient } : {}),
+    continuationRequests: {
+      offer: (request) => Queue.offer(continuations, request).pipe(Effect.asVoid),
+    },
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -364,6 +370,27 @@ const harness = Effect.fnUntraced(function* (
         creationSource: "web",
       },
     });
+  /** The run Scient starts when Droid works on after a turn, as the orchestrator starts it. */
+  const continueTurn = (ordinal: number) =>
+    runtime.startTurn({
+      appThread,
+      threadId,
+      providerThread,
+      modelSelection,
+      runtimePolicy: { ...runtimePolicy, runtimeMode: "full-access" },
+      runId: RunId.make(`droid-run-${ordinal}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(`droid-attempt-${ordinal}`),
+      rootNodeId: NodeId.make(`droid-root-${ordinal}`),
+      message: {
+        messageId: MessageId.make(`droid-message-${ordinal}`),
+        text: "Background work finished.",
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "provider",
+      },
+    });
   const terminal = Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue);
@@ -415,6 +442,8 @@ const harness = Effect.fnUntraced(function* (
     rejectedAuthentication,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
     send,
+    continueTurn,
+    continuations,
     terminal,
     requests,
     recorded,
@@ -791,6 +820,42 @@ const result = (id, status, text) => update({ sessionUpdate: "tool_call_update",
 const wait = (id, taskId, block, timeout) => update({ sessionUpdate: "tool_call", toolCallId: id, title: "TaskOutput", kind: "other", status: "pending", rawInput: { task_id: taskId, block, ...(timeout === undefined ? {} : { timeout }) } });
 `;
 
+/** Droid 1.2.0: a background Task's call stays open past its turn, then Droid works on. */
+const backgroundTaskBody = `let answering;
+function onPrompt(message) {
+  if (state.prompts > 1) {
+    if (process.env.ANSWER_IN_SECOND_PROMPT !== "1") return reply(message, { stopReason: "end_turn" });
+    answering = message;
+    return update({ sessionUpdate: "tool_call", toolCallId: "look", title: "Read", kind: "read", status: "in_progress", rawInput: { path: "notes.md" } });
+  }
+  update({ sessionUpdate: "tool_call", toolCallId: "task", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "worker", description: "Sleep", prompt: "Sleep, then report." } });
+  update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "in_progress", rawOutput: { text: "Running in background" } });
+  if (process.env.SECOND_BACKGROUND === "1") {
+    update({ sessionUpdate: "tool_call", toolCallId: "task-2", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "worker", description: "Watch", prompt: "Watch the logs." } });
+    update({ sessionUpdate: "tool_call_update", toolCallId: "task-2", status: "in_progress", rawOutput: { text: "Running in background" } });
+  }
+  reply(message, { stopReason: "end_turn" });
+  let previous = "";
+  setInterval(() => {
+    if (!fs.existsSync(__CONTROL_PATH__)) return;
+    const next = fs.readFileSync(__CONTROL_PATH__, "utf8");
+    if (next === previous) return;
+    previous = next;
+    if (next === "finished") {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "completed", rawOutput: { text: "Slept." } });
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The background task finished." } });
+      if (answering) {
+        update({ sessionUpdate: "tool_call_update", toolCallId: "look", status: "completed", rawOutput: { text: "notes" } });
+        return reply(answering, { stopReason: "end_turn" });
+      }
+      update({ sessionUpdate: "tool_call", toolCallId: "check", title: "Execute", kind: "execute", status: "pending", rawInput: { command: "sleep 90" } });
+    } else {
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " Checked." } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "check", status: "completed", rawOutput: { text: "done" } });
+    }
+  }, 5);
+}`;
+
 const silentBody = `function onPrompt(message) {
   if (message.params.prompt.some(block => block.text?.includes("recover"))) return reply(message, { stopReason: "end_turn" });
   update({ sessionUpdate: "tool_call", toolCallId: "read", title: "Read file", kind: "read", status: "in_progress", rawInput: { path: "file.txt" }, rawOutput: { text: "Partial tool output." } });
@@ -1074,6 +1139,96 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
         assert.include(failed.failure?.message ?? "", "idle timeout (10m)");
         assert.notInclude(failed.failure?.message ?? "", "subagent");
         assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+  it.effect.each(
+    (["after its turn", "after a later turn", "while another runs on"] as const).map((when) => ({
+      caseTitle: `follows a Droid 1.2.0 background Task that ends ${when} into the work Droid starts`,
+      later: when === "after a later turn",
+      second: when === "while another runs on",
+    })),
+  )("$caseTitle", ({ later, second }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: backgroundTaskBody,
+          ...(second ? { environment: { SECOND_BACKGROUND: "1" } } : {}),
+        });
+        const latest = (nativeId: string) =>
+          nativeTasks(h).findLast((task) => task.nativeTaskRef?.nativeId === nativeId);
+        const checkTool = (done: boolean) => (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "check" &&
+          (event.turnItem.status === "completed") === done;
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const launched = latest("task");
+        assert.equal(launched?.status, "running");
+        if (later) {
+          yield* h.send(2, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          assert.equal(nativeTasks(h).at(-1)?.status, "running");
+        }
+        assert.equal(yield* Queue.size(h.continuations), 0);
+
+        yield* h.signal("finished");
+        yield* Queue.take(h.continuations);
+        const wakeOrdinal = later ? 3 : 2;
+        yield* h.continueTurn(wakeOrdinal);
+        yield* untilRecorded(h, checkTool(false));
+        const finished = latest("task");
+        assert.deepEqual(
+          [finished?.id, finished?.runId, finished?.status, finished?.result],
+          [launched?.id, launched?.runId, "completed", "Slept."],
+        );
+        // Droid marks no end to this work: an open tool holds it open however long it runs.
+        yield* TestClock.adjust("5 minutes");
+        assert.lengthOf(terminals(h), wakeOrdinal - 1);
+
+        yield* h.signal("checked");
+        yield* untilRecorded(h, checkTool(true));
+        yield* TestClock.adjust("39 seconds");
+        assert.lengthOf(terminals(h), wakeOrdinal - 1);
+        yield* TestClock.adjust("2 seconds");
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.isTrue(
+          h.recorded.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.runId === RunId.make(`droid-run-${wakeOrdinal}`) &&
+              event.message.text.startsWith("The background task finished."),
+          ),
+        );
+        assert.equal(new Set(nativeTasks(h).map((task) => task.id)).size, second ? 2 : 1);
+        assert.equal(latest("task-2")?.status, second ? "running" : undefined);
+      }),
+    ),
+  );
+  it.effect("ends a Droid 1.2.0 background Task inside the user turn Droid reports it in", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: backgroundTaskBody,
+          environment: { ANSWER_IN_SECOND_PROMPT: "1" },
+        });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const launched = nativeTasks(h).at(-1);
+        yield* h.send(2, "full-access");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "look",
+        );
+        yield* h.signal("finished");
+        assert.equal((yield* h.terminal).status, "completed");
+        const finished = nativeTasks(h).at(-1);
+        assert.deepEqual(
+          [finished?.id, finished?.runId, finished?.status, finished?.result],
+          [launched?.id, launched?.runId, "completed", "Slept."],
+        );
+        assert.equal(yield* Queue.size(h.continuations), 0);
       }),
     ),
   );

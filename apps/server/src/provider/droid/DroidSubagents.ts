@@ -1,7 +1,8 @@
 /**
  * ACP exposes Droid Task calls, not child steps. Foreground cancellation may repeat the same empty
- * call ID; background Task completes immediately and requires TaskOutput for later state. Derive
- * one subagent presentation per Task and suppress its duplicate tool row.
+ * call ID. A background Task before 1.2.0 completes at once and reports later only through
+ * TaskOutput; from 1.2.0 its call stays open until the sub-agent ends, possibly after the turn.
+ * Derive one subagent presentation per Task and suppress its duplicate tool row.
  */
 import * as Predicate from "effect/Predicate";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
@@ -46,8 +47,10 @@ interface DroidSubagent {
   readonly title: string;
   readonly role: string | undefined;
   readonly turnId: string | undefined;
-  /** `background`: launched, and Droid reports on it only through `TaskOutput`. */
+  /** `background`: launched to run on its own; see `reportsEnd`. */
   state: "running" | "background" | "ended";
+  /** Droid ends the Task call itself when the sub-agent ends, even after the turn. */
+  reportsEnd: boolean;
 }
 
 interface DroidSubagentWait {
@@ -233,6 +236,7 @@ export function observeDroidSubagentToolCall(
       role: text(rawInput?.subagent_type),
       turnId,
       state: "running",
+      reportsEnd: false,
     };
     if (!known) {
       tracker.subagents.set(id, subagent);
@@ -260,6 +264,7 @@ export function observeDroidSubagentToolCall(
       /^Running in background\b/iu.test(result)
     ) {
       subagent.state = "background";
+      subagent.reportsEnd = true;
       events.push(progress(subagent, BACKGROUND_NOTE));
     } else if (toolCall.status === "completed") {
       // Before 1.2.0 a background launch completes the call with this acknowledgement.
@@ -380,6 +385,15 @@ function observeDroidTaskStop(
 /** Why the sub-agents that are still open end now. */
 export type DroidSubagentsEnd = "stop" | "turn-ended" | "session-ended";
 
+/** True for a background sub-agent's open call, which Droid ends only when the sub-agent does. */
+export function droidSubagentOutlivesTurn(
+  tracker: DroidSubagentTracker,
+  toolCallId: string,
+): boolean {
+  const subagent = tracker.subagents.get(toolCallId);
+  return subagent?.state === "background" && subagent.reportsEnd;
+}
+
 /** Ends the sub-agents Droid will not report on any more. */
 export function endDroidSubagents(
   tracker: DroidSubagentTracker,
@@ -389,6 +403,7 @@ export function endDroidSubagents(
   const events: Array<DroidSubagentEvent> = [];
   for (const subagent of tracker.subagents.values()) {
     if (subagent.state === "ended") continue;
+    if (reason === "turn-ended" && subagent.state === "background" && subagent.reportsEnd) continue;
     const foreground = subagent.state === "running";
     if (reason === "stop") {
       events.push(
