@@ -595,12 +595,12 @@ jobs:
   # separate workers, so no two server test files ever share a machine and the
   # isolation that flag buys is preserved exactly.
   test_server:
-    # The organization allows 60 concurrent jobs; twelve runners keep each near five minutes.
+    # The organization allows 60 concurrent jobs; twelve runners keep each under eight minutes.
     needs: [queue_ci, release_notes, changes, shard_weights]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    # SCIENT-FORK:START — Scient's shards take 7-10 minutes, and shard 1 also runs the Python
+    # SCIENT-FORK:START — Scient's shards take 7-8 minutes, and shard 1 also runs the Python
     # bridge and performance steps; upstream's 20-minute limit covers both.
     timeout-minutes: 20
     # SCIENT-FORK:END

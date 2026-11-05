@@ -5,13 +5,19 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { createVitest } from "vite-plus/test/node";
 
+import ciQueueReuse from "./ci-queue-reuse.cjs";
+
+const { SHARDS } = ciQueueReuse;
+
 const root = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
 const summary = {};
 try {
-  for (const [suite, count, fallback] of [
-    ["server", 12, 0.6],
-    ["web", 6, 1],
+  // The sequencers' fallback seconds for files without a recorded time.
+  for (const [suite, fallback] of [
+    ["server", 0.6],
+    ["web", 1],
   ]) {
+    const count = SHARDS[suite];
     const cwd = NodePath.join(root, "apps", suite);
     process.chdir(cwd);
     const ctx = await createVitest({

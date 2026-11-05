@@ -9,10 +9,10 @@ import * as NodeUtil from "node:util";
 
 import { weightsFromReports } from "./shard-weights.mjs";
 
-export const SUITES = ["web", "server"];
+const SUITES = ["web", "server"];
 // Medians over a few runs keep one slow run from moving the split.
 export const RUNS_PER_SUITE = 3;
-const REPORT = /^vitest-(web|server)-(\d+)-attempt-(\d+)$/;
+const REPORT = /^vitest-(web|server)-\d+-attempt-\d+$/;
 
 /** Groups successful reports by suite and run, newest run first, ignoring anything else. */
 export function collectReports(runs) {
@@ -126,7 +126,6 @@ if (
   const [output] = process.argv.slice(2);
   if (!output) throw new Error("Usage: node .github/scripts/ci-shard-weights.mjs <output-dir>");
   const repository = process.env.GITHUB_REPOSITORY;
-  const current = Number(process.env.GITHUB_RUN_ID);
   const ids = JSON.parse(
     await gh([
       "run",
@@ -146,9 +145,7 @@ if (
       "--json",
       "databaseId",
     ]),
-  )
-    .map((run) => run.databaseId)
-    .filter((id) => id !== current);
+  ).map((run) => run.databaseId);
   const scratch = NodeFS.mkdtempSync(
     NodePath.join(process.env.RUNNER_TEMP ?? output, "shard-reports-"),
   );
