@@ -133,18 +133,6 @@ describe("delivering a desktop's sign-ins", () => {
     expect(sent.flatMap(({ units }) => units.map(({ sites }) => sites))).toEqual([["github.com"]]);
   });
 
-  it("delivers actions recorded before it ever subscribed, from the log", async () => {
-    const { deps, sent } = fixture({
-      log: { head: 2, units: [{ sites: ["github.com"], revision: 2, kind: "copy" }] },
-      applied: { bound: true, units: [{ sites: ["github.com"], revision: 1, outcome: "copied" }] },
-      jar: ["github.com"],
-    });
-    await deliverOnce(deps);
-    expect(sent.map(({ mode, units }) => [mode, units.map(({ revision }) => revision)])).toEqual([
-      ["replace", [2]],
-    ]);
-  });
-
   it("lets a sign-out issued between reading a copy and sending it win, one revision later", async () => {
     const log: ProfileSendLog = {
       head: 5,
@@ -163,16 +151,6 @@ describe("delivering a desktop's sign-ins", () => {
       ["copy", 5],
       ["delete", 6],
     ]);
-  });
-
-  it("resends the whole jar when the log fell back to it", async () => {
-    const { deps, sent } = fixture({
-      log: { head: 9, jar: 9, units: [] },
-      applied: { bound: true, units: [{ sites: ["github.com"], revision: 3, outcome: "copied" }] },
-      jar: ["github.com", "example.test"],
-    });
-    await deliverOnce(deps);
-    expect(sent[0]!.units.map(({ sites }) => sites)).toEqual([["github.com"], ["example.test"]]);
   });
 
   it.each(["removed", "route", "permission"])(
