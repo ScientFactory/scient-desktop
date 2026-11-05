@@ -442,7 +442,8 @@ jobs:
 
   # SCIENT-FORK:START — one set of recent main timings for every shard of this run.
   # Each shard reads the same artifact, so all of them derive the same split. Without it
-  # (no readable recent report, or this job failed) every shard uses the checked-in weights.
+  # (no readable recent report, or this job failed) every shard uses the checked-in weights,
+  # so it is advisory: Check gates the shards, not this job.
   shard_weights:
     name: Shard weights
     needs: [queue_ci, release_notes]
@@ -982,7 +983,7 @@ jobs:
 
   qualification:
     name: Qualification receipt
-    needs: [release_notes, queue_ci, changes, shard_weights, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1017,7 +1018,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [release_notes, queue_ci, changes, shard_weights, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
