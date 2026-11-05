@@ -194,7 +194,6 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
       const ancestor = sql.literal(
         ancestorColumns[0]?.found ? "has_cross_site_ancestor" : "null as has_cross_site_ancestor",
       );
-      // SCIENT-FORK:END
       const raw =
         schemaVersion >= 15
           ? yield* sql`select host_key, name, value, encrypted_value, path,
@@ -203,6 +202,7 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
           : yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, '' as top_frame_site_key, ${ancestor} from cookies`;
+      // SCIENT-FORK:END
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
