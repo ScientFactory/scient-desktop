@@ -400,9 +400,6 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
 const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
-// SCIENT-FORK:START — desktop connections released at the server limit have been idle this long.
-const RELEASE_IDLE_MS = 2 * 60 * 1000;
-// SCIENT-FORK:END
 const IDLE_SWEEP_INTERVAL = "1 minute";
 
 const DOWNLOAD_LIMIT = 20;
@@ -1490,30 +1487,6 @@ const make = Effect.gen(function* () {
   const atTabLimit = (agentSessionId: string) =>
     serverAtTabLimit() || agentAtTabLimit(agentSessionId);
 
-  // SCIENT-FORK:START — a desktop page outlives its server connection, so the least recently used
-  // connections of other conversations are released before a new tab is refused for the server
-  // limit; each reconnects on its next use.
-  const operatingAgents = new Map<string | null, number>();
-  const releaseDesktopConnections = (threadId: string) => {
-    while (tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT) {
-      const oldest = [...tabs.values()]
-        .filter(
-          (tab) =>
-            tab.desktop !== null &&
-            tab.threadId !== threadId &&
-            tab.viewers.size === 0 &&
-            tab.recording === undefined &&
-            // Never one an agent is using right now.
-            !operatingAgents.has(tab.control.agentId) &&
-            tab.usedAt < Date.now() - RELEASE_IDLE_MS,
-        )
-        .sort((left, right) => left.usedAt - right.usedAt)[0];
-      if (!oldest) return;
-      dropTab(oldest, false);
-    }
-  };
-  // SCIENT-FORK:END
-
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
       throw new BrowserControlInterrupted({
@@ -2130,12 +2103,7 @@ const make = Effect.gen(function* () {
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
-        if (!existing) {
-          closeIdleAgentTabs();
-          // SCIENT-FORK:START — free server connections held by other conversations' desktop pages.
-          releaseDesktopConnections(request.threadId);
-          // SCIENT-FORK:END
-        }
+        if (!existing) closeIdleAgentTabs();
         const tab =
           existing ??
           (await runPromise(
@@ -2408,20 +2376,10 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () => {
-        // SCIENT-FORK:START — an agent's tabs stay connected while its operation runs.
-        const agent = request.agentSessionId ?? null;
-        operatingAgents.set(agent, (operatingAgents.get(agent) ?? 0) + 1);
-        // SCIENT-FORK:END
-        return runOperation(request, performance.now() + request.timeoutMs).finally(() => {
-          markUsed(request);
-          // SCIENT-FORK:START
-          const others = (operatingAgents.get(agent) ?? 1) - 1;
-          if (others > 0) operatingAgents.set(agent, others);
-          else operatingAgents.delete(agent);
-          // SCIENT-FORK:END
-        });
-      },
+      try: () =>
+        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
+          markUsed(request),
+        ),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       Effect.match({

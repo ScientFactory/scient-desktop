@@ -67,7 +67,8 @@ rules off, and Scient does the same for its own code (`23a3578c6d`, about 300 di
 
 - **Browser tab limit (#24186):** when the server's 32-tab limit is full, an agent opening a tab
   frees the slot of the longest-idle agent tab nobody is viewing. Scient's `scient_preview_close`
-  hint stays in the limit message.
+  hint stays in the limit message. Scient's own release of idle desktop pages
+  (`releaseDesktopConnections`) is removed in favour of it; see below.
 - **Wake-ups (#28204), stopped runs (#31266), pending questions (#26435), deleted forks in Lineage
   (#29000):** merged as upstream. Scient's split RPC groups register T3's new thread-titles RPC.
 - **Relay (#24946):** the tunnel restarts when Cloudflare drops it. Scient's CloudLink test mocks
@@ -109,12 +110,17 @@ WSL environment list stay; Scient's tests for them now inject the environment in
 - **T3's rewrite of the web analytics device id** in `connection/platform.ts`. Scient removed that
   capability earlier; it falls back to its default.
 
-## Known issue, unchanged
+## Removed: Scient's desktop page release
 
-Scient's `releaseDesktopConnections` in `ServerBrowser.ts` checks `tab.recording === undefined`,
-but `recording` starts as `null`, so it has never released a connection (since `021617d354`).
-T3's #24186 now covers the same "agent cannot open a tab" case. The alignment leaves it as it was;
-fixing or removing it is a separate decision.
+Scient added `releaseDesktopConnections` in `021617d354` (Oct 30): before an agent was refused a
+tab at the server limit, it freed other conversations' idle desktop pages. Since `e6599bc0f5`
+(Oct 31) it has freed nothing, because it skips tabs whose `recording` is `undefined` while tabs
+start with `null`. T3's #24186 now frees idle agent tabs at the same point, so the alignment
+removes Scient's function, its two-minute idle constant and its running-agent tracking, and keeps
+T3's code as is. Nothing changes at runtime.
+
+T3's version does not free pages the user opened. That case is a follow-up, added as one marked
+step on top of T3's reclaim.
 
 ## Migrations
 
