@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import type { ScientOverleafUnreadableRecord } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,7 +29,7 @@ import { captureOverleafInventory } from "./OverleafInventory.ts";
 import { classifyProbeGitFailure } from "./OverleafProtocolProbe.ts";
 import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
 import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
-import { OverleafStateStore } from "./OverleafStateStore.ts";
+import { OverleafStateStore, unreadableSetAside } from "./OverleafStateStore.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 /** The workspace authority a connection is recorded under (contract rule 2). */
@@ -1075,30 +1076,36 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
   /** Readable connection records with their recorded bindings, for ownership checks. */
   const documents = connections;
 
-  /** Records no release here can read: damaged, or written by a newer Scient. */
+  /** Records no release here can read, damaged or written by a newer Scient, with what they show. */
   const unreadableRecords = Effect.gen(function* () {
-    let count = 0;
-    for (const id of yield* store.listConnections) {
-      const read = yield* store.readConnection(id);
-      if (read._tag !== "ready" && read._tag !== "missing") count += 1;
+    const records: ScientOverleafUnreadableRecord[] = [];
+    for (const recordId of yield* store.listConnections) {
+      const read = yield* store.readConnection(recordId);
+      if (read._tag === "ready" || read._tag === "missing") continue;
+      records.push({
+        recordId,
+        kind: read._tag === "unsupported" ? "newer" : "damaged",
+        folder: read.shows.folder,
+        unfinished: read.shows.unfinished,
+        setAside: unreadableSetAside(read),
+      });
     }
-    return count;
+    return records;
   });
 
   /**
-   * An unreadable record blocks linking and every bulk checkout change, because it
-   * might describe an unfinished sync. Moving it aside, bytes intact, is the user's
-   * call. A damaged record can't be settled by any release, so it can always go; a
-   * newer release's record with an unfinished sync is held for that release to settle.
+   * An unreadable record blocks linking, and bulk changes to its checkout (or every
+   * checkout, when it doesn't say which) while it may hold an unfinished sync. Moving
+   * it aside, bytes intact, is the user's call; the store refuses what it must keep.
    */
-  const setAsideUnreadable = Effect.fn("OverleafConnections.setAsideUnreadable")(function* () {
-    let setAside = 0;
-    let held = 0;
-    for (const id of yield* store.listConnections) {
-      const read = yield* store.readConnection(id);
-      if (read._tag === "ready" || read._tag === "missing") continue;
-      const outcome = yield* store.quarantineConnection(id).pipe(
-        Effect.as("moved" as const),
+  const setAsideUnreadable = Effect.fn("OverleafConnections.setAsideUnreadable")(function* (input: {
+    readonly recordId: string;
+    readonly acceptUnfinished: boolean;
+  }) {
+    return yield* store
+      .quarantineConnection(input.recordId, { acceptUnfinished: input.acceptUnfinished })
+      .pipe(
+        Effect.as("set-aside" as const),
         Effect.catchTags({
           OverleafConnectionUnavailableError: (error) =>
             Effect.succeed(
@@ -1106,10 +1113,6 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             ),
         }),
       );
-      if (outcome === "moved") setAside += 1;
-      else if (outcome === "held") held += 1;
-    }
-    return { setAside, held };
   });
 
   return {

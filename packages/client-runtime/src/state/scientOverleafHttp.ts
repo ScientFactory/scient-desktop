@@ -9,6 +9,7 @@ import type {
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
   ScientOverleafUndoRequest,
+  ScientOverleafSetAsideRequest,
   ScientOverleafWorkspaceRequest,
 } from "@t3tools/contracts";
 
@@ -106,12 +107,12 @@ export const listEnvironmentOverleafConnections = Effect.fn(
   });
 });
 
-/** Moves the link records this release can't read aside; never reaches Overleaf. */
+/** Moves one link record this release can't read aside; never reaches Overleaf. */
 export const setAsideEnvironmentOverleafUnreadable = Effect.fn(
   "clientRuntime.state.setAsideEnvironmentOverleafUnreadable",
 )(function* (input: {
   readonly prepared: PreparedConnection;
-  readonly request: ScientOverleafWorkspaceRequest;
+  readonly request: ScientOverleafSetAsideRequest;
 }) {
   return yield* request({
     prepared: input.prepared,

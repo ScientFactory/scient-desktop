@@ -163,7 +163,7 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
       return Effect.succeed(
         toolError(
           "recovery-required",
-          field("reason") === "unreadable-record"
+          field("reason") === "unreadable-record" || field("reason") === "newer-unfinished-record"
             ? `${error.message} Ask the user to do this; it can't be done from a tool.`
             : `${error.message} Use scient_overleaf_manage with action recover.`,
         ),

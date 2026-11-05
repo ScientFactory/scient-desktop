@@ -26,6 +26,7 @@ import type {
   ScientOverleafPreviewRequest,
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
+  ScientOverleafSetAsideRequest,
   ScientOverleafUndoRequest,
 } from "@t3tools/contracts";
 
@@ -76,15 +77,12 @@ export async function listOverleafConnections(environmentId: EnvironmentId, work
   );
 }
 
-export async function setAsideUnreadableOverleafRecords(
+export async function setAsideUnreadableOverleafRecord(
   environmentId: EnvironmentId,
-  workspaceRoot: string,
+  request: ScientOverleafSetAsideRequest,
 ) {
   return runtime.runPromise(
-    setAsideEnvironmentOverleafUnreadable({
-      prepared: prepared(environmentId),
-      request: { workspaceRoot },
-    }),
+    setAsideEnvironmentOverleafUnreadable({ prepared: prepared(environmentId), request }),
   );
 }
 

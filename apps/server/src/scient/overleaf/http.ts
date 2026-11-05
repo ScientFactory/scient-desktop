@@ -337,7 +337,13 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
         Effect.gen(function* () {
           yield* annotateEnvironmentRequest(endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* mapErrors(overleaf.setAsideUnreadable(workspace(payload.workspaceRoot)));
+          return yield* mapErrors(
+            overleaf.setAsideUnreadable({
+              caller: workspace(payload.workspaceRoot),
+              recordId: payload.recordId,
+              acceptUnfinished: payload.acceptUnfinished === true,
+            }),
+          );
         }),
       )
       .handle("keptCopies", ({ endpoint, payload }) =>

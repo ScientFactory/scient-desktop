@@ -1,7 +1,7 @@
 // SCIENT-OWNED: Overleaf in Settings. Synced folders ▸ Overleaf holds the token
 // and every linked folder on this computer, by project; Project Settings ▸
 // Overleaf holds one project's links.
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScientOverleafUnreadableRecord } from "@t3tools/contracts";
 import { ChevronDownIcon, ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -20,11 +20,7 @@ import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjects } from "~/state/entities";
 
-import {
-  removeOverleafToken,
-  saveOverleafToken,
-  setAsideUnreadableOverleafRecords,
-} from "./client";
+import { removeOverleafToken, saveOverleafToken, setAsideUnreadableOverleafRecord } from "./client";
 import { lastSyncLabel } from "./OverleafFileChip";
 import { openOverleafProject, runOverleafSync, unlinkOverleaf } from "./overleafActions";
 import { OVERLEAF_TOKEN_PAGE_URL, operationErrorText, overleafChipView } from "./overleafModel";
@@ -241,68 +237,109 @@ function OverleafProjectLinks(props: {
   );
 }
 
+/** What one unreadable record holds back, and what the user can do about it. */
+function unreadableRecordLines(record: ScientOverleafUnreadableRecord): {
+  readonly state: string;
+  readonly holds: string;
+} {
+  const state =
+    record.setAside === "held"
+      ? "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then."
+      : record.setAside === "confirm"
+        ? "This record is damaged, and its last sync stopped part-way. Setting it aside stops Scient guarding the files that sync left in the folder."
+        : record.unfinished === false
+          ? record.kind === "newer"
+            ? "A newer version of Scient made this link. No sync is waiting on it."
+            : "This record is damaged. No sync is waiting on it."
+          : "This record is damaged, and it doesn't say whether a sync stopped part-way.";
+  const holds =
+    record.unfinished === false
+      ? "Until it's set aside, Scient won't link folders."
+      : record.folder === null
+        ? "Until it's set aside, Scient won't link folders or change any project's files in bulk, for example when switching branches."
+        : "Until it's set aside, Scient won't link folders or change this project's files in bulk, for example when switching branches.";
+  return { state, holds };
+}
+
 /**
- * Link records this release can't read (damaged, or made by a newer Scient). They
- * can't be tied to a project, and they stop linking and bulk folder changes until
- * the user sets them aside.
+ * Link records this release can't read (damaged, or made by a newer Scient), one row each
+ * with its folder when the record names it. They stop linking, and bulk folder changes
+ * while they may hold an unfinished sync, until they're set aside or settled.
  */
 function OverleafUnreadableRecords(props: {
   readonly environmentId: EnvironmentId;
   readonly workspaceRoots: ReadonlyArray<string>;
-  readonly count: number;
+  readonly records: ReadonlyArray<ScientOverleafUnreadableRecord>;
 }) {
-  const { environmentId, workspaceRoots, count } = props;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [held, setHeld] = useState(0);
+  const { environmentId, workspaceRoots, records } = props;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [firstRoot] = workspaceRoots;
   if (firstRoot === undefined) return null;
-  const setAside = () => {
-    setBusy(true);
-    setError(null);
+  const setAside = (record: ScientOverleafUnreadableRecord) => {
+    setBusy(record.recordId);
+    setErrors((current) => {
+      const next = new Map(current);
+      next.delete(record.recordId);
+      return next;
+    });
     void settleOverleafOperation(
       async () => {
-        const result = await setAsideUnreadableOverleafRecords(environmentId, firstRoot);
-        setHeld(result.held);
+        await setAsideUnreadableOverleafRecord(environmentId, {
+          workspaceRoot: firstRoot,
+          recordId: record.recordId,
+          acceptUnfinished: record.setAside === "confirm",
+        });
         await Promise.all(
           workspaceRoots.map((root) => loadOverleafWorkspace(environmentId, root, { force: true })),
         );
       },
-      (cause) => setError(operationErrorText(cause)),
-      () => setBusy(false),
+      (cause) =>
+        setErrors((current) => new Map(current).set(record.recordId, operationErrorText(cause))),
+      () => setBusy(null),
     );
   };
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-3">
       <p className="text-xs text-foreground">
-        {count === 1
+        {records.length === 1
           ? "Scient can't read one of its Overleaf link records."
-          : `Scient can't read ${count} of its Overleaf link records.`}{" "}
-        Until {count === 1 ? "it's" : "they're"} set aside, Scient won't link folders or change
-        project files in bulk, for example when switching branches.
+          : `Scient can't read ${records.length} of its Overleaf link records.`}
       </p>
+      {records.map((record) => {
+        const lines = unreadableRecordLines(record);
+        const error = errors.get(record.recordId);
+        return (
+          <div key={record.recordId} className="grid gap-1" data-unreadable-record>
+            <p className="break-all text-xs font-medium text-foreground">
+              {record.folder ?? "Folder not recorded"}
+            </p>
+            <p className="text-xs text-muted-foreground">{lines.state}</p>
+            <p className="text-xs text-muted-foreground">{lines.holds}</p>
+            {record.setAside === "held" ? null : (
+              <div>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy !== null}
+                  onClick={() => setAside(record)}
+                >
+                  {record.setAside === "confirm" ? "Set aside anyway" : "Set aside"}
+                </Button>
+              </div>
+            )}
+            {error ? (
+              <p className="text-xs text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
       <p className="text-xs text-muted-foreground">
-        Setting aside moves the record to a recovery folder, and nothing on Overleaf changes. If
-        that link's last sync stopped part-way, Scient no longer guards the files it was changing. A
-        link made by a newer version of Scient with an unfinished sync is kept; finish it there.
+        Setting aside moves the record to a recovery folder, and nothing on Overleaf changes. The
+        link's kept copies stay on disk, but Scient can no longer list or restore them.
       </p>
-      <div>
-        <Button size="xs" variant="outline" disabled={busy} onClick={setAside}>
-          Set aside
-        </Button>
-      </div>
-      {held > 0 ? (
-        <p className="text-xs text-foreground" role="status">
-          {held === 1
-            ? "One link was kept: a newer version of Scient made it, and its sync didn't finish. Open that version to finish it."
-            : `${held} links were kept: a newer version of Scient made them, and their syncs didn't finish. Open that version to finish them.`}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="text-xs text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -317,11 +354,11 @@ function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId })
   return (
     <div className="grid gap-3">
       <p className="text-xs font-medium text-foreground">Linked folders</p>
-      {unreadable > 0 ? (
+      {unreadable.length > 0 ? (
         <OverleafUnreadableRecords
           environmentId={environmentId}
           workspaceRoots={workspaceRoots}
-          count={unreadable}
+          records={unreadable}
         />
       ) : null}
       {noneLinked ? <p className="text-xs text-muted-foreground">No folder is linked.</p> : null}

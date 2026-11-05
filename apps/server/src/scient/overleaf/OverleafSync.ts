@@ -757,7 +757,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     return result;
   });
 
-  /** Unreadable link records can't be tied to a project, so the count is the environment's. */
+  /** Unreadable link records can't be tied to a project for sure, so the list is the environment's. */
   const unreadableRecords = Effect.fn("OverleafSync.unreadableRecords")(function* (
     caller: OverleafCaller,
   ) {
@@ -765,11 +765,18 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     return yield* connections.unreadableRecords;
   });
 
-  const setAsideUnreadable = Effect.fn("OverleafSync.setAsideUnreadable")(function* (
-    caller: OverleafCaller,
-  ) {
-    yield* resolveCaller(caller);
-    return yield* connections.setAsideUnreadable();
+  const setAsideUnreadable = Effect.fn("OverleafSync.setAsideUnreadable")(function* (input: {
+    readonly caller: OverleafCaller;
+    readonly recordId: string;
+    readonly acceptUnfinished: boolean;
+  }) {
+    yield* resolveCaller(input.caller);
+    return {
+      outcome: yield* connections.setAsideUnreadable({
+        recordId: input.recordId,
+        acceptUnfinished: input.acceptUnfinished,
+      }),
+    };
   });
 
   const connect = Effect.fn("OverleafSync.connect")(function* (input: {

@@ -143,6 +143,7 @@ import {
   ScientOverleafPreviewRequest,
   ScientOverleafPreviewResult,
   ScientOverleafRecoverResult,
+  ScientOverleafSetAsideRequest,
   ScientOverleafSetAsideResult,
   ScientOverleafRelinkRequest,
   ScientOverleafRestoreRequest,
@@ -796,7 +797,7 @@ export function makeScientEnvironmentHttpGroups({
     .add(
       HttpApiEndpoint.post("setAsideUnreadable", "/api/scient/overleaf/v1/set-aside-unreadable", {
         headers: OptionalBearerHeaders,
-        payload: ScientOverleafWorkspaceRequest,
+        payload: ScientOverleafSetAsideRequest,
         success: ScientOverleafSetAsideResult,
         error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
       }).middleware(EnvironmentAuthenticatedAuth),

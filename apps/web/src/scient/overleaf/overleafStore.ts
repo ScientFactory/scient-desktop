@@ -9,6 +9,7 @@ import type {
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
+  ScientOverleafUnreadableRecord,
 } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 
@@ -49,7 +50,9 @@ export interface OverleafWorkspaceSnapshot {
   readonly loaded: boolean;
   readonly connections: ReadonlyArray<OverleafConnection>;
   /** The environment's link records this release can't read; they block linking. */
-  readonly unreadableRecords: number;
+  readonly unreadableRecords: ReadonlyArray<ScientOverleafUnreadableRecord>;
+  /** Which list read this came from; a later read is newer. */
+  readonly listRead: number;
   readonly error: string | null;
   readonly statuses: ReadonlyMap<string, ScientOverleafStatus>;
   /** What Overleaf itself last said about each link. The status only reads the folder. */
@@ -93,10 +96,13 @@ export interface OverleafWorkspaceSnapshot {
   >;
 }
 
+const NO_UNREADABLE_RECORDS: ReadonlyArray<ScientOverleafUnreadableRecord> = [];
+
 const EMPTY: OverleafWorkspaceSnapshot = {
   loaded: false,
   connections: [],
-  unreadableRecords: 0,
+  unreadableRecords: NO_UNREADABLE_RECORDS,
+  listRead: 0,
   error: null,
   statuses: new Map(),
   remoteStates: new Map(),
@@ -116,7 +122,7 @@ const EMPTY: OverleafWorkspaceSnapshot = {
 /** What one workspace view lists: its links and their status as this workspace reads them. */
 type WorkspacePart = Pick<
   OverleafWorkspaceSnapshot,
-  "loaded" | "connections" | "unreadableRecords" | "error" | "statuses"
+  "loaded" | "connections" | "unreadableRecords" | "listRead" | "error" | "statuses"
 >;
 /**
  * Everything about a link's syncs, reviews and decisions: one state per link
@@ -129,7 +135,8 @@ type Lifecycle = Omit<OverleafWorkspaceSnapshot, keyof WorkspacePart>;
 const EMPTY_PART: WorkspacePart = {
   loaded: false,
   connections: [],
-  unreadableRecords: 0,
+  unreadableRecords: NO_UNREADABLE_RECORDS,
+  listRead: 0,
   error: null,
   statuses: new Map(),
 };
@@ -445,7 +452,8 @@ export function loadOverleafWorkspace(
         loaded: true,
         error: null,
         connections: listed.connections,
-        unreadableRecords: listed.unreadableRecords ?? 0,
+        unreadableRecords: listed.unreadableRecords ?? NO_UNREADABLE_RECORDS,
+        listRead: read,
       }));
       await Promise.all(
         listed.connections.map((connection) =>
@@ -814,14 +822,13 @@ export function useOverleafWorkspace(
 }
 
 /**
- * Whether none of the projects has a link, once each project's links are read; false while
- * any is still loading. Subscribing loads each project's links, like `useOverleafWorkspace`.
+ * Unreadable link records belong to the environment, so each workspace list reports
+ * them all: this is the list most recently loaded among the given workspaces.
  */
-/** Unreadable link records belong to the environment; any of its workspace lists reports them. */
 export function useOverleafUnreadableRecords(
   environmentId: EnvironmentId,
   workspaceRoots: ReadonlyArray<string>,
-): number {
+): ReadonlyArray<ScientOverleafUnreadableRecord> {
   const rootsKey = workspaceRoots.join("\u0000");
   const subscribe = (listener: () => void) => {
     const roots = rootsKey === "" ? [] : rootsKey.split("\u0000");
@@ -833,14 +840,20 @@ export function useOverleafUnreadableRecords(
       for (const unsubscribe of unsubscribes) unsubscribe();
     };
   };
-  return useSyncExternalStore(subscribe, () =>
-    Math.max(
-      0,
-      ...workspaceRoots.map((root) => viewOf(keyOf(environmentId, root)).unreadableRecords),
-    ),
-  );
+  return useSyncExternalStore(subscribe, () => {
+    let latest: OverleafWorkspaceSnapshot | null = null;
+    for (const root of workspaceRoots) {
+      const part = viewOf(keyOf(environmentId, root));
+      if (part.loaded && (latest === null || part.listRead > latest.listRead)) latest = part;
+    }
+    return latest?.unreadableRecords ?? NO_UNREADABLE_RECORDS;
+  });
 }
 
+/**
+ * Whether none of the projects has a link, once each project's links are read; false while
+ * any is still loading. Subscribing loads each project's links, like `useOverleafWorkspace`.
+ */
 export function useNoOverleafLinks(
   environmentId: EnvironmentId,
   workspaceRoots: ReadonlyArray<string>,
