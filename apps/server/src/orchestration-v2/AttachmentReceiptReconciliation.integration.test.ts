@@ -646,7 +646,6 @@ it.live(
               RuntimeLayer.layerProviderEventIngestorProvided.pipe(
                 Layer.provide(
                   Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                    // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
                     getInstance: () => Effect.succeed(undefined),
                   }),
                 ),

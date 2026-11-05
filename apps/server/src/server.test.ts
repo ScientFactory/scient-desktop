@@ -255,6 +255,8 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
@@ -1057,12 +1059,9 @@ const buildAppUnderTest = (options?: {
                 Effect.succeed(
                   makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
                 ),
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
               getVoiceTranscriptCorrectionForInstance: () =>
-                // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
                 Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
               setProviderManagedRuntimeSummary: () => Effect.succeed([]),
               setProviderMaintenanceActionState: () => Effect.succeed([]),
@@ -1435,6 +1434,7 @@ const buildAppUnderTest = (options?: {
           };
         }),
         Layer.provideMerge(makeAuthTestLayer()),
+        Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
         // Reuse the same fixture owners for dependencies introduced by later layers.

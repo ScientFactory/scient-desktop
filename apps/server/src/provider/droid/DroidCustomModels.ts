@@ -423,7 +423,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
           const sessionStartMarker = path.join(directory, "session-started");
           yield* fs.writeFileString(
             overlayPath,
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            // @effect-diagnostics-next-line globalJsonInEffect:off
             JSON.stringify({
               // Off stops Droid uploading messages and titles to Factory for the
               // whole process (verified against Droid 0.213.0 and 0.230.0).

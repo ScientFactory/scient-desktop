@@ -194,7 +194,6 @@ function makeHarness(
       getProviderPluginActionsForInstance: () => Effect.sync(() => undefined),
       recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       setProviderMaintenanceActionState: () => SubscriptionRef.get(providersRef),
       setProviderConnectionOperation: () => SubscriptionRef.get(providersRef),

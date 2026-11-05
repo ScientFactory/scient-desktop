@@ -42,6 +42,7 @@ import {
   storeAttachmentUpload,
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
 } from "../../assets/AttachmentUpload.ts";
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import {
@@ -369,7 +370,8 @@ const runConjunction = (refusal = false) =>
           }),
         ).pipe(
           Effect.provide(
-            ServerSecretStore.layer.pipe(
+            AssetSigner.layer.pipe(
+              Layer.provideMerge(ServerSecretStore.layer),
               Layer.provideMerge(configLayer),
               Layer.provideMerge(NodeServices.layer),
             ),

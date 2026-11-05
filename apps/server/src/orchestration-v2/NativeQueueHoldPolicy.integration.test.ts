@@ -617,7 +617,6 @@ const withNativeQueue = <A, E, R>(
                     Layer.provide(
                       Layer.mergeAll(
                         Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-                          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                           getInstance: () => Effect.succeed(undefined),
                         }),
                         Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -4101,7 +4100,6 @@ it.live(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
               Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-                // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                 getInstance: () => Effect.succeed(undefined),
               }),
             ),
@@ -4640,7 +4638,6 @@ it.live(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
               Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-                // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                 getInstance: () => Effect.succeed(undefined),
               }),
             ),

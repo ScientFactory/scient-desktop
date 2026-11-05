@@ -224,10 +224,12 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server listens only on a loopback address, creates no pairing links, and
 signs out devices that paired earlier. It does not start with a host other than a loopback
-address or `localhost`. The [background service](./background-service.md) listens on private
-networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts
-with network access and Tailscale Serve off, whatever the user chose. That also turns off the
-cloud connection. To keep other remote access but turn off the cloud connection alone, set
+address or `localhost`. A [background service](./background-service.md) installed before
+`T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
+Run `scient up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
+`T3CODE_HOST=127.0.0.1` in `service.env`, then run `scient service restart`. The desktop app
+starts with network access and Tailscale Serve off, whatever the user chose. That also turns off
+the cloud connection. To keep other remote access but turn off the cloud connection alone, set
 `"connect": false`.
 
 When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards

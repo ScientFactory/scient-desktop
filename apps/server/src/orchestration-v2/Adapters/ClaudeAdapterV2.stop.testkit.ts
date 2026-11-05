@@ -136,6 +136,10 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
                 Effect.die("No SDK flag settings mutation in captured Stop race"),
               stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
               backgroundTasks: () => Effect.succeed(false),
+              mcpServerStatus: Effect.succeed([]),
+              readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              listPermissionRules: Effect.die("unexpected permission rules read"),
               setPermissionMode: () =>
                 Effect.die("No SDK permission mutation in captured Stop race"),
               interrupt: Effect.gen(function* () {

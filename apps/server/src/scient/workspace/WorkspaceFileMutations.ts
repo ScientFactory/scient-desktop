@@ -3882,7 +3882,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       resolved: Resolved,
       id: string,
     ) => {
-      const exit = await Effect.runPromiseExit(resolveTarget(input));
+      const exit = await runPromise(Effect.exit(resolveTarget(input)));
       if (
         Exit.isFailure(exit) ||
         exit.value.root !== resolved.root ||
