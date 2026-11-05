@@ -27,11 +27,18 @@ export async function isolateManagedPythonPackages(
   root: string,
   signal: AbortSignal,
 ): Promise<void> {
-  signal.throwIfAborted();
-  // A recursive listing reports links as links and does not descend into them.
-  const files = (await NodeFSP.readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) => NodePath.join(entry.parentPath, entry.name));
+  // Listing is cheap; checking each file is what waits on the disk. Only real directories are
+  // entered: a recursive readdir followed links to directories on Linux CI.
+  const files: string[] = [];
+  const directories = [root];
+  for (let directory = directories.pop(); directory !== undefined; directory = directories.pop()) {
+    signal.throwIfAborted();
+    for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
+      const path = NodePath.join(directory, entry.name);
+      if (entry.isDirectory()) directories.push(path);
+      else if (entry.isFile()) files.push(path);
+    }
+  }
   let next = 0;
   let failure: { readonly cause: unknown } | undefined;
   const lane = async () => {
