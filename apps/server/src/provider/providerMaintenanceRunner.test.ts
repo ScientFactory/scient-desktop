@@ -224,11 +224,11 @@ function makeRegistry(
       invalidateModelCaches: () => Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
-      getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-      getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
-      getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+      getProviderConnectionActionsForInstance: () => Effect.undefined,
+      getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
+      getProviderSkillActionsForInstance: () => Effect.undefined,
       // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
-      getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+      getProviderPluginActionsForInstance: () => Effect.undefined,
       recordProviderNativeInventory: () => Ref.get(providersRef),
       // SCIENT-FORK:END
       getVoiceTranscriptCorrectionForInstance: () =>

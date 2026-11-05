@@ -349,7 +349,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           // home or profile setting uses it.
           const ompHome = NodePath.join(home, ".omp");
           const ompEnvironment: NodeJS.ProcessEnv = {
-            PATH: process.env.PATH ?? "",
+            PATH: (yield* HostProcess.Environment).PATH ?? "",
             HTTPS_PROXY: "http://127.0.0.1:9",
             HTTP_PROXY: "http://127.0.0.1:9",
             NO_PROXY: "127.0.0.1,localhost",
@@ -452,7 +452,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           };
           const ompInstance = ompLiveInstance(NodePath.join(root, "omp"), {
             baseEnv: {
-              PATH: process.env.PATH ?? "",
+              PATH: (yield* HostProcess.Environment).PATH ?? "",
               HTTPS_PROXY: "http://127.0.0.1:9",
               HTTP_PROXY: "http://127.0.0.1:9",
               NO_PROXY: "127.0.0.1,localhost",
@@ -568,7 +568,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
             binaryPath: ompQualifyBinary,
             environment: ompLiveInstance(NodePath.join(root, "omp"), {
               baseEnv: {
-                PATH: process.env.PATH ?? "",
+                PATH: (yield* HostProcess.Environment).PATH ?? "",
                 HTTPS_PROXY: "http://127.0.0.1:9",
                 HTTP_PROXY: "http://127.0.0.1:9",
                 NO_PROXY: "127.0.0.1,localhost",

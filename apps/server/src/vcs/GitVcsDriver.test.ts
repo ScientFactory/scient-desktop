@@ -477,16 +477,19 @@ for (const scenario of checkpointTransferScenarios) {
       if (scenario === "size-limit") {
         const globalConfig = path.join(root, "global-config");
         yield* fs.writeFileString(globalConfig, "[pack]\n\tpackSizeLimit = 1m\n");
+        // Git commands take their environment from HostProcess.Environment, the live
+        // process environment unless a test provides another.
+        const env = yield* HostProcess.Environment;
         yield* Effect.acquireRelease(
           Effect.sync(() => {
-            const previous = process.env.GIT_CONFIG_GLOBAL;
-            process.env.GIT_CONFIG_GLOBAL = globalConfig;
+            const previous = env.GIT_CONFIG_GLOBAL;
+            env.GIT_CONFIG_GLOBAL = globalConfig;
             return previous;
           }),
           (previous) =>
             Effect.sync(() => {
-              if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-              else process.env.GIT_CONFIG_GLOBAL = previous;
+              if (previous === undefined) delete env.GIT_CONFIG_GLOBAL;
+              else env.GIT_CONFIG_GLOBAL = previous;
             }),
         );
         // Incompressible files that would need several 1 MiB packs.

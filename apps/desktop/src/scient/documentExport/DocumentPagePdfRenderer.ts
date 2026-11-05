@@ -8,12 +8,11 @@ import {
   scientDocumentBlockedRequestsNote,
   scientDocumentReadinessRejection,
   type DesktopDocumentPageRenderInput,
-  type DesktopDocumentPageRenderOutcome,
+  DesktopDocumentPageRenderOutcome,
   type DesktopPreviewPdfExportArtifact,
 } from "@t3tools/contracts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -246,9 +245,10 @@ const rejected = (
   detail: detail.slice(0, 2_048),
 });
 
-class DocumentPageRejection extends Data.TaggedError("DocumentPageRejection")<{
-  readonly outcome: DesktopDocumentPageRenderOutcome;
-}> {}
+class DocumentPageRejection extends Schema.TaggedError<DocumentPageRejection>()(
+  "DocumentPageRejection",
+  { outcome: DesktopDocumentPageRenderOutcome },
+) {}
 
 const ensureProtocol = (
   session: Session,

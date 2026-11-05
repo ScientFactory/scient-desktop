@@ -243,7 +243,7 @@ export default function(pi) {
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-              getInstance: () => Effect.succeed(undefined),
+              getInstance: () => Effect.undefined,
             }),
           ),
         ),
@@ -417,7 +417,7 @@ export default function(pi) {
                 });
               }),
               resolve: Effect.fn("McpSessionRegistry.resolve")(function () {
-                return Effect.succeed(undefined);
+                return Effect.undefined;
               }),
               touch: Effect.fn("McpSessionRegistry.touch")(function () {
                 return Effect.void;
@@ -1087,7 +1087,7 @@ export default function(pi) {
           const store = yield* CheckpointStore;
           beforePrompt = Effect.fn("PiNativeInitiatedWorkTestHarness.beforePrompt")(
             function* () {
-              const p = yield* orchestrator.getThreadProjection(h.threadId).pipe(Effect.orDie);
+              const p = yield* orchestrator.getThreadProjection(h.threadId);
               const predecessor = p.runs.find((r) => r.id === nativeRun.id)!;
               const answer = p.messages.find(
                 (m) => m.runId === nativeRun.id && m.role === "assistant",
@@ -1102,24 +1102,21 @@ export default function(pi) {
               assert.equal(parent.status, "ready");
               assert.equal(parent.scopeId, checkpoint.scopeId);
               assert.include(
-                yield* store
-                  .diffCheckpoints({
-                    cwd,
-                    fromCheckpointRef: parent.ref,
-                    toCheckpointRef: checkpoint.ref,
-                    fallbackFromToHead: false,
-                    ignoreWhitespace: false,
-                    format: "patch",
-                  })
-                  .pipe(Effect.orDie),
+                yield* store.diffCheckpoints({
+                  cwd,
+                  fromCheckpointRef: parent.ref,
+                  toCheckpointRef: checkpoint.ref,
+                  fallbackFromToHead: false,
+                  ignoreWhitespace: false,
+                  format: "patch",
+                }),
                 "+Captured native work in A",
               );
-              const refInA = yield* store
-                .hasCheckpointRef({ cwd, checkpointRef: checkpoint.ref })
-                .pipe(Effect.orDie);
-              const refInB = yield* store
-                .hasCheckpointRef({ cwd: workspaceB, checkpointRef: checkpoint.ref })
-                .pipe(Effect.orDie);
+              const refInA = yield* store.hasCheckpointRef({ cwd, checkpointRef: checkpoint.ref });
+              const refInB = yield* store.hasCheckpointRef({
+                cwd: workspaceB,
+                checkpointRef: checkpoint.ref,
+              });
               assert.equal(
                 p.checkpointScopes.find((s) => s.id === checkpoint.scopeId)?.cwd,
                 cwd,
@@ -1130,26 +1127,21 @@ export default function(pi) {
                   refInB,
                 }),
               );
-              assert.isTrue(
-                yield* store
-                  .hasCheckpointRef({ cwd, checkpointRef: checkpoint.ref })
-                  .pipe(Effect.orDie),
-              );
+              assert.isTrue(yield* store.hasCheckpointRef({ cwd, checkpointRef: checkpoint.ref }));
               assert.isFalse(
-                yield* store
-                  .hasCheckpointRef({ cwd: workspaceB, checkpointRef: checkpoint.ref })
-                  .pipe(Effect.orDie),
+                yield* store.hasCheckpointRef({ cwd: workspaceB, checkpointRef: checkpoint.ref }),
               );
               assert.equal(
-                yield* git(cwd, ["show", `${checkpoint.ref}:native-answer.txt`]).pipe(Effect.orDie),
+                yield* git(cwd, ["show", `${checkpoint.ref}:native-answer.txt`]),
                 "Captured native work in A\n",
               );
               assert.equal(
-                yield* fs.readFileString(`${cwd}/native-cwd.txt`).pipe(Effect.orDie),
-                `${yield* fs.realPath(cwd).pipe(Effect.orDie)}\n`,
+                yield* fs.readFileString(`${cwd}/native-cwd.txt`),
+                `${yield* fs.realPath(cwd)}\n`,
               );
               queuedWireChecks++;
             },
+            Effect.orDie,
             Effect.tapCause((c) => Deferred.succeed(wireFailure, c).pipe(Effect.asVoid)),
           );
           yield* orchestrator.dispatch({

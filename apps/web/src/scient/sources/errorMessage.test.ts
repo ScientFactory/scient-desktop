@@ -57,7 +57,10 @@ describe("Scient Sources error messages", () => {
   it("does not call local endpoint failures remote", () => {
     expect(
       scientSourcesErrorMessage(
-        new RemoteEnvironmentAuthTimeoutError("http://127.0.0.1:14774/api/scient/sources", 25),
+        new RemoteEnvironmentAuthTimeoutError({
+          requestUrl: "http://127.0.0.1:14774/api/scient/sources",
+          timeoutMs: 25,
+        }),
         true,
       ),
     ).toBe(

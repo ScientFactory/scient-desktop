@@ -78,7 +78,7 @@ describe("Mermaid error recovery", () => {
     vi.mocked(toastManager.add).mockReset();
     vi.mocked(renderMermaidDiagram)
       .mockReset()
-      .mockRejectedValue(new MermaidRenderError(new Error(diagnostic)));
+      .mockRejectedValue(new MermaidRenderError({ cause: new Error(diagnostic) }));
     _fixture.container = document.createElement("div");
     document.body.append(_fixture.container);
     _fixture.root0 = _fixture.stack.use(
@@ -265,7 +265,9 @@ describe("Mermaid error recovery", () => {
     await renderEditor(`${source}correcting`);
     expect(cleanup).not.toHaveBeenCalled();
     expect(editor.mount).toHaveBeenCalledTimes(1);
-    await act(() => pending.reject(new MermaidRenderError(new Error("Still incomplete"))));
+    await act(() =>
+      pending.reject(new MermaidRenderError({ cause: new Error("Still incomplete") })),
+    );
     expect(cleanup).not.toHaveBeenCalled();
     await act(() => button(_fixture, "Retry diagram").click());
     expect(editor.mount).toHaveBeenCalledTimes(1);
@@ -312,7 +314,7 @@ describe("Mermaid error recovery", () => {
       expect(_fixture.container.textContent).not.toContain("Parse error on line 2");
       await act(() => button(_fixture, "Ask agent to fix").click());
       expect(draft).toBe("An existing draft");
-      await act(() => pending.reject(new MermaidRenderError(new Error("New error"))));
+      await act(() => pending.reject(new MermaidRenderError({ cause: new Error("New error") })));
       expect(button(_fixture, "Ask agent to fix").disabled).toBe(false);
       await act(() => button(_fixture, "Ask agent to fix").click());
       expect(collectAssistantCitations(draft)[0]!.citation.comment).toContain("New error");
@@ -372,7 +374,7 @@ describe("Mermaid error recovery", () => {
     expect(summary.textContent).toBe("Rendering diagram…");
     expect(summary.getAttribute("title")).toBeNull();
     expect(summary.className).toContain("truncate");
-    await act(() => pending.reject(new MermaidRenderError(new Error(diagnostic))));
+    await act(() => pending.reject(new MermaidRenderError({ cause: new Error(diagnostic) })));
     expect([...errorRow.children]).toEqual(children);
     expect(summary.textContent).toBe("Parse error on line 2:");
   });
@@ -396,7 +398,7 @@ describe("Mermaid error recovery", () => {
     const pending = pendingRender();
     vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
     await act(() => button(_fixture, "Retry diagram").click());
-    await act(() => pending.reject(new MermaidRenderError(new Error(diagnostic))));
+    await act(() => pending.reject(new MermaidRenderError({ cause: new Error(diagnostic) })));
     expect(_fixture.container.querySelector(".chat-markdown-codeblock")).toBe(codeBlock);
     expect(codeBlock.getAttribute("data-wrap")).toBe(String(!wrapped));
   });
@@ -681,7 +683,7 @@ describe("Mermaid error recovery", () => {
     await act(() => button(_fixture, "More diagram actions").click());
     expect(document.body.textContent).not.toContain("Copy recovered source");
     await act(() => button(_fixture, "More diagram actions").click());
-    await act(() => current.reject(new MermaidRenderError(new Error(diagnostic))));
+    await act(() => current.reject(new MermaidRenderError({ cause: new Error(diagnostic) })));
     await act(() => button(_fixture, "Copy error and source").click());
     expect(writeText).toHaveBeenLastCalledWith(
       buildMermaidRepairRequest("flowchart LR\nC --> D", diagnostic),

@@ -18,6 +18,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
@@ -43,6 +44,8 @@ import {
   QualifiedRpcManagedRuntime,
   type ManagedRpcQualification,
 } from "./QualifiedRpcManagedRuntime.ts";
+
+const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);
 
 type Dependencies = ConstructorParameters<typeof ManagedScientAgentRuntime>[1];
 
@@ -156,7 +159,7 @@ export const qualifyManagedScientAgentRuntime = Effect.fn("ScientAgentManagedRun
       }),
     ).pipe(
       Effect.mapError((cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : new ProviderConnectionActionError({
               message: "The staged Scient Agent runtime failed its RPC qualification check.",

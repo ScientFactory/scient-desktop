@@ -45,7 +45,7 @@ const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.mergeAll(
       projectsLayer,
       Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.undefined,
       }),
     ),
   ),

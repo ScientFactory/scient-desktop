@@ -155,7 +155,7 @@ export const discoverDroidInventory = Effect.fn("discoverDroidInventory")(functi
         ),
         Effect.map((inventory) => droidSkillsToServerProviderSkills(inventory.skills)),
         Effect.flatMap((skills) =>
-          Effect.tryPromise(client.listMcpServers).pipe(
+          droidControlCall("Droid failed to list its MCP servers.", client.listMcpServers).pipe(
             Effect.map(droidMcpServersToServerProvider),
             Effect.option,
             Effect.map((mcpServers) => ({

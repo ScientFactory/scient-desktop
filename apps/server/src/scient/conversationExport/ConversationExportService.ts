@@ -354,7 +354,10 @@ const make = Effect.gen(function* () {
 
   /** Hashes a file a conversation file streams, holding only its first bytes. */
   const inspectAttachment = (path: string, remaining: number) =>
-    Effect.tryPromise(() => inspectAttachmentFile(path, remaining, SNIFF_BYTES)).pipe(
+    Effect.tryPromise({
+      try: () => inspectAttachmentFile(path, remaining, SNIFF_BYTES),
+      catch: (cause) => new ConversationExportFileError({ cause }),
+    }).pipe(
       Effect.map((inspected) =>
         inspected === null
           ? ("too-large" as const)

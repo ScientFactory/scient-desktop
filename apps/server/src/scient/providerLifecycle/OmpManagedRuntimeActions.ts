@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
@@ -39,6 +40,8 @@ import {
 } from "../../provider/omp/OmpExecutableGate.ts";
 import { OMP_ISOLATED_ARGS, makeOmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
+
+const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);
 
 const DEFAULT_OMP_BINARY = "omp";
 
@@ -137,7 +140,7 @@ export const qualifyManagedOmpRuntime = Effect.fn("OmpManagedRuntime.qualify")(f
     }),
   ).pipe(
     Effect.mapError((cause) =>
-      cause instanceof ProviderConnectionActionError
+      isProviderConnectionActionError(cause)
         ? cause
         : new ProviderConnectionActionError({
             message: "The staged Oh My Pi runtime failed its RPC qualification check.",

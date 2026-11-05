@@ -8,6 +8,7 @@ import * as NodeDns from "node:dns";
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
+import * as Schema from "effect/Schema";
 import type * as Undici from "undici";
 
 export const CONNECTOR_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
@@ -38,14 +39,15 @@ export interface ConnectorEgressPolicy {
 
 export const STRICT_EGRESS_POLICY: ConnectorEgressPolicy = { loopbackOrigin: undefined };
 
-export class ConnectorEgressRejected extends Error {
-  override readonly name = "ConnectorEgressRejected";
-  readonly reason: "blocked-url" | "blocked-address" | "redirect" | "response-too-large";
-  constructor(reason: ConnectorEgressRejected["reason"], message: string) {
-    super(message);
-    this.reason = reason;
-  }
-}
+export class ConnectorEgressRejected extends Schema.TaggedError<ConnectorEgressRejected>()(
+  "ConnectorEgressRejected",
+  {
+    reason: Schema.Literals(["blocked-url", "blocked-address", "redirect", "response-too-large"]),
+    message: Schema.String,
+  },
+) {}
+
+const isConnectorEgressRejected = Schema.is(ConnectorEgressRejected);
 
 // undici stays external to the CLI bundle; only `require` loads it from disk
 // inside a single executable (see outboundHttp.ts).
@@ -181,10 +183,10 @@ export const egressPolicyFor = (
 };
 
 const blockedAddress = () =>
-  new ConnectorEgressRejected(
-    "blocked-address",
-    "Connectors cannot reach private, link-local or loopback addresses.",
-  );
+  new ConnectorEgressRejected({
+    reason: "blocked-address",
+    message: "Connectors cannot reach private, link-local or loopback addresses.",
+  });
 
 /** Validates a connector-reachable URL. Returns the parsed URL without its fragment. */
 export const checkConnectorUrl = (
@@ -195,24 +197,31 @@ export const checkConnectorUrl = (
   try {
     url = new URL(String(raw));
   } catch {
-    return new ConnectorEgressRejected("blocked-url", "The address is not a valid URL.");
+    return new ConnectorEgressRejected({
+      reason: "blocked-url",
+      message: "The address is not a valid URL.",
+    });
   }
   if (url.username !== "" || url.password !== "") {
-    return new ConnectorEgressRejected(
-      "blocked-url",
-      "Connector addresses cannot contain a user name or password.",
-    );
+    return new ConnectorEgressRejected({
+      reason: "blocked-url",
+      message: "Connector addresses cannot contain a user name or password.",
+    });
   }
   const typedLoopback = policy.loopbackOrigin !== undefined && url.origin === policy.loopbackOrigin;
   if (url.protocol === "http:") {
     if (!typedLoopback) {
-      return new ConnectorEgressRejected(
-        "blocked-url",
-        "Connectors must use https. Plain http is allowed only for the local server address you typed.",
-      );
+      return new ConnectorEgressRejected({
+        reason: "blocked-url",
+        message:
+          "Connectors must use https. Plain http is allowed only for the local server address you typed.",
+      });
     }
   } else if (url.protocol !== "https:") {
-    return new ConnectorEgressRejected("blocked-url", "Connectors must use https.");
+    return new ConnectorEgressRejected({
+      reason: "blocked-url",
+      message: "Connectors must use https.",
+    });
   }
   const host = bareHostname(url.hostname);
   if (!typedLoopback) {
@@ -248,10 +257,10 @@ const makeGuardedLookup =
       const allowed = (address: string) =>
         isPublicAddress(address) || (typedHost && isLoopbackAddress(address));
       if (addresses.length === 0 || !addresses.every((entry) => allowed(entry.address))) {
-        const blocked: NodeJS.ErrnoException = new ConnectorEgressRejected(
-          "blocked-address",
-          `Connectors cannot reach ${hostname}: it resolves to a private, link-local or loopback address.`,
-        );
+        const blocked: NodeJS.ErrnoException = new ConnectorEgressRejected({
+          reason: "blocked-address",
+          message: `Connectors cannot reach ${hostname}: it resolves to a private, link-local or loopback address.`,
+        });
         blocked.code = "ECONNREFUSED";
         callback(blocked, []);
         return;
@@ -296,10 +305,10 @@ const limitBody = (
         total += chunk.byteLength;
         if (total > maxBytes) {
           controller.error(
-            new ConnectorEgressRejected(
-              "response-too-large",
-              "The connector response exceeded the size limit.",
-            ),
+            new ConnectorEgressRejected({
+              reason: "response-too-large",
+              message: "The connector response exceeded the size limit.",
+            }),
           );
           return;
         }
@@ -322,17 +331,18 @@ export interface ConnectorFetchOptions {
 }
 
 const redirectRefused = () =>
-  new ConnectorEgressRejected(
-    "redirect",
-    "The connector answered with a redirect, which Scient does not follow for this request.",
-  );
+  new ConnectorEgressRejected({
+    reason: "redirect",
+    message:
+      "The connector answered with a redirect, which Scient does not follow for this request.",
+  });
 
 /** A WHATWG fetch bound to the connector egress policy. */
 export const makeConnectorFetch =
   (options: ConnectorFetchOptions): ConnectorFetch =>
   async (input, init) => {
     let target = checkConnectorUrl(input, options.policy);
-    if (target instanceof ConnectorEgressRejected) throw target;
+    if (isConnectorEgressRejected(target)) throw target;
     const signals = [AbortSignal.timeout(options.timeoutMs)];
     if (init?.signal) signals.push(init.signal);
     const signal = AbortSignal.any(signals);
@@ -360,7 +370,7 @@ export const makeConnectorFetch =
         const location = response.headers.get("location");
         if (!redirectable || location === null || hop >= MAX_REDIRECTS) throw redirectRefused();
         const next = checkConnectorUrl(new URL(location, target), options.policy);
-        if (next instanceof ConnectorEgressRejected) throw next;
+        if (isConnectorEgressRejected(next)) throw next;
         target = next;
         continue;
       }
@@ -417,7 +427,7 @@ const withSignal =
 export const describeEgressFailure = (error: unknown): string => {
   // undici reports a refused lookup as `TypeError: fetch failed` with the policy error as cause.
   const reason = error instanceof TypeError && error.cause !== undefined ? error.cause : error;
-  if (reason instanceof ConnectorEgressRejected) return reason.message;
+  if (isConnectorEgressRejected(reason)) return reason.message;
   return reason instanceof Error && reason.name === "TimeoutError"
     ? "The connector did not answer in time."
     : "The connector could not be reached.";

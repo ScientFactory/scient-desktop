@@ -155,6 +155,7 @@ describe("reconcileDesiredCloudLink", () => {
           applyConfig: unusedSecretStoreOperation,
           recoveryRequests: Stream.empty,
           requestRecovery: () => Effect.void,
+          restartConnector: () => Effect.succeed(false),
           tunnelConnected: Stream.empty,
           inspectConnector: Effect.succeed(null),
           readinessChanged: Stream.empty,

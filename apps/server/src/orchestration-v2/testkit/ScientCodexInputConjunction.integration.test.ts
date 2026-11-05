@@ -163,13 +163,13 @@ const runConjunction = (refusal = false) =>
       const allocator = yield* IdAllocatorV2;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       let offeredScope: McpInvocationScope | undefined;
-      const offered = yield* Deferred.make<typeof CodexSchema.V2TurnStartParams.Type>();
+      const offered = yield* Deferred.make<CodexSchema.V2TurnStartParams>();
       const peerInput = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
       let buffered = "";
       const methods: string[] = [];
-      const nativeOffers: Array<typeof CodexSchema.V2TurnStartParams.Type> = [];
+      const nativeOffers: Array<CodexSchema.V2TurnStartParams> = [];
       const nativeThread = "controlled-native-thread";
       const nativeTurn = {
         id: "controlled-native-turn",

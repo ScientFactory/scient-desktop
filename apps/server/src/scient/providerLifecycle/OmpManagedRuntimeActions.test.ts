@@ -218,10 +218,13 @@ describe("managed Oh My Pi activation", () => {
         yield* gate
           .acquireProcess(identity, { target: ompTarget, kind: "session" })
           .pipe(Effect.provideService(Scope.Scope, conversation));
-        const failure = yield* Effect.tryPromise(() =>
-          runtime.install({ artifact, signal: new AbortController().signal }),
-        ).pipe(Effect.flip);
-        expect(String(failure.cause)).toContain("open conversation");
+        const failure = yield* Effect.promise(() =>
+          runtime.install({ artifact, signal: new AbortController().signal }).then(
+            () => undefined,
+            (cause: unknown) => cause,
+          ),
+        );
+        expect(String(failure)).toContain("open conversation");
         // The previous runtime stays selected.
         const status = yield* Effect.promise(() => runtime.status(artifact));
         expect(status.installed && status.selected).toBe(true);
@@ -260,8 +263,11 @@ const recordingSpawner = (spawned: Array<ChildProcess.StandardCommand>) =>
   });
 
 /** The environment a spawned child would really see. */
-const effectiveChildEnvironment = (command: ChildProcess.StandardCommand) => ({
-  ...(command.options.extendEnv === false ? {} : process.env),
+const effectiveChildEnvironment = (
+  command: ChildProcess.StandardCommand,
+  inherited: NodeJS.ProcessEnv,
+) => ({
+  ...(command.options.extendEnv === false ? {} : inherited),
   ...command.options.env,
 });
 
@@ -277,7 +283,7 @@ const probeFixture = Effect.fn("probeFixture")(function* () {
     settings: yield* decodeOmpSettings({ binaryPath: executable }),
     baseDir,
     // The driver passes the already filtered OMP process environment.
-    environment: { PATH: process.env.PATH ?? "", HOME: baseDir },
+    environment: { PATH: (yield* HostProcess.Environment).PATH ?? "", HOME: baseDir },
     spawner: recordingSpawner(spawned),
     managedInstallationAllowed: false,
   }).pipe(Effect.provideService(OmpExecutableGate, gate));
@@ -313,17 +319,19 @@ describe("configured Oh My Pi health probe", () => {
 
   it.live("runs with the filtered OMP environment, never the server's internals", () =>
     Effect.gen(function* () {
-      const canaries = ["T3CODE_PROBE_CANARY", "SCIENT_PROBE_CANARY"] as const;
-      for (const name of canaries) process.env[name] = "server-internal";
+      const serverEnvironment = {
+        ...(yield* HostProcess.Environment),
+        T3CODE_PROBE_CANARY: "server-internal",
+        SCIENT_PROBE_CANARY: "server-internal",
+      };
       const { baseDir, resolve, versionProbes } = yield* probeFixture();
       try {
         expect((yield* resolve).summary.source).toBe("custom");
         const [probe] = versionProbes();
         expect(probe?.options.extendEnv).toBe(false);
-        const names = Object.keys(effectiveChildEnvironment(probe!));
+        const names = Object.keys(effectiveChildEnvironment(probe!, serverEnvironment));
         expect(names.filter((name) => /^(T3CODE|SCIENT)_/iu.test(name))).toEqual([]);
       } finally {
-        for (const name of canaries) delete process.env[name];
         NodeFS.rmSync(baseDir, { recursive: true, force: true });
       }
     }),
@@ -382,7 +390,7 @@ describe("managed Oh My Pi activation check", () => {
             executablePath: executable,
             expectedVersion: "18.2.8",
             cwd,
-            environment: { PATH: process.env.PATH ?? "", HOME: root },
+            environment: { PATH: (yield* HostProcess.Environment).PATH ?? "", HOME: root },
             activations: [],
           }).pipe(
             Effect.provideServiceEffect(OmpExecutableGate, makeOmpExecutableGate()),

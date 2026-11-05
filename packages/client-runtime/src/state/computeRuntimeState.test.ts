@@ -14,9 +14,9 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
-import * as Data from "effect/Data";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -33,9 +33,10 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { createComputeEnvironmentAtoms, withManagedRuntimePolling } from "./compute.ts";
 
 const PYTHON = ComputeLanguageId.make("python");
-class ManagedStatusUnavailable extends Data.TaggedError("ManagedStatusUnavailable")<{
-  readonly message: string;
-}> {}
+class ManagedStatusUnavailable extends Schema.TaggedError<ManagedStatusUnavailable>()(
+  "ManagedStatusUnavailable",
+  { message: Schema.String },
+) {}
 const ENV = EnvironmentId.make("test-server");
 const initialStatus: ComputeManagedRuntimeStatus = {
   installed: false,

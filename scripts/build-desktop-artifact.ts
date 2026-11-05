@@ -1138,8 +1138,20 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
       });
     for (const file of expected) {
       const source = path.join(input.sourceDir, file);
-      const info = yield* Effect.tryPromise(() => NodeFSP.lstat(source));
-      const parent = yield* Effect.tryPromise(() => NodeFSP.lstat(path.dirname(source)));
+      const info = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(source),
+        catch: (cause) =>
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite cannot be inspected: ${file}: ${String(cause)}`,
+          }),
+      });
+      const parent = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(path.dirname(source)),
+        catch: (cause) =>
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite folder cannot be inspected: ${file}: ${String(cause)}`,
+          }),
+      });
       if (
         !info.isFile() ||
         info.isSymbolicLink() ||
@@ -4593,7 +4605,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.verbose,
   );
 
-  const nativePreviewSetting = process.env.SCIC_PREVIEW_ENABLE_NATIVE;
+  const env = yield* HostProcess.Environment;
+  const nativePreviewSetting = env.SCIC_PREVIEW_ENABLE_NATIVE;
   if (
     nativePreviewSetting !== undefined &&
     nativePreviewSetting !== "0" &&
@@ -4622,7 +4635,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
               platform: options.platform,
               arch: options.arch,
               channel: previewChannel,
-              manifestPath: process.env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
+              manifestPath: env.SCIC_PREVIEW_QUALIFIED_STAGE_MANIFEST,
               repoRoot,
             });
             const nativePath = await buildConversationPreview({

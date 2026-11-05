@@ -21,7 +21,6 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -29,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -94,6 +94,10 @@ import {
   makeConnectorStateStore,
 } from "./ConnectorStateStore.ts";
 
+const isConnectorEgressRejected = Schema.is(ConnectorEgressRejected);
+
+const isConnectorOAuthError = Schema.is(ConnectorOAuthError);
+
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
@@ -148,18 +152,18 @@ type RefreshOutcome =
   | { readonly type: "transient"; readonly session: ConnectorOAuthSession }
   | { readonly type: "lost"; readonly message: string };
 
-class ConnectorUpstreamError extends Data.TaggedError("ConnectorUpstreamError")<{
-  readonly cause: unknown;
-}> {}
+class ConnectorUpstreamError extends Schema.TaggedError<ConnectorUpstreamError>()(
+  "ConnectorUpstreamError",
+  { cause: Schema.Defect() },
+) {}
 
 /** Thrown into the MCP SDK client when the credential is lost or the request failed. */
-class ConnectorUnavailableError extends Error {
-  readonly kind: "lost" | "failed";
-  constructor(kind: "lost" | "failed", message: string) {
-    super(message);
-    this.kind = kind;
-  }
-}
+class ConnectorUnavailableError extends Schema.TaggedError<ConnectorUnavailableError>()(
+  "ConnectorUnavailableError",
+  { kind: Schema.Literals(["lost", "failed"]), message: Schema.String },
+) {}
+
+const isConnectorUnavailableError = Schema.is(ConnectorUnavailableError);
 
 const policyOf = (record: Pick<ConnectorRecord, "source" | "url">): ConnectorEgressPolicy =>
   egressPolicyFor(record.url, record.source);
@@ -984,7 +988,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   const checkUrl = (raw: string, policy: ConnectorEgressPolicy) => {
     const checked = checkConnectorUrl(raw, policy);
-    return checked instanceof ConnectorEgressRejected
+    return isConnectorEgressRejected(checked)
       ? Effect.fail(extensionsError("invalid-input", checked.message))
       : Effect.succeed(checked.href);
   };
@@ -1288,7 +1292,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           scope: probe.scope,
         }),
       catch: (error) =>
-        error instanceof ConnectorOAuthError
+        isConnectorOAuthError(error)
           ? extensionsError(
               error.reason,
               curatedServerForUrl(record.url) && error.reason === "registration-unsupported"
@@ -1347,7 +1351,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     const exchanged = yield* Effect.tryPromise({
       try: () => flows.complete(claimed, code),
       catch: (error) =>
-        error instanceof ConnectorOAuthError ? error.message : "Sign-in could not be completed.",
+        isConnectorOAuthError(error) ? error.message : "Sign-in could not be completed.",
     }).pipe(Effect.exit);
     if (Exit.isFailure(exchanged)) {
       if (!isLive(record.connectorId)) return signInFailed(undefined, removedMessage);
@@ -1483,9 +1487,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       if (outcome.type === "rejected") {
         void outcome.response.body?.cancel().catch(() => undefined);
-        throw new ConnectorUnavailableError("failed", outcome.message);
+        throw new ConnectorUnavailableError({ kind: "failed", message: outcome.message });
       }
-      throw new ConnectorUnavailableError(outcome.type, outcome.message);
+      throw new ConnectorUnavailableError({ kind: outcome.type, message: outcome.message });
     };
     const listed = yield* Effect.tryPromise({
       try: async () => {
@@ -1511,12 +1515,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }).pipe(Effect.exit);
     if (Exit.isFailure(listed)) {
       const error = Option.getOrUndefined(Exit.findErrorOption(listed))?.cause;
-      if (error instanceof ConnectorUnavailableError) {
+      if (isConnectorUnavailableError(error)) {
         return error.kind === "lost"
           ? result("needs-auth", "Sign in again to use this service.")
           : result("unreachable", error.message);
       }
-      if (error instanceof ConnectorEgressRejected || error instanceof TypeError) {
+      if (isConnectorEgressRejected(error) || error instanceof TypeError) {
         return result("unreachable", describeEgressFailure(error));
       }
       return result("error", "The service did not complete the MCP handshake and tool listing.");

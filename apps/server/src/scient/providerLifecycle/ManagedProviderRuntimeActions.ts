@@ -25,6 +25,7 @@ import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -42,6 +43,8 @@ import {
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
 } from "./ManagedRuntimeCatalog.ts";
+
+const isProviderConnectionActionError = Schema.is(ProviderConnectionActionError);
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -670,7 +673,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
           },
         }),
       catch: (cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
     });

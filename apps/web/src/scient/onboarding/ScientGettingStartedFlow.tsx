@@ -5,13 +5,13 @@ import { useEffect, useState } from "react";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
-import { usePrimarySessionState } from "../../environments/primary";
 import {
   deriveProviderInstanceEntries,
   isProviderInstancePickerReady,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentSessionState } from "../../state/session";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { providerOnboardingStatusLabel } from "../providerConnection/ProviderOnboardingPicker";
 import { hasSavedScientPreferences, type ScientWorkKind } from "./model";
@@ -34,7 +34,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const sessionState = usePrimarySessionState();
+  const sessionState = useEnvironmentSessionState(primaryEnvironmentId);
   const {
     state: onboardingState,
     profile,
@@ -77,7 +77,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     hasDesktopBridge: typeof window !== "undefined" && Boolean(window.desktopBridge),
     session: sessionState.data,
     isPending: sessionState.isPending,
-    hasError: sessionState.error !== null,
+    hasError: sessionState.hasError,
   });
 
   const entryByDriver = (() => {

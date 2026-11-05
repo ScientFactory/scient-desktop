@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   annotateEnvironmentRequest,
@@ -39,6 +40,18 @@ import {
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
 
+class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
+  "ScientSourcesOperationError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "A sources operation failed.";
+  }
+}
+
+const sourcesOperation = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new ScientSourcesOperationError({ cause }) });
+
 const handle = Effect.fn("ScientSourcesHttp.handle")(function* <A>(
   endpointName: string,
   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
@@ -46,7 +59,7 @@ const handle = Effect.fn("ScientSourcesHttp.handle")(function* <A>(
 ) {
   yield* annotateEnvironmentRequest(endpointName);
   yield* requireEnvironmentScope(scope);
-  return yield* Effect.tryPromise(run).pipe(
+  return yield* sourcesOperation(run).pipe(
     Effect.catch((cause) => failEnvironmentInternal("scient_sources_operation_failed", cause)),
   );
 });
@@ -72,7 +85,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           Effect.gen(function* () {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-            const material = yield* Effect.tryPromise(() =>
+            const material = yield* sourcesOperation(() =>
               getScientSourceAttachmentPreviewMaterial(args.payload),
             ).pipe(
               Effect.catch((cause) =>
@@ -100,7 +113,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             const config = yield* ServerConfig.ServerConfig;
             const path = yield* Path.Path;
-            const material = yield* Effect.tryPromise(() =>
+            const material = yield* sourcesOperation(() =>
               getScientSourceJournalIconMaterial({
                 ...args.payload,
                 cacheRoot: path.join(config.stateDir, "scient", "journal-icons", "v1"),

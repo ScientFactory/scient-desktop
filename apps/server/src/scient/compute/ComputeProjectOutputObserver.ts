@@ -6,9 +6,9 @@ import * as NodePath from "node:path";
 
 import type { ComputeImageMediaType } from "@scientfactory/compute";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 
@@ -31,9 +31,10 @@ const IGNORED_DIRECTORIES = new Set([
   "node_modules",
 ]);
 
-class ProjectOutputObservationFailure extends Data.TaggedError("ProjectOutputObservationFailure")<{
-  readonly cause: unknown;
-}> {}
+class ProjectOutputObservationFailure extends Schema.TaggedError<ProjectOutputObservationFailure>()(
+  "ProjectOutputObservationFailure",
+  { cause: Schema.Defect() },
+) {}
 
 interface ProjectImageState {
   readonly device: bigint;
