@@ -140,3 +140,26 @@ Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state.
   - `vp run -r typecheck`: 57/57.
   - `vp check`: no errors; 5 warnings that main already has.
   - `vp run knip:check` and `vp run brand:check`: pass.
+  - The seam check (`--base origin/main --head HEAD`) and upstream provenance at `67eebaca23`
+    pass.
+  - The lockfile keeps every `hasBin` marker (125, as on main).
+- **Full suites:**
+  - server: 14,557 passed, 3 failed;
+  - packages, desktop and scripts: all passed except 1 failure;
+  - web: 14,680 passed, 0 failed.
+
+  Every failure was checked on its own:
+  - **Load flakes (2):** `DeviceHubProxy.stream` and `EnvironmentFileOpen`. The second fails about
+    one run in three even alone, with the same 16 ms failure seen in earlier runs of main's code.
+  - **Fail on main's code on this Mac too (2):** `LatexRealEngine` (a missing local
+    source-navigation helper) and the ssh install race.
+
+- **Live review on a dev app:** a fresh start, then a copy of the previous 77-thread test database.
+  Results and screenshots are in `reviews/t3-sync-67ee-20261105/RECORD.md`.
+  - **Passes:** startup and onboarding, existing data, a Claude turn, a Codex turn, a PDF export
+    opened in the viewer, an agent opening and closing a browser tab, the new clone-folder setting,
+    and the Custom models panel.
+  - **Not driven live:** silent Antigravity prompts and the relay tunnel restart. Their tests cover
+    them.
+- **Review:** a light Codex review of the error conversions and key merge resolutions found
+  nothing.
