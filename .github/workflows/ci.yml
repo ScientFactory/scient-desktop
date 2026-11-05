@@ -856,13 +856,22 @@ jobs:
         id: package_cache_path
         shell: pwsh
         run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
-      - name: Cache packages
-        uses: actions/cache@v6
+      # One Windows store: this whole-workspace install saves it, from main only, and
+      # windows-packaging.yml reads it. Pull requests saving copies filled the 10 GB cache.
+      - name: Restore packages
+        id: package_cache
+        uses: actions/cache/restore@v6
         with:
           path: ${{ steps.package_cache_path.outputs.path }}
-          key: overleaf-windows-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+          key: windows-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install
         run: vp install
+      - name: Save packages
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.package_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: ${{ steps.package_cache.outputs.cache-primary-key }}
       - name: Set adversarial global Git defaults
         shell: pwsh
         run: |
