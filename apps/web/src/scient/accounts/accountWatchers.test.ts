@@ -50,7 +50,7 @@ it("reads only the desktop's own jars: nothing starts for another computer", () 
 
   registry.set(primaryAtom, EnvironmentId.make("desktop"));
   registry.set(primary.ids as Atom.Writable<ReadonlyArray<string>>, ["desktop", "lab-server"]);
-  // Nothing goes to another computer until Labs turns sending on.
+  // Nothing goes to another computer while sending is turned off.
   expect(state.started).not.toContain("deliver:lab-server");
   setSharing(true);
   expect(state.started).toEqual([

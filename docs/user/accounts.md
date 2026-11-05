@@ -96,13 +96,13 @@ profile that has it.
 **Other sign-ins** lists those managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
 GitHub login is one row, with its own chip for Source Control and for the GitHub connector.
 
-## Other computers (Labs)
+## Other computers
 
-Scient can copy this computer's sign-ins to a computer it connects to, such as a lab server over
-SSH, so agents there are signed in too. It is still being tested, so it stays off until you turn on
-**Settings → Labs → Send sign-ins to other computers**, and each computer's line in Accounts says so.
+Scient copies this computer's sign-ins to the computers it connects to, such as a lab server over
+SSH, so agents there are signed in too. **Send sign-ins to other computers**, under Other computers
+in Accounts, turns it off.
 
-When on, each profile goes to its namesake there (Main to Main), for the sites you have in Accounts
+Each profile goes to its namesake there (Main to Main), for the sites you have in Accounts
 only. Profiles that are Off, limited to projects or kept from scripts stay here, and their copies
 leave. Passwords, two-factor keys and your university's sign-in never go. If a site refuses a copy,
 press **Sign in there** once. Copies leave when you remove that computer here while it is connected,

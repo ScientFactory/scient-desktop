@@ -9,7 +9,7 @@ import type { DeliveryFailure } from "./remoteSessions";
 
 export interface RemoteLineInput {
   readonly phase: string;
-  /** Settings → Labs lets this desktop send sign-ins at all. */
+  /** Accounts' switch lets this desktop send sign-ins at all. */
   readonly sharing: boolean;
   readonly sending: boolean;
   /** The last delivery that failed, until one succeeds. */

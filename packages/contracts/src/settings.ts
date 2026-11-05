@@ -477,8 +477,8 @@ export const ClientSettingsSchema = Schema.Struct({
   // SCIENT-FORK:START — keep the computer awake while this computer's threads work.
   keepComputerAwake: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers only once turned on in Labs.
-  signInSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.
+  signInSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
   mainDefaultNotice: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

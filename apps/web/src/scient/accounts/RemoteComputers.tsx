@@ -15,7 +15,8 @@ import { useState } from "react";
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useClientSettings } from "~/hooks/useSettings";
+import { Switch } from "~/components/ui/switch";
+import { updateClientSettings, useClientSettings } from "~/hooks/useSettings";
 import { readDesktopSecondaryBootstraps } from "~/connection/desktopLocal";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
@@ -53,7 +54,7 @@ function when(iso: string, now = new Date()) {
 function stateText(state: RemoteState, now: Date) {
   switch (state.kind) {
     case "sharing-off":
-      return "doesn't get your sign-ins: sending them is off in Settings → Labs";
+      return "doesn't get your sign-ins: sending them is off";
     case "sending":
       return "sending your sign-ins…";
     case "failed":
@@ -282,6 +283,19 @@ export function RemoteComputers({
         ) : undefined
       }
     >
+      <SettingsRow
+        title="Send sign-ins to other computers"
+        description="Copies this computer's browser sign-ins for the sites in Accounts, never passwords, so agents there are signed in too."
+        control={
+          <Switch
+            aria-label="Send sign-ins to other computers"
+            checked={settings.signInSharingEnabled}
+            onCheckedChange={(checked) =>
+              void updateClientSettings({ signInSharingEnabled: Boolean(checked) })
+            }
+          />
+        }
+      />
       {remotes.map((remote) => (
         <RemoteComputerRow
           key={remote.environmentId}
