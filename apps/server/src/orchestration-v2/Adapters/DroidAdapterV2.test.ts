@@ -1351,48 +1351,49 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       }),
     ),
   );
-  it.effect(
-    "consumes a Steer held across the silent end of work Droid started after its turn",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
-          yield* h.send(1, "full-access");
-          assert.equal((yield* h.terminal).status, "completed");
-          yield* h.signal("finished");
-          yield* Queue.take(h.continuations);
-          yield* h.continueTurn(2);
-          yield* h.signal("checked");
-          yield* untilRecorded(
-            h,
-            (event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.nativeItemRef?.nativeId === "check" &&
-              event.turnItem.status === "completed",
-          );
-          const running = h.recorded.findLast(
-            (event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
-          );
-          if (running?.type !== "provider_turn.updated")
-            return yield* Effect.die("Missing the continuation turn");
-          const lease = yield* h.runtime.reserveDroidSteer!({
-            attemptId: RunAttemptId.make("droid-attempt-2"),
+  it.effect("holds a Steer until work Droid started after its turn ends in silence", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        yield* h.signal("finished");
+        yield* Queue.take(h.continuations);
+        yield* h.continueTurn(2);
+        yield* h.signal("checked");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "check" &&
+            event.turnItem.status === "completed",
+        );
+        const running = h.recorded.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (running?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing the continuation turn");
+        const reserve = h.runtime.reserveDroidSteer!({
+          attemptId: RunAttemptId.make("droid-attempt-2"),
+          providerTurnId: running.providerTurn.id,
+          revision: "steer",
+        });
+        // Droid 1.2.0 folds a prompt sent now into this work and never answers it.
+        assert.isUndefined(yield* reserve);
+        yield* TestClock.adjust("41 seconds");
+        assert.equal((yield* h.terminal).status, "completed");
+        const lease = yield* reserve;
+        if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
+        assert.isTrue(
+          yield* h.runtime.consumeDroidSteer!({
+            providerThread: h.providerThread,
             providerTurnId: running.providerTurn.id,
-            revision: "steer",
-          });
-          if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
-          yield* TestClock.adjust("41 seconds");
-          assert.equal((yield* h.terminal).status, "completed");
-          assert.isTrue(
-            yield* h.runtime.consumeDroidSteer!({
-              providerThread: h.providerThread,
-              providerTurnId: running.providerTurn.id,
-              droidSteerLease: lease,
-            }),
-          );
-        }),
-      ),
+            droidSteerLease: lease,
+          }),
+        );
+      }),
+    ),
   );
   it.effect(
     "forgets unfinished Tasks after completion and uses the configured next-turn window",

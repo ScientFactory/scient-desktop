@@ -324,6 +324,10 @@ export interface AcpAdapterV2ApplicationBridge {
     readonly makeSupervision: <Turn extends AcpDroidSteerOwnerTurn>(input: {
       readonly enabled: boolean;
       readonly testHooks: AcpDroidSteerTestHooks | undefined;
+      // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+      /** The agent would absorb a prompt sent now into this owner's work, and never answer it. */
+      readonly holdsSteer?: (context: Turn) => boolean;
+      // SCIENT-FORK:END
     }) => AcpDroidSteerSupervision<Turn>;
     /** The app error keeps the manager's refusal and retry semantics intact. */
     readonly deferredError: () => Error;
@@ -2168,12 +2172,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
+        // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+        const settlesOnSilence = (context: ActiveAcpTurn): boolean =>
+          flavor.continuationSilence !== undefined &&
+          flavor.deferFinalizeForBackgroundWork !== true &&
+          acpIsProviderContinuationMessage(context.input.message);
+        // SCIENT-FORK:END
         const droidSteerApplication = flavor.application?.droidSteering;
         const droidSteer =
           droidSteerApplication === undefined
             ? makeDisabledDroidSteerSupervision<ActiveAcpTurn>()
             : droidSteerApplication.makeSupervision<ActiveAcpTurn>({
                 enabled: droidSteerApplication.enabled,
+                // SCIENT-FORK:START — post-turn work has no prompt to cancel; Steer waits for its end.
+                holdsSteer: (context) => settlesOnSilence(context) && !context.finalized,
+                // SCIENT-FORK:END
                 testHooks: {
                   ...(options.testHooks?.afterDroidDecodedBatchBegin === undefined
                     ? {}
@@ -4083,10 +4096,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
 
         // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
-        const settlesOnSilence = (context: ActiveAcpTurn): boolean =>
-          flavor.continuationSilence !== undefined &&
-          flavor.deferFinalizeForBackgroundWork !== true &&
-          acpIsProviderContinuationMessage(context.input.message);
         const continuationWorkOpen = (context: ActiveAcpTurn): boolean =>
           openAgentRequests.size > 0 ||
           [...context.tools.values()].some((tool) => {

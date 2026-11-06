@@ -124,6 +124,7 @@ type DroidSteerRuntimeMethods = Pick<
  */
 export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(input: {
   readonly enabled: boolean;
+  readonly holdsSteer?: (context: Turn) => boolean;
   readonly testHooks:
     | {
         readonly afterDroidDecodedBatchBegin?: () => Effect.Effect<void>;
@@ -280,7 +281,8 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
                   droidPendingRequestCount !== 0 ||
                   droidOwner?.providerTurnId !== identity.providerTurnId ||
                   droidOwner.input.attemptId !== identity.attemptId ||
-                  droidOwner.interrupted
+                  droidOwner.interrupted ||
+                  input.holdsSteer?.(droidOwner) === true
                 )
                   return undefined;
                 const id = droidOwner.droidSteerSafety?.reserve(identity.revision);
