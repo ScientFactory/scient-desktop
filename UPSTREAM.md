@@ -1995,3 +1995,54 @@ When aligning, check:
   `scient/multiWindow/previewHostWindows.ts`) or all `appWindows`.
 - **Shortcuts.** File > New Window uses `CmdOrCtrl+Alt+Shift+N`. If T3 binds it,
   decide which command keeps the key and update `docs/user/multiple-windows.md`.
+
+## Office preview limits
+
+T3's `apps/web/src/components/files/officeArchive.ts` bounds a Word file before its engine opens it.
+The bounds were sized for a renderer on the page's main thread, so ordinary documents lost parts:
+any table over about 2,000 tags or 128 KB cut the document off there, a body stopped at 5,000
+paragraphs, and styles past 1,024 definitions or lists past 2,000 tags were dropped, which unstyled
+the whole document. Scient replaces the numbers with `WORD_LIMITS`, measured against the
+`@betteroffice/docx` engine, which runs in its own worker:
+
+- Paragraph text, 32K characters. Line breaking grows with the square of one paragraph's text
+  (16K 0.7 s, 32K 1.5 s, 128K 11.6 s on an M-series Mac). This replaces the 128 KB element limit,
+  which mostly measured picture markup.
+- One body element, 100,000 tags: a table is laid out in one go, and a 4,000-row table takes 2.2 s.
+- A header or footer, 128 KB: its cost grows with its own length, not the page count.
+- The body's 4 MB read limit stays (about 700 pages of prose, opened in under 1 s). Styles, lists,
+  notes and the expansion totals rose to where they no longer bind real documents; the engine opened
+  4,000 chained styles, 2,000 lists or 5,000 footnotes in under 0.75 s.
+- Archive, entry and nesting limits are T3's, unchanged.
+
+`WordDocument.tsx` shows the first 1,000 pages with the "Preview limited" notice instead of
+replacing them with an error once layout passes 1,000. Each changed line in these files names a
+`WORD_LIMITS` field or sits in a marked block. T3's limit cases in
+`AttachmentFilePreview.browser.test.tsx` size their inputs and bounds from `WORD_LIMITS`, so each
+still crosses the limit it checks. If T3 resizes its own budgets, compare them with these
+measurements before taking either.
+
+The limits (not the 1,000-page change) are offered to T3 as pingdotgg/t3code#32040 (issue #32039).
+If it merges, take T3's version and drop the marked lines in `officeArchive.ts` and its test.
+
+## Office reader
+
+Word and PowerPoint files read with the PDF reader's controls: page number, zoom (buttons, keys
+and pinch), a sidebar of pages and find. The reader is `apps/web/src/scient/office`; T3's viewer
+still draws the pages, and its files keep marked seams:
+
+| T3 file                                              | Seam                                                                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `office/OfficePages.tsx`                             | `zoom` and `onWidth`; zooming keeps the middle of the view; wide pages scroll sideways; 2^25-pixel canvases                                                         |
+| `office/WordDocument.tsx`, `Presentation.tsx`        | `ScientOfficeReader` instead of `OfficePages`; thumbnail paints and find. Presentation drops T3's previous/next slide bar, which the reader's page controls replace |
+| `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                     |
+| `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                     |
+
+Selected text on a page or slide quotes into chat as an Office quote (`OfficeCitation`, with the
+other quote kinds in `packages/contracts/src/fileCitations.ts`). `FilePreviewPanel.tsx` gives the
+reader its file and conversation (`OfficeFileContext`), and `AssistantCitationChip.tsx` names,
+links and reopens the quote in its existing Scient blocks.
+
+When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
+worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
+replace Scient's rather than run beside it.

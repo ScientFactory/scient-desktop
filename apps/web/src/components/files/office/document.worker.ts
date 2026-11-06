@@ -25,6 +25,7 @@ import { createBitmapImageResolver } from "./word-images";
 import { layerFont, type WordMethods, type WordPageSize, type WordSpan } from "./word-protocol";
 import { pageText, positionTarget, type TextMeasure } from "./word-text";
 import { serveWorker, Transfer } from "./worker-rpc";
+import { wordFindHits } from "~/scient/office/wordFind"; // SCIENT-FORK
 
 // One worker holds one open Word document: its engine session, fonts, layout, built pages and painting. The window
 // terminates the worker when the document closes, which is the only way the engine's memory is given back.
@@ -83,7 +84,13 @@ serveWorker<WordMethods>({
   },
   layout: () => required().step(),
   paint: async (input, signal) => {
-    const bitmap = await required().paint(input.index, input.scale, input.ratio, signal);
+    const bitmap = await required().paint(
+      input.index,
+      input.scale,
+      input.ratio,
+      signal,
+      input.thumbnail, // SCIENT-FORK
+    );
 
     return bitmap ? new Transfer(bitmap, [bitmap]) : undefined;
   },
@@ -94,6 +101,7 @@ serveWorker<WordMethods>({
   },
   text: (input) => required().text(input.index),
   bookmark: (input) => required().target(input.name),
+  find: (input) => required().find(input.query), // SCIENT-FORK
 });
 
 function required() {
@@ -247,6 +255,7 @@ async function open(bytes: Uint8Array) {
   const images = createBitmapImageResolver((token) => session.mediaSource(token));
   const surface = new OffscreenCanvas(1, 1);
   const textMeasure = layerMeasure();
+  const viewing = { index: 0 }; // SCIENT-FORK: the page the reader painted last
   const texts = new WeakMap<DisplayPage, readonly WordSpan[]>();
   // Built on the first followed bookmark: most documents are read without one.
   const projection: Lazy<YrsPositionProjection | null> = { value: undefined };
@@ -286,12 +295,22 @@ async function open(bytes: Uint8Array) {
         ? { done: false as const }
         : complete(progress.layoutJson);
     },
-    paint: async (index: number, scale: number, ratio: number, signal: AbortSignal) => {
+    paint: async (
+      index: number,
+      scale: number,
+      ratio: number,
+      signal: AbortSignal,
+      thumbnail = false, // SCIENT-FORK
+    ) => {
       // A page that scrolled away before its paint began, or while it rasterized, needs no bitmap.
       if (signal.aborted) return undefined;
 
       // Released first, so the page builds in the memory they free.
-      release(index);
+      // SCIENT-FORK:START — a thumbnail keeps the pages around the reader's view, and gives back
+      // the others, its own earlier ones included.
+      if (!thumbnail) viewing.index = index;
+      release(viewing.index);
+      // SCIENT-FORK:END
 
       const page = built(index);
 
@@ -349,6 +368,17 @@ async function open(bytes: Uint8Array) {
       // Word's reserved bookmark for the start of the document.
       return name === "_top" ? { index: 0, y: 0 } : undefined;
     },
+    // SCIENT-FORK:START — the engine searches the document model, so no page is built to find text.
+    find: (query: string) => {
+      projection.value ??= createYrsPositionProjection(session, "body");
+      const positions = session
+        .searchText(query)
+        .flatMap(
+          (match) => projection.value?.positionForLoc({ ...match, offset: match.start }) ?? [],
+        );
+      return wordFindHits(retained.frame.displayList.pages, positions);
+    },
+    // SCIENT-FORK:END
   };
 }
 

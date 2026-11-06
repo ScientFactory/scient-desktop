@@ -71,6 +71,7 @@ import { ScientAssetClaimsSchemas } from "./ScientAssetClaims.ts";
 import {
   isScientAssetClaims,
   issueScientAssetClaims,
+  fileInfoRevision,
   resolveScientAsset,
 } from "./ScientAssetAccess.ts";
 // SCIENT-FORK:END
@@ -588,7 +589,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       fileName: path.basename(resolved.relativePath),
       sourcePath: resolved.relativePath,
       imageDimensions,
-      fileRevision: undefined,
+      // SCIENT-FORK:START — the revision a PDF reader keeps its document by; see fileInfoRevision.
+      fileRevision: pdfInfo ? fileInfoRevision(pdfInfo) : undefined,
+      // SCIENT-FORK:END
     };
   },
 );
@@ -686,6 +689,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = finalized.fileName;
       sourcePath = finalized.sourcePath;
       imageDimensions = finalized.imageDimensions;
+      // SCIENT-FORK:START — report the revision, as draft-workspace-file does below.
+      fileRevision = finalized.fileRevision;
+      // SCIENT-FORK:END
       break;
     }
     case "draft-workspace-file": {
@@ -918,6 +924,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = issued.fileName;
       sourcePath = issued.sourcePath;
       expiresAt = issued.expiresAt;
+      fileRevision = issued.fileRevision;
       break;
     }
     // SCIENT-FORK:END
