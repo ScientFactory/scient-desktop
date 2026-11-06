@@ -104,18 +104,24 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
     };
   },
   inEnvironment: () => ["bin/julia"],
-  setup: (privateDirectory, environment, platform) => ({
-    args: [...JULIA_FLAGS, "-e", SETUP],
-    // Only Scient's depot and project are written; no kernelspec is registered with Jupyter.
-    environment: {
-      ...environment,
-      JULIA_DEPOT_PATH: NodePath.join(privateDirectory, "depot"),
-      JULIA_PROJECT: NodePath.join(privateDirectory, "environment"),
-      JULIA_LOAD_PATH: `@${platform === "win32" ? ";" : ":"}@stdlib`,
-      JUPYTER_DATA_DIR: NodePath.join(privateDirectory, "jupyter"),
-      IJULIA_NODEFAULTKERNEL: "1",
-    },
-  }),
+  setup: (privateDirectory, environment, platform) => {
+    const separator = platform === "win32" ? ";" : ":";
+    return {
+      args: [...JULIA_FLAGS, "-e", SETUP],
+      // Only Scient's depot and project are written; no kernelspec is registered with Jupyter.
+      environment: {
+        ...environment,
+        // The trailing empty entry adds the installation's own depots, never the person's: without
+        // them Julia cannot load the standard library it ships compiled, and builds it again, which
+        // took one to four minutes before IJulia was even fetched.
+        JULIA_DEPOT_PATH: `${NodePath.join(privateDirectory, "depot")}${separator}`,
+        JULIA_PROJECT: NodePath.join(privateDirectory, "environment"),
+        JULIA_LOAD_PATH: `@${separator}@stdlib`,
+        JUPYTER_DATA_DIR: NodePath.join(privateDirectory, "jupyter"),
+        IJULIA_NODEFAULTKERNEL: "1",
+      },
+    };
+  },
   launch: ({ executable, privateDirectory, environment, platform }) => {
     const separator = platform === "win32" ? ";" : ":";
     // The project folder's Project.toml, unless the person already named an environment.
