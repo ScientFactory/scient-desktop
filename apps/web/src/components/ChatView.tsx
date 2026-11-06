@@ -6,6 +6,7 @@ import {
 } from "~/scient/accounts/AccountApprovals";
 // SCIENT-FORK:END
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
+import { useChatPriorityPanelOpen } from "~/scient/writing/useChatPriorityPanelOpen";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -1284,7 +1285,13 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
-  const rightPanelOpen = rightPanelState.isOpen;
+  // SCIENT-FORK:START — document-pane layout waits for a chat input pause.
+  const rightPanelOpen = useChatPriorityPanelOpen(
+    rightPanelState.isOpen,
+    activeThreadKey,
+    activeRightPanelSurface?.kind === "file" || activeRightPanelSurface?.kind === "files",
+  );
+  // SCIENT-FORK:END
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = {

@@ -1,4 +1,9 @@
-import { afterLatexInputQuiet, latexInputQuietDelay } from "./latexInputPriority";
+import {
+  afterChatInputQuiet,
+  afterInputQuiet,
+  chatInputQuietDelay,
+  inputQuietDelay,
+} from "../writing/inputPriority";
 
 const pending = new Map<() => void, () => number>();
 const priorities = new WeakMap<Element, number>();
@@ -99,8 +104,10 @@ function scheduleBatch(deferForInput = false) {
           break;
         }
         const { mount, priority } = nextJob();
-        if (priority < 2 && latexInputQuietDelay() > 0) {
-          cancelBatch = afterLatexInputQuiet(() => {
+        const chatBusy = chatInputQuietDelay() > 0;
+        if (chatBusy || (priority < 2 && inputQuietDelay() > 0)) {
+          const afterQuiet = chatBusy ? afterChatInputQuiet : afterInputQuiet;
+          cancelBatch = afterQuiet(() => {
             cancelBatch = undefined;
             scheduleBatch();
           });

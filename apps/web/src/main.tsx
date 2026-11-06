@@ -1,5 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { configureRenderClockScheduling } from "@t3tools/client-runtime/clock";
+import { afterChatInputQuiet } from "./scient/writing/inputPriority";
 
 import "@fontsource-variable/inter";
 import "./index.css";
@@ -13,6 +15,9 @@ import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
 // SCIENT-FORK:END
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
+// SCIENT-FORK:START — chat input takes priority over display-clock updates.
+configureRenderClockScheduling(afterChatInputQuiet);
+// SCIENT-FORK:END
 const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;

@@ -119,13 +119,20 @@ export function collectLoginFields<Input extends PageInput>(
       !input.disabled &&
       !input.readOnly &&
       input.type !== "hidden" &&
-      !input.closest("[hidden], [inert]") &&
-      loginElementVisible(input),
+      !input.closest("[hidden], [inert]"),
     label: [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" "),
     name: input.name || input.id,
     inputMode: input.inputMode,
     maxLength: input.maxLength,
   }));
+  // Check semantics before layout; password-page refusal needs the final visible fields.
+  const candidates = detectLoginFields(fields);
+  if (candidates.username === -1 && candidates.password === -1 && candidates.otp === -1) {
+    return { inputs, ...candidates };
+  }
+  for (let index = 0; index < inputs.length; index++) {
+    if (fields[index]!.usable) fields[index]!.usable = loginElementVisible(inputs[index]!);
+  }
   return { inputs, ...detectLoginFields(fields, rules) };
 }
 

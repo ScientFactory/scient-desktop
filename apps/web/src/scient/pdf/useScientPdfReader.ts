@@ -1,6 +1,11 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import {
+  afterChatInputQuiet,
+  chatInputQuietDelay,
+  waitForChatInputQuiet,
+} from "../writing/inputPriority";
 
 import {
   createPdfRuntime,
@@ -297,6 +302,9 @@ export function useScientPdfReader(input: {
     let candidate: ScientPdfRuntime | null = null;
     let searchWarmupHandle: number | null = null;
     let searchWarmupKind: "idle" | "timeout" | null = null;
+    let cancelQuietSearch: (() => void) | undefined;
+    let cancelProgress: (() => void) | undefined;
+    let latestProgress: number | null = null;
     let pinchFrame: number | null = null;
     let pendingPinchFactor = 1;
     let pendingPinchOrigin: [number, number] = [0, 0];
@@ -316,15 +324,23 @@ export function useScientPdfReader(input: {
       },
       onProgress: (loaded, total) => {
         if (!isRequested() || runtimeRef.current) return;
-        setState((previous) => ({
-          ...previous,
-          progress: total && total > 0 ? Math.min(loaded / total, 1) : null,
-        }));
+        latestProgress = total && total > 0 ? Math.min(loaded / total, 1) : null;
+        if (cancelProgress) return;
+        cancelProgress = afterChatInputQuiet(() => {
+          cancelProgress = undefined;
+          if (!isRequested() || runtimeRef.current) return;
+          setState((previous) =>
+            previous.progress === latestProgress
+              ? previous
+              : { ...previous, progress: latestProgress },
+          );
+        });
       },
     });
 
     void loadingTask.promise
       .then(async (document) => {
+        if (chatInputQuietDelay() > 0) await waitForChatInputQuiet(abortController.signal);
         if (!isRequested()) return;
         const runtime = createPdfRuntime({
           container,
@@ -437,10 +453,17 @@ export function useScientPdfReader(input: {
             };
             if (typeof window.requestIdleCallback === "function") {
               searchWarmupKind = "idle";
-              searchWarmupHandle = window.requestIdleCallback(warmSearch, { timeout: 1_500 });
+              searchWarmupHandle = window.requestIdleCallback(
+                () => {
+                  cancelQuietSearch = afterChatInputQuiet(warmSearch);
+                },
+                { timeout: 1_500 },
+              );
             } else {
               searchWarmupKind = "timeout";
-              searchWarmupHandle = window.setTimeout(warmSearch, 750);
+              searchWarmupHandle = window.setTimeout(() => {
+                cancelQuietSearch = afterChatInputQuiet(warmSearch);
+              }, 750);
             }
           };
           void preparePdfPresentation({
@@ -591,6 +614,8 @@ export function useScientPdfReader(input: {
       if (!current) return;
       current = false;
       abortController.abort();
+      cancelQuietSearch?.();
+      cancelProgress?.();
       passwordRef.current = null;
       if (searchWarmupHandle !== null) {
         if (searchWarmupKind === "idle") window.cancelIdleCallback(searchWarmupHandle);

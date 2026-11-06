@@ -15,9 +15,19 @@ export function installPdfRetainedSelection(container: HTMLElement) {
   };
   const remember = () => {
     const selection = document.getSelection();
-    if (!selection?.rangeCount || selection.isCollapsed) return;
+    if (
+      !selection ||
+      !container.contains(selection.anchorNode) ||
+      !container.contains(selection.focusNode) ||
+      !selection.rangeCount
+    )
+      return;
     const range = selection.getRangeAt(0);
-    if (container.contains(range.startContainer) && container.contains(range.endContainer))
+    if (
+      !range.collapsed &&
+      container.contains(range.startContainer) &&
+      container.contains(range.endContainer)
+    )
       saved = range.cloneRange();
   };
   const retain = (event: Event) => {

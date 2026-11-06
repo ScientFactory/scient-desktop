@@ -1,0 +1,124 @@
+diff --git a/legacy/web/pdf_viewer.mjs b/legacy/web/pdf_viewer.mjs
+index 001fdcab4aa0966a555ffcde3f3881e80ac5c299..142745dcbf995414627aec6b5a6c987bb8267c59 100644
+--- a/legacy/web/pdf_viewer.mjs
++++ b/legacy/web/pdf_viewer.mjs
+@@ -11108,6 +11108,7 @@ class TextHighlighter {
+ 
+ 
+ class TextLayerBuilder {
++  static beforeAppend = null;
+   #abortSignal = null;
+   #enablePermissions = false;
+   #onAppend = null;
+@@ -11162,7 +11163,12 @@ class TextLayerBuilder {
+     } = this.#textLayer;
+     this.highlighter?.setTextMapping(textDivs, textContentItemsStr);
+     this.accessibilityManager?.setTextMapping(textDivs);
+-    await this.#textLayer.render();
++    const textLayer = this.#textLayer;
++    await textLayer.render();
++    await TextLayerBuilder.beforeAppend?.(this.#abortSignal);
++    if (this.#textLayer !== textLayer || this.#abortSignal?.aborted) {
++      throw new AbortException("Text layer rendering cancelled.");
++    }
+     this.#renderingDone = true;
+     const endOfContent = document.createElement("div");
+     endOfContent.className = "endOfContent";
+@@ -11228,10 +11234,14 @@ class TextLayerBuilder {
+     this.#selectionChangeAC = new AbortController();
+     const signal = globalAbortSignal ? AbortSignal.any([this.#selectionChangeAC.signal, globalAbortSignal]) : this.#selectionChangeAC.signal;
+     const reset = (end, textLayer) => {
+-      textLayer.append(end);
+-      end.style.width = "";
+-      end.style.height = "";
+-      textLayer.classList.remove("selecting");
++      if (end !== textLayer.lastChild) {
++        textLayer.append(end);
++      }
++      if (end.style.width) end.style.width = "";
++      if (end.style.height) end.style.height = "";
++      if (textLayer.classList.contains("selecting")) {
++        textLayer.classList.remove("selecting");
++      }
+     };
+     let isPointerDown = false;
+     document.addEventListener("pointerdown", () => {
+@@ -11281,6 +11291,10 @@ class TextLayerBuilder {
+           reset(endDiv, textLayerDiv);
+         }
+       }
++      if (activeTextLayers.size === 0) {
++        prevRange = null;
++        return;
++      }
+       if (isFirefoxOrModernChromium === undefined) {
+         isFirefoxOrModernChromium = getComputedStyle(this.#textLayers.values().next().value).getPropertyValue("-moz-user-select") === "none";
+         if (!isFirefoxOrModernChromium) {
+diff --git a/types/web/text_layer_builder.d.ts b/types/web/text_layer_builder.d.ts
+index 882fd142c790e8d3ed7a3a2a701c609bff71fa42..988d61919cd50dd9ad95b9a64e52e63d8e90892e 100644
+--- a/types/web/text_layer_builder.d.ts
++++ b/types/web/text_layer_builder.d.ts
+@@ -42,6 +42,7 @@ export type TextLayerBuilderRenderOptions = {
+  * contain text that matches the PDF text they are overlaying.
+  */
+ export class TextLayerBuilder {
++    static beforeAppend: ((signal: AbortSignal | null) => void | Promise<void>) | null;
+     static #textLayers: Map<any, any>;
+     static #selectionChangeAC: null;
+     static #removeGlobalSelectionListener(textLayerDiv: any): void;
+diff --git a/web/pdf_viewer.mjs b/web/pdf_viewer.mjs
+index e4a6b24652d1ed233dc3de1b746188a246e5fb9e..c9925d7c6a34193a0802e88019e257165b963a74 100644
+--- a/web/pdf_viewer.mjs
++++ b/web/pdf_viewer.mjs
+@@ -6155,6 +6155,7 @@ class TextHighlighter {
+ 
+ 
+ class TextLayerBuilder {
++  static beforeAppend = null;
+   #abortSignal = null;
+   #enablePermissions = false;
+   #onAppend = null;
+@@ -6209,7 +6210,12 @@ class TextLayerBuilder {
+     } = this.#textLayer;
+     this.highlighter?.setTextMapping(textDivs, textContentItemsStr);
+     this.accessibilityManager?.setTextMapping(textDivs);
+-    await this.#textLayer.render();
++    const textLayer = this.#textLayer;
++    await textLayer.render();
++    await TextLayerBuilder.beforeAppend?.(this.#abortSignal);
++    if (this.#textLayer !== textLayer || this.#abortSignal?.aborted) {
++      throw new AbortException("Text layer rendering cancelled.");
++    }
+     this.#renderingDone = true;
+     const endOfContent = document.createElement("div");
+     endOfContent.className = "endOfContent";
+@@ -6275,10 +6281,14 @@ class TextLayerBuilder {
+     this.#selectionChangeAC = new AbortController();
+     const signal = globalAbortSignal ? AbortSignal.any([this.#selectionChangeAC.signal, globalAbortSignal]) : this.#selectionChangeAC.signal;
+     const reset = (end, textLayer) => {
+-      textLayer.append(end);
+-      end.style.width = "";
+-      end.style.height = "";
+-      textLayer.classList.remove("selecting");
++      if (end !== textLayer.lastChild) {
++        textLayer.append(end);
++      }
++      if (end.style.width) end.style.width = "";
++      if (end.style.height) end.style.height = "";
++      if (textLayer.classList.contains("selecting")) {
++        textLayer.classList.remove("selecting");
++      }
+     };
+     let isPointerDown = false;
+     document.addEventListener("pointerdown", () => {
+@@ -6328,6 +6338,10 @@ class TextLayerBuilder {
+           reset(endDiv, textLayerDiv);
+         }
+       }
++      if (activeTextLayers.size === 0) {
++        prevRange = null;
++        return;
++      }
+       if (isFirefoxOrModernChromium === undefined) {
+         isFirefoxOrModernChromium = getComputedStyle(this.#textLayers.values().next().value).getPropertyValue("-moz-user-select") === "none";
+         if (!isFirefoxOrModernChromium) {

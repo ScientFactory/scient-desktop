@@ -16,13 +16,16 @@ import {
   PDFFindController,
   PDFLinkService,
   PDFViewer,
+  TextLayerBuilder,
 } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
 
 import { observeResize } from "~/lib/observeResize";
 
 import { createPdfResizeSettlement } from "./pdfResizeSettlement";
+import { prioritizePdfTextCompletion, prioritizePdfWork } from "./pdfChatPriority";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+prioritizePdfTextCompletion(TextLayerBuilder);
 
 // Without a shared worker, pdf.js starts a worker and recompiles its 1.3 MB
 // script for every document, about 80 ms per open. Destroying a document
@@ -160,6 +163,7 @@ export function createPdfRuntime(input: {
     supportsPinchToZoom: true,
   };
   const viewer = new PDFViewer(viewerOptions);
+  prioritizePdfWork(viewer, viewerLifetime.signal);
 
   linkService.setViewer(viewer);
   linkService.setDocument(input.document);

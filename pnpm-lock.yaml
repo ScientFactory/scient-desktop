@@ -388,6 +388,7 @@ patchedDependencies:
   micromark-extension-llm-math@3.1.0: 4eeb9d9e27ebc75e98795e21c0719005483dad7d233055698257f7d10e91603b
   micromark@4.0.2: cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67
   node-pty@1.2.0-beta.15: f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651
+  pdfjs-dist@6.4.299: dadccdad50e0be8667287faad2e5a8e62fa2ce1845f2b1e56f65893912dd94ad
   react-native-gesture-handler@3.3.0: abe20e1d1c23549297cbbc818e14fe479b41455930d9663135d6b40fe359b626
   react-native-image-viewing@0.2.2: 4aa038d541c7ddcc8f1437eb3e7b4f769f61de78e7f91b53f9805dfca608474d
   react-native-keyboard-controller@1.22.8: 6eb6c847ac693b636ec97c83575acd44b77e92ad0d2c776de0cb4e78e8fb9d4f
@@ -1363,7 +1364,7 @@ importers:
         version: 1.17.1
       pdfjs-dist:
         specifier: 6.4.299
-        version: 6.4.299
+        version: 6.4.299(patch_hash=dadccdad50e0be8667287faad2e5a8e62fa2ce1845f2b1e56f65893912dd94ad)
       pele:
         specifier: ^1.8.0
         version: 1.8.0
@@ -23135,7 +23136,7 @@ snapshots:
     optionalDependencies:
       '@napi-rs/canvas': 1.0.13
 
-  pdfjs-dist@6.4.299:
+  pdfjs-dist@6.4.299(patch_hash=dadccdad50e0be8667287faad2e5a8e62fa2ce1845f2b1e56f65893912dd94ad):
     optionalDependencies:
       '@napi-rs/canvas': 1.0.13
 

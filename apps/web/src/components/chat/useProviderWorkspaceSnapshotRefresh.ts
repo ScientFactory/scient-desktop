@@ -35,6 +35,6 @@ export function useProviderWorkspaceSnapshotRefresh(input: {
       : idleRefreshAtom;
   return {
     refresh: useAtomRefresh(atom),
-    scanning: isProviderWorkspaceSnapshotScanning(useAtomValue(atom)),
+    scanning: useAtomValue(atom, isProviderWorkspaceSnapshotScanning),
   };
 }

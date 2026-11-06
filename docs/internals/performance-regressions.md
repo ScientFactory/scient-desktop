@@ -1,5 +1,68 @@
 # Performance regression checks
 
+## Chat input takes priority
+
+Browser guest sign-in detection checks input metadata before reading visibility
+geometry. Pages with no possible username, password or one-time-code field must
+not force layout after ordinary DOM changes. Registration-page refusal still
+runs after visibility filtering, so hidden password fields cannot suppress a login.
+
+PDF text-layer completion waits for chat input to become quiet before appending
+and enabling accessibility layout, even when its worker started before typing.
+Closing a document cancels that completion without appending a stale layer.
+
+The pinned PDF.js 6.4.299 patch makes text-selection resets idempotent and skips
+PDF-only selection geometry when no PDF text layer intersects the selection.
+Typing or selecting in another editor must not move PDF selection-marker DOM
+nodes, even when the PDF has never been selected. Leaving a PDF selection still
+clears its transient selection state. `pdfSelectionIsolation.browser.test.ts`
+checks these behaviors with the real PDF.js text-layer builder.
+
+Permission-mode options retain their identity for the same supported modes and
+managed policy. Composer controls should not render for ordinary draft edits;
+permission ceilings and their explanations must still update when policy changes.
+Workspace-scan subscriptions select only the scanning indicator, so refresh metadata
+from one composer does not rerender another composer using the same workspace.
+
+Chat responsiveness takes precedence over document work. The composer registers
+typing, composition, and selection activity with `writing/inputPriority.ts`.
+The Ask in chat comment textarea registers through the same native input observer;
+moving focus into a citation popover must not release document work during typing.
+Closing or blurring the comment editor releases its registration. Its browser
+regression covers deferred work, IME composition, selection and saving the draft.
+Nonessential work resumes after 500 ms without chat activity, or when focus leaves
+the composer. This is cooperative scheduling within the renderer: it cannot
+interrupt JavaScript already running or prevent operating-system paging stalls.
+
+Opening a document pane also waits for quiet input before changing the chat's
+width. The store's requested panel state stays authoritative; only presentation
+waits. Closing is immediate, an opened pane remains open while typing resumes,
+thread changes cannot release another thread's pending pane, and other panel
+types retain immediate presentation.
+
+New file-preview mounts yield through `ChatPriorityMount`, including the preview's
+headers, metadata subscriptions and lazy module load. A lightweight loading surface
+stays visible until chat input is quiet. The boundary cancels on closure and passes
+the latest props when released; it does not re-key mounted editors on file renames.
+
+File previews coalesce scroll notifications to the latest native scroll position.
+PDF.js viewer updates and rendering continuations yield during chat activity;
+document setup, progress notifications, and speculative search warmup also wait.
+PDF pages retain their explicit PDF.js dimensions while `content-visibility: auto`
+keeps offscreen page contents out of ordinary rendering. Native scrolling remains
+available; pages and position indicators may catch up after the typing pause.
+Render-clock labels also wait, while action deadlines retain their original timing.
+The composer builds its initial document once rather than parsing the draft on
+every React render; external replacements still use the controlled update path.
+
+Qualify changes with both idle chat and concurrent large-PDF/text-file scrolling,
+including multi-sentence drafts, composition, selection, blur, document closure,
+and catch-up after input stops. Record memory pressure alongside the workload.
+Input-to-next-frame callbacks are a latency proxy, not direct screen-paint or
+operating-system key latency. Unit tests establish scheduling and cancellation;
+they do not establish a performance improvement. Keep real-browser timing and
+production-build qualification separate from those tests.
+
 The v2 transport has a focused regression command:
 
 ```bash
