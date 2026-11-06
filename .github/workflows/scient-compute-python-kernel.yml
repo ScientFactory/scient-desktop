@@ -57,6 +57,13 @@ jobs:
       run:
         shell: bash
     steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -69,7 +76,7 @@ jobs:
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
@@ -81,31 +88,80 @@ jobs:
         env:
           EXPECTED_TARGET: ${{ fromJSON('{"ubuntu-24.04":"linux-x64","macos-15":"darwin-arm64","macos-15-intel":"darwin-x64","windows-2025":"win32-x64"}')[matrix.runner] }}
         run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, process.env.EXPECTED_TARGET)'
+      # Windows qualifies recipes in managed_recipes, beside this, its longest job.
+      - name: Qualify recipes
+        if: ${{ matrix.runner != 'windows-2025' }}
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MANAGED_PYTHON: "1"
+          MPLBACKEND: Agg
+        run: vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
       - name: Qualify base, every toolkit combination, and retained kernels
         working-directory: apps/server
         env:
           SCIENT_TEST_MANAGED_PYTHON: "1"
           MPLBACKEND: Agg
-        run: >-
-          vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1 &&
-          vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1
+        run: vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1
+
+  managed_recipes:
+    if: ${{ inputs.managed_python && inputs.platforms != 'linux' }}
+    name: Managed Python recipes / windows-2025
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: |
+            args:
+              - --filter=t3...
+      - name: Seal candidate recipe metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Assert native qualification target
+        run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, "win32-x64")'
+      - name: Qualify recipes
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MANAGED_PYTHON: "1"
+          MPLBACKEND: Agg
+        run: vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
     if: ${{ inputs.real_kernel }}
-    name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
+    name: Real kernel / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
-        # Both ends of the supported range, because the failures this suite
-        # catches are version-dependent asyncio and kernel-startup behaviour:
-        # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
-        # user is most likely to already have.
-        python: ["3.10", "3.12"]
-
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -118,33 +174,59 @@ jobs:
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
 
-      - name: Setup Python ${{ matrix.python }}
+      # Both ends of the supported range, because the failures this suite
+      # catches are version-dependent asyncio and kernel-startup behaviour:
+      # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
+      # user is most likely to already have. One job runs both, one after the
+      # other: setting up a runner costs more than the suite.
+      - name: Setup Python 3.10
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python }}
-
-      - name: Install kernel dependencies
-        shell: bash
+          python-version: "3.10"
+      - name: Install kernel dependencies on Python 3.10
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
-
-      # The absolute path rather than `python`: this value becomes the launch
-      # plan's executable, so resolving it once here is what makes the kernel
-      # under test the interpreter this job set up.
-      - name: Run the real-kernel integration suite
+      - name: Run the real-kernel integration suite on Python 3.10
         working-directory: apps/server
-        shell: bash
         env:
           # Headless runners have no display, and a figure that opened a window
           # would hang the execution the test is waiting on.
           MPLBACKEND: Agg
+        # The interpreter's absolute path becomes the launch plan's executable, which
+        # is what makes the kernel under test the interpreter set up here.
+        run: |
+          set -euo pipefail
+          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export SCIENT_TEST_PYTHON
+          vp test run \
+            src/scient/compute/PythonKernel.integration.test.ts \
+            src/scient/compute/PythonComputeService.integration.test.ts \
+            src/scient/compute/FreshCompute.integration.test.ts \
+            src/preview/PortScannerPythonCompute.integration.test.ts
+      - name: Setup Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install kernel dependencies on Python 3.12
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
+      - name: Run the real-kernel integration suite on Python 3.12
+        working-directory: apps/server
+        env:
+          # Headless runners have no display, and a figure that opened a window
+          # would hang the execution the test is waiting on.
+          MPLBACKEND: Agg
+        # The interpreter's absolute path becomes the launch plan's executable, which
+        # is what makes the kernel under test the interpreter set up here.
         run: |
           set -euo pipefail
           SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
@@ -168,6 +250,9 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -180,7 +265,7 @@ jobs:
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
@@ -219,6 +304,18 @@ jobs:
 
       - name: Install the bridge host's packages
         run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
+
+      - name: EXPERIMENT time IJulia setup phases
+        env:
+          JULIA_DEPOT_PATH: ${{ runner.temp }}/jdiag/depot
+          JULIA_PROJECT: ${{ runner.temp }}/jdiag/environment
+          IJULIA_NODEFAULTKERNEL: "1"
+        run: >-
+          julia --startup-file=no --history-file=no -e 'println(VERSION, " threads=", Sys.CPU_THREADS);
+          using Pkg; @time "registry" Pkg.Registry.add("General");
+          @time "add (no precompile)" withenv("JULIA_PKG_PRECOMPILE_AUTO"=>"0") do; Pkg.add("IJulia"); end;
+          @time "precompile" Pkg.precompile();
+          @time "import" @eval import IJulia; println(pkgversion(IJulia)); Pkg.status()'
 
       - name: Run real R and Julia kernels
         working-directory: apps/server
