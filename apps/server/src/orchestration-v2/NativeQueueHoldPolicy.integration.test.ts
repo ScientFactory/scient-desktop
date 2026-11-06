@@ -617,7 +617,7 @@ const withNativeQueue = <A, E, R>(
                     Layer.provide(
                       Layer.mergeAll(
                         Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-                          getInstance: () => Effect.succeed(undefined),
+                          getInstance: () => Effect.undefined,
                         }),
                         Layer.mock(ProjectStore.ProjectStoreV2)({
                           get: (projectId) =>
@@ -4100,7 +4100,7 @@ it.live(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
               Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-                getInstance: () => Effect.succeed(undefined),
+                getInstance: () => Effect.undefined,
               }),
             ),
           ),
@@ -4638,7 +4638,7 @@ it.live(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
               Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-                getInstance: () => Effect.succeed(undefined),
+                getInstance: () => Effect.undefined,
               }),
             ),
           ),

@@ -166,3 +166,6 @@ export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient chat-only rewind without a file snapshot (new file, no upstream edits).
+export * from "./scient/checkpointRewind.ts";
+// SCIENT-FORK:END

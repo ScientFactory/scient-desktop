@@ -42,7 +42,7 @@ export type ComputeContextLifecycle =
 export interface ComputeContextBinding {
   readonly contextId: ComputeContextId;
   readonly parentContextId?: ComputeContextId | undefined;
-  readonly batchRunId?: typeof AnalysisRunId.Type | undefined;
+  readonly batchRunId?: AnalysisRunId | undefined;
   /** When a run was asked for, which is how a person tells runs apart. */
   readonly startedAt?: string | undefined;
   readonly environmentId: EnvironmentId;
@@ -66,7 +66,7 @@ interface ComputeContextStoreState {
   ensureContext: (input: {
     readonly contextId: ComputeContextId;
     readonly parentContextId?: ComputeContextId;
-    readonly batchRunId?: typeof AnalysisRunId.Type;
+    readonly batchRunId?: AnalysisRunId;
     readonly startedAt?: string;
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
@@ -242,7 +242,7 @@ export function computeFileContextId(input: {
 export function computeContextBindingForSurface(input: {
   readonly contextId: ComputeContextId;
   readonly parentContextId?: ComputeContextId;
-  readonly batchRunId?: typeof AnalysisRunId.Type;
+  readonly batchRunId?: AnalysisRunId;
   readonly startedAt?: string;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -705,7 +705,7 @@ export function ownsLiveComputeSession(
 export function ensureComputeContext(input: {
   readonly contextId: ComputeContextId;
   readonly parentContextId?: ComputeContextId;
-  readonly batchRunId?: typeof AnalysisRunId.Type;
+  readonly batchRunId?: AnalysisRunId;
   readonly startedAt?: string;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;

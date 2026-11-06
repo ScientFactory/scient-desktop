@@ -145,7 +145,7 @@ it.layer(NodeServices.layer)("Claude provider account status", (it) => {
 
       const snapshot = yield* checkClaudeProviderStatus(
         decodeClaudeSettings({ binaryPath: executablePath }),
-        () => Effect.succeed(undefined),
+        () => Effect.undefined,
         process.env,
         tempDir,
       );

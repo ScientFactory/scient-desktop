@@ -168,7 +168,7 @@ describe("CursorAdapterV2", () => {
                               : {}),
                           },
                         },
-                      }).pipe(Effect.orDie);
+                      });
                     }
                     const readUpdates: ReadonlyArray<InteractionUpdate> = [
                       {
@@ -196,7 +196,7 @@ describe("CursorAdapterV2", () => {
                       })),
                     ];
                     for (const update of readUpdates) {
-                      yield* input.onDelta!(update).pipe(Effect.orDie);
+                      yield* input.onDelta!(update);
                     }
                     return {
                       agentId: "native-cursor-lifecycle",
@@ -210,7 +210,7 @@ describe("CursorAdapterV2", () => {
                       }),
                       cancel: Effect.void,
                     };
-                  }),
+                  }).pipe(Effect.orDie),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),

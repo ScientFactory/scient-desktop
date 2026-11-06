@@ -111,7 +111,7 @@ describe("scient SyncTeX build adapter", () => {
         // A corrupt download must fail before replacing the verified staging
         // destination or repairing permissions on the source.
         yield* fileSystem.writeFileString(path.join(source, executable), "corrupt");
-        const error = yield* Effect.tryPromise(() =>
+        const error = yield* Effect.promise(() =>
           stageScientSyncTexRuntimeForDesktopBuild({
             repoRoot: root,
             stageResourcesDir: resources,
@@ -119,9 +119,12 @@ describe("scient SyncTeX build adapter", () => {
             arch: "arm64",
             sourceDirectory: source,
             verbose: false,
-          }),
-        ).pipe(Effect.flip);
-        assert.include(String(error.cause), "failed integrity verification");
+          }).then(
+            () => undefined,
+            (cause: unknown) => cause,
+          ),
+        );
+        assert.include(String(error), "failed integrity verification");
         assert.equal(
           yield* fileSystem.readFileString(path.join(resources, "synctex-runtime", executable)),
           "synctex",

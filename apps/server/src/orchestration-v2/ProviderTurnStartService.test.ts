@@ -336,6 +336,7 @@ function makeLocalCommandHarness(input: {
     readonly switchedProvider?: boolean;
     /** The parent is itself a Scient fork, whose history sits outside its runs. */
     readonly frozenParent?: boolean;
+    readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
   };
 }) {
   const settledRuns: Array<string> = [];
@@ -619,7 +620,7 @@ function makeLocalCommandHarness(input: {
       ...projection,
       thread: {
         ...projection.thread,
-        runtimeMode: "full-access",
+        runtimeMode: input.sideChat.threadRuntimeMode ?? "full-access",
         lineage: {
           parentThreadId,
           relationshipToParent: "fork",
@@ -1405,16 +1406,22 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
 );
 
 effectIt.effect.each([
-  { contextRun: "current", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "failed", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "cancelled", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "cancelled", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   {
     contextRun: "failed",
     switchedProvider: true,
-    runtimeMode: "approval-required",
+    runtimeMode: "full-access",
     context: "SIDE_CHAT_CONTEXT",
   },
   { contextRun: "delivered", runtimeMode: "full-access", context: "" },
+  {
+    contextRun: "current",
+    threadRuntimeMode: "approval-required",
+    runtimeMode: "approval-required",
+    context: "SIDE_CHAT_CONTEXT",
+  },
 ] as const)(
   "sends side chat context inline once, for the first turn that reaches the provider: %j",
   ({ runtimeMode, context, ...sideChat }) =>
@@ -1426,7 +1433,6 @@ effectIt.effect.each([
 
       yield* harness.start;
 
-      // The turn that delivers the context is clamped; a later one follows the thread's mode.
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );

@@ -11,6 +11,7 @@ const client = vi.hoisted(() => ({
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   removeOverleafToken: vi.fn(),
+  setAsideUnreadableOverleafRecord: vi.fn(),
   connectOverleaf: vi.fn(),
   syncOverleaf: vi.fn(),
   previewOverleaf: vi.fn(),
@@ -125,6 +126,67 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     await using _screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
     await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
     await expect.element(page.getByText("No folder is linked.")).toBeVisible();
+  });
+
+  it("shows each unreadable record's folder and state, and keeps a newer release's unsettled one", async () => {
+    reset(true);
+    projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
+    const newer = {
+      recordId: "r-newer",
+      kind: "newer" as const,
+      folder: "/work/thesis/paper",
+      unfinished: null,
+      holds: "checkout" as const,
+      setAside: "held" as const,
+    };
+    const damaged = {
+      recordId: "r-damaged",
+      kind: "damaged" as const,
+      folder: "/work/grant/paper",
+      unfinished: true,
+      holds: "checkout" as const,
+      setAside: "confirm" as const,
+    };
+    let unreadable: unknown[] = [newer, damaged];
+    client.listOverleafConnections.mockImplementation(async () => ({
+      connections: [],
+      unreadableRecords: unreadable,
+    }));
+    client.setAsideUnreadableOverleafRecord.mockImplementation(async () => {
+      unreadable = [newer];
+      return { outcome: "set-aside" };
+    });
+    await using _screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
+    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
+
+    await expect
+      .element(page.getByText("Scient can't read 2 of its Overleaf link records."))
+      .toBeVisible();
+    await expect.element(page.getByText("/work/thesis/paper")).toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          /A newer version of Scient made this link, and this version can't tell whether its last sync finished/,
+        ),
+      )
+      .toBeVisible();
+    // The kept record has no action; only the damaged one can be set aside, knowingly.
+    await expect
+      .element(page.getByRole("button", { name: "Set aside", exact: true }))
+      .not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Set aside anyway" }).click();
+    expect(client.setAsideUnreadableOverleafRecord).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: "/work/thesis",
+      recordId: "r-damaged",
+      acceptUnfinished: true,
+    });
+
+    // After a reload the kept record is still shown as kept, with no button.
+    await expect
+      .element(page.getByText("Scient can't read one of its Overleaf link records."))
+      .toBeVisible();
+    await expect.element(page.getByText("/work/grant/paper")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: /Set aside/ })).not.toBeInTheDocument();
   });
 });
 

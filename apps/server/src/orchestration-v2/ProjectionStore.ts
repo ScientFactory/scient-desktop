@@ -1,5 +1,5 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { checkpointSupportsRewind, pendingGuestMessageCount } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
 import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
 import {
@@ -653,6 +653,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /** Titles of the given threads that exist, archived ones included. */
+  readonly getThreadTitles: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -803,6 +807,7 @@ export interface ProjectionStoreV2Shape {
       readonly providerThreadId: ProviderThreadId;
       readonly checkpointId: CheckpointId;
       readonly scopeId: CheckpointScopeId;
+      readonly restoreFiles?: boolean;
     },
   ) => Effect.Effect<ProjectionCheckpointRollbackContext, ProjectionStoreV2Error>;
   readonly getRunMessage: (
@@ -3053,21 +3058,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
                     )
                     AND request.type = 'run_interrupt_request'
-                  UNION
-                  -- An open question or approval stays in the window: clients
-                  -- build the answer panel from its row, and a run that kept
-                  -- working pushes the row out of the newest turns.
-                  SELECT question.rowid AS item_rowid, question.ordinal, question.turn_item_id
-                  FROM orchestration_v2_projection_runtime_requests AS pending
-                  JOIN orchestration_v2_projection_turn_items AS question
-                    ON question.node_id = pending.node_id
-                  WHERE pending.thread_id = ${threadId}
-                    AND pending.status = 'pending'
-                    AND question.thread_id = ${threadId}
-                    AND question.type IN ('user_input_request', 'approval_request')
-                    AND ${window.rowLimit} > 0
-                    AND ${window.anchorItemId ?? null} IS NULL
-                    AND ${window.requiredRunId ?? null} IS NULL
                   UNION
                   SELECT latest.item_rowid, latest.ordinal, latest.turn_item_id
                   FROM (
@@ -5735,7 +5725,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               checkpoint === undefined ||
               scope === undefined ||
               checkpoint.scopeId !== scope.id ||
-              checkpoint.status !== "ready" ||
+              // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
+              !checkpointSupportsRewind(checkpoint, target.restoreFiles !== false) ||
               providerThread.id !== thread.activeProviderThreadId ||
               providerThread.providerInstanceId !== thread.modelSelection.instanceId
             )
@@ -5765,8 +5756,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             JOIN orchestration_v2_projection_runs AS run ON run.run_id = attempt.run_id
             WHERE run.thread_id = ${threadId} AND run.status = 'rolled_back'
               AND attempt.thread_id = ${threadId}`,
+                // SCIENT-FORK: later boundaries without a snapshot are discarded too.
                 sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId} AND scope_id = ${scope.id} AND status = 'ready'
+            WHERE thread_id = ${threadId} AND scope_id = ${scope.id} AND status != 'stale'
               AND app_run_ordinal > ${targetOrdinal}
             ORDER BY ordinal_within_scope ASC`,
               ]);
@@ -6649,6 +6641,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
+            // Pending requests outlive their turn's window; clients read their prompt from the card.
+            const retainedIds = new Set(projection.turnItems.map((item) => item.id));
+            const pendingCards = (yield* decodeRows(
+              decodeTurnItemPayload,
+              threadId,
+            )(
+              yield* sql<PayloadRow>`
+                SELECT item.payload_json
+                FROM orchestration_v2_projection_runtime_requests AS request
+                CROSS JOIN orchestration_v2_projection_turn_items AS item
+                  ON item.node_id = request.node_id
+                  AND item.type IN ('approval_request', 'user_input_request')
+                  AND json_extract(item.payload_json, '$.requestId') = request.runtime_request_id
+                WHERE request.thread_id = ${threadId} AND request.status = 'pending'
+                  AND item.thread_id = ${threadId}
+              `,
+            )).filter((item) => !retainedIds.has(item.id));
+            const windowProjection =
+              pendingCards.length === 0
+                ? projection
+                : {
+                    ...projection,
+                    turnItems: [...projection.turnItems, ...pendingCards].toSorted(
+                      (left, right) =>
+                        left.ordinal - right.ordinal || left.id.localeCompare(right.id),
+                    ),
+                  };
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
               SELECT MAX(sequence) AS snapshot_sequence
               FROM orchestration_events
@@ -6659,7 +6678,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
-              projection,
+              projection: windowProjection,
             };
           }),
         )
@@ -6836,7 +6855,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
-                ORDER BY request.created_at DESC, request.runtime_request_id DESC
+                ORDER BY (request.kind = 'user_input') ASC,
+                  request.created_at DESC, request.runtime_request_id DESC
                 LIMIT 1
               ) AS pending_request_payload_json,
               (
@@ -7405,16 +7425,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
             : null;
         if (
-          (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) &&
+          (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") &&
           waitingCards.length > 0
         ) {
-          pendingRuntimeRequest =
-            secretRequestAsPendingInput(
-              waitingCards.toSorted(
-                (left, right) =>
-                  DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-              )[0] ?? null,
-            ) ?? pendingRuntimeRequest;
+          const waitingCard = secretRequestAsPendingInput(
+            waitingCards.toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+            )[0] ?? null,
+          );
+          if (
+            waitingCard !== null &&
+            (pendingRuntimeRequest === null ||
+              DateTime.toEpochMillis(waitingCard.createdAt) >=
+                DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
+          ) {
+            pendingRuntimeRequest = waitingCard;
+          }
         }
         let terminalFailureItem =
           row.terminal_failure_payload_json === null
@@ -7891,6 +7918,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }));
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getThreadTitles = Effect.fn("ProjectionStore.getThreadTitles")(function* (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) {
+      if (threadIds.length === 0) return {};
+      const rows = yield* sql<{ readonly thread_id: ThreadId; readonly title: string }>`
+        SELECT thread_id, title
+        FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL AND thread_id IN ${sql.in(threadIds)}
+      `;
+      return Object.fromEntries(rows.map((row) => [row.thread_id, row.title]));
+    }, Effect.mapError(shellSnapshotReadError));
+
     const findGuestShareThreadId = Effect.fn("ProjectionStore.findGuestShareThreadId")(function* (
       shareId: GuestShareId,
     ) {
@@ -8057,6 +8096,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
+      getThreadTitles: readOnReader(getThreadTitles),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),

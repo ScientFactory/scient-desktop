@@ -158,7 +158,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
           }),
         ),
       );
-      const accountList = readAccounts ? readAccounts(client) : Effect.succeed(undefined);
+      const accountList = readAccounts ? readAccounts(client) : Effect.undefined;
       return yield* Effect.all([modelList, client.getCommands(), accountList], {
         concurrency: "unbounded",
       }).pipe(

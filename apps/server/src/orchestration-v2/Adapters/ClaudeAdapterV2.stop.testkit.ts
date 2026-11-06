@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -33,7 +34,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
       prefix: "t3-claude-captured-stop-",
     });
     const receiptDir =
-      process.env.SCIENT_STOP_PROOF_ARTIFACT_DIR ??
+      (yield* HostProcess.Environment).SCIENT_STOP_PROOF_ARTIFACT_DIR ??
       (yield* fs.makeTempDirectoryScoped({ prefix: "t3-stop-race-receipts-" }));
     const interruptEntered = yield* Deferred.make<void>();
     const interruptRelease = yield* Deferred.make<void>();

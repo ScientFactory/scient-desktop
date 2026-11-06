@@ -271,11 +271,17 @@ const LAST_SAVED_FILES = 1024;
 const IN_PLACE_MAX_BYTES = 128n * 1024n * 1024n;
 
 /** A plain publication failed before it could change the target. */
-class PlainPublicationUnchangedError extends Error {
-  constructor(cause: unknown) {
-    super("A plain publication failed before changing its target.", { cause });
+class PlainPublicationUnchangedError extends Schema.TaggedError<PlainPublicationUnchangedError>()(
+  "PlainPublicationUnchangedError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "A plain publication failed before changing its target.";
   }
 }
+
+const isPlainPublicationUnchangedError = Schema.is(PlainPublicationUnchangedError);
+
 const isExistsError = Schema.is(WorkspaceFileExistsError);
 const isRevisionConflict = Schema.is(WorkspaceFileRevisionConflictError);
 
@@ -345,7 +351,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         cause,
       });
     }
-    if (cause instanceof PlainPublicationUnchangedError)
+    if (isPlainPublicationUnchangedError(cause))
       return new WorkspaceFileSystemOperationError({
         ...fields,
         operationPath: target,
@@ -1348,7 +1354,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           sameIdentity(current.identity, before.identity) &&
           current.revision === before.revision
     )
-      throw new PlainPublicationUnchangedError(cause);
+      throw new PlainPublicationUnchangedError({ cause });
     throw cause;
   };
   const publishPlainly = async (
@@ -1400,7 +1406,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           await handle.close();
         }
       }).catch((cause: unknown) => {
-        const stage = cause instanceof PlainPublicationUnchangedError ? cause.cause : cause;
+        const stage = isPlainPublicationUnchangedError(cause) ? cause.cause : cause;
         if (exclusive || !snapshot || !replacementRefused(stage)) throw cause;
         refused ??= stage;
       });
@@ -1625,7 +1631,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       handle = await NodeFSP.open(target, "wx", mode);
     } catch (cause) {
       if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(fields);
-      throw new PlainPublicationUnchangedError(cause);
+      throw new PlainPublicationUnchangedError({ cause });
     }
     let created: { dev: string; ino: string } | null = null;
     try {
@@ -1640,7 +1646,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       const current = await fileIdentity(target, deps.nativePublicationHelper).catch(() => null);
       if (created !== null && current !== null && sameIdentity(current, created)) {
         await NodeFSP.rm(target, { force: true });
-        throw new PlainPublicationUnchangedError(cause);
+        throw new PlainPublicationUnchangedError({ cause });
       }
       throw cause;
     }
@@ -1652,12 +1658,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     } catch (cause) {
       if (
         cause instanceof RetainedMutationError ||
-        cause instanceof PlainPublicationUnchangedError ||
+        isPlainPublicationUnchangedError(cause) ||
         isExistsError(cause) ||
         isRevisionConflict(cause)
       )
         throw cause;
-      throw new PlainPublicationUnchangedError(cause);
+      throw new PlainPublicationUnchangedError({ cause });
     }
   };
   /**
@@ -4192,7 +4198,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           // The original itself moves in, so a program still holding it writes into the copy.
           advancePlainEpoch();
           await replaceByRename(target, kept).catch(async (cause: unknown) => {
-            if (!isNodeError(cause, "EXDEV")) throw new PlainPublicationUnchangedError(cause);
+            if (!isNodeError(cause, "EXDEV")) throw new PlainPublicationUnchangedError({ cause });
             await NodeFSP.unlink(target);
           });
         } else {
@@ -4223,7 +4229,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       } catch (cause) {
         if (isRevisionConflict(cause) || cause instanceof RetainedMutationError)
           return await settleUntouched();
-        if (!(cause instanceof PlainPublicationUnchangedError)) throw cause;
+        if (!isPlainPublicationUnchangedError(cause)) throw cause;
         await save({ sourceMutation: false });
         return finish("skipped", "unavailable");
       }
@@ -4355,7 +4361,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 throw new WorkspaceFileExistsError(destinationFields);
               if (!(await missing(destination.target))) throw cause;
               // Includes volumes without hard links: plain moves need them, as on main.
-              throw new PlainPublicationUnchangedError(cause);
+              throw new PlainPublicationUnchangedError({ cause });
             }
             // The new name must hold the inspected bytes before the old name goes.
             /** The move may have happened: the outcome is unknown, never "unchanged". */
@@ -4370,7 +4376,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               );
             } catch (cause) {
               if (await undoLink().catch(() => false))
-                throw new PlainPublicationUnchangedError(cause);
+                throw new PlainPublicationUnchangedError({ cause });
               throw unknown(cause);
             }
             if (
@@ -4396,7 +4402,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             } catch (cause) {
               // Undo the new name so the move is either complete or did not happen.
               if (await undoLink().catch(() => false))
-                throw new PlainPublicationUnchangedError(cause);
+                throw new PlainPublicationUnchangedError({ cause });
               throw unknown(cause);
             }
             await syncDirectory(folder);
@@ -4476,7 +4482,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 () => null,
               );
               if (still !== null && sameIdentity(still, snapshot.identity))
-                throw new PlainPublicationUnchangedError(cause);
+                throw new PlainPublicationUnchangedError({ cause });
               throw cause;
             }
             await syncDirectory(NodePath.dirname(resolved.target));

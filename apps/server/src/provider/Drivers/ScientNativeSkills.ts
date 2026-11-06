@@ -9,10 +9,10 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 // Direct Node imports use the public entry; CLI packaging selects its ESM closure.
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
@@ -44,10 +44,13 @@ const writeSettingsFileAtomically = Effect.fn("ScientNativeSkills.writeSettingsF
 );
 
 const GROK_SKILL_SETTINGS_ERROR_TAG = "GrokSkillSettingsError";
-class GrokSkillSettingsError extends Data.TaggedError(GROK_SKILL_SETTINGS_ERROR_TAG)<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {}
+class GrokSkillSettingsError extends Schema.TaggedError<GrokSkillSettingsError>()(
+  GROK_SKILL_SETTINGS_ERROR_TAG,
+  {
+    cause: Schema.optional(Schema.Defect()),
+    detail: Schema.String,
+  },
+) {}
 
 function stringArray(value: unknown): ReadonlyArray<string> | undefined {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string")
@@ -295,10 +298,13 @@ export function mergeClaudeReportedSkills(
 }
 
 const CLAUDE_SKILL_SETTINGS_ERROR_TAG = "ClaudeSkillSettingsError";
-class ClaudeSkillSettingsError extends Data.TaggedError(CLAUDE_SKILL_SETTINGS_ERROR_TAG)<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {}
+class ClaudeSkillSettingsError extends Schema.TaggedError<ClaudeSkillSettingsError>()(
+  CLAUDE_SKILL_SETTINGS_ERROR_TAG,
+  {
+    cause: Schema.optional(Schema.Defect()),
+    detail: Schema.String,
+  },
+) {}
 
 /**
  * Persist one user-scoped Claude skill override without rewriting unrelated

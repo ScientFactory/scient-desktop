@@ -546,7 +546,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          getInstance: () => Effect.succeed(undefined),
+          getInstance: () => Effect.undefined,
         }),
         configuredEventSinkLayer,
         IdAllocator.layer,

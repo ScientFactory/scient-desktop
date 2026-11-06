@@ -38,7 +38,10 @@ import {
   type ConfiguredRuntimeProbe,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   QualifiedRpcManagedRuntime,
   type ManagedRpcQualification,
@@ -156,7 +159,7 @@ export const qualifyManagedScientAgentRuntime = Effect.fn("ScientAgentManagedRun
       }),
     ).pipe(
       Effect.mapError((cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : new ProviderConnectionActionError({
               message: "The staged Scient Agent runtime failed its RPC qualification check.",

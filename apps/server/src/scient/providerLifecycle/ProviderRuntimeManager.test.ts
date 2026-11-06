@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -188,10 +189,10 @@ function makeHarness(
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
         ),
-      getProviderConnectionActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderConnectionActionsForInstance: () => Effect.undefined,
       getProviderManagedRuntimeActionsForInstance: () => Ref.get(actionsRef),
-      getProviderSkillActionsForInstance: () => Effect.sync(() => undefined),
-      getProviderPluginActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderSkillActionsForInstance: () => Effect.undefined,
+      getProviderPluginActionsForInstance: () => Effect.undefined,
       recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
@@ -793,7 +794,8 @@ describe("ProviderRuntimeManager", () => {
 
   it.effect("never interrupts running work across random interleavings", () =>
     Effect.gen(function* () {
-      const iterations = Number(process.env.SCIENT_RUNTIME_STRESS_ITERATIONS ?? 40);
+      const env = yield* HostProcess.Environment;
+      const iterations = Number(env.SCIENT_RUNTIME_STRESS_ITERATIONS ?? 40);
       for (let seed = 1; seed <= iterations; seed += 1) {
         // mulberry32: deterministic per seed, so a failure names its seed.
         let state = seed;
