@@ -21,10 +21,10 @@ export function redactRemoteUrl(remoteUrl: string): string {
 }
 // SCIENT-FORK:END public-remote-url-redaction
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
+const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/)(.+)$/;
 // Userinfo may contain `@`; the last one before the first slash separates the host.
-const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?([^@:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?([^@:/\s]+)(:\d+)?\/(.+)$/;
+const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
+const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
 
 function parseCloneUrl(
   url: string,

@@ -6139,6 +6139,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             generateReviewGuide: (): never => {
               throw new Error("Unexpected review guide generation");
             },
+            generateTranscriptionPostProcessing: (): never => {
+              throw new Error("Unexpected transcript cleanup");
+            },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");
             },
@@ -6351,6 +6354,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               generateReviewGuide: (): never => {
                 throw new Error("Unexpected review guide generation");
               },
+              generateTranscriptionPostProcessing: (): never => {
+                throw new Error("Unexpected transcript cleanup");
+              },
               generatePrContent: (): never => {
                 throw new Error("Unexpected generation");
               },
@@ -6457,6 +6463,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               },
               generateReviewGuide: (): never => {
                 throw new Error("Unexpected review guide generation");
+              },
+              generateTranscriptionPostProcessing: (): never => {
+                throw new Error("Unexpected transcript cleanup");
               },
               generatePrContent: (): never => {
                 throw new Error("Unexpected generation");
@@ -6690,6 +6699,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             },
             generateReviewGuide: (): never => {
               throw new Error("Unexpected review guide generation");
+            },
+            generateTranscriptionPostProcessing: (): never => {
+              throw new Error("Unexpected transcript cleanup");
             },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");

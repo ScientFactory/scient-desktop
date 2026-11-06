@@ -577,7 +577,7 @@
   },
   {
     "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
-    "line": "description=\"Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
+    "line": "description=\"Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."

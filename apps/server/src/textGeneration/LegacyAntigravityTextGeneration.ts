@@ -303,5 +303,13 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     generateThreadTitle,
     generateReviewGuide: () =>
       Effect.fail(investigationUnsupported("generateReviewGuide", "Antigravity")),
+    // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
+    generateTranscriptionPostProcessing: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "Antigravity does not clean up voice transcripts.",
+        }),
+      ),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

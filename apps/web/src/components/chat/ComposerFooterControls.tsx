@@ -253,6 +253,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  children?: React.ReactNode;
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
@@ -276,6 +277,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   alternateShortcutLabel: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
+  voiceInputActive?: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isEnvironmentUnavailable: boolean;
@@ -309,6 +311,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.children}
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}
@@ -323,6 +326,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         alternateShortcutLabel={props.alternateShortcutLabel}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
+        voiceInputActive={props.voiceInputActive ?? false}
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
