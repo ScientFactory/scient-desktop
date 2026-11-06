@@ -8,9 +8,11 @@ import {
   defaultAccountControls,
   type AccountActivityEntry,
   type AccountHandoff,
+  type AccountSignInAttempt,
   type AccountSaveInput,
   type AccountsSnapshot,
   type AccountSummary,
+  type BrowserProfileChoices,
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
 import { Context, Effect, Layer, Option, Redacted, Stream } from "effect";
@@ -20,6 +22,9 @@ import * as AccountPersistence from "./AccountPersistence.ts";
 import { AccountSources } from "./AccountSources.ts";
 import { AccountsService } from "./AccountsService.ts";
 import * as AccountsServiceLive from "./AccountsServiceLive.ts";
+import * as SignInAttemptsStore from "./agent/signInAttempts.ts";
+import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
+import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
 
 export const syntheticValue = () => NodeCrypto.randomUUID();
 const unavailable = () =>
@@ -87,6 +92,11 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   options: {
     readonly storage?: ReturnType<typeof memoryStore>;
     readonly sourceOverrides?: Partial<AccountSources["Service"]>;
+    /** What Source Control discovers and the GitHub credential it holds. */
+    readonly sourceControl?: {
+      readonly discover: SourceControlProviderRegistry["Service"]["discover"];
+      readonly github: GitHubSourceControlCredential["Service"];
+    };
   } = {},
 ) {
   const storage = options.storage ?? memoryStore();
@@ -106,9 +116,21 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   const context = yield* Layer.build(
     AccountsServiceLive.layer.pipe(
       Layer.provide(AccountPersistence.layer),
+      Layer.provide(SignInAttemptsStore.layer),
       Layer.provide(Layer.succeed(AccountSources, sources)),
       Layer.provide(Layer.succeed(AccountVault, vault)),
       Layer.provide(Layer.succeed(ServerSecretStore, storage.store)),
+      Layer.provide(
+        options.sourceControl === undefined
+          ? Layer.empty
+          : Layer.mergeAll(
+              Layer.mock(SourceControlProviderRegistry)({
+                resolveLink: () => undefined,
+                discover: options.sourceControl.discover,
+              }),
+              Layer.succeed(GitHubSourceControlCredential, options.sourceControl.github),
+            ),
+      ),
     ),
   );
   return { service: Context.get(context, AccountsService), vault, ...storage };
@@ -132,6 +154,7 @@ export function fakeAccounts(
   options: {
     accounts?: ReadonlyArray<AccountSummary>;
     profiles?: ReadonlyArray<BrowserProfileRecord>;
+    profileChoices?: BrowserProfileChoices;
     agentAccess?: boolean;
     denied?: boolean;
     values?: Readonly<Record<string, string>>;
@@ -139,10 +162,13 @@ export function fakeAccounts(
   } = {},
 ) {
   const handoffs = new Map<string, AccountHandoff>();
+  const attempts = new Map<string, AccountSignInAttempt>();
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
-  const checks: Array<{ accountId: AccountId; state: string; message?: string | undefined }> = [];
+  const checks: Array<
+    { accountId: AccountId } & Parameters<AccountsService["Service"]["recordCheck"]>[1]
+  > = [];
   const accounts = [...(options.accounts ?? [])];
   const saves: Array<AccountSaveInput> = [];
   const unsupported = Effect.fail(
@@ -152,6 +178,7 @@ export function fakeAccounts(
     }),
   );
   const service = AccountsService.of({
+    signInAttempts: Effect.succeed(SignInAttemptsStore.makeSignInAttempts()),
     setHandoff: (entry) =>
       Effect.sync(() => {
         handoffs.set(entry.handoffId, entry);
@@ -162,6 +189,15 @@ export function fakeAccounts(
         cancelled.delete(id);
       }),
     handoffCancelled: (id) => Effect.sync(() => cancelled.has(id)),
+    attempts: Effect.sync(() => [...attempts.values()]),
+    setAttempt: (attempt) =>
+      Effect.sync(() => {
+        attempts.set(attempt.attemptId, attempt);
+      }),
+    removeAttempt: (id) =>
+      Effect.sync(() => {
+        attempts.delete(id);
+      }),
     setPaperQueue: () => Effect.void,
     showHandoff: () => unsupported,
     cancelHandoff: (id) =>
@@ -169,7 +205,9 @@ export function fakeAccounts(
         cancelled.add(id);
       }),
     passwordStore: () => unsupported,
-    snapshot: Effect.sync(() => ({ accounts }) as unknown as AccountsSnapshot),
+    snapshot: Effect.sync(
+      () => ({ accounts, agentAccess: options.agentAccess ?? true }) as unknown as AccountsSnapshot,
+    ),
     changes: Stream.empty,
     save: (input) =>
       Effect.sync(() => {
@@ -208,7 +246,23 @@ export function fakeAccounts(
     updateProfile: () => unsupported,
     removeProfile: () => unsupported,
     chooseProfile: () => unsupported,
+    mainFilled: () => unsupported,
+    profileSignedOut: () => unsupported,
+    mainWithdrawn: () => unsupported,
+    profileResend: () => unsupported,
+    profileSendLog: () => unsupported,
+    profileShared: () => unsupported,
+    profilesUnshared: () => unsupported,
+    receivedProfiles: unsupported,
+    remoteSenders: unsupported,
+    setRemoteSender: () => unsupported,
+    senderKey: () => unsupported,
+    keepSenderKey: () => unsupported,
+    updateReceived: () => unsupported,
+    mainBackfilled: () => unsupported,
     googleSessionsSeen: () => unsupported,
+    sessionsSeen: () => unsupported,
+    keepTyped: () => unsupported,
     setCodeSources: () => unsupported,
     setKeyLink: () => Effect.void,
     respondApproval: () => unsupported,
@@ -225,6 +279,7 @@ export function fakeAccounts(
         agentAccess: options.agentAccess ?? true,
         accounts,
         profiles: options.profiles ?? [],
+        ...(options.profileChoices ? { profileChoices: options.profileChoices } : {}),
       }),
     authorize: (_scope, target, action) =>
       Effect.sync(() => {
@@ -251,5 +306,5 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses, handoffs, cancelled, saves, checks };
+  return { service, calls, uses, handoffs, attempts, cancelled, saves, checks };
 }

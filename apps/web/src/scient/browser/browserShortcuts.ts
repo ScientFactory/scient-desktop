@@ -6,7 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { isLocalLoopbackHost, normalizeHostname } from "~/browser/browserTargetResolver";
 import { resolveStorage } from "~/lib/storage";
-import { byDomain, GMAIL_URL } from "~/scient/accounts/accountsView";
+import { byDomain } from "~/scient/accounts/accountsView";
 import { isIdentityProvider } from "~/scient/accounts/sessionDetection";
 
 import ICONS from "./browserHomeIcons.json";
@@ -64,7 +64,11 @@ const GOOGLE: HomeSite = {
   url: "https://www.google.com/",
   icon: ICONS.google,
 };
-export const GMAIL: HomeSite = { name: "Gmail", url: GMAIL_URL, icon: ICONS.gmail };
+export const GMAIL: HomeSite = {
+  name: "Gmail",
+  url: "https://mail.google.com/mail/",
+  icon: ICONS.gmail,
+};
 
 const DRIVE: HomeSite = { name: "Drive", url: "https://drive.google.com/", icon: ICONS.drive };
 const CALENDAR: HomeSite = {

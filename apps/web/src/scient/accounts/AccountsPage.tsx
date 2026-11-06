@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
 import {
+  ACCOUNTS_PROTOCOL,
+  AuthOrchestrationReadScope,
   DEFAULT_BROWSER_PROFILE_ID,
+  GOOGLE_SITE,
   AccountId,
   PROVIDER_DISPLAY_NAMES,
   ThreadId,
@@ -17,6 +21,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
+  EllipsisIcon,
   FileKeyIcon,
   GlobeIcon,
   KeyRoundIcon,
@@ -32,6 +37,7 @@ import {
   SettingsSection,
 } from "~/components/settings/settingsLayout";
 import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -40,7 +46,15 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
 import { toastManager } from "~/components/ui/toast";
@@ -56,9 +70,12 @@ import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
+import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { environmentThreadShells } from "~/state/threads";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { signInHeld } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
+import { siteIdentities } from "@t3tools/shared/scientBrowserProfileChoice";
 import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
 import { ApiKeyAccountPicker } from "./ApiKeyAccountPicker";
@@ -73,27 +90,40 @@ import {
   accountManagePage,
   accountStatusLabel,
   activityLine,
+  type GitHubIdentity,
+  githubIdentities,
   type KeyInUse,
   isBrowserSignIn,
   isSavedPassword,
   keysInUse,
   mergeProfiles,
-  providerManagedAccounts,
+  type ProviderRowsCache,
+  steadyProviderRows,
   signedIntoUniversity,
 } from "./accountsView";
-import { UniversityIcon, useUniversitySignIn } from "./University";
+import { UniversityIcon } from "./University";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
-import { BrowserImportDialog, BrowserProfiles } from "./BrowserProfiles";
+import {
+  BrowserImportDialog,
+  BrowserProfiles,
+  GOOGLE_BLOCKED,
+  useImportingPasswords,
+} from "./BrowserProfiles";
+import { copySignInIntoMain } from "./mainFill";
+import { RemoteComputers } from "./RemoteComputers";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+import { useSignIn } from "./useSignIn";
 import { useWebsiteSessions } from "./useWebsiteSessions";
+
+/** Provider rows last read per environment, so a refresh doesn't empty "Other sign-ins". */
+const providerRowsCache: ProviderRowsCache = new Map();
 
 /** Where each kind of sign-in is managed, for the "Other sign-ins" links. */
 const MANAGED_IN = {
-  github: "Source Control",
   "custom-model": "Custom models",
   claude: "Claude",
   codex: "Codex",
@@ -129,11 +159,14 @@ export function AccountRow({
   const check = useAccountCommand(accountsState.check, environmentId);
   const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
   const university = universityDetails(details);
-  const universitySignIn = useUniversitySignIn(environmentId);
-  const signInAgain = ["signed-out", "needs-you"].includes(account.signIn?.state ?? "");
-  const openSite = async (url = site) => {
-    if (!url) return;
-    await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
+  const signIn = useSignIn(environmentId);
+  const signInAnyRow =
+    (useAccounts(environmentId).data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL;
+  const held = signInHeld(account.signIn);
+  const signInAgain = held || account.signIn?.state === "signed-out";
+  const openSite = async () => {
+    if (!site) return;
+    await openBrowser(site, details.kind === "website" ? details.profileId : undefined);
   };
   const iconUrl = accountIconUrl("sites" in details ? details.sites : [], account.name);
   const managePage = accountManagePage("sites" in details ? details.sites : []);
@@ -213,14 +246,15 @@ export function AccountRow({
       }
       control={
         <div className="flex items-center gap-2">
-          {university && !signedIntoUniversity(account) ? (
+          {(university && !signedIntoUniversity(account)) ||
+          (!university && held && signInAnyRow && details.kind === "website") ? (
             <Button
               size="xs"
               variant="outline"
               disabled={!canWrite}
               onClick={(event) => {
                 event.stopPropagation();
-                void universitySignIn(account.accountId);
+                void signIn(account.accountId);
               }}
             >
               Sign in
@@ -234,11 +268,13 @@ export function AccountRow({
           />
           <ControlsMenu disabled={!canWrite || busy}>
             {university ? (
-              <MenuItem onClick={() => void universitySignIn(account.accountId)}>Sign in</MenuItem>
+              <MenuItem onClick={() => void signIn(account.accountId)}>Sign in</MenuItem>
             ) : signInAgain && details.kind === "website" ? (
-              <MenuItem onClick={() => void openSite(details.loginUrl ?? site)}>
-                Sign in again
-              </MenuItem>
+              signInAnyRow ? (
+                <MenuItem onClick={() => void signIn(account.accountId)}>Sign in again</MenuItem>
+              ) : (
+                <MenuItem disabled>Update Scient on this computer to sign in from here</MenuItem>
+              )
             ) : null}
             {details.kind === "website" ? (
               <MenuItem
@@ -333,7 +369,7 @@ function ManagedAccountRow({
   environmentId,
 }: {
   row: {
-    kind: "github" | "custom-model" | "extension" | "claude" | "codex";
+    kind: "custom-model" | "extension" | "claude" | "codex";
     instanceId?: ProviderInstanceId;
     name: string;
     detail?: string | undefined;
@@ -341,9 +377,7 @@ function ManagedAccountRow({
   };
   environmentId: EnvironmentId;
 }) {
-  const domain =
-    managedHost(row.detail) ??
-    (row.kind === "github" ? "github.com" : row.kind === "claude" ? "claude.ai" : undefined);
+  const domain = managedHost(row.detail) ?? (row.kind === "claude" ? "claude.ai" : undefined);
   // Our own logos first: the extension catalogue has no GitHub or Claude sign-in entries.
   const logo = accountIconUrl(
     row.kind === "claude"
@@ -383,6 +417,45 @@ function ManagedAccountRow({
     <Link to={row.href} className={className}>
       {content}
     </Link>
+  );
+}
+
+const SOURCE_CONTROL_VIA = { gh: "GitHub CLI", app: "Scient for GitHub", token: "Token" } as const;
+
+/** One GitHub login with a chip per use; each chip shows that use's own state. */
+function GitHubIdentityRow({ identity }: { identity: GitHubIdentity }) {
+  const logo = accountIconUrl(["github.com"], identity.login);
+  const via = identity.sourceControl?.via;
+  const connector = identity.connector;
+  return (
+    <div className="flex min-h-15 items-center gap-3 rounded-lg px-4 py-2 text-foreground">
+      {logo ? <AccountLogo src={logo} className="size-10 shrink-0 rounded-[25%]" /> : null}
+      <span className="grid min-w-0 flex-1 gap-1">
+        <span className="truncate text-sm font-medium">{identity.login}</span>
+        <span className="flex flex-wrap gap-1">
+          {identity.sourceControl ? (
+            <Badge variant="success" render={<Link to="/settings/source-control" />}>
+              {via ? `Source Control · ${SOURCE_CONTROL_VIA[via]}` : "Source Control"}
+            </Badge>
+          ) : null}
+          {connector ? (
+            <Badge
+              variant={connector.status === "connected" ? "success" : "warning"}
+              render={
+                <Link
+                  to="/settings/extensions/item/connector/$connectorId"
+                  params={{ connectorId: connector.connectorId }}
+                />
+              }
+            >
+              {connector.status === "connected"
+                ? "Connector"
+                : `Connector · ${connector.status === "needs-auth" ? "Needs sign-in" : "Account missing"}`}
+            </Badge>
+          ) : null}
+        </span>
+      </span>
+    </div>
   );
 }
 
@@ -460,16 +533,25 @@ function SavedPasswordsDialog({
   );
 }
 
-/** One site signed in from several browser profiles: the profiles' pictures, opening to each. */
-function SignInGroupRow({
+/**
+ * One site signed in from several browser profiles: the profiles' pictures, opening to each.
+ * When Main has the site but it doesn't work there, the row says which profile is used instead.
+ * Google refuses signing in from Scient's browser, so Main gets Google only as a copy.
+ */
+export function SignInGroupRow({
+  environmentId,
   accounts,
   profiles,
   onOpen,
+  onImport,
 }: {
+  environmentId: EnvironmentId;
   accounts: ReadonlyArray<AccountSummary>;
   profiles: ReturnType<typeof mergeProfiles>;
   onOpen: () => void;
+  onImport?: () => void;
 }) {
+  const openBrowser = useAccountBrowser(environmentId);
   const first = accounts[0]!;
   const site = "sites" in first.details ? first.details.sites[0] : undefined;
   const iconUrl = accountIconUrl(site ? [site] : [], first.name);
@@ -477,6 +559,34 @@ function SignInGroupRow({
     accounts.map(({ details }) => (details.kind === "website" ? details.profileId : undefined)),
   );
   const signedIn = profiles.filter((profile) => profileIds.has(profile.id));
+  const pageUrl = site ? (site.startsWith("https://") ? site : `https://${site}`) : undefined;
+  const identities = siteIdentities(accounts, pageUrl).map((identity) => identity.profileId);
+  const using =
+    profileIds.has(DEFAULT_BROWSER_PROFILE_ID) && !identities.includes(DEFAULT_BROWSER_PROFILE_ID)
+      ? profiles.find((profile) => profile.id === identities[0])
+      : undefined;
+  const google = site === GOOGLE_SITE;
+  const usingRow = accounts.find(
+    ({ details }) => details.kind === "website" && details.profileId === using?.id,
+  );
+  // Main's Google doesn't work and no profile here holds one that does.
+  const googleMissing =
+    google &&
+    !using &&
+    profileIds.has(DEFAULT_BROWSER_PROFILE_ID) &&
+    !identities.includes(DEFAULT_BROWSER_PROFILE_ID);
+  const copyIntoMain = async (row: AccountSummary, from: string) => {
+    const outcome = await copySignInIntoMain(environmentId, row);
+    if (outcome === "copied" || outcome === "same")
+      toastManager.add({ type: "success", title: `Copied ${from}'s Google sign-in into Main` });
+    else if (outcome === "conflict")
+      toastManager.add({
+        type: "info",
+        title: "Main already holds a Google sign-in",
+        description: "Sign out of Google in Main, then copy again.",
+      });
+    else toastManager.add({ type: "error", title: "Couldn't copy the sign-in into Main" });
+  };
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
@@ -492,15 +602,50 @@ function SignInGroupRow({
             <span className="truncate text-left">{first.name}</span>
             <span className="truncate text-xs text-muted-foreground">
               Browser sign-in ·{" "}
-              {signedIn.length > 2
-                ? `${signedIn.length} profiles`
-                : signedIn.map((profile) => profile.name).join(", ")}
+              {using
+                ? `Using ${using.name}`
+                : signedIn.length > 2
+                  ? `${signedIn.length} profiles`
+                  : signedIn.map((profile) => profile.name).join(", ")}
             </span>
           </span>
         </span>
       }
       control={
         <span className="flex items-center gap-2">
+          {(using && pageUrl) || (googleMissing && onImport) ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`More for ${first.name} sign-ins`}
+                  />
+                }
+              >
+                <EllipsisIcon />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                {googleMissing && onImport ? (
+                  <MenuGroup>
+                    <MenuGroupLabel className="max-w-64">
+                      {GOOGLE_BLOCKED} Sign in in your browser, then import that profile
+                    </MenuGroupLabel>
+                    <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
+                  </MenuGroup>
+                ) : google && using && usingRow ? (
+                  <MenuItem onClick={() => void copyIntoMain(usingRow, using.name)}>
+                    Copy from {using.name}
+                  </MenuItem>
+                ) : using && pageUrl ? (
+                  <MenuItem onClick={() => void openBrowser(pageUrl, using.id)}>
+                    Open in {using.name}
+                  </MenuItem>
+                ) : null}
+              </MenuPopup>
+            </Menu>
+          ) : null}
           <span className="flex -space-x-1.5">
             {signedIn.map((profile) => (
               <ProfilePicture
@@ -509,6 +654,8 @@ function SignInGroupRow({
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
+                id={profile.id}
+                browser={profile.record.source?.browser}
               />
             ))}
           </span>
@@ -524,17 +671,21 @@ function ListRow({
   icon,
   title,
   detail,
+  description,
   onOpen,
 }: {
   icon: ReactNode;
   title: string;
   detail: string;
+  description?: string;
   onOpen: () => void;
 }) {
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
       aria-label={`Show ${title.toLowerCase()}`}
+      description={description}
+      descriptionSize="compact"
       title={
         <span className="flex min-w-0 items-center gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted [&_svg]:size-4 [&_svg]:text-muted-foreground">
@@ -807,14 +958,26 @@ function AccountsContent({
     projectsKnown: true,
     enabled: true,
   });
+  const providerRows = steadyProviderRows(providerRowsCache, environmentId, {
+    connection: Option.getOrNull(usePreparedConnection(environmentId)),
+    canRead: useEnvironmentScope(environmentId, AuthOrchestrationReadScope),
+    permitted: useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId)),
+    providers,
+    inventory: providerInventory.providers,
+  });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
   // Lists that grow on their own (saved passwords, sign-ins recorded while browsing, sign-ins
   // managed elsewhere) are one row each, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
+  const importingPasswords = useImportingPasswords();
   const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
+  const githubRows = githubIdentities(snapshot.managedElsewhere, inventory.data?.connectors ?? []);
   const managedRows = [
-    ...providerManagedAccounts(providerInventory.providers),
-    ...(snapshot.managedElsewhere ??
+    ...providerRows,
+    // GitHub's rows are its identities above.
+    ...(snapshot.managedElsewhere?.flatMap((row) =>
+      row.kind === "custom-model" ? [{ ...row, kind: row.kind }] : [],
+    ) ??
       snapshot.customModelKeys.map((connection) => ({
         kind: "custom-model" as const,
         id: connection.connectionId,
@@ -924,11 +1087,11 @@ function AccountsContent({
               onActivity={setActivity}
             />
           ))}
-        {savedPasswords.length ? (
+        {savedPasswords.length || importingPasswords ? (
           <ListRow
             icon={<KeyRoundIcon />}
             title="Saved passwords"
-            detail={savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
+            detail={`${importingPasswords ? "Importing… " : ""}${savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}`}
             onOpen={() => setDialog("passwords")}
           />
         ) : null}
@@ -937,6 +1100,7 @@ function AccountsContent({
             icon={<GlobeIcon />}
             title="Browser sign-ins"
             detail={browserSignIns.length === 1 ? "1 site" : `${browserSignIns.length} sites`}
+            description="Passwords work in every profile. A sign-in stays in the profile it was made in and is copied into Main, unless Main already has someone else on that site. Then the site's row lets you pick who."
             onOpen={() => setDialog("browser-sign-ins")}
           />
         ) : null}
@@ -966,11 +1130,14 @@ function AccountsContent({
             onOpen={() => setDialog("sign-in-codes")}
           />
         ) : null}
-        {managedRows.length ? (
+        {managedRows.length || githubRows.length ? (
           <ListRow
             icon={<LinkIcon />}
             title="Other sign-ins"
-            detail={managedRows.map((row) => row.name).join(", ")}
+            detail={[
+              ...githubRows.map((row) => row.login),
+              ...managedRows.map((row) => row.name),
+            ].join(", ")}
             onOpen={() => setDialog("other-sign-ins")}
           />
         ) : null}
@@ -981,6 +1148,7 @@ function AccountsContent({
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
+      <RemoteComputers environmentId={environmentId} snapshot={snapshot} canWrite={canWrite} />
       <PasswordStores
         environmentId={environmentId}
         snapshot={snapshot}
@@ -1038,9 +1206,11 @@ function AccountsContent({
             ) : (
               <SignInGroupRow
                 key={row[0]!.accountId}
+                environmentId={environmentId}
                 accounts={row}
                 profiles={profiles}
                 onOpen={() => setSignIns(row)}
+                onImport={() => setDialog("import")}
               />
             ),
           )}
@@ -1079,6 +1249,9 @@ function AccountsContent({
       ) : null}
       {dialog === "other-sign-ins" ? (
         <ListDialog title="Other sign-ins" onClose={() => setDialog(null)}>
+          {githubRows.map((identity) => (
+            <GitHubIdentityRow key={identity.id} identity={identity} />
+          ))}
           {managedRows.map((row) => (
             <ManagedAccountRow
               key={`${row.kind}:${row.id}`}

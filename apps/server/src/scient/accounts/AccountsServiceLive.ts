@@ -1,8 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque record ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
 import {
+  ACCOUNTS_PROTOCOL,
   GOOGLE_SITE,
   ACCOUNT_SECRET_FIELDS,
+  DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
   AccountId,
   AccountSaveInput,
   AccountMatchSignInInput,
@@ -11,6 +14,7 @@ import {
   type AccountActivityEntry,
   type AccountApproval,
   type AccountHandoff,
+  type AccountSignInAttempt,
   type PaperQueueSummary,
   type AccountApprovalDecision,
   type AccountControls,
@@ -18,6 +22,7 @@ import {
   type AccountsSnapshot,
   type AccountSummary,
   type AccountTarget,
+  type BrowserProfileId,
   type BrowserProfileRecord,
   type AccountValueSource,
   type AccountWriteStore,
@@ -26,6 +31,7 @@ import {
   Clock,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Layer,
   Option,
@@ -37,6 +43,7 @@ import {
   Stream,
 } from "effect";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
+import { GitHubSourceControlCredential } from "../extensions/connectors/GitHubSourceControlCredential.ts";
 import {
   AccountsService,
   fail,
@@ -45,6 +52,9 @@ import {
   type AccountAuthorization,
 } from "./AccountsService.ts";
 import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
+import { mainRowFor, withMainSignOutsCleared, withSignedOutSite } from "./mainRecord.ts";
+import { SignInAttempts } from "./agent/signInAttempts.ts";
+import { clientProfile, issueJar, issueUnit, withSendLog, withShared } from "./sendLog.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
   AccountPersistence,
@@ -74,8 +84,11 @@ import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 import { parseTotp } from "./signIn/totp.ts";
+import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 
 const missing = () => fail("not-found", "The account no longer exists.");
+/** Offline, Accounts still opens: GitHub's own answer is left out after this long. */
+const GITHUB_IDENTITY_TIMEOUT = Duration.seconds(3);
 
 /** A removed profile's sign-ins ended with it; a saved password stays, free of the profile. */
 const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId: string) =>
@@ -121,10 +134,12 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const persistence = yield* AccountPersistence;
     const sources = yield* AccountSources;
+    const signInAttempts = yield* SignInAttempts;
     const cliStores = sources.passwordStores;
     const vault = yield* AccountVault;
     const serviceScope = yield* Scope.Scope;
     const sourceControl = yield* Effect.serviceOption(SourceControlProviderRegistry);
+    const githubCredential = yield* Effect.serviceOption(GitHubSourceControlCredential);
     const writes = yield* Semaphore.make(1);
     const events = yield* PubSub.sliding<AccountsSnapshot>({ capacity: 1, replay: 1 });
     let state: AccountsState = emptyState;
@@ -145,6 +160,7 @@ export const layer = Layer.effect(
         target.type === "account" ? target.accountId : target.profileId,
       ]);
     const handoffs = new Map<string, AccountHandoff>();
+    const attempts = new Map<string, AccountSignInAttempt>();
     const paperQueues = new Map<string, PaperQueueSummary>();
     // In memory only, never trimmed while the server runs: a forgotten entry would expose a filled
     // page. The account autofill put into a tab, keyed by thread and tab.
@@ -160,32 +176,67 @@ export const layer = Layer.effect(
       }
     >();
 
+    // Discovery runs the source-control CLIs: too slow to repeat for every snapshot.
+    const githubSignIns = yield* Effect.cachedWithTTL(
+      Effect.gen(function* () {
+        const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
+        const github = providers.find((provider) => provider.kind === "github");
+        const githubAccounts =
+          github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
+        if (
+          github &&
+          githubAccounts.length === 0 &&
+          github.auth.status === "authenticated" &&
+          Option.isSome(github.auth.account)
+        ) {
+          githubAccounts.push({
+            account: github.auth.account.value,
+            host: Option.getOrElse(github.auth.host, () => "github.com"),
+            active: true,
+            authenticated: true,
+          });
+        }
+        return githubAccounts;
+      }),
+      "1 minute",
+    );
     const snapshotNow = Effect.gen(function* () {
       const customModelKeys = yield* sources.customModelKeys.pipe(Effect.orElseSucceed(() => []));
-      const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
-      const github = providers.find((provider) => provider.kind === "github");
-      const githubAccounts =
-        github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
-      if (
-        github &&
-        githubAccounts.length === 0 &&
-        github.auth.status === "authenticated" &&
-        Option.isSome(github.auth.account)
-      ) {
-        githubAccounts.push({
-          account: github.auth.account.value,
-          host: Option.getOrElse(github.auth.host, () => "github.com"),
-          active: true,
-          authenticated: true,
-        });
-      }
+      const githubAccounts = yield* githubSignIns;
+      // Source Control's own choice first, as GitHub names it; then gh's other logins.
+      const effective = Option.isSome(githubCredential)
+        ? yield* githubCredential.value.get("github.com").pipe(
+            Effect.timeoutOption(GITHUB_IDENTITY_TIMEOUT),
+            Effect.map(Option.flatten),
+            Effect.orElseSucceed(() => Option.none()),
+          )
+        : Option.none();
+      const githubRows = [
+        ...Option.toArray(effective).map((credential) => ({
+          host: "github.com",
+          account: credential.login,
+          via: credential.via === "cli" ? ("gh" as const) : credential.via,
+        })),
+        ...githubAccounts
+          .filter(
+            (account) =>
+              !Option.exists(
+                effective,
+                (credential) =>
+                  account.host.toLowerCase() === "github.com" &&
+                  account.account.toLowerCase() === credential.login.toLowerCase(),
+              ),
+          )
+          .map((account) => ({ ...account, via: "gh" as const })),
+      ];
       const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = [
-        ...githubAccounts.map((account) => ({
+        ...githubRows.map((account) => ({
           kind: "github" as const,
-          id: `${account.host}:${account.account}`,
+          id: `${account.host.toLowerCase()}:${account.account.toLowerCase()}`,
           name: account.account,
           detail: account.host,
           href: "/settings/source-control" as const,
+          via: account.via,
         })),
         ...customModelKeys.map((connection) => ({
           kind: "custom-model" as const,
@@ -198,7 +249,7 @@ export const layer = Layer.effect(
       return {
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
-        profiles: state.profiles,
+        profiles: state.profiles.map(clientProfile),
         ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
         ...(state.codeSources ? { codeSources: state.codeSources } : {}),
         ...(state.keyLinks ? { keyLinks: state.keyLinks } : {}),
@@ -209,11 +260,13 @@ export const layer = Layer.effect(
           cli: cliStores.statuses(),
         },
         handoffs: [...handoffs.values()],
+        attempts: [...attempts.values()],
         paperQueues: [...paperQueues.values()],
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
         managedElsewhere,
+        accountsProtocol: ACCOUNTS_PROTOCOL,
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
@@ -244,9 +297,11 @@ export const layer = Layer.effect(
      */
     let batch: { dirty: boolean; removals: Array<string> } | undefined;
     const commit = Effect.fn("AccountsService.commit")(function* (
-      next: AccountsState,
+      proposed: AccountsState,
       usageOnly = false,
     ) {
+      // Every path that records a sign-in passes here, in the same locked write.
+      const next = withSendLog(state, withMainSignOutsCleared(state, proposed));
       // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
       if (!usageOnly) bindingRevision++;
       if (batch) {
@@ -297,6 +352,34 @@ export const layer = Layer.effect(
       target.type === "account"
         ? findAccount(target.accountId)?.summary.controls
         : effectiveProfile(state.profiles, target.profileId);
+    const withProfile = (
+      profileId: BrowserProfileId,
+      change: (record: BrowserProfileRecord) => BrowserProfileRecord,
+      profiles = state.profiles,
+    ) => {
+      const record = change(effectiveProfile(profiles, profileId));
+      return {
+        record,
+        state: {
+          ...state,
+          profiles: [...profiles.filter((profile) => profile.profileId !== profileId), record],
+        },
+      };
+    };
+    /** A revision for the profile, committed on its own inside the caller's lock. */
+    const issue = Effect.fn("AccountsService.issue")(function* (
+      profileId: BrowserProfileId,
+      change: (log: BrowserProfileRecord["send"]) => NonNullable<BrowserProfileRecord["send"]>,
+      profiles = state.profiles,
+    ) {
+      const next = withProfile(
+        profileId,
+        (record) => ({ ...record, send: change(record.send) }),
+        profiles,
+      );
+      yield* commit(next.state, true);
+      return next.record.send?.head ?? 0;
+    });
     const replaceAccount = (next: StoredAccount) => ({
       ...state,
       accounts: [
@@ -548,13 +631,22 @@ export const layer = Layer.effect(
             ? "needs-attention"
             : "ready",
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
-        // A new password, code or key is untried: what the old one met no longer applies.
-        ...(!input.secrets?.password &&
-        !input.secrets?.totp &&
-        !input.secrets?.token &&
-        existing?.summary.signIn
-          ? { signIn: existing.summary.signIn }
-          : {}),
+        // A new password, code or key is untried: what the old one met no longer applies. On a
+        // website that is the user's reset of a held sign-in, so it is written as an action.
+        ...(!input.secrets?.password && !input.secrets?.totp && !input.secrets?.token
+          ? existing?.summary.signIn
+            ? { signIn: existing.summary.signIn }
+            : {}
+          : existing && input.details.kind === "website"
+            ? {
+                signIn: {
+                  state: "unknown" as const,
+                  at: timestamp,
+                  detail: "Password changed",
+                  by: "action" as const,
+                },
+              }
+            : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
         ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
@@ -685,7 +777,12 @@ export const layer = Layer.effect(
         ),
       );
       yield* denyRevoked;
-      return { accountId, ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}) };
+      const account = findAccount(accountId)?.summary;
+      return {
+        accountId,
+        ...(account ? { account } : {}),
+        ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}),
+      };
     });
 
     const service = AccountsService.of({
@@ -706,6 +803,22 @@ export const layer = Layer.effect(
             handoffReveals.delete(handoffId);
             cancelledHandoffs.delete(handoffId);
             yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
+      attempts: Effect.sync(() => [...attempts.values()]),
+      setAttempt: Effect.fn("AccountsService.setAttempt")((attempt) =>
+        locked(
+          Effect.gen(function* () {
+            attempts.set(attempt.attemptId, attempt);
+            yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
+      removeAttempt: Effect.fn("AccountsService.removeAttempt")((attemptId) =>
+        locked(
+          Effect.gen(function* () {
+            if (attempts.delete(attemptId)) yield* publish(false);
           }),
         ).pipe(Effect.ignore),
       ),
@@ -853,6 +966,7 @@ export const layer = Layer.effect(
             for (const key of ["picture", "color", "source"] as const) {
               if (input[key] === null) delete next[key];
             }
+            if (input.madeInScient) next.madeInScient = input.madeInScient;
             yield* commit({
               ...state,
               profiles: [
@@ -882,6 +996,354 @@ export const layer = Layer.effect(
           ),
         ),
       ),
+      mainFilled: Effect.fn("AccountsService.mainFilled")(({ accountId, profileName }) =>
+        locked(
+          Effect.gen(function* () {
+            const source = findAccount(accountId);
+            if (!source) return yield* missing();
+            const { details } = source.summary;
+            // University rows are made in Main by their own sign-in, never by a copy.
+            if (details.kind !== "website" || details.institution) return;
+            const signIn = {
+              state: "unknown" as const,
+              at: yield* now,
+              detail: `Copied from ${profileName}`,
+              by: "look" as const,
+              from: "copy" as const,
+            };
+            const existing = mainRowFor(state.accounts, source.summary);
+            if (!existing) {
+              const { accountId: created } = yield* save({
+                name: source.summary.name,
+                details: {
+                  kind: "website",
+                  sites: details.sites,
+                  ...(details.loginUrl ? { loginUrl: details.loginUrl } : {}),
+                  ...(details.username === undefined ? {} : { username: details.username }),
+                  profileId: DEFAULT_BROWSER_PROFILE_ID,
+                  origin: "browser-session",
+                },
+                secrets: {},
+              });
+              const row = findAccount(created);
+              if (row)
+                yield* commit(replaceAccount({ ...row, summary: { ...row.summary, signIn } }));
+              yield* issue(DEFAULT_BROWSER_PROFILE_ID, (log) =>
+                issueUnit(log, details.sites, "copy"),
+              );
+              return;
+            }
+            const main = existing.summary;
+            if (main.details.kind !== "website") return;
+            const username = main.details.username ?? details.username;
+            yield* commit(
+              replaceAccount({
+                ...existing,
+                summary: {
+                  ...main,
+                  details: {
+                    ...main.details,
+                    sites: [...new Set([...main.details.sites, ...details.sites])].slice(0, 16),
+                    ...(username === undefined ? {} : { username }),
+                    // A row with nothing to type is now the copied session; a saved password stays fillable.
+                    ...(Object.keys(main.secrets).length === 0
+                      ? { origin: "browser-session" as const }
+                      : {}),
+                  },
+                  // A copy says nothing new about a Main session already seen working.
+                  ...(main.signIn?.state === "signed-in" ? {} : { signIn }),
+                  updatedAt: signIn.at,
+                },
+              }),
+            );
+            yield* issue(DEFAULT_BROWSER_PROFILE_ID, (log) =>
+              issueUnit(log, details.sites, "copy"),
+            );
+          }),
+        ),
+      ),
+      mainBackfilled: Effect.fn("AccountsService.mainBackfilled")((profileIds) =>
+        locked(
+          Effect.suspend(() => {
+            const main = effectiveProfile(state.profiles, DEFAULT_BROWSER_PROFILE_ID);
+            return commit(
+              {
+                ...state,
+                profiles: [
+                  ...state.profiles.filter((profile) => profile.profileId !== main.profileId),
+                  {
+                    ...main,
+                    main: {
+                      ...main.main,
+                      backfilled: [...new Set([...(main.main?.backfilled ?? []), ...profileIds])],
+                    },
+                  },
+                ],
+              },
+              true,
+            );
+          }),
+        ),
+      ),
+      profileSignedOut: Effect.fn("AccountsService.profileSignedOut")((profileId, site) =>
+        locked(
+          issue(
+            profileId,
+            (log) => issueUnit(log, [site], "delete"),
+            profileId === DEFAULT_BROWSER_PROFILE_ID
+              ? withSignedOutSite(state.profiles, site)
+              : state.profiles,
+          ),
+        ),
+      ),
+      mainWithdrawn: Effect.fn("AccountsService.mainWithdrawn")((sites) =>
+        locked(
+          issue(DEFAULT_BROWSER_PROFILE_ID, (log) =>
+            issueUnit(log, sites, "delete", { copyOnly: true }),
+          ),
+        ),
+      ),
+      profileResend: Effect.fn("AccountsService.profileResend")((profileId) =>
+        locked(issue(profileId, issueJar)),
+      ),
+      profileSendLog: Effect.fn("AccountsService.profileSendLog")((profileId) =>
+        locked(
+          Effect.sync(
+            () => effectiveProfile(state.profiles, profileId).send ?? { head: 0, units: [] },
+          ),
+        ),
+      ),
+      profileShared: Effect.fn("AccountsService.profileShared")((profileId, share) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              withProfile(profileId, (record) => withShared(record, share.environmentId, share))
+                .state,
+              true,
+            ),
+          ),
+        ),
+      ),
+      profilesUnshared: Effect.fn("AccountsService.profilesUnshared")((environmentId, forgetKey) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                ...(state.senderKeys && forgetKey
+                  ? {
+                      senderKeys: state.senderKeys.filter(
+                        (entry) => entry.environmentId !== environmentId,
+                      ),
+                    }
+                  : {}),
+                profiles: state.profiles.map((profile) =>
+                  profile.sharedWith?.some((entry) => entry.environmentId === environmentId)
+                    ? withShared(profile, environmentId, undefined)
+                    : profile,
+                ),
+              },
+              true,
+            ),
+          ),
+        ),
+      ),
+      sessionsSeen: Effect.fn("AccountsService.sessionsSeen")((input) =>
+        locked(
+          batched(
+            Effect.gen(function* () {
+              const created: Array<AccountId> = [];
+              if (input.profileId === INCOGNITO_BROWSER_PROFILE_ID) return { created };
+              const sessionRow = (site: string) =>
+                state.accounts.find(
+                  ({ summary }) =>
+                    summary.details.kind === "website" &&
+                    summary.details.profileId === input.profileId &&
+                    summary.secrets.password === undefined &&
+                    !universityDetails(summary.details) &&
+                    !isGoogleSessionRow(summary) &&
+                    siteMatches(summary.details.sites, `https://${site}`),
+                );
+              for (const { site, how, from } of input.sessions) {
+                // Google's sessions are its own rows, one per address (`googleSessionsSeen`).
+                if (site === GOOGLE_SITE || site.endsWith(`.${GOOGLE_SITE}`)) continue;
+                const at = yield* now;
+                const row = sessionRow(site);
+                if (row) {
+                  if (how === "imported") continue;
+                  yield* commit(
+                    replaceAccount({
+                      ...row,
+                      summary: withSignIn(
+                        row.summary,
+                        { state: "signed-in", at },
+                        yield* Clock.currentTimeMillis,
+                        "attempt",
+                      ),
+                    }),
+                  );
+                  continue;
+                }
+                const { accountId } = yield* save({
+                  name: site,
+                  details: {
+                    kind: "website",
+                    sites: [site],
+                    profileId: input.profileId,
+                    origin: "browser-session",
+                  },
+                  secrets: {},
+                });
+                const saved = findAccount(accountId);
+                if (!saved) continue;
+                const signIn =
+                  how === "imported"
+                    ? {
+                        state: "unknown" as const,
+                        at,
+                        detail: `Imported from ${from ?? "another browser"}`,
+                        by: "look" as const,
+                        from: "import" as const,
+                      }
+                    : { state: "signed-in" as const, at, by: "action" as const };
+                yield* commit(replaceAccount({ ...saved, summary: { ...saved.summary, signIn } }));
+                created.push(accountId);
+              }
+              return { created };
+            }),
+          ),
+        ),
+      ),
+      keepTyped: Effect.fn("AccountsService.keepTyped")((accountId, typed) =>
+        locked(
+          Effect.gen(function* () {
+            const row = findAccount(accountId);
+            if (!row || row.summary.details.kind !== "website") return "dropped" as const;
+            const { summary } = row;
+            const details = summary.details;
+            if (summary.controls.access === "off") return "dropped" as const;
+            const target = { type: "account", accountId } as const;
+            const linked = summary.secrets.password?.source.type;
+            if (linked !== undefined && linked !== "scient") {
+              yield* appendActivity({
+                target,
+                action: "sign-in",
+                decision: "allowed",
+                keptTyped: "linked",
+              });
+              return "linked" as const;
+            }
+            yield* save({
+              accountId,
+              name: summary.name,
+              details:
+                details.kind === "website" && details.username === undefined && typed.username
+                  ? { ...details, username: typed.username }
+                  : details,
+              secrets: { password: { type: "scient", value: Redacted.value(typed.password) } },
+            });
+            // The sign-in it came from stands. The password is not verified: nothing showed it was
+            // the one that worked, so only a later sign-in where Scient types it verifies it.
+            const kept = findAccount(accountId);
+            if (kept) {
+              const { signIn: _, ...rest } = kept.summary;
+              yield* commit(
+                replaceAccount({
+                  ...kept,
+                  summary: { ...rest, ...(summary.signIn ? { signIn: summary.signIn } : {}) },
+                }),
+              );
+            }
+            yield* appendActivity({
+              target,
+              action: "sign-in",
+              decision: "allowed",
+              keptTyped: "kept",
+            });
+            return "kept" as const;
+          }),
+        ),
+      ),
+      signInAttempts: Effect.succeed(signInAttempts),
+      // Nothing stored means no senders: answered without opening the vault or reading Accounts,
+      // so a server nobody has used yet starts without touching the keychain or Source Control.
+      remoteSenders: Effect.suspend(() =>
+        initialized
+          ? locked(Effect.sync(() => state.senders ?? []))
+          : persistence
+              .exists("accounts-state")
+              .pipe(
+                Effect.flatMap((stored) =>
+                  stored ? locked(Effect.sync(() => state.senders ?? [])) : Effect.succeed([]),
+                ),
+              ),
+      ),
+      setRemoteSender: Effect.fn("AccountsService.setRemoteSender")((source, sender) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                senders: [
+                  ...(state.senders ?? []).filter((entry) => entry.source !== source),
+                  ...(sender ? [sender] : []),
+                ],
+              },
+              true,
+            ),
+          ),
+        ),
+      ),
+      senderKey: Effect.fn("AccountsService.senderKey")((environmentId) =>
+        locked(
+          Effect.sync(
+            () => state.senderKeys?.find((entry) => entry.environmentId === environmentId)?.key,
+          ),
+        ),
+      ),
+      keepSenderKey: Effect.fn("AccountsService.keepSenderKey")((environmentId, key) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                senderKeys: [
+                  ...(state.senderKeys ?? []).filter(
+                    (entry) => entry.environmentId !== environmentId,
+                  ),
+                  { environmentId, key },
+                ],
+              },
+              true,
+            ),
+          ),
+        ),
+      ),
+      receivedProfiles: locked(
+        Effect.sync(() => state.profiles.filter((profile) => profile.received?.length)),
+      ),
+      updateReceived: Effect.fn("AccountsService.updateReceived")((profileId, change) =>
+        locked(
+          Effect.gen(function* () {
+            const before = effectiveProfile(state.profiles, profileId);
+            const { received, controls } = change(before);
+            const same =
+              received === before.received || (!before.received && received.length === 0);
+            if (controls === undefined && same) return before;
+            const next = withProfile(profileId, (record) => {
+              const { received: _, ...rest } = record;
+              return {
+                ...rest,
+                ...controls,
+                ...(controls ? { allowedProjects: [] } : {}),
+                ...(received.length ? { received } : {}),
+              };
+            });
+            yield* commit(next.state, controls === undefined);
+            return before;
+          }),
+        ),
+      ),
       googleSessionsSeen: Effect.fn("AccountsService.googleSessionsSeen")((input) =>
         locked(
           batched(
@@ -905,6 +1367,7 @@ export const layer = Layer.effect(
                       loginUrl: "https://accounts.google.com/",
                       username: email,
                       profileId: input.profileId,
+                      origin: "browser-session",
                     },
                     secrets: {},
                   });
@@ -916,13 +1379,31 @@ export const layer = Layer.effect(
                 );
                 const seen = valid ? ("signed-in" as const) : ("signed-out" as const);
                 const last = account.summary.signIn;
-                if (last?.state === seen && nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS)
+                // Google lists this address in the profile, so the row is that session.
+                const { details } = account.summary;
+                const recorded =
+                  details.kind === "website" &&
+                  details.origin === undefined &&
+                  input.sessions.some((session) => session.email === address(account))
+                    ? { ...details, origin: "browser-session" as const }
+                    : details;
+                if (
+                  recorded === details &&
+                  last?.state === seen &&
+                  nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS
+                )
                   continue;
                 // Google's own answer for a password-free row: nothing to refuse or limit here.
+                // A new account, or one Google shows signed in again, is an action; the rest are looks.
+                const by = seen === "signed-in" && last?.state !== "signed-in" ? "action" : "look";
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: { ...account.summary, signIn: { state: seen, at } },
+                    summary: {
+                      ...account.summary,
+                      details: recorded,
+                      signIn: { state: seen, at, by },
+                    },
                   }),
                   true,
                 );
@@ -1425,13 +1906,26 @@ export const layer = Layer.effect(
       resolveSecrets: Effect.fn("AccountsService.resolveSecretsInput")((accountId, fields) =>
         locked(resolve(accountId, fields)),
       ),
-      recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, check) =>
+      recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, { username, ...check }) =>
         locked(
           Effect.gen(function* () {
             const account = findAccount(accountId);
             if (!account) return;
+            const { details } = account.summary;
+            // A page naming who is signed in names a session row that had no one yet.
+            const named =
+              username !== undefined &&
+              check.state === "signed-in" &&
+              details.kind === "website" &&
+              details.username === undefined &&
+              account.summary.secrets.password === undefined
+                ? {
+                    ...account.summary,
+                    details: { ...details, username, origin: "browser-session" as const },
+                  }
+                : account.summary;
             const summary = withSignIn(
-              account.summary,
+              named,
               { ...check, at: yield* now },
               yield* Clock.currentTimeMillis,
               "look",
@@ -1442,7 +1936,7 @@ export const layer = Layer.effect(
         ),
       ),
       recordUse: Effect.fn("AccountsService.recordUse")(
-        ({ savedPasswordUsed, ...entry }, message) =>
+        ({ savedPasswordUsed, ...entry }, message, wait) =>
           locked(
             Effect.gen(function* () {
               yield* appendActivity({ ...entry, decision: "allowed" });
@@ -1477,7 +1971,11 @@ export const layer = Layer.effect(
                 }
               }
             }),
-          ).pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid),
+          ).pipe(
+            Effect.ignore,
+            (record) => (wait ? record : record.pipe(Effect.forkIn(serviceScope))),
+            Effect.asVoid,
+          ),
       ),
     });
     return service;

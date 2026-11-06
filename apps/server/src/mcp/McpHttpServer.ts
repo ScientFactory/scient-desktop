@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import { ScientAccountsToolkit } from "../scient/accounts/agent/tools.ts";
 import { AccountSessionFilesLive } from "../scient/accounts/agent/sessionFiles.ts";
 import { ScientAccountsToolkitHandlersLive } from "../scient/accounts/agent/handlers.ts";
+import { AccountsError } from "@t3tools/contracts";
 // SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -509,6 +510,9 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
   ) as unknown as Toolkit.Toolkit<Tools>;
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+// SCIENT-FORK:START — Scient Accounts: a refusal's message reaches the agent.
+const isAccountsRefusal = Schema.is(AccountsError);
+// SCIENT-FORK:END
 
 const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   cause: Cause.Cause<E>,
@@ -526,7 +530,12 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
       ? firstFailure._tag
       : "PreviewSnapshotError";
   // Preview errors contain server-authored recovery guidance, never page output.
-  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
+  const message =
+    isPreviewAutomationError(firstFailure) ||
+    // SCIENT-FORK: an Accounts refusal is server-written guidance too, such as a sign-in under way.
+    isAccountsRefusal(firstFailure)
+      ? firstFailure.message
+      : undefined;
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {

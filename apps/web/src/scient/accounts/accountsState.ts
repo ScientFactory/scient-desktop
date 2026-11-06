@@ -5,9 +5,10 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import { Atom, type AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 import { connectionAtomRuntime } from "~/connection/runtime";
+import type { SavedAccount } from "./accountsView";
 
 const changes = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
   label: "accounts:changes",
@@ -34,6 +35,11 @@ const lane = {
   ) => Effect.sync(() => registry.refresh(snapshot({ environmentId, input: {} }))),
 } as const;
 
+/** Accounts saved here since the snapshot shown was read, each with the snapshot it was saved over. */
+const savedAccounts = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make<ReadonlyArray<SavedAccount>>([]).pipe(Atom.keepAlive),
+);
+
 export const accountsState = {
   snapshot,
   passwordStore: createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -52,10 +58,25 @@ export const accountsState = {
     staleTimeMs: 0,
     idleTtlMs: 0,
   }),
+  savedAccounts,
   save: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:save",
     tag: WS_METHODS.accountsSave,
     ...lane,
+    // Shown at once, so a form closes onto the new counts; the refresh then replaces it.
+    onSuccess: ({ environmentId }, registry, { account }) =>
+      Effect.sync(() => {
+        const current = snapshot({ environmentId, input: {} });
+        if (account) {
+          const shown = AsyncResult.getOrElse(registry.get(current), () => null);
+          const saved = savedAccounts(environmentId);
+          registry.set(saved, [
+            ...registry.get(saved).filter((entry) => entry.before === shown),
+            { before: shown, account },
+          ]);
+        }
+        registry.refresh(current);
+      }),
   }),
   remove: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:remove",
@@ -80,6 +101,15 @@ export const accountsState = {
     label: "accounts:googleSessionsSeen",
     tag: WS_METHODS.accountsGoogleSessionsSeen,
     ...lane,
+  }),
+  sessionsSeen: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsSeen",
+    tag: WS_METHODS.accountsSessionsSeen,
+    ...lane,
+  }),
+  keepTyped: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:keepTyped",
+    tag: WS_METHODS.accountsKeepTyped,
   }),
   sessionEnded: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:sessionEnded",
@@ -107,6 +137,11 @@ export const accountsState = {
     label: "accounts:continuePapers",
     tag: WS_METHODS.accountsPapersContinue,
   }),
+  signInAsPerson: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:signInAsPerson",
+    tag: WS_METHODS.accountsSignInAsPerson,
+  }),
+  /** The same sign-in under its old name, for a server older than `ACCOUNTS_PROTOCOL`. */
   universitySignIn: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:universitySignIn",
     tag: WS_METHODS.accountsUniversitySignIn,
@@ -162,6 +197,85 @@ export const accountsState = {
     label: "accounts:chooseProfile",
     tag: WS_METHODS.accountsProfileChoose,
     ...lane,
+  }),
+  mainFilled: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainFilled",
+    tag: WS_METHODS.accountsMainFilled,
+    ...lane,
+  }),
+  profileSignedOut: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileSignedOut",
+    tag: WS_METHODS.accountsProfileSignedOut,
+    ...lane,
+  }),
+  mainWithdrawn: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainWithdrawn",
+    tag: WS_METHODS.accountsMainWithdrawn,
+    ...lane,
+  }),
+  profileResend: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileResend",
+    tag: WS_METHODS.accountsProfileResend,
+    ...lane,
+  }),
+  profileSendLog: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileSendLog",
+    tag: WS_METHODS.accountsProfileSendLog,
+  }),
+  profileShared: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profileShared",
+    tag: WS_METHODS.accountsProfileShared,
+  }),
+  profilesUnshared: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:profilesUnshared",
+    tag: WS_METHODS.accountsProfilesUnshared,
+  }),
+  sessionsBind: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsBind",
+    tag: WS_METHODS.accountsSessionsBind,
+  }),
+  sessionsForget: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsForget",
+    tag: WS_METHODS.accountsSessionsForget,
+    ...lane,
+  }),
+  senderKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:senderKey",
+    tag: WS_METHODS.accountsSenderKey,
+  }),
+  keepSenderKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:keepSenderKey",
+    tag: WS_METHODS.accountsKeepSenderKey,
+  }),
+  sessionsReceive: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsReceive",
+    tag: WS_METHODS.accountsSessionsReceive,
+  }),
+  sessionsApplied: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsApplied",
+    tag: WS_METHODS.accountsSessionsApplied,
+  }),
+  sessionsWithdraw: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsWithdraw",
+    tag: WS_METHODS.accountsSessionsWithdraw,
+  }),
+  sessionsList: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsList",
+    tag: WS_METHODS.accountsSessionsList,
+  }),
+  sessionsSignOutLocal: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsSignOutLocal",
+    tag: WS_METHODS.accountsSessionsSignOutLocal,
+    ...lane,
+  }),
+  mainBackfilled: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainBackfilled",
+    tag: WS_METHODS.accountsMainBackfilled,
+    ...lane,
+  }),
+  sessionsQualify: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionsQualify",
+    tag: WS_METHODS.accountsSessionsQualify,
   }),
   showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:showHandoff",

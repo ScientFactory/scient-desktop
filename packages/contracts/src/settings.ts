@@ -477,6 +477,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // SCIENT-FORK:START — keep the computer awake while this computer's threads work.
   keepComputerAwake: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.
+  signInSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
+  mainDefaultNotice: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // SCIENT-FORK:END
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1996,6 +2002,12 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
   // SCIENT-FORK:START — keep the computer awake while this computer's threads work.
   keepComputerAwake: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers only once turned on in Labs.
+  signInSharingEnabled: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
+  mainDefaultNotice: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

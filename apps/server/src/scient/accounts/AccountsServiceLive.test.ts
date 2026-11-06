@@ -50,11 +50,12 @@ describe("AccountsService persistence", () => {
       expect(
         (yield* rows).map(({ details, signIn }) => [
           details.kind === "website" ? details.username : undefined,
+          details.kind === "website" ? details.origin : undefined,
           signIn?.state,
         ]),
       ).toEqual([
-        ["a@example.com", "signed-in"],
-        ["b@example.com", "signed-out"],
+        ["a@example.com", "browser-session", "signed-in"],
+        ["b@example.com", "browser-session", "signed-out"],
       ]);
       // Seen again, with the first signed out and the second gone from Google's list.
       yield* service.googleSessionsSeen({
@@ -74,6 +75,33 @@ describe("AccountsService persistence", () => {
         (yield* service.snapshot).accounts.find(({ accountId }) => accountId === saved.accountId)
           ?.signIn,
       ).toBeUndefined();
+    }),
+  );
+
+  it.effect("keeps a Google username saved by hand unmarked across a restart", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { service } = yield* makeHarness({ storage });
+      for (const profileId of [undefined, BrowserProfileId.make("profile-work")])
+        yield* service.save({
+          name: "Google",
+          details: {
+            kind: "website",
+            sites: ["google.com"],
+            username: "a@example.com",
+            ...(profileId ? { profileId } : {}),
+          },
+          secrets: {},
+        });
+      const restarted = yield* makeHarness({ storage });
+      expect(
+        (yield* restarted.service.snapshot).accounts.map(({ details }) =>
+          details.kind === "website" ? [details.profileId, details.origin] : [],
+        ),
+      ).toEqual([
+        [undefined, undefined],
+        ["profile-work", undefined],
+      ]);
     }),
   );
 
@@ -292,6 +320,285 @@ describe("AccountsService profiles and evidence", () => {
       expect(accounts[0]?.details.kind === "website" && accounts[0].details.profileId).toBe(
         undefined,
       );
+    }),
+  );
+});
+
+describe("AccountsService and Main", () => {
+  const row = (profileId: string, sites: string[], username?: string) => ({
+    name: sites[0]!,
+    details: {
+      kind: "website" as const,
+      sites,
+      profileId: BrowserProfileId.make(profileId),
+      ...(username === undefined ? {} : { username }),
+    },
+    secrets: {},
+  });
+
+  it.effect("reads rows stored before `from` as imported or copied, keeping the rest", () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { service, vault, blobs } = yield* makeHarness({ storage });
+      yield* service.sessionsSeen({
+        profileId: BrowserProfileId.make("profile-work"),
+        sessions: [{ site: "github.com", how: "imported", from: "Chrome · Person" }],
+      });
+      const work = yield* service.save(row("profile-work", ["overleaf.com"]));
+      yield* service.mainFilled({ accountId: work.accountId, profileName: "Work" });
+      // The state as the earlier build stored it: the origin only in the detail's first words.
+      const name = "accounts-state";
+      const stored = JSON.parse(
+        new TextDecoder().decode(Redacted.value(yield* vault.decrypt(name, blobs.get(name)!))),
+      ) as { accounts: Array<{ summary: { signIn?: Record<string, unknown> } }> };
+      for (const { summary } of stored.accounts) delete summary.signIn?.["from"];
+      blobs.set(
+        name,
+        yield* vault.encrypt(name, Redacted.make(new TextEncoder().encode(JSON.stringify(stored)))),
+      );
+      const restarted = yield* makeHarness({ storage });
+      expect(
+        (yield* restarted.service.snapshot).accounts.flatMap(({ details, signIn }) =>
+          signIn && details.kind === "website"
+            ? [[details.sites, signIn.state, signIn.by, signIn.detail, signIn.from]]
+            : [],
+        ),
+      ).toEqual([
+        [["github.com"], "unknown", "look", "Imported from Chrome · Person", "import"],
+        [["overleaf.com"], "unknown", "look", "Copied from Work", "copy"],
+      ]);
+    }),
+  );
+
+  it.effect("writes every action with a new date, and a repeated look once an hour", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const { accountId } = yield* service.save(row("profile-work", ["github.com"]));
+      const signIn = Effect.map(
+        service.snapshot,
+        ({ accounts }) => accounts.find((account) => account.accountId === accountId)?.signIn,
+      );
+      const used = Effect.gen(function* () {
+        const before = (yield* signIn)?.at;
+        const written = yield* service.changes.pipe(
+          Stream.filter(({ accounts }) =>
+            accounts.some(
+              (account) => account.accountId === accountId && account.signIn?.at !== before,
+            ),
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+        yield* service.recordUse({
+          target: { type: "account", accountId },
+          action: "sign-in",
+          outcome: "ok",
+          signInOutcome: "signed-in",
+        });
+        yield* Fiber.join(written);
+      });
+      yield* service.recordCheck(accountId, { state: "signed-in" });
+      const look = yield* signIn;
+      expect(look?.by).toBe("look");
+      yield* TestClock.adjust("10 minutes");
+      yield* service.recordCheck(accountId, { state: "signed-in" });
+      expect(yield* signIn).toEqual(look);
+      yield* used;
+      const action = yield* signIn;
+      expect(action).toMatchObject({ state: "signed-in", by: "action" });
+      yield* TestClock.adjust("1 minute");
+      yield* used;
+      expect((yield* signIn)?.at).not.toBe(action?.at);
+      // A changed state is always written; the same one again after the hour.
+      yield* TestClock.adjust("20 minutes");
+      yield* service.recordCheck(accountId, { state: "signed-out" });
+      expect(yield* signIn).toMatchObject({ state: "signed-out", by: "look" });
+      yield* TestClock.adjust("61 minutes");
+      const dated = (yield* signIn)?.at;
+      yield* service.recordCheck(accountId, { state: "signed-out" });
+      expect((yield* signIn)?.at).not.toBe(dated);
+    }),
+  );
+
+  it.effect("keeps one session row per site in a profile, from imports and sign-ins seen", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const work = BrowserProfileId.make("profile-work");
+      // A saved password and a university on the same sites never take a session.
+      yield* service.save({
+        ...website(),
+        details: { ...website().details, sites: ["github.com"], profileId: work },
+      });
+      yield* service.save({
+        ...row("profile-work", ["huji.ac.il"]),
+        details: {
+          ...row("profile-work", ["huji.ac.il"]).details,
+          institution: { name: "HUJI", entityId: "https://idp.huji.ac.il", domain: "huji.ac.il" },
+        },
+      });
+      const sessions = Effect.map(service.snapshot, ({ accounts }) =>
+        accounts
+          .filter(
+            (account) =>
+              account.details.kind === "website" && account.details.origin === "browser-session",
+          )
+          .map((account) => [
+            account.details.kind === "website" ? account.details.sites : [],
+            account.signIn?.state,
+            account.signIn?.by,
+            account.signIn?.from,
+          ]),
+      );
+      const imported = yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [
+          { site: "github.com", how: "imported", from: "Chrome · Person" },
+          { site: "huji.ac.il", how: "imported", from: "Chrome · Person" },
+          { site: "google.com", how: "imported", from: "Chrome · Person" },
+        ],
+      });
+      expect(imported.created).toHaveLength(2);
+      const again = yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [{ site: "github.com", how: "imported", from: "Chrome · Other" }],
+      });
+      expect(again.created).toEqual([]);
+      expect(yield* sessions).toEqual([
+        [["github.com"], "unknown", "look", "import"],
+        [["huji.ac.il"], "unknown", "look", "import"],
+      ]);
+      // A sign-in seen there confirms the row; a later import never takes it back to unknown.
+      yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [{ site: "github.com", how: "signed-in" }],
+      });
+      yield* service.sessionsSeen({
+        profileId: work,
+        sessions: [{ site: "github.com", how: "imported", from: "Chrome · Person" }],
+      });
+      expect(yield* sessions).toContainEqual([["github.com"], "signed-in", "action", undefined]);
+      // In another profile, a sign-in seen makes its own row.
+      const home = yield* service.sessionsSeen({
+        profileId: BrowserProfileId.make("profile-home"),
+        sessions: [{ site: "github.com", how: "signed-in" }],
+      });
+      expect(home.created).toHaveLength(1);
+      expect(yield* sessions).toHaveLength(3);
+    }),
+  );
+
+  it.effect("keeps a typed password once, never on a removed, Off or linked row", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const typed = { username: "person", password: Redacted.make("typed-password") };
+      const session = (yield* service.save(row("profile-work", ["example.com"]))).accountId;
+      yield* service.recordUse({
+        target: { type: "account", accountId: session },
+        action: "sign-in",
+        outcome: "ok",
+        signInOutcome: "signed-in",
+      });
+      yield* TestClock.adjust("1 second");
+      expect(yield* service.keepTyped(session, typed)).toBe("kept");
+      const kept = (yield* service.snapshot).accounts.find((row) => row.accountId === session)!;
+      expect(kept.details).toMatchObject({ username: "person" });
+      // The sign-in it came from stands; nothing yet shows the kept password is the one that worked.
+      expect(kept.signIn).toMatchObject({ state: "signed-in", by: "action" });
+      expect(kept.secrets.password?.verifiedAt).toBeUndefined();
+      expect(
+        secretEquals(
+          (yield* service.resolveSecrets(session, ["password"])).password,
+          "typed-password",
+        ),
+      ).toBe(true);
+      expect((yield* service.activity({}))[0]).toMatchObject({ keptTyped: "kept" });
+      // Linked: left in its store, with a line saying so.
+      const linked = (yield* service.save({
+        ...website(),
+        secrets: { password: { type: "keychain", service: "synthetic", account: "synthetic" } },
+      })).accountId;
+      expect(yield* service.keepTyped(linked, typed)).toBe("linked");
+      expect(
+        (yield* service.snapshot).accounts.find((row) => row.accountId === linked)?.secrets.password
+          ?.source,
+      ).toMatchObject({ type: "keychain" });
+      // Off, or removed meanwhile: nothing written, nothing made.
+      yield* service.setControls({
+        target: { type: "account", accountId: session },
+        access: "off",
+      });
+      expect(
+        yield* service.keepTyped(session, { ...typed, password: Redacted.make("other") }),
+      ).toBe("dropped");
+      yield* service.remove(session);
+      expect(yield* service.keepTyped(session, typed)).toBe("dropped");
+      expect((yield* service.snapshot).accounts.map((row) => row.accountId)).toEqual([linked]);
+    }),
+  );
+
+  it.effect("verifies a kept password only when Scient signs in with it", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const kept = (outcome: "signed-in" | "password-rejected") =>
+        Effect.gen(function* () {
+          const { accountId } = yield* service.save(row("profile-work", [`${outcome}.example`]));
+          // What a silent sign-in elsewhere after a wrong password can leave: kept, unverified.
+          yield* service.keepTyped(accountId, {
+            username: "person",
+            password: Redacted.make("typed-password"),
+          });
+          const read = Effect.map(service.snapshot, ({ accounts }) =>
+            accounts.find((account) => account.accountId === accountId)!,
+          );
+          expect((yield* read).secrets.password?.verifiedAt).toBeUndefined();
+          // The next sign-in, where Scient's engine typed it.
+          const settled = yield* service.changes.pipe(
+            Stream.filter(({ accounts }) =>
+              accounts.some(
+                (account) => account.accountId === accountId && account.signIn?.state === outcome,
+              ),
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* service.recordUse({
+            target: { type: "account", accountId },
+            action: "sign-in",
+            outcome: outcome === "signed-in" ? "ok" : "error",
+            signInOutcome: outcome,
+            savedPasswordUsed: true,
+          });
+          yield* Fiber.join(settled);
+          return yield* read;
+        });
+      expect((yield* kept("signed-in")).secrets.password?.verifiedAt).toBeDefined();
+      // A wrong one is refused once: the row says so, holds, and the password stays unverified.
+      const refused = yield* kept("password-rejected");
+      expect(refused.signIn?.state).toBe("password-rejected");
+      expect(refused.secrets.password?.verifiedAt).toBeUndefined();
+    }),
+  );
+
+  it.effect("names a session row from the page, and never a row with a password", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const session = (yield* service.save(row("profile-work", ["github.com"]))).accountId;
+      const saved = (yield* service.save(website())).accountId;
+      for (const accountId of [session, saved])
+        yield* service.recordCheck(accountId, { state: "signed-in", username: "octo" });
+      const details = Effect.map(service.snapshot, ({ accounts }) =>
+        accounts.map((account) =>
+          account.details.kind === "website"
+            ? [account.details.username, account.details.origin]
+            : [],
+        ),
+      );
+      expect(yield* details).toEqual([
+        ["octo", "browser-session"],
+        ["synthetic-user", undefined],
+      ]);
     }),
   );
 });
@@ -640,7 +947,12 @@ describe("AccountsService grants and approvals", () => {
         yield* service.save({ ...input, accountId, secrets: {} });
         expect((yield* service.snapshot).accounts[0]?.signIn?.state).toBe("code-rejected");
         yield* service.save({ ...input, accountId });
-        expect((yield* service.snapshot).accounts[0]?.signIn).toBeUndefined();
+        // The user's reset of a held sign-in: an action newer than the refusal.
+        expect((yield* service.snapshot).accounts[0]?.signIn).toMatchObject({
+          state: "unknown",
+          detail: "Password changed",
+          by: "action",
+        });
         // A sign-in Scient didn't type the password for says nothing about the new one.
         const seen = yield* service.changes.pipe(
           Stream.filter((snapshot) => snapshot.accounts[0]?.signIn?.state === "signed-in"),

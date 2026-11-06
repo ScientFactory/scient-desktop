@@ -23,7 +23,8 @@
     "packages/shared/src/scientBrowserProfileChoice.ts",
     "packages/shared/src/scientSignInPage.ts",
     "apps/mobile/src/state/accounts.ts",
-    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx"
+    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx",
+    "apps/server/src/preview/ServerBrowserContexts.scient.test.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -113,6 +114,11 @@
       "path": "apps/web/src/components/settings/IntegrationsSettings.tsx",
       "anchor": "Scient Accounts: reuse the browser import and registration transaction.",
       "purpose": "Reuse browser import transactions and link to Accounts while preserving the older-server profile panel."
+    },
+    {
+      "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the sign-ins copied there go first, if it answers in 5 s.",
+      "purpose": "Removing a computer first deletes the sign-ins this desktop copied there, waiting at most 5 s."
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
@@ -220,6 +226,16 @@
       "purpose": "Execute account operations over server and desktop CDP sessions."
     },
     {
+      "path": "apps/server/src/preview/ServerBrowserContexts.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a tab waits for a cookie copy into its profile.",
+      "purpose": "Hook ProfileContextLeases into contextFor and the clear path so tabs and clears wait for a cookie copy's hold; keep profile directories private."
+    },
+    {
+      "path": "apps/server/src/preview/ServerBrowserContexts.test.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: profile directories are made private.",
+      "purpose": "Mock the private-directory chmod that every persistent context launch now makes."
+    },
+    {
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
       "anchor": "Scient Accounts: provider sessions receive account tools.",
       "purpose": "Expect the account capability in provider session grants."
@@ -233,6 +249,21 @@
       "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
       "anchor": "coveredBySite",
       "purpose": "Leave working sign-ins alone when a browser refresh copies cookies."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserImport/ChromiumCookies.ts",
+      "anchor": "Scient Accounts: keep partitioned cookies with their stored ancestor bit.",
+      "purpose": "Import Chrome's partitioned cookies with their stored cross-site-ancestor bit, and skip them without it."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserImport/CookieDatabase.ts",
+      "anchor": "Scient Accounts: keep partitioned cookies with their stored ancestor bit.",
+      "purpose": "Carry an imported cookie's partition key."
+    },
+    {
+      "path": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+      "anchor": "<ProjectBrowserProfile",
+      "purpose": "Set the project's browser profile in Project settings."
     },
     {
       "path": "packages/contracts/src/browserImport.ts",
@@ -313,6 +344,11 @@
       "path": "apps/server/src/mcp/toolkits/previewControls/tools.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a hidden profile's tab is refused with a safe denial.",
       "purpose": "Let the preview control tools return an Accounts denial for a hidden profile's tab."
+    },
+    {
+      "path": "packages/contracts/src/settings.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: sign-ins go to other computers unless turned off in Accounts.",
+      "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers."
     }
   ],
   "scientMounts": [

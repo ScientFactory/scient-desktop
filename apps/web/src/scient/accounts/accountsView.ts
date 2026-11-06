@@ -20,17 +20,20 @@ import {
   type AccountStoresStatus,
   type AccountsSnapshot,
   type AccountSummary,
+  type ConnectorSummary,
   type AccountUseAction,
   type AccountSaveInput,
   type DesktopCapturedSignIn,
   type BrowserProfile,
   type BrowserProfileRecord,
   type BrowserImportSource,
+  type BrowserImportSourceId,
+  type BrowserImportSourceProfile,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
+import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
-import { anySiteMatches, siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import ACCOUNT_ICONS from "./accountIcons.json";
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
@@ -61,28 +64,12 @@ export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: 
   );
 }
 
-export function matchingAccounts(
+/** UI autofill offers every website sign-in for the page, in the one shared order. */
+export const matchingAccounts = (
   accounts: ReadonlyArray<AccountSummary>,
   url: string,
   profileId: string,
-) {
-  const sameProfile = ({ details }: AccountSummary) =>
-    "profileId" in details && details.profileId === profileId ? 1 : 0;
-  const exact = ({ details }: AccountSummary) =>
-    "sites" in details &&
-    details.sites.some((site) => site.startsWith("https://") && siteMatchesUrl(site, url))
-      ? 1
-      : 0;
-  return accounts
-    .filter(({ details }) => details.kind === "website" && anySiteMatches(details.sites, url))
-    .sort(
-      (a, b) =>
-        sameProfile(b) - sameProfile(a) ||
-        exact(b) - exact(a) ||
-        (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
-        a.accountId.localeCompare(b.accountId),
-    );
-}
+) => matchingSignIns(accounts, url, profileId);
 
 /** Whether the conversation's agent may use an account now, without asking. */
 export function agentMayUse(
@@ -123,10 +110,10 @@ export function mergeSourceProfiles(
         ...(source.unavailable === "browserRunning"
           ? details
               .filter((detail) => detail.sourceId === source.id)
-              .map(
-                (detail) =>
-                  [detail.directory, { directory: detail.directory, name: detail.name }] as const,
-              )
+              .map((detail): [string, BrowserImportSourceProfile] => [
+                detail.directory,
+                { directory: detail.directory, name: detail.name },
+              ])
           : []),
       ]).values(),
     ].map((profile) => ({
@@ -136,6 +123,47 @@ export function mergeSourceProfiles(
       ),
     })),
   }));
+}
+
+const cookieCount = (count: number) =>
+  `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+
+/** How many cookies a browser profile holds, when its browser lets Scient count them. */
+export function cookiesLabel(count: number | undefined) {
+  if (count === undefined) return undefined;
+  return count === 0 ? "no cookies" : cookieCount(count);
+}
+
+/** What importing a browser profile brought: cookies, counted per site. A cookie isn't a sign-in. */
+export function importedLabel(cookies: number, sites: number | undefined) {
+  if (cookies === 0) return "nothing to import";
+  if (!sites) return cookieCount(cookies);
+  return `cookies for ${sites.toLocaleString()} ${sites === 1 ? "site" : "sites"}`;
+}
+
+/** The names the desktop's browser import gives each browser. */
+const BROWSER_NAMES: Readonly<Record<BrowserImportSourceId, string>> = {
+  chrome: "Chrome",
+  edge: "Microsoft Edge",
+  brave: "Brave",
+  vivaldi: "Vivaldi",
+  opera: "Opera",
+  arc: "Arc",
+  helium: "Helium",
+  firefox: "Firefox",
+  zen: "Zen",
+  safari: "Safari",
+};
+
+export const browserName = (id: BrowserImportSourceId) => BROWSER_NAMES[id];
+
+/** "Chrome · Yaacov" beside an imported profile whose name here differs from its source's. */
+export function renamedSourceLabel(
+  name: string,
+  source: Pick<NonNullable<BrowserProfileRecord["source"]>, "browser" | "profileName"> | undefined,
+) {
+  if (!source || name.trim() === source.profileName.trim()) return undefined;
+  return `${browserName(source.browser)} · ${source.profileName}`;
 }
 
 export function importProfileName(sourceName: string, taken: ReadonlyArray<string>) {
@@ -237,7 +265,6 @@ export const accountCatalogue = [
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
   { name: "University library", kind: "website", site: "", university: true },
-  { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
   {
@@ -313,10 +340,8 @@ export const accountCatalogueGroups = [
       "ORCID",
     ],
   },
-  {
-    name: "Universities & libraries",
-    entries: ["University library", "HUJI", "Moodle", "Google"],
-  },
+  { name: "Websites", entries: ["Google"] },
+  { name: "Universities & libraries", entries: ["University library", "Moodle"] },
   {
     name: "Developer tools",
     entries: [
@@ -493,11 +518,36 @@ export function isSavedPassword(account: AccountSummary) {
   );
 }
 
-/** Only a profile's session: no password, and no username but Google's. */
+/** Only a profile's session: no password, and no username unless it was recorded from a session. */
 const hasNothingToType = ({ details, secrets }: AccountSummary) =>
   details.kind === "website" &&
   secrets.password === undefined &&
-  (details.username === undefined || details.sites.includes(GOOGLE_SITE));
+  (details.username === undefined || details.origin === "browser-session");
+
+/** An account saved here, with the snapshot that was shown when it was saved. */
+export interface SavedAccount {
+  readonly before: AccountsSnapshot | null;
+  readonly account: AccountSummary;
+}
+
+/**
+ * A snapshot with the accounts saved since it was read; a newer snapshot replaces them, so a failed
+ * refresh shows them only until the next one arrives.
+ */
+export function withSavedAccounts(
+  snapshot: AccountsSnapshot,
+  saved: ReadonlyArray<SavedAccount>,
+): AccountsSnapshot {
+  const since = saved.filter((entry) => entry.before === snapshot);
+  if (since.length === 0) return snapshot;
+  const accounts = [...snapshot.accounts];
+  for (const { account } of since) {
+    const index = accounts.findIndex((item) => item.accountId === account.accountId);
+    if (index === -1) accounts.push(account);
+    else accounts[index] = account;
+  }
+  return { ...snapshot, accounts };
+}
 
 /** A site signed in from a profile. A university has its own row. */
 export function isBrowserSignIn(account: AccountSummary) {
@@ -512,9 +562,6 @@ export function fillableAccounts(
 ) {
   return matchingAccounts(accounts, url, profileId).filter((account) => !hasNothingToType(account));
 }
-
-/** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
-export const GMAIL_URL = "https://mail.google.com/mail/";
 
 /** The domain of the address a browser profile was imported from, such as mail.huji.ac.il. */
 export function profileAddressDomain(
@@ -640,37 +687,137 @@ type ProviderManagedAccount = {
   href: "/settings/extensions/installed";
 };
 
-export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>) {
-  return providers
-    .filter((provider) => provider.enabled && provider.installed)
-    .flatMap((provider): ReadonlyArray<ProviderManagedAccount> => {
-      if (provider.driver === "claudeAgent") {
-        return (provider.mcpServers ?? [])
-          .filter((server) => server.scope === "claudeai" && server.status === "connected")
-          .map((server) => ({
-            kind: "claude" as const,
-            id: JSON.stringify([provider.instanceId, server.name]),
-            instanceId: provider.instanceId,
-            // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
-            name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
-            href: "/settings/extensions/installed" as const,
-          }));
-      }
-      if (provider.driver !== "codex") return [];
-      const apps = new Map(
-        (provider.plugins ?? [])
-          .flatMap((plugin) => plugin.apps ?? [])
-          .filter((app) => app.connected)
-          .map((app) => [app.id ?? app.name, app]),
-      );
-      return [...apps].map(([id, app]) => ({
-        kind: "codex" as const,
-        id: JSON.stringify([provider.instanceId, id]),
-        instanceId: provider.instanceId,
-        name: app.name,
-        href: "/settings/extensions/installed" as const,
-      }));
-    });
+/** One GitHub login, with each use of it kept apart: one working use never marks another. */
+export interface GitHubIdentity {
+  /** `host:login`, lower case. */
+  readonly id: string;
+  readonly host: string;
+  readonly login: string;
+  /** Source Control holds this login; how, when the server says. */
+  readonly sourceControl?: { readonly via: "gh" | "app" | "token" | undefined };
+  /** The connector borrowing this login from Source Control. */
+  readonly connector?: ConnectorSummary;
+}
+
+/**
+ * GitHub logins Scient has actually seen: Source Control's, and those its connectors were
+ * connected as. A connector with its own token says nothing about whose it is, so it stays apart.
+ */
+export function githubIdentities(
+  managed: AccountsSnapshot["managedElsewhere"],
+  connectors: ReadonlyArray<ConnectorSummary>,
+): ReadonlyArray<GitHubIdentity> {
+  const identities = new Map<string, GitHubIdentity>();
+  const keyOf = (host: string, login: string) => `${host.toLowerCase()}:${login.toLowerCase()}`;
+  for (const row of managed ?? []) {
+    if (row.kind !== "github") continue;
+    const host = row.detail ?? "github.com";
+    const id = keyOf(host, row.name);
+    identities.set(id, { id, host, login: row.name, sourceControl: { via: row.via } });
+  }
+  for (const connector of connectors) {
+    if (connector.auth.type !== "source-control") continue;
+    const { host, account } = connector.auth;
+    const id = keyOf(host, account);
+    identities.set(id, { ...(identities.get(id) ?? { id, host, login: account }), connector });
+  }
+  return [...identities.values()];
+}
+
+type ManagedRowsByInstance = ReadonlyMap<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>;
+
+function claudeRows(
+  provider: ServerProvider,
+  servers: NonNullable<ServerProvider["mcpServers"]>,
+  previous: ReadonlyArray<ProviderManagedAccount>,
+) {
+  return servers
+    .filter(
+      (server) =>
+        server.scope === "claudeai" &&
+        (server.status === "connected" ||
+          // A server still starting keeps the place it had; a refusal removes it.
+          ((server.status === "pending" || server.status === "unknown") &&
+            previous.some((row) => row.id === JSON.stringify([provider.instanceId, server.name])))),
+    )
+    .map((server) => ({
+      kind: "claude" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
+      name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider["plugins"]>) {
+  const apps = new Map(
+    plugins
+      .flatMap((plugin) => plugin.apps ?? [])
+      .filter((app) => app.connected)
+      .map((app) => [app.id ?? app.name, app]),
+  );
+  return [...apps].map(([id, app]) => ({
+    kind: "codex" as const,
+    id: JSON.stringify([provider.instanceId, id]),
+    instanceId: provider.instanceId,
+    name: app.name,
+    href: "/settings/extensions/installed" as const,
+  }));
+}
+
+/**
+ * Claude and Codex connections, kept steady while their inventory is unknown or refreshing.
+ * `providers` is the live list (which instances count), `inventory` the last extensions reply.
+ */
+export function providerManagedAccounts(
+  providers: ReadonlyArray<ServerProvider>,
+  inventory: ReadonlyArray<ServerProvider>,
+  previous: ManagedRowsByInstance,
+): { rows: ReadonlyArray<ProviderManagedAccount>; next: ManagedRowsByInstance } {
+  const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
+  for (const provider of providers) {
+    if (!provider.enabled || !provider.installed) continue;
+    if (provider.driver !== "claudeAgent" && provider.driver !== "codex") continue;
+    const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
+    const kept = previous.get(provider.instanceId) ?? [];
+    const rows =
+      provider.driver === "claudeAgent"
+        ? known?.mcpServers
+          ? claudeRows(provider, known.mcpServers, kept)
+          : kept
+        : known?.plugins
+          ? codexRows(provider, known.plugins)
+          : kept;
+    next.set(provider.instanceId, rows);
+  }
+  const rows = [...next.values()].flat().toSorted((a, b) => a.name.localeCompare(b.name));
+  return { rows, next };
+}
+
+export type ProviderRowsCache = Map<string, { connection: object; rows: ManagedRowsByInstance }>;
+
+/** Kept rows belong to the connection that read them; a new, lost or unpermitted one clears them. */
+export function steadyProviderRows(
+  cache: ProviderRowsCache,
+  environmentId: string,
+  live: {
+    connection: object | null;
+    canRead: boolean;
+    permitted: boolean;
+    providers: ReadonlyArray<ServerProvider>;
+    inventory: ReadonlyArray<ServerProvider>;
+  },
+) {
+  const cached = cache.get(environmentId);
+  if (!live.connection || !live.canRead || !live.permitted) {
+    cache.delete(environmentId);
+    return [];
+  }
+  const previous = cached?.connection === live.connection ? cached.rows : new Map();
+  const { rows, next } = providerManagedAccounts(live.providers, live.inventory, previous);
+  cache.set(environmentId, { connection: live.connection, rows: next });
+  return rows;
 }
 
 const KEY_PREFIXES = [
@@ -716,8 +863,10 @@ export function accountStatusLabel(
   const university = account.details && universityDetails(account.details);
   if (!signIn) return university ? "Not signed in yet" : null;
   switch (signIn.state) {
-    case "signed-in":
-      return `Signed in · ${relativeTime(signIn.at)}`;
+    case "signed-in": {
+      const who = account.details?.kind === "website" ? account.details.username : undefined;
+      return `Signed in${who ? ` as ${who}` : ""} · ${relativeTime(signIn.at)}`;
+    }
     case "signed-out":
       return university ? "Sign in needed" : "Signed out";
     case "needs-you":
@@ -728,9 +877,18 @@ export function accountStatusLabel(
       return "Code rejected";
     case "limited":
       return "Site is limiting access";
-    case "failed":
     case "unknown":
-      return "Couldn't check";
+      return signIn.from === "import"
+        ? "Imported"
+        : signIn.from === "copy"
+          ? "Copied"
+          : // An action that said nothing yet about the site, such as a changed password.
+            signIn.by === "action" && signIn.detail
+            ? signIn.detail
+            : "Couldn't check";
+    // A failed attempt holds automatic sign-ins until the person signs in.
+    case "failed":
+      return "Sign in needed";
   }
 }
 
@@ -755,13 +913,17 @@ const SIGN_IN_OUTCOME_LABELS: Readonly<
 /** One line of an account's activity; `where` names the conversation. */
 export function activityLine(entry: AccountActivityEntry, where: string | undefined) {
   const what =
-    entry.decision === "denied"
-      ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-      : entry.signInOutcome
-        ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
-        : entry.outcome === "error"
-          ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
-          : ACTIVITY_LABELS[entry.action];
+    entry.keptTyped === "kept"
+      ? "Kept the password you typed"
+      : entry.keptTyped === "linked"
+        ? "The typed password wasn't kept: it lives in its linked password store"
+        : entry.decision === "denied"
+          ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+          : entry.signInOutcome
+            ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
+            : entry.outcome === "error"
+              ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+              : ACTIVITY_LABELS[entry.action];
   return where ? `${what} · ${where}` : what;
 }
 

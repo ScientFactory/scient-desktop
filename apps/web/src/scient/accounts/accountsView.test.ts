@@ -8,12 +8,15 @@ import {
   defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
+  type ConnectorSummary,
+  ConnectorId,
   type ProjectId,
 } from "@t3tools/contracts";
 import {
   accountStatusLabel,
   fillableAccounts,
   isBrowserSignIn,
+  renamedSourceLabel,
   signedOutOfGoogle,
   sitesToKeep,
   activityLine,
@@ -21,7 +24,10 @@ import {
   agentMayUse,
   libraryLinkTemplate,
   accountListRows,
+  githubIdentities,
   providerManagedAccounts,
+  steadyProviderRows,
+  type ProviderRowsCache,
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
@@ -33,6 +39,7 @@ import {
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
+  importedLabel,
   matchingAccounts,
   mergeProfiles,
   mergeSourceProfiles,
@@ -66,7 +73,7 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
   });
 
-  it("fills from saved sign-ins only, never a browser sign-in with nothing to type", () => {
+  it("fills from saved sign-ins, a username saved by hand included, never a browser sign-in", () => {
     const google = {
       ...website("work"),
       details: {
@@ -74,8 +81,18 @@ describe("Accounts decisions", () => {
         sites: ["google.com"],
         username: "a@example.com",
         profileId: "work",
+        origin: "browser-session" as const,
       },
     };
+    const byHand = (profileId?: string) => ({
+      ...website(profileId),
+      details: {
+        kind: "website" as const,
+        sites: ["google.com"],
+        username: "b@example.com",
+        ...(profileId ? { profileId } : {}),
+      },
+    });
     const saved = {
       ...website(),
       details: {
@@ -85,12 +102,16 @@ describe("Accounts decisions", () => {
       },
       secrets: { password: { source: { type: "scient" as const } } },
     };
-    expect(fillableAccounts([google, saved], "https://accounts.google.com/", "work")).toEqual([
-      saved,
-    ]);
+    expect(
+      fillableAccounts(
+        [google, saved, byHand(), byHand("work")],
+        "https://accounts.google.com/",
+        "work",
+      ),
+    ).toEqual([byHand("work"), saved, byHand()]);
   });
 
-  it("groups Google rows with browser sign-ins, and says when a profile lost Google", () => {
+  it("groups rows recorded from sessions with browser sign-ins, and says when a profile lost Google", () => {
     const google = (state: "signed-in" | "signed-out", profileId = "work") => ({
       ...website(profileId),
       details: {
@@ -98,6 +119,7 @@ describe("Accounts decisions", () => {
         sites: ["google.com"],
         username: "a@example.com",
         profileId,
+        origin: "browser-session" as const,
       },
       signIn: { state, at: "2026-10-31T00:00:00.000Z" },
     });
@@ -205,6 +227,12 @@ describe("Accounts decisions", () => {
     expect(importProfileName(" ", [])).toBe("Profile");
   });
 
+  it("says an empty import brought nothing, and counts cookies when sites can't be read", () => {
+    expect(importedLabel(0, 0)).toBe("nothing to import");
+    expect(importedLabel(3, undefined)).toBe("3 cookies");
+    expect(importedLabel(3, 0)).toBe("3 cookies");
+  });
+
   it("derives kind-specific forms and secret fields from catalogue choices", () => {
     const forms = accountCatalogue.map((entry) => catalogueDetails(entry));
     expect(forms.find((form) => form.kind === "database")).toMatchObject({
@@ -240,8 +268,11 @@ describe("Accounts decisions", () => {
       tabId: "synthetic-tab",
       profileId: "work",
       url: "https://example.com/login",
+      path: "/login",
+      step: "password" as const,
       username: "synthetic",
       password: "synthetic-password",
+      usernameFrom: "form" as const,
     };
     expect(capturedSignInInput(capture, []).details).toEqual({
       kind: "website",
@@ -463,24 +494,84 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
       { id: "second", name: "Second", source: "local" as const, enabled: false, apps },
     ],
   };
-  expect(
-    providerManagedAccounts([base, codex]).map((row) => [row.kind, row.name, row.instanceId]),
-  ).toEqual([
-    ["claude", "Signed in", base.instanceId],
+  const rows = (
+    providers: ReadonlyArray<ServerProvider>,
+    previous = new Map() as Parameters<typeof providerManagedAccounts>[2],
+    inventory = providers,
+  ) => providerManagedAccounts(providers, inventory, previous);
+  const first = rows([base, codex]);
+  expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["codex", "Connected app", codex.instanceId],
+    ["claude", "Signed in", base.instanceId],
   ]);
   expect(
-    providerManagedAccounts([
+    rows([
       { ...base, mcpServers: [] },
       { ...codex, plugins: [] },
-    ]),
+    ]).rows,
   ).toEqual([]);
+  // Uninstalling or disabling an instance removes its rows, even from the kept list.
   expect(
-    providerManagedAccounts([
-      { ...base, enabled: false },
-      { ...codex, installed: false },
-    ]),
+    rows(
+      [
+        { ...base, enabled: false },
+        { ...codex, installed: false },
+      ],
+      first.next,
+    ).rows,
   ).toEqual([]);
+  // A reset inventory (scope change) or Codex not yet reporting keeps the last known rows.
+  expect(rows([base, codex], first.next, []).rows).toEqual(first.rows);
+  expect(
+    rows([base, codex], first.next, [base, (({ plugins: _, ...rest }) => rest)(codex)]).rows,
+  ).toEqual(first.rows);
+  // A Claude server still starting keeps its place; one that asks to sign in again leaves.
+  const restarting = (status: "pending" | "needs-auth") => ({
+    ...base,
+    mcpServers: [{ name: "Signed in", status, scope: "claudeai" as const }],
+  });
+  expect(rows([restarting("pending"), codex], first.next).rows).toEqual(first.rows);
+  expect(rows([restarting("pending"), codex]).rows.map((row) => row.kind)).toEqual(["codex"]);
+  expect(rows([restarting("needs-auth"), codex], first.next).rows.map((row) => row.kind)).toEqual([
+    "codex",
+  ]);
+});
+
+it("keeps provider rows only under the connection and permission that read them", () => {
+  const claude: ServerProvider = {
+    instanceId: ProviderInstanceId.make("synthetic-claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [{ name: "Drive", status: "connected", scope: "claudeai" }],
+  };
+  const cache: ProviderRowsCache = new Map();
+  const live = {
+    connection: {} as object | null,
+    canRead: true,
+    permitted: true,
+    providers: [claude],
+  };
+  const read = (change: Partial<typeof live> & { inventory?: ReadonlyArray<ServerProvider> }) =>
+    steadyProviderRows(cache, "env", { ...live, inventory: [], ...change }).map((row) => row.name);
+  expect(read({ inventory: [claude] })).toEqual(["Drive"]);
+  expect(read({})).toEqual(["Drive"]);
+  expect(read({ connection: {} })).toEqual([]);
+  expect(read({ inventory: [claude] })).toEqual(["Drive"]);
+  expect(read({ permitted: false })).toEqual([]);
+  expect(read({})).toEqual([]);
+  read({ inventory: [claude] });
+  expect(read({ canRead: false })).toEqual([]);
+  read({ inventory: [claude] });
+  expect(read({ connection: null })).toEqual([]);
+  expect(read({})).toEqual([]);
 });
 
 it("recognizes key prefixes without retaining values or guessing unknown keys", async () => {
@@ -564,7 +655,41 @@ describe("account status", () => {
     expect(accountStatusLabel({ signIn: { state: "signed-in", at } }, relative)).toBe(
       "Signed in · 2h ago",
     );
+    const session = (username?: string) => ({
+      kind: "website" as const,
+      sites: ["github.com"],
+      ...(username ? { username } : {}),
+    });
+    expect(
+      accountStatusLabel(
+        { details: session("octo"), signIn: { state: "signed-in", at } },
+        relative,
+      ),
+    ).toBe("Signed in as octo · 2h ago");
+    // An imported or copied session was never seen working; anything else unknown wasn't read.
+    expect(
+      accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, from: "copy" } },
+        relative,
+      ),
+    ).toBe("Copied");
+    expect(
+      accountStatusLabel(
+        { details: session(), signIn: { state: "unknown", at, detail: "No answer." } },
+        relative,
+      ),
+    ).toBe("Couldn't check");
+    expect(
+      accountStatusLabel(
+        { signIn: { state: "unknown", at, detail: "Password changed", by: "action" } },
+        relative,
+      ),
+    ).toBe("Password changed");
     expect(accountStatusLabel({ signIn: { state: "needs-you", at } }, relative)).toBe("Needs you");
+    // A failed attempt holds automatic sign-ins: the row says what the person can do.
+    expect(accountStatusLabel({ signIn: { state: "failed", at } }, relative)).toBe(
+      "Sign in needed",
+    );
     expect(accountStatusLabel({}, relative)).toBeNull();
     expect(
       accountStatusLabel(
@@ -592,6 +717,9 @@ describe("account status", () => {
     expect(
       activityLine({ ...entry, action: "sign-in", signInOutcome: "password-rejected" }, undefined),
     ).toBe("Password rejected");
+    expect(activityLine({ ...entry, action: "sign-in", keptTyped: "kept" }, undefined)).toBe(
+      "Kept the password you typed",
+    );
   });
 });
 
@@ -678,5 +806,91 @@ describe("a university's status", () => {
     // Also a session gone from the browser's cookies, which the server records as signed out.
     expect(accountStatusLabel(check("signed-out"), when)).toBe("Sign in needed");
     expect(accountStatusLabel(check("signed-in"), when)).toBe("Signed in · 2h ago");
+  });
+});
+
+describe("githubIdentities", () => {
+  const connector = (
+    connectorId: string,
+    auth: ConnectorSummary["auth"],
+    status: ConnectorSummary["status"],
+  ): ConnectorSummary => ({
+    connectorId: ConnectorId.make(connectorId),
+    serverName: "github",
+    displayName: "GitHub",
+    url: "https://api.githubcopilot.com/mcp/",
+    source: { type: "url" },
+    auth,
+    status,
+    enabled: true,
+    authRevision: 0,
+    availability: { type: "all-projects" },
+    createdAt: "2026-11-03T00:00:00.000Z",
+    updatedAt: "2026-11-03T00:00:00.000Z",
+  });
+  const borrowed = (account: string) =>
+    ({ type: "source-control", host: "github.com", account }) as const;
+
+  it("joins each observed login's uses, each with its own state, and leaves token rows apart", () => {
+    const missing = connector("con_octo0001", borrowed("octo"), "needs-credential");
+    const orphan = connector("con_gone0001", borrowed("gone"), "needs-credential");
+    const identities = githubIdentities(
+      [
+        {
+          kind: "github",
+          id: "github.com:octo",
+          name: "Octo",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "app",
+        },
+        {
+          kind: "github",
+          id: "github.com:second",
+          name: "second",
+          detail: "github.com",
+          href: "/settings/source-control",
+          via: "gh",
+        },
+        { kind: "custom-model", id: "m", name: "Model", href: "/settings/custom-models" },
+      ],
+      [
+        missing,
+        orphan,
+        connector(
+          "con_token001",
+          { type: "credential", strategy: "bearer", storage: "owned" },
+          "connected",
+        ),
+      ],
+    );
+    expect(identities).toEqual([
+      {
+        id: "github.com:octo",
+        host: "github.com",
+        login: "Octo",
+        sourceControl: { via: "app" },
+        connector: missing,
+      },
+      {
+        id: "github.com:second",
+        host: "github.com",
+        login: "second",
+        sourceControl: { via: "gh" },
+      },
+      { id: "github.com:gone", host: "github.com", login: "gone", connector: orphan },
+    ]);
+  });
+});
+
+describe("renamedSourceLabel", () => {
+  it("names the source of an imported profile renamed here, and nothing otherwise", () => {
+    const source = { browser: "chrome" as const, profileName: "Yaacov" };
+    expect(renamedSourceLabel("Lab", source)).toBe("Chrome · Yaacov");
+    expect(renamedSourceLabel("Yaacov", source)).toBeUndefined();
+    expect(renamedSourceLabel("Lab", undefined)).toBeUndefined();
+    expect(renamedSourceLabel("Work", { browser: "edge", profileName: "Profile 1" })).toBe(
+      "Microsoft Edge · Profile 1",
+    );
   });
 });

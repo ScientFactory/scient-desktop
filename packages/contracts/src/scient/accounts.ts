@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
@@ -193,6 +194,8 @@ const WebsiteFields = {
   institution: Schema.optional(Institution),
   /** A library's link containing `{url}`, for a university outside the directory. */
   proxyUrl: Schema.optional(HttpsUrl.check(Schema.isIncluding("{url}"))),
+  /** Recorded from a browser profile's session rather than typed in, so there is nothing to fill. */
+  origin: Schema.optional(Schema.Literal("browser-session")),
 } as const;
 
 export const ApiKeyAuth = Schema.Union([
@@ -292,6 +295,16 @@ export const AccountSignIn = Schema.Struct({
   state: AccountSignInState,
   at: IsoDateTime,
   detail: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * `action`: something signed in or tried to (Scient, a recording, Google showing a new account).
+   * `look`: Scient only looked (Check, an agent's page, a quiet visit, an import). Absent on old rows.
+   */
+  by: Schema.optional(Schema.Literals(["action", "look"])),
+  /**
+   * An `unknown` row made from another browser's import, or copied into Main from another profile,
+   * not yet seen on the site. Any later look or attempt replaces it.
+   */
+  from: Schema.optional(Schema.Literals(["import", "copy"])),
 });
 export type AccountSignIn = typeof AccountSignIn.Type;
 
@@ -330,6 +343,99 @@ export const BrowserProfileSource = Schema.Struct({
 });
 export type BrowserProfileSource = typeof BrowserProfileSource.Type;
 
+/** The sites of one unit a copy moves whole: a registrable site, or one multi-site sign-in's. */
+export const SessionUnitSites = Schema.Array(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(253)),
+).check(Schema.isMinLength(1), Schema.isMaxLength(50));
+
+/** A desktop revision: one counter per profile that only grows; times are only labels. */
+const SessionRevision = NonNegativeInt;
+
+/**
+ * The desktop's record of the actions other computers must follow, newest per unit. An action
+ * takes the next revision in the same commit that records it; `jar` covers the whole jar.
+ */
+export const ProfileSendLog = Schema.Struct({
+  head: SessionRevision,
+  jar: Schema.optional(SessionRevision),
+  units: Schema.Array(
+    Schema.Struct({
+      sites: SessionUnitSites,
+      revision: SessionRevision,
+      kind: Schema.Literals(["copy", "delete"]),
+      /** A delete that takes back only this computer's copy, while it still holds what it wrote. */
+      copyOnly: Schema.optional(Schema.Literal(true)),
+    }),
+  ),
+  /** When the profile stopped being shareable, so other computers drop its copies. */
+  withdrawn: Schema.optional(SessionRevision),
+});
+export type ProfileSendLog = typeof ProfileSendLog.Type;
+
+const ComputerLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
+
+/** On the desktop: what another computer has applied of this profile, names and numbers only. */
+export const ProfileSharedWith = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: ComputerLabel,
+  sentAt: Schema.optional(IsoDateTime),
+  seenAt: Schema.optional(IsoDateTime),
+  /** The highest revision with nothing lower still waiting. */
+  applied: SessionRevision,
+  waiting: NonNegativeInt,
+  /** Units the remote kept with its own sign-in on the first delivery. */
+  kept: Schema.optional(NonNegativeInt),
+  needsYou: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(253))).check(
+    Schema.isMaxLength(50),
+  ),
+});
+export type ProfileSharedWith = typeof ProfileSharedWith.Type;
+
+export const ReceivedUnitOutcome = Schema.Literals(["copied", "same", "kept", "deleted"]);
+
+/** On a remote: one unit applied from a sender, and whether its copy was refused there. */
+export const ReceivedUnit = Schema.Struct({
+  sites: SessionUnitSites,
+  revision: SessionRevision,
+  outcome: ReceivedUnitOutcome,
+  needsYou: Schema.optional(IsoDateTime),
+  /** A digest of exactly the cookies the copy wrote; never sent to clients. */
+  fingerprint: Schema.optional(TrimmedNonEmptyString),
+});
+export type ReceivedUnit = typeof ReceivedUnit.Type;
+
+/** On a remote: the copies of one sender, the desktop its key proves. */
+/** The controls a desktop sends with a profile; a project limit arrives as Off. */
+export const SentProfileControls = Schema.Struct({
+  access: AccountAccess,
+  scope: GrantScope,
+  scriptSignIn: Schema.Boolean,
+});
+export type SentProfileControls = typeof SentProfileControls.Type;
+
+export const ProfileReceived = Schema.Struct({
+  source: EnvironmentId,
+  label: ComputerLabel,
+  sentAt: IsoDateTime,
+  withdrawn: Schema.optional(SessionRevision),
+  units: Schema.Array(ReceivedUnit).check(Schema.isMaxLength(5_000)),
+  /** The controls this sender last set; the profile follows the strictest of its senders'. */
+  controls: Schema.optional(SentProfileControls),
+});
+export type ProfileReceived = typeof ProfileReceived.Type;
+
+/** What only Main keeps. */
+export const MainProfileState = Schema.Struct({
+  /**
+   * Sites the user signed out of with Accounts' Sign out, which an import or back-fill never
+   * copies back. A sign-in seen in Main clears its site.
+   */
+  signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** The profiles whose sessions have been copied into Main once, in this environment. */
+  backfilled: Schema.optional(Schema.Array(BrowserProfileId)),
+});
+export type MainProfileState = typeof MainProfileState.Type;
+
 /**
  * Scient's record for an upstream browser profile id. A profile without a
  * record is Allowed for all projects with script sign-ins on.
@@ -345,8 +451,59 @@ export const BrowserProfileRecord = Schema.Struct({
   picture: Schema.optional(ProfilePictureDataUri),
   color: Schema.optional(ProfileColor),
   source: Schema.optional(BrowserProfileSource),
+  /**
+   * When Scient made the profile; one imported or made elsewhere has none. Nothing reads it yet:
+   * it is written from now on so that folding Scient-made profiles into Main, if the owner
+   * approves that, can tell which profiles Scient made.
+   */
+  madeInScient: Schema.optional(IsoDateTime),
+  /** Main's own record; no other profile has one. */
+  main: Schema.optional(MainProfileState),
+  /** On the desktop: the actions other computers follow. */
+  send: Schema.optional(ProfileSendLog),
+  /** On the desktop: the other computers this profile's sign-ins go to. */
+  sharedWith: Schema.optional(Schema.Array(ProfileSharedWith)),
+  /** On a remote: copies received from desktops; their controls are set there. */
+  received: Schema.optional(Schema.Array(ProfileReceived).check(Schema.isMaxLength(4))),
 });
 export type BrowserProfileRecord = typeof BrowserProfileRecord.Type;
+
+/** A partitioned cookie's key as the browser stored it; the ancestor bit is never derived. */
+export const CookiePartitionKey = Schema.Struct({
+  topLevelSite: Schema.String,
+  hasCrossSiteAncestor: Schema.Boolean,
+});
+export type CookiePartitionKey = typeof CookiePartitionKey.Type;
+
+const sessionCookieFields = {
+  name: Schema.String,
+  value: Schema.String,
+  /** Chromium form: `.github.com` for a domain cookie, `github.com` for a host-only one. */
+  domain: Schema.String,
+  hostOnly: Schema.Boolean,
+  path: Schema.String,
+  secure: Schema.Boolean,
+  httpOnly: Schema.Boolean,
+  sameSite: Schema.Literals(["unspecified", "no_restriction", "lax", "strict"]),
+  /** Unix seconds; absent for a cookie that ends with the browser. */
+  expires: Schema.optional(Schema.Number),
+  partitionKey: Schema.optional(CookiePartitionKey),
+};
+const hostOnlyMatchesDomain = Schema.makeFilter(
+  (cookie: { readonly hostOnly: boolean; readonly domain: string }) =>
+    cookie.hostOnly === !cookie.domain.startsWith("."),
+);
+
+/** One cookie with every attribute a copy between jars must keep. */
+export const SessionCookie = Schema.Struct(sessionCookieFields).check(hostOnlyMatchesDomain);
+export type SessionCookie = typeof SessionCookie.Type;
+
+/** A session cookie sent to another computer: its value is redacted wherever it is decoded. */
+export const SentSessionCookie = Schema.Struct({
+  ...sessionCookieFields,
+  value: Schema.RedactedFromValue(Schema.String),
+}).check(hostOnlyMatchesDomain);
+export type SentSessionCookie = typeof SentSessionCookie.Type;
 
 export const defaultBrowserProfileRecord = (profileId: BrowserProfileId): BrowserProfileRecord => ({
   profileId,
@@ -381,6 +538,8 @@ export const AccountActivityEntry = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   /** Safe summary such as a site or `GET api.example.com`; never values, queries or bodies. */
   detail: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  /** A password the user typed while Scient signed them in: kept, or left for its linked store. */
+  keptTyped: Schema.optional(Schema.Literals(["kept", "linked"])),
 });
 export type AccountActivityEntry = typeof AccountActivityEntry.Type;
 
@@ -460,10 +619,24 @@ export const AccountHandoff = Schema.Struct({
   tabId: Schema.optional(TrimmedNonEmptyString),
   kind: Schema.Literals(["push", "captcha", "passkey", "code", "other"]),
   number: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{1,3}$/))),
+  /** Why an agent asked the user to sign in here. */
+  reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
   startedAt: IsoDateTime,
   expiresAt: IsoDateTime,
 });
 export type AccountHandoff = typeof AccountHandoff.Type;
+
+/** A sign-in under way in a tab: Scient typing, a person finishing, or waiting for a second factor. */
+export const AccountSignInAttempt = Schema.Struct({
+  attemptId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  accountId: AccountId,
+  state: Schema.Literals(["typing", "person", "pending"]),
+  /** The tab's profile: none of its sessions leaves it while the attempt lasts. */
+  profileId: Schema.optional(BrowserProfileId),
+});
+export type AccountSignInAttempt = typeof AccountSignInAttempt.Type;
 
 export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
 
@@ -476,7 +649,8 @@ export const BrowserProfileChoices = Schema.Struct({
   threads: Schema.Record(
     ThreadId,
     Schema.Struct({
-      profileId: BrowserProfileId,
+      /** Absent while only sites were chosen; the project's profile then applies. */
+      profileId: Schema.optional(BrowserProfileId),
       sites: Schema.Record(
         Schema.String,
         Schema.Struct({ profileId: BrowserProfileId, at: IsoDateTime }),
@@ -492,6 +666,8 @@ export const BrowserProfileChoiceInput = Schema.Union([
     threadId: ThreadId,
     profileId: BrowserProfileId,
     url: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+    /** Only this page's site: the conversation's own profile stays as it is. */
+    siteOnly: Schema.optional(Schema.Boolean),
   }),
   /** "Use in this project"; null clears it. */
   Schema.Struct({ projectId: ProjectId, profileId: Schema.NullOr(BrowserProfileId) }),
@@ -599,12 +775,15 @@ export type PaperQueueInput = typeof PaperQueueInput.Type;
 export const UniversitySearchInput = Schema.Struct({
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
 });
-export const UniversitySignInInput = Schema.Struct({
+/** The user's own sign-in to any website row, a university's included, in a tab beside `threadId`. */
+export const AccountSignInAsPersonInput = Schema.Struct({
   accountId: AccountId,
   /** The conversation it opens beside. */
   threadId: ThreadId,
+  /** A row made just for this sign-in goes again if it ends with nothing kept. */
+  discardIfUnfinished: Schema.optional(Schema.Literal(true)),
 });
-export type UniversitySignInInput = typeof UniversitySignInInput.Type;
+export type AccountSignInAsPersonInput = typeof AccountSignInAsPersonInput.Type;
 
 /** A page the person opened, to bring in through their university when it is a journal article. */
 export const UniversityBrowseInput = Schema.Struct({
@@ -670,6 +849,13 @@ export const AccountCodeSourcesResult = Schema.Struct({
   messagesNeedAccess: Schema.Boolean,
 });
 
+/**
+ * Accounts' protocol between a client and a server, which may run different builds. 1: imported
+ * sessions recorded (`sessionsSeen`), sign-ins received from another computer, sign-in on any
+ * website row, and keeping what the user types in a sign-in Scient runs.
+ */
+export const ACCOUNTS_PROTOCOL = 1;
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
@@ -692,9 +878,16 @@ export const AccountsSnapshot = Schema.Struct({
         name: TrimmedNonEmptyString,
         detail: Schema.optional(TrimmedNonEmptyString),
         href: Schema.Literals(["/settings/source-control", "/settings/custom-models"]),
+        /** How Source Control holds a GitHub login: the gh CLI, the app sign-in, or a token. */
+        via: Schema.optional(Schema.Literals(["gh", "app", "token"])),
       }),
     ),
   ),
+  /** What this server can do that an older one can't, so a newer client offers only that. */
+  /** What this server's Accounts speaks; absent on a server older than `ACCOUNTS_PROTOCOL`. */
+  accountsProtocol: Schema.optional(Schema.Int),
+  /** Sign-ins Scient is running, by tab; no values. Agents can't read these tabs meanwhile. */
+  attempts: Schema.optional(Schema.Array(AccountSignInAttempt)),
 });
 export type AccountsSnapshot = typeof AccountsSnapshot.Type;
 
@@ -730,6 +923,8 @@ export type AccountSaveInput = typeof AccountSaveInput.Type;
 
 export const AccountSaveResult = Schema.Struct({
   accountId: AccountId,
+  /** The saved account as Accounts lists it, for a client to show before its next snapshot. */
+  account: Schema.optional(AccountSummary),
   warnings: Schema.optional(Schema.Array(Schema.String)),
 });
 export type AccountSaveResult = typeof AccountSaveResult.Type;
@@ -755,10 +950,185 @@ export const BrowserProfileRecordUpdateInput = Schema.Struct({
   picture: Schema.optional(Schema.NullOr(ProfilePictureDataUri)),
   color: Schema.optional(Schema.NullOr(ProfileColor)),
   source: Schema.optional(Schema.NullOr(BrowserProfileSource)),
+  madeInScient: Schema.optional(IsoDateTime),
 });
 export type BrowserProfileRecordUpdateInput = typeof BrowserProfileRecordUpdateInput.Type;
 
 export const BrowserProfileRecordRemoveInput = Schema.Struct({ profileId: BrowserProfileId });
+
+/** A row's sign-in was copied into Main, or Main already held the same one. */
+export const AccountMainFilledInput = Schema.Struct({
+  accountId: AccountId,
+  /** The source profile's name, for "Copied from …". */
+  profileName: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+});
+
+/** One case of the dev-only check that a computer's browser copies sign-ins exactly. */
+export const AccountsQualifyCase = Schema.Struct({
+  case: Schema.Int,
+  name: Schema.String,
+  ok: Schema.Boolean,
+  detail: Schema.optional(Schema.String),
+});
+export type AccountsQualifyCase = typeof AccountsQualifyCase.Type;
+
+/** Profiles whose sessions the one-time back-fill has copied into Main; empty when there were none. */
+export const AccountMainBackfilledInput = Schema.Struct({
+  profileIds: Schema.Array(BrowserProfileId).check(Schema.isMaxLength(64)),
+});
+
+const SessionSite = TrimmedNonEmptyString.check(Schema.isMaxLength(253));
+
+/** Accounts' Sign out in a profile, recorded before the cookies go; Main also keeps the site out. */
+export const AccountProfileSignedOutInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  site: SessionSite,
+});
+
+/** Main gave back a restricted profile's copy: other computers take back theirs of it. */
+export const AccountMainWithdrawnInput = Schema.Struct({ sites: SessionUnitSites });
+
+export const AccountProfileSendLogInput = Schema.Struct({ profileId: BrowserProfileId });
+
+/** A whole-jar revision: after an import or a refresh into the profile, or Send again. */
+export const AccountProfileResendInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  why: Schema.Literals(["import", "send-again"]),
+});
+
+export const AccountProfileRevision = Schema.Struct({ revision: SessionRevision });
+
+/**
+ * A computer this desktop no longer sends to: its deletions no longer wait for it. Its key goes
+ * only once it confirmed the withdrawal; kept, a later link proves the same sender again.
+ */
+export const AccountProfileUnsharedInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  forgetKey: Schema.optional(Schema.Literal(true)),
+});
+
+/** On a remote, its owner forgets a desktop: its copies and its registration go. */
+export const AccountSessionsForgetInput = Schema.Struct({ source: EnvironmentId });
+
+export const AccountProfileSharedInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  share: ProfileSharedWith,
+});
+
+const SENT_COOKIES_LIMIT = 1_000;
+
+/** The key a computer issued this desktop as a sender; only its hash is kept there. */
+const SenderKey = Schema.RedactedFromValue(TrimmedNonEmptyString.check(Schema.isMaxLength(128)));
+
+/** A desktop proves it is the sender it was: with its key, or for the first time, without one. */
+export const AccountSessionsBindInput = Schema.Struct({
+  source: EnvironmentId,
+  label: ComputerLabel,
+  key: Schema.optional(SenderKey),
+});
+
+/** A new sender's key, given once. */
+export const AccountSessionsBindResult = Schema.Struct({ key: Schema.optional(SenderKey) });
+
+export const AccountSenderKeyInput = Schema.Struct({ environmentId: EnvironmentId });
+export const AccountSenderKey = Schema.Struct({ key: Schema.optional(SenderKey) });
+export const AccountKeepSenderKeyInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  key: SenderKey,
+});
+
+const SessionsBatch = Schema.Struct({
+  source: EnvironmentId,
+  key: SenderKey,
+  label: ComputerLabel,
+  profileId: BrowserProfileId,
+  controls: SentProfileControls,
+  mode: Schema.Literals(["fill", "replace"]),
+  units: Schema.Array(
+    Schema.Struct({
+      sites: SessionUnitSites,
+      revision: SessionRevision,
+      kind: Schema.Literals(["copy", "delete"]),
+      copyOnly: Schema.optional(Schema.Literal(true)),
+      cookies: Schema.optional(
+        Schema.Array(SentSessionCookie).check(Schema.isMaxLength(SENT_COOKIES_LIMIT)),
+      ),
+    }),
+  ).check(Schema.isMaxLength(100)),
+  sentAt: IsoDateTime,
+});
+
+/** One batch from a desktop: at most 100 units and 1,000 cookies, never a split unit. */
+export const AccountSessionsReceiveInput = SessionsBatch.check(
+  Schema.makeFilter(
+    (input: typeof SessionsBatch.Type) =>
+      input.units.reduce((total, unit) => total + (unit.cookies?.length ?? 0), 0) <=
+      SENT_COOKIES_LIMIT,
+  ),
+);
+export type AccountSessionsReceiveInput = typeof AccountSessionsReceiveInput.Type;
+
+export const SessionReceiveOutcome = Schema.Literals([
+  "copied",
+  "same",
+  "kept",
+  "deleted",
+  "stale",
+  "busy",
+  "blocked",
+  "failed",
+  "restore-failed",
+]);
+export type SessionReceiveOutcome = typeof SessionReceiveOutcome.Type;
+
+export const AccountSessionsReceiveResult = Schema.Struct({
+  units: Schema.Array(
+    Schema.Struct({
+      sites: SessionUnitSites,
+      revision: SessionRevision,
+      outcome: SessionReceiveOutcome,
+    }),
+  ),
+});
+export type AccountSessionsReceiveResult = typeof AccountSessionsReceiveResult.Type;
+
+export const AccountSessionsAppliedInput = Schema.Struct({
+  source: EnvironmentId,
+  key: SenderKey,
+  profileId: BrowserProfileId,
+});
+
+/** Names and numbers only. `bound`: this sender has delivered to the profile before. */
+export const AccountSessionsApplied = Schema.Struct({
+  bound: Schema.Boolean,
+  withdrawn: Schema.optional(SessionRevision),
+  units: Schema.Array(ReceivedUnit),
+});
+export type AccountSessionsApplied = typeof AccountSessionsApplied.Type;
+
+export const AccountSessionsWithdrawInput = Schema.Struct({
+  source: EnvironmentId,
+  key: SenderKey,
+  profileId: Schema.optional(BrowserProfileId),
+  all: Schema.optional(Schema.Literal(true)),
+  revision: Schema.optional(SessionRevision),
+});
+
+export const AccountSessionsWithdrawResult = Schema.Struct({ deleted: NonNegativeInt });
+
+export const AccountSessionsListInput = Schema.Struct({ profileId: BrowserProfileId });
+
+export const AccountSessionsList = Schema.Struct({
+  sites: Schema.Array(Schema.Struct({ site: SessionSite, cookies: NonNegativeInt })),
+});
+export type AccountSessionsList = typeof AccountSessionsList.Type;
+
+export const AccountSessionsSignOutLocalInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  site: SessionSite,
+});
+
+export const AccountSessionsSignOutLocalResult = Schema.Struct({ signedOut: Schema.Boolean });
 
 export const AccountApprovalRespondInput = Schema.Struct({
   approvalId: AccountApprovalId,
@@ -859,6 +1229,41 @@ export const AccountMatchSignInResult = Schema.Struct({
   accountId: Schema.optional(AccountId),
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
+
+/** A session in a browser profile: brought by an import, or a sign-in seen happening there. */
+export const AccountSessionSeen = Schema.Struct({
+  /** The registrable site, such as `github.com`. */
+  site: AccountSite,
+  how: Schema.Literals(["imported", "signed-in"]),
+  /** Where an import came from, such as "Chrome · Yaacov". */
+  from: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+});
+export type AccountSessionSeen = typeof AccountSessionSeen.Type;
+
+export const AccountSessionsSeenInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  sessions: Schema.Array(AccountSessionSeen).check(Schema.isMaxLength(200)),
+});
+export type AccountSessionsSeenInput = typeof AccountSessionsSeenInput.Type;
+
+/** The rows made for sessions that had none. */
+export const AccountSessionsSeenResult = Schema.Struct({ created: Schema.Array(AccountId) });
+
+/**
+ * What the user typed in a sign-in Scient runs, on that attempt's tab. Scient keeps it only once
+ * the sign-in is proven, and only the password the site accepted.
+ */
+export const AccountKeepTypedInput = Schema.Struct({
+  attemptId: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  origin: AccountFillValuesInput.fields.origin,
+  path: Schema.String.check(Schema.isMaxLength(2048)),
+  step: Schema.Literal("password"),
+  username: Schema.String.check(Schema.isMaxLength(256)),
+  password: SecretValue,
+});
+export type AccountKeepTypedInput = typeof AccountKeepTypedInput.Type;
 
 /** How a sign-in with this saved password on the user's own tab ended. */
 export const AccountSignInSeenInput = Schema.Struct({

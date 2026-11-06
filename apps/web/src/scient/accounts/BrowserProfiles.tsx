@@ -1,7 +1,7 @@
 import { clickableAccountRow } from "./clickableAccountRow";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import {
   BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
@@ -20,11 +20,17 @@ import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
-import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  XIcon,
+} from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { QuitStep } from "~/components/settings/BrowserImportWizard";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
-import { AccountLogo } from "./AccountLogo";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "~/components/ui/collapsible";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import {
@@ -56,19 +62,21 @@ import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
-import { addBrowserProfile, withOwnDefault } from "./addBrowserProfile";
+import { addBrowserProfile } from "./addBrowserProfile";
+import { recordImportedSessions } from "./importedSessions";
 import { ProfilePicture } from "./ProfilePicture";
-import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
-  GMAIL_URL,
-  browserIconUrl,
+  browserName,
   importProfileName,
   mergeProfiles,
   matchExistingProfile,
   mergeSourceProfiles,
   changedSourceProfile,
+  cookiesLabel,
+  importedLabel,
+  renamedSourceLabel,
   signedOutOfGoogle,
   sitesToKeep,
 } from "./accountsView";
@@ -100,17 +108,25 @@ function sourceRecord(
   });
 }
 
-function BrowserLogo({ id, name }: { id: string; name: string }) {
-  const icon = browserIconUrl(id);
-  return icon ? (
-    <AccountLogo src={icon} className="size-10 rounded-[25%]" />
-  ) : (
-    <ProfilePicture name={name} />
-  );
-}
-
 /** One browser import at a time, even after its dialog closed and was opened again. */
 let importRunning = false;
+
+/** Whether a browser import is still adding saved passwords, for the Accounts page to say so. */
+let importingPasswords = false;
+const importingPasswordsListeners = new Set<() => void>();
+function setImportingPasswords(value: boolean) {
+  importingPasswords = value;
+  for (const listener of importingPasswordsListeners) listener();
+}
+export function useImportingPasswords() {
+  return useSyncExternalStore(
+    (listener) => {
+      importingPasswordsListeners.add(listener);
+      return () => importingPasswordsListeners.delete(listener);
+    },
+    () => importingPasswords,
+  );
+}
 
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
@@ -130,26 +146,45 @@ function SignedInSitesDialog({
   const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Another computer's sign-ins live in its own browser, not in this desktop's partitions.
+  const remote = environmentId !== usePrimaryEnvironmentId();
+  const remoteLabel = useEnvironment(environmentId)?.label ?? "this computer";
+  const sender = profile.record.received?.[0]?.label;
+  const listRemote = useAccountCommand(accountsState.sessionsList, environmentId);
+  const signOutRemote = useAccountCommand(accountsState.sessionsSignOutLocal, environmentId);
+  const recordSignOut = useAccountCommand(accountsState.profileSignedOut, environmentId);
+  const read = () =>
+    remote
+      ? listRemote({ profileId: BrowserProfileId.make(profile.id) }).then((listed) =>
+          listed.ok ? listed.value.sites.map(({ site }) => ({ domain: site })) : [],
+        )
+      : window.desktopBridge?.accounts?.signedInSites(profile.id, environmentId);
   const load = useEffectEvent(() =>
-    window.desktopBridge?.accounts
-      ?.signedInSites(profile.id, environmentId)
-      .then(setSites)
+    read()
+      ?.then(setSites)
       .catch(() => setSites([])),
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the desktop when the view opens.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the computer that holds them when the view opens.
   useEffect(() => {
     void load();
   }, []);
   const signOut = async (site: string) => {
     setBusy(site);
-    const done = await window.desktopBridge?.accounts
-      ?.signOutSite?.(profile.id, site, environmentId)
-      .catch(() => false);
+    const accounts = window.desktopBridge?.accounts;
+    const profileId = BrowserProfileId.make(profile.id);
+    // Recorded first: other computers then delete the site too, and Main never gets it back.
+    const done = remote
+      ? (await signOutRemote({ profileId, site })).ok
+      : (await recordSignOut({ profileId, site })).ok &&
+        (profile.id === DEFAULT_BROWSER_PROFILE_ID
+          ? await accounts?.signOutMainSite?.(site, environmentId).catch(() => false)
+          : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false));
     if (!done) profileError();
     else window.dispatchEvent(new Event("scient-accounts-session-changed"));
     await load();
     setBusy(null);
   };
+  const canSignOut = remote || window.desktopBridge?.accounts?.signOutSite !== undefined;
   const shown = (sites ?? []).filter((site) => site.domain.includes(query.trim().toLowerCase()));
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -160,6 +195,8 @@ function SignedInSitesDialog({
               name={profile.name}
               picture={profile.record.picture}
               color={profile.record.color}
+              id={profile.id}
+              browser={profile.record.source?.browser}
             />
             <div className="grid">
               <DialogTitle>{profile.name}</DialogTitle>
@@ -185,7 +222,7 @@ function SignedInSitesDialog({
                   className="group flex items-center justify-between gap-3 border-b px-3 py-1.5 text-sm last:border-b-0"
                 >
                   <span className="truncate">{site.domain}</span>
-                  {window.desktopBridge?.accounts?.signOutSite ? (
+                  {canSignOut ? (
                     <span className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
                       <Button
                         size="xs"
@@ -205,6 +242,11 @@ function SignedInSitesDialog({
                 </div>
               ) : null}
             </div>
+            {remote && sender ? (
+              <p className="text-sm text-muted-foreground">
+                Signs out on {remoteLabel}. {sender}'s next sign-in to this site copies it again.
+              </p>
+            ) : null}
           </div>
         </DialogPanel>
       </DialogPopup>
@@ -236,9 +278,7 @@ export function BrowserImportDialog({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
   // Closing never stops an import: it finishes in the background and reports in a toast.
-  const closed = useRef(false);
   const close = () => {
-    closed.current = true;
     if (busy) toastManager.add({ type: "info", title: "The import continues in the background" });
     onClose();
   };
@@ -246,7 +286,9 @@ export function BrowserImportDialog({
   const [quitting, setQuitting] = useState<ReturnType<typeof mergeSourceProfiles>[number] | null>(
     null,
   );
-  const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
+  // What each profile imported here brought, by its key.
+  const [brought, setBrought] = useState<ReadonlyMap<string, string>>(new Map());
+  const passwordsImporting = useImportingPasswords();
   const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
@@ -262,7 +304,7 @@ export function BrowserImportDialog({
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
   ) =>
-    imported.has(JSON.stringify([source.id, profile.directory])) ||
+    brought.has(JSON.stringify([source.id, profile.directory])) ||
     linkedProfile(source, profile) !== undefined;
   const load = async () => {
     const [sources, details] = await Promise.all([
@@ -320,6 +362,7 @@ export function BrowserImportDialog({
       profileId: string | undefined;
     }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
+    const sessionsFrom: Array<{ profileId: string; from: string; filled: boolean }> = [];
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
@@ -337,6 +380,7 @@ export function BrowserImportDialog({
                 sourceProfileDirectory: profile.directory,
                 target: { kind: "new", profileId },
                 profileName: profile.name,
+                fillMain: false,
               },
             );
             if (outcome.kind === "blocked") {
@@ -350,12 +394,20 @@ export function BrowserImportDialog({
             const record = sourceRecord(profileId, source.id, profile);
             if (Option.isSome(record)) await updateRecord(record.value);
             else profileError();
+            const label = importedLabel(outcome.imported, outcome.importedSites);
+            setBrought((current) => new Map(current).set(key, label));
           }
           done.add(key);
+          if (profileId !== undefined)
+            sessionsFrom.push({
+              profileId,
+              from: `${source.name} · ${profile.name}`,
+              filled: !isImported(source, profile),
+            });
           if (passwords && readPasswords && profile.passwordCount !== undefined)
             passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
-      if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
+      if (passwordSources.length) setImportingPasswords(true);
       for (const { profileId, ...input } of passwordSources) {
         const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
         const result = csv
@@ -370,6 +422,9 @@ export function BrowserImportDialog({
           passwordTotals.skipped += csv.skipped + result.value.skipped;
         } else passwordTotals.failed = true;
       }
+      // After the passwords: a site with a saved password is one whose session gets a row.
+      for (const { profileId, from, filled } of sessionsFrom)
+        await recordImportedSessions(environmentId, profileId, from, { fillMain: filled });
       if (passwordTotals.failed)
         toastManager.add({ type: "error", title: "Could not import saved passwords" });
       else if (passwordTotals.imported || passwordTotals.skipped)
@@ -379,12 +434,11 @@ export function BrowserImportDialog({
             ? `Imported ${passwordTotals.imported} passwords, ${passwordTotals.skipped} skipped`
             : `Imported ${passwordTotals.imported} passwords`,
         });
-      setImported((current) => new Set([...current, ...done]));
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
-      if (!closed.current && done.size === selected.size) onClose();
     } catch {
       profileError();
     }
+    setImportingPasswords(false);
     importRunning = false;
     setBusy(false);
   };
@@ -425,11 +479,11 @@ export function BrowserImportDialog({
                             key={source.id}
                             className="flex min-h-15 items-center gap-3 px-3 py-2"
                           >
-                            <BrowserLogo id={source.id} name={source.name} />
+                            <ProfilePicture name={source.name} browser={source.id} />
                             <span className="grid min-w-0 flex-1 text-sm">
                               <span>{source.name}</span>
                               <span className="text-xs text-muted-foreground">
-                                Needs Full Disk Access
+                                Needs Full Disk Access to see what it holds
                               </span>
                             </span>
                             <div className="shrink-0">
@@ -468,27 +522,34 @@ export function BrowserImportDialog({
                                 (!!source.unavailable && source.unavailable !== "browserRunning")
                               }
                               icon={
-                                profile.picture ? (
-                                  <ProfilePicture
-                                    name={profile.name}
-                                    picture={profile.picture}
-                                    color={profile.color}
-                                  />
-                                ) : (
-                                  <BrowserLogo id={source.id} name={profile.name} />
-                                )
+                                <ProfilePicture
+                                  name={profile.name}
+                                  picture={profile.picture}
+                                  color={profile.color}
+                                  browser={source.id}
+                                />
                               }
                               title={profile.name}
                               description={
                                 alreadyImported
-                                  ? [source.name, profile.email, passwordsOnly && "Imported"]
+                                  ? [
+                                      source.name,
+                                      profile.email,
+                                      brought.get(key) ?? (passwordsOnly && "Imported"),
+                                    ]
                                       .filter(Boolean)
                                       .join(" · ")
                                   : source.unavailable === "browserRunning"
                                     ? `${source.name} · ${RUNNING_BROWSER_COPY}`
                                     : source.unavailable
                                       ? BROWSER_IMPORT_FAILURE_COPY[source.unavailable]
-                                      : [source.name, profile.email].filter(Boolean).join(" · ")
+                                      : [
+                                          source.name,
+                                          profile.email,
+                                          cookiesLabel(profile.cookieCount),
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" · ")
                               }
                               action={
                                 alreadyImported && !passwordsOnly ? (
@@ -544,7 +605,7 @@ export function BrowserImportDialog({
                             key={source.id}
                             className="flex items-center gap-3 border-t border-border/60 px-3 py-3"
                           >
-                            <BrowserLogo id={source.id} name={source.name} />
+                            <ProfilePicture name={source.name} browser={source.id} />
                             <div className="flex min-w-0 flex-1 flex-col">
                               <span className="truncate text-sm font-medium">{source.name}</span>
                               <span className="text-xs text-muted-foreground">Not installed</span>
@@ -555,7 +616,11 @@ export function BrowserImportDialog({
                   </Collapsible>
                 ) : null}
               </DiscoveryList>
-              {readPasswords && selectedPasswordCount !== undefined ? (
+              {passwordsImporting ? (
+                <p role="status" className="py-3 text-sm text-muted-foreground">
+                  Importing saved passwords…
+                </p>
+              ) : readPasswords && selectedPasswordCount !== undefined ? (
                 <label className="flex items-center gap-2 py-3 text-sm">
                   <Checkbox
                     checked={passwords}
@@ -573,7 +638,7 @@ export function BrowserImportDialog({
             </DialogPanel>
             <DialogFooter>
               <Button variant="outline" onClick={close}>
-                {busy ? "Close" : "Cancel"}
+                {busy || brought.size ? "Close" : "Cancel"}
               </Button>
               <Button
                 disabled={busy || !canWrite || selected.size === 0}
@@ -589,26 +654,61 @@ export function BrowserImportDialog({
   );
 }
 
+/** After a renamed imported profile's name: where it came from, "· Chrome · Yaacov". */
+function RenamedSource({ name, source }: { name: string; source: BrowserProfileRecord["source"] }) {
+  const label = renamedSourceLabel(name, source);
+  return label ? (
+    <span className="min-w-0 truncate text-xs text-muted-foreground">· {label}</span>
+  ) : null;
+}
+
+/** Google refuses signing in from Scient's browser: the way back is the user's own browser. */
+export const GOOGLE_BLOCKED = "Google blocks signing in here.";
+
+/** What a signed-out profile does instead: sign in in a browser, then bring that in. */
+export function googleRecovery(
+  source: BrowserProfileRecord["source"],
+  actions: { readonly refresh: () => void; readonly importProfile: () => void },
+) {
+  if (!source)
+    return {
+      message: `${GOOGLE_BLOCKED} Sign in in your browser, then import that profile`,
+      action: "Import from a browser…",
+      onAction: actions.importProfile,
+    };
+  const browser = browserName(source.browser);
+  return {
+    message: `${GOOGLE_BLOCKED} Sign in in ${browser}, then Refresh from ${browser}`,
+    action: `Refresh from ${browser}`,
+    onAction: actions.refresh,
+  };
+}
+
 /** The line under a profile's name: its address and, when Google refused it, a way back in. */
 export function ProfileDetail({
   email,
   signedOut,
-  onSignIn,
+  recover,
 }: {
   email: string | undefined;
   signedOut: boolean;
-  onSignIn?: () => void;
+  recover?: ReturnType<typeof googleRecovery> | undefined;
 }) {
   if (!email && !signedOut) return null;
+  if (signedOut && recover)
+    return (
+      <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+        {email ? <span className="max-w-full truncate">{email} ·</span> : null}
+        <span>{recover.message}</span>
+        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={recover.onAction}>
+          <span className="text-xs text-foreground">{recover.action}</span>
+        </Button>
+      </span>
+    );
   return (
     <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
       {email ? <span className="truncate">{email}</span> : null}
       {signedOut ? <span className="shrink-0">{email ? "· " : ""}Signed out of Google</span> : null}
-      {signedOut && onSignIn ? (
-        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={onSignIn}>
-          <span className="text-xs text-foreground">Sign in</span>
-        </Button>
-      ) : null}
     </span>
   );
 }
@@ -632,7 +732,6 @@ export function BrowserProfiles({
     reportFailure: false,
     reportDefect: false,
   });
-  const openBrowser = useAccountBrowser(environmentId);
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
@@ -647,12 +746,7 @@ export function BrowserProfiles({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles).filter(
-    (profile) =>
-      profile.id !== DEFAULT_BROWSER_PROFILE_ID ||
-      settings.browserProfiles.length === 0 ||
-      settings.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID,
-  );
+  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
   const disabled = !canWrite || !hydrated || busy;
   const linkedProfiles = profiles.filter((profile) => profile.record.source);
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
@@ -731,6 +825,7 @@ export function BrowserProfiles({
     const renames: Array<{ id: string; from: string; to: string }> = [];
     let failed = false;
     for (const { id, record } of targets) {
+      let refreshed = false;
       const linked = record.source;
       const source = sources.find((source) => source.id === linked?.browser);
       const profile = source?.profiles.find((profile) =>
@@ -750,8 +845,10 @@ export function BrowserProfiles({
           sourceProfileDirectory: profile.directory,
           target: { kind: "existing", profileId: id, name: linked.profileName },
           keepSites: sitesToKeep(snapshot.accounts, id),
+          fillMain: false,
         });
         if (result.kind === "blocked") failed = true;
+        else refreshed = true;
       }
       const metadata = sourceRecord(id, source.id, profile, linked.importedAt);
       if (Option.isSome(metadata)) await updateRecord(metadata.value);
@@ -771,6 +868,9 @@ export function BrowserProfiles({
           : null;
         if (!result?.ok) failed = true;
       }
+      await recordImportedSessions(environmentId, id, `${source.name} · ${profile.name}`, {
+        fillMain: refreshed,
+      });
     }
     await followSourceNames(renames);
     if (failed) profileError();
@@ -849,7 +949,7 @@ export function BrowserProfiles({
               <MenuItem
                 onClick={() =>
                   void act(async () => {
-                    await addBrowserProfile();
+                    await addBrowserProfile(environmentId);
                   })
                 }
               >
@@ -883,6 +983,23 @@ export function BrowserProfiles({
         </span>
       }
     >
+      {settings.mainDefaultNotice ? (
+        <SettingsRow
+          title="New tabs now open in Main, which has your sign-ins. You can change this here."
+          control={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Dismiss"
+              onClick={() =>
+                void changeSettings((current) => ({ ...current, mainDefaultNotice: false }))
+              }
+            >
+              <XIcon />
+            </Button>
+          }
+        />
+      ) : null}
       {profiles.map((profile) => (
         <SettingsRow
           key={profile.id}
@@ -894,6 +1011,8 @@ export function BrowserProfiles({
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
+                id={profile.id}
+                browser={profile.record.source?.browser}
               />
               {renaming === profile.id ? (
                 <DraftInput
@@ -919,6 +1038,7 @@ export function BrowserProfiles({
                 <span className="grid min-w-0 gap-1 text-left">
                   <span className="flex items-center gap-2">
                     <span className="truncate text-sm text-foreground">{profile.name}</span>
+                    <RenamedSource name={profile.name} source={profile.record.source} />
                     {settings.browserDefaultProfileId === profile.id ? (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         New tabs
@@ -928,9 +1048,14 @@ export function BrowserProfiles({
                   <ProfileDetail
                     email={profile.record.source?.email}
                     signedOut={signedOutOfGoogle(snapshot.accounts, profile.id)}
-                    {...(previewBridge
-                      ? { onSignIn: () => void openBrowser(GMAIL_URL, profile.id) }
-                      : {})}
+                    recover={
+                      previewBridge
+                        ? googleRecovery(profile.record.source, {
+                            refresh: () => void act(() => refresh([profile])),
+                            importProfile: onImport,
+                          })
+                        : undefined
+                    }
                   />
                 </span>
               )}
@@ -938,15 +1063,21 @@ export function BrowserProfiles({
           }
           control={
             <div className="flex items-center gap-2">
+              {profile.record.received?.[0] ? (
+                <span className="text-xs text-muted-foreground">
+                  Set on {profile.record.received[0].label}
+                </span>
+              ) : null}
               <AccessChip
                 environmentId={environmentId}
                 target={{ type: "profile", profileId: profile.id }}
                 access={profile.record.access}
-                disabled={disabled}
+                disabled={disabled || profile.record.received !== undefined}
               />
               <ControlsMenu disabled={disabled}>
                 <MenuCheckboxItem
                   variant="switch"
+                  disabled={profile.record.received !== undefined}
                   checked={profile.record.scriptSignIn}
                   onCheckedChange={(scriptSignIn) =>
                     void setControls({
@@ -977,11 +1108,13 @@ export function BrowserProfiles({
                     Match to browser profile…
                   </MenuItem>
                 )}
-                <ScopeSubmenu
-                  environmentId={environmentId}
-                  target={{ type: "profile", profileId: profile.id }}
-                  scope={profile.record.scope}
-                />
+                {profile.record.received ? null : (
+                  <ScopeSubmenu
+                    environmentId={environmentId}
+                    target={{ type: "profile", profileId: profile.id }}
+                    scope={profile.record.scope}
+                  />
+                )}
                 <MenuItem
                   disabled={settings.browserDefaultProfileId === profile.id}
                   onClick={() =>
@@ -995,9 +1128,7 @@ export function BrowserProfiles({
                 </MenuItem>
                 {previewBridge && profile.record.source ? (
                   <MenuItem onClick={() => void act(() => refresh([profile]))}>
-                    Refresh from{" "}
-                    {profile.record.source.browser[0]!.toUpperCase() +
-                      profile.record.source.browser.slice(1)}
+                    Refresh from {browserName(profile.record.source.browser)}
                   </MenuItem>
                 ) : null}
                 {profile.record.source?.email && profile.record.source.browser === "chrome" ? (
@@ -1021,17 +1152,15 @@ export function BrowserProfiles({
                         await clear(profile.id);
                         const result = await removeRecord({ profileId: profile.id });
                         if (!result.ok) return;
-                        await persistClientSettingsUpdate((current) =>
-                          withOwnDefault({
-                            ...current,
-                            browserProfiles: current.browserProfiles.filter(
-                              (item) => item.id !== profile.id,
-                            ),
-                            ...(current.browserDefaultProfileId === profile.id
-                              ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
-                              : {}),
-                          }),
-                        );
+                        await persistClientSettingsUpdate((current) => ({
+                          ...current,
+                          browserProfiles: current.browserProfiles.filter(
+                            (item) => item.id !== profile.id,
+                          ),
+                          ...(current.browserDefaultProfileId === profile.id
+                            ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
+                            : {}),
+                        }));
                         forgetBrowsing(profile.id);
                       })
                     }
@@ -1069,6 +1198,7 @@ export function BrowserProfiles({
                           name={sourceProfile.name}
                           picture={sourceProfile.picture}
                           color={sourceProfile.color}
+                          browser={source.id}
                         />
                       }
                       title={sourceProfile.name}

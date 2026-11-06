@@ -35,6 +35,18 @@
       "types": "./src/scientBrowserProfileChoice.ts",
       "import": "./src/scientBrowserProfileChoice.ts"
     },
+    "./scientSessionCookies": {
+      "types": "./src/scientSessionCookies.ts",
+      "import": "./src/scientSessionCookies.ts"
+    },
+    "./scientSessionQualify": {
+      "types": "./src/scientSessionQualify.ts",
+      "import": "./src/scientSessionQualify.ts"
+    },
+    "./scientSessionDelivery": {
+      "types": "./src/scientSessionDelivery.ts",
+      "import": "./src/scientSessionDelivery.ts"
+    },
     "./scientPublicationArtifact": {
       "types": "./src/scientPublicationArtifact.ts",
       "import": "./src/scientPublicationArtifact.ts"
@@ -654,6 +666,7 @@
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",
     "remark-rehype": "catalog:",
+    "tldts": "catalog:",
     "unified": "catalog:",
     "yaml": "catalog:"
   },

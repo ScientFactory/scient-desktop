@@ -33,10 +33,40 @@ import {
   PaperQueueRequestInput,
   Institution,
   UniversitySearchInput,
-  UniversitySignInInput,
+  AccountSignInAsPersonInput,
   UniversityBrowseInput,
   AccountKeyUnlinkInput,
+  AccountMainBackfilledInput,
+  AccountsQualifyCase,
+  AccountMainFilledInput,
+  AccountProfileResendInput,
+  AccountProfileRevision,
+  AccountProfileSendLogInput,
+  AccountProfileSharedInput,
+  AccountProfileUnsharedInput,
+  AccountKeepSenderKeyInput,
+  AccountSenderKey,
+  AccountSenderKeyInput,
+  AccountSessionsBindInput,
+  AccountSessionsForgetInput,
+  AccountSessionsBindResult,
+  AccountProfileSignedOutInput,
+  AccountMainWithdrawnInput,
+  AccountSessionsApplied,
+  AccountSessionsAppliedInput,
+  AccountSessionsList,
+  AccountSessionsListInput,
+  AccountSessionsReceiveInput,
+  AccountSessionsReceiveResult,
+  AccountSessionsSignOutLocalInput,
+  AccountSessionsSignOutLocalResult,
+  AccountSessionsWithdrawInput,
+  AccountSessionsWithdrawResult,
+  ProfileSendLog,
   AccountSignInSeenInput,
+  AccountSessionsSeenInput,
+  AccountKeepTypedInput,
+  AccountSessionsSeenResult,
   AccountsCheckInput,
   AccountsError,
   AccountsSetAgentAccessInput,
@@ -53,6 +83,7 @@ import {
   PasswordImportResult,
 } from "./accounts.ts";
 import { PreviewTabId } from "../preview.ts";
+import { ThreadId } from "../baseSchemas.ts";
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_ACCOUNT_WS_METHODS = {
@@ -65,6 +96,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsCheck: "accounts.check",
   accountsSignInSeen: "accounts.signInSeen",
   accountsGoogleSessionsSeen: "accounts.googleSessions.seen",
+  accountsSessionsSeen: "accounts.sessionsSeen",
+  accountsKeepTyped: "accounts.keepTyped",
   accountsSessionEnded: "accounts.sessionEnded",
   accountsSetCodeSources: "accounts.codeSources.set",
   accountsLinkKey: "accounts.keys.link",
@@ -73,6 +106,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsPapersContinue: "accounts.papers.continue",
   accountsPapersList: "accounts.papers.list",
   accountsUniversitySearch: "accounts.universities.search",
+  accountsSignInAsPerson: "accounts.signInAsPerson",
+  /** The old name of `accountsSignInAsPerson`, answered for one more release. */
   accountsUniversitySignIn: "accounts.universities.signIn",
   accountsUniversityBrowse: "accounts.universities.browse",
   accountsPlainKeys: "accounts.plainKeys.find",
@@ -83,6 +118,24 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileUpdate: "accounts.profiles.update",
   accountsProfileRemove: "accounts.profiles.remove",
   accountsProfileChoose: "accounts.profiles.choose",
+  accountsMainFilled: "accounts.main.filled",
+  accountsMainBackfilled: "accounts.main.backfilled",
+  accountsSessionsQualify: "accounts.sessions.qualify",
+  accountsSessionsReceive: "accounts.sessions.receive",
+  accountsSessionsApplied: "accounts.sessions.applied",
+  accountsSessionsWithdraw: "accounts.sessions.withdraw",
+  accountsSessionsList: "accounts.sessions.list",
+  accountsSessionsSignOutLocal: "accounts.sessions.signOutLocal",
+  accountsProfileSendLog: "accounts.profiles.sendLog",
+  accountsProfileResend: "accounts.profiles.resend",
+  accountsProfileSignedOut: "accounts.profiles.signedOut",
+  accountsMainWithdrawn: "accounts.main.withdrawn",
+  accountsProfileShared: "accounts.profiles.shared",
+  accountsProfilesUnshared: "accounts.profiles.unshared",
+  accountsSessionsBind: "accounts.sessions.bind",
+  accountsSessionsForget: "accounts.sessions.forget",
+  accountsSenderKey: "accounts.computers.senderKey",
+  accountsKeepSenderKey: "accounts.computers.keepSenderKey",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -198,13 +251,22 @@ export const WsAccountsPapersListRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
   error: AccountsRpcError,
 });
 
+const signInAsPerson = {
+  payload: AccountSignInAsPersonInput,
+  /** `threadId` is where the tab opened; older servers leave it out. */
+  success: Schema.Struct({ tabId: PreviewTabId, threadId: Schema.optional(ThreadId) }),
+  error: AccountsRpcError,
+};
+
+export const WsAccountsSignInAsPersonRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSignInAsPerson,
+  signInAsPerson,
+);
+
+/** The same sign-in under its old name, for clients of the last release. */
 export const WsAccountsUniversitySignInRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsUniversitySignIn,
-  {
-    payload: UniversitySignInInput,
-    success: Schema.Struct({ tabId: PreviewTabId }),
-    error: AccountsRpcError,
-  },
+  signInAsPerson,
 );
 
 export const WsAccountsUniversityBrowseRpc = Rpc.make(
@@ -328,3 +390,123 @@ export const WsAccountsHandoffShowRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accou
   success: Empty,
   error: AccountsRpcError,
 });
+
+export const WsAccountsMainFilledRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsMainFilled, {
+  payload: AccountMainFilledInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsMainBackfilledRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsMainBackfilled,
+  { payload: AccountMainBackfilledInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsSessionsSeenRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSessionsSeen, {
+  payload: AccountSessionsSeenInput,
+  success: AccountSessionsSeenResult,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsKeepTypedRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsKeepTyped, {
+  payload: AccountKeepTypedInput,
+  success: Schema.Struct({ kept: Schema.Boolean }),
+  error: AccountsRpcError,
+});
+
+/** Dev builds only: the cookie adapter's qualification on this computer's browser. */
+export const WsAccountsSessionsQualifyRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsQualify,
+  { payload: Empty, success: Schema.Array(AccountsQualifyCase), error: AccountsRpcError },
+);
+
+const accountRpc = <
+  const Tag extends string,
+  Payload extends Schema.Top,
+  Success extends Schema.Top,
+>(
+  tag: Tag,
+  payload: Payload,
+  success: Success,
+) => Rpc.make(tag, { payload, success, error: AccountsRpcError });
+
+/** On a remote: one batch of a desktop's sign-ins, from the session that sends as `source`. */
+export const WsAccountsSessionsReceiveRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsReceive,
+  AccountSessionsReceiveInput,
+  AccountSessionsReceiveResult,
+);
+export const WsAccountsSessionsAppliedRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsApplied,
+  AccountSessionsAppliedInput,
+  AccountSessionsApplied,
+);
+export const WsAccountsSessionsWithdrawRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsWithdraw,
+  AccountSessionsWithdrawInput,
+  AccountSessionsWithdrawResult,
+);
+export const WsAccountsSessionsListRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsList,
+  AccountSessionsListInput,
+  AccountSessionsList,
+);
+export const WsAccountsSessionsSignOutLocalRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsSignOutLocal,
+  AccountSessionsSignOutLocalInput,
+  AccountSessionsSignOutLocalResult,
+);
+/** On the desktop: the send log of one profile, names and numbers only. */
+export const WsAccountsProfileSendLogRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileSendLog,
+  AccountProfileSendLogInput,
+  ProfileSendLog,
+);
+export const WsAccountsProfileResendRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileResend,
+  AccountProfileResendInput,
+  AccountProfileRevision,
+);
+export const WsAccountsProfileSignedOutRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileSignedOut,
+  AccountProfileSignedOutInput,
+  AccountProfileRevision,
+);
+export const WsAccountsMainWithdrawnRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsMainWithdrawn,
+  AccountMainWithdrawnInput,
+  AccountProfileRevision,
+);
+export const WsAccountsProfileSharedRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileShared,
+  AccountProfileSharedInput,
+  Empty,
+);
+export const WsAccountsProfilesUnsharedRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfilesUnshared,
+  AccountProfileUnsharedInput,
+  Empty,
+);
+/** On a remote: proves, or first establishes, which desktop sends as `source`. */
+export const WsAccountsSessionsBindRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsBind,
+  AccountSessionsBindInput,
+  AccountSessionsBindResult,
+);
+/** On the desktop: the key a computer issued it, kept encrypted with Accounts. */
+export const WsAccountsSenderKeyRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSenderKey,
+  AccountSenderKeyInput,
+  AccountSenderKey,
+);
+export const WsAccountsKeepSenderKeyRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsKeepSenderKey,
+  AccountKeepSenderKeyInput,
+  Empty,
+);
+/** On a remote: its owner forgets a desktop, so a reinstalled one can bind again. */
+export const WsAccountsSessionsForgetRpc = accountRpc(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSessionsForget,
+  AccountSessionsForgetInput,
+  AccountSessionsWithdrawResult,
+);

@@ -1028,7 +1028,7 @@ importers:
         specifier: 3.6.0
         version: 3.6.0
       tldts:
-        specifier: 7.4.2
+        specifier: 'catalog:'
         version: 7.4.2
       undici:
         specifier: 'catalog:'
@@ -2659,6 +2659,9 @@ importers:
       remark-rehype:
         specifier: 'catalog:'
         version: 11.1.2
+      tldts:
+        specifier: 'catalog:'
+        version: 7.4.2
       unified:
         specifier: 'catalog:'
         version: 11.0.5

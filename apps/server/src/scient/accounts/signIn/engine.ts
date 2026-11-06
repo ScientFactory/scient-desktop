@@ -47,7 +47,37 @@ export interface SignInOptions {
   readonly findCode?: (sinceMs: number) => Effect.Effect<string | undefined, never, never>;
   /** Started by a page, not by a tool that can ask for a code: hand that step to the agent. */
   readonly stopAtCode?: boolean;
+  /**
+   * The user's own sign-in: a visible tab, and whatever Scient can't do is theirs to finish, for up
+   * to `waitMs`. `learnOrigins` collects each page that asked them for something (universities).
+   */
+  readonly person?: {
+    readonly waitMs: number;
+    readonly lookGapMs: number;
+    readonly learnOrigins: boolean;
+  };
+  /** Continues a pending attempt in its own tab, from what it already submitted. */
+  readonly resume?: {
+    readonly submissions: ReadonlyArray<SignInSubmission>;
+    readonly submittedAt?: number | undefined;
+  };
+  /** Why an agent asked the user to sign in, for the card. */
+  readonly reason?: string;
+  /** Told the attempt's tab as soon as it has one. */
+  readonly onTab?: (tabId: PreviewTabId, profileId: string | undefined) => Effect.Effect<void>;
+  /** Told each page it looks at: its origin, whether it asked for anything, and for a password. */
+  readonly onPage?: (page: {
+    readonly origin: string;
+    readonly fields: boolean;
+    readonly password: boolean;
+  }) => void;
+  /** Told each origin Scient typed the saved password into. */
+  readonly onTyped?: (origin: string) => void;
 }
+
+/** A second factor the person answers; an attempt stopped at one waits for them as it is. */
+const SECOND_FACTORS = new Set(["code", "push", "captcha", "passkey"]);
+const AGENT_WAIT = { waitMs: 180_000, lookGapMs: 2_000 };
 
 export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   session: AccountSessionScope,
@@ -81,14 +111,16 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   // The agent's own tab is used when it is on the account's site (in any profile: the password
   // works anywhere) or in the account's profile, where it is sent to the site. A new tab opens the
   // sign-in page, this page, or the account's first site.
-  const reuse = current?.ownedByCaller === true && (sameProfile || (tabId !== undefined && onSite));
+  const reuse =
+    options.resume !== undefined ||
+    (current?.ownedByCaller === true && (sameProfile || (tabId !== undefined && onSite)));
   const firstSite = details.sites[0];
   const siteUrl =
     firstSite && (firstSite.startsWith("https://") ? firstSite : `https://${firstSite}`);
   // A tab already on the site stays put: a saved address may be a step of an old sign-in, and the
   // page may already be the one to use.
   const destination =
-    reuse && onSite
+    options.resume || (reuse && onSite)
       ? undefined
       : university
         ? universitySignInLink(university)
@@ -101,7 +133,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
     ...(details.profileId === undefined ? {} : { profileId: details.profileId }),
     reuseExistingTab: reuse,
     ...(reuse && current ? { tabId: current.tabId } : {}),
-    open: false,
+    open: options.person !== undefined,
   };
   if (details.loginUrl && !anySiteMatches(details.sites, details.loginUrl))
     return yield* new AccountsError({
@@ -125,6 +157,8 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       message: "No browser tab is available for sign-in.",
     });
   const target = opened.tabId;
+  if (options.onTab)
+    yield* options.onTab(target, opened.tabs?.find((tab) => tab.tabId === target)?.profileId);
   const password = secrets.password === undefined ? undefined : Redacted.value(secrets.password);
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
   const decide = (page: SignInDetection) => {
@@ -136,8 +170,9 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       ...(details.username === undefined ? {} : { accountName: details.username }),
       passwordSent: submissions.some(({ fields }) => fields.includes("password")),
     });
-    // Scient learns a university's sign-in service from the person's own first sign-in.
-    return university &&
+    // The person finishes what Scient can't: a university's own sign-in, which Scient learns from
+    // their first one, or a sign-in the user started themselves.
+    return (university || options.person) &&
       decision.type === "needs-user" &&
       decision.kind === undefined &&
       !page.broken &&
@@ -145,16 +180,25 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       ? {
           ...decision,
           kind: "other" as const,
-          message: "Finish signing in on your university's page.",
+          message: university
+            ? "Finish signing in on your university's page."
+            : "Finish signing in on the site's page.",
         }
       : decision;
   };
   // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
   // continues with what is on screen.
   let filled: Array<{ origin: string; selector: string; expected: string }> = [];
-  const submissions: SignInSubmission[] = [];
+  const submissions: SignInSubmission[] = [...(options.resume?.submissions ?? [])];
   // A code sent in reply to a submit can arrive before the page shows it asks for one.
-  let submittedAt: number | undefined;
+  let submittedAt: number | undefined = options.resume?.submittedAt;
+  const learned = new Set<string>();
+  const patience = options.person ?? AGENT_WAIT;
+  /** Kept as the site's pending attempt: stopped at a second factor, with what it submitted. */
+  const pendingAt = (kind: string | undefined) =>
+    kind !== undefined && SECOND_FACTORS.has(kind)
+      ? { pending: { submissions: [...submissions], submittedAt } }
+      : {};
   // Cleared unless the sign-in succeeded or the user takes over, including on interruption.
   let clearFilled = true;
   let cleanupFailed = false;
@@ -175,6 +219,10 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         ),
       );
       const timestamp = yield* Clock.currentTimeMillis;
+      const fields = Boolean(page.username || page.password || page.otp);
+      if (options.person?.learnOrigins && page.origin.startsWith("https://") && fields)
+        learned.add(page.origin);
+      options.onPage?.({ origin: page.origin, fields, password: Boolean(page.password) });
       const otpPeriod =
         !page.otp || totp === undefined || /^\d{6,8}$/.test(totp)
           ? undefined
@@ -250,12 +298,18 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         if (page.limited)
           return { outcome: "limited" as const, message: action.message, tabId: target };
         if (session.unattended || action.kind === undefined)
-          return { outcome: "needs-user" as const, message: action.message, tabId: target };
+          return {
+            outcome: "needs-user" as const,
+            message: action.message,
+            tabId: target,
+            ...pendingAt(action.kind),
+          };
         if (options.stopAtCode && action.kind === "code")
           return {
             outcome: "needs-user" as const,
             message: "It needs a code.",
             tabId: target,
+            ...pendingAt(action.kind),
           };
         const handoffId = NodeCrypto.randomUUID();
         const startedAt = timestamp;
@@ -319,8 +373,9 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
                 tabId: target,
                 kind: action.kind,
                 ...(number === undefined ? {} : { number }),
+                ...(options.reason === undefined ? {} : { reason: options.reason }),
                 startedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt)),
-                expiresAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt + 180_000)),
+                expiresAt: DateTime.formatIso(DateTime.makeUnsafe(startedAt + patience.waitMs)),
               },
               invoke("open", { tabId: target, reuseExistingTab: true, open: true }, target).pipe(
                 Effect.asVoid,
@@ -331,20 +386,21 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           // The card shows this tab live in the conversation; "Open browser" reveals it elsewhere.
           yield* update();
           yield* noteCodeNeeded;
-          for (let poll = 0; poll < 90; poll++) {
+          for (let poll = 0; poll < patience.waitMs / patience.lookGapMs; poll++) {
             if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
             // The user's actions navigate the page; a look that fails mid-navigation is retried.
-            const looked = yield* invoke("accountWaitForLoad", { settleMs: 2000 }, target).pipe(
-              Effect.andThen(inspect(step)),
-              Effect.option,
-            );
+            const looked = yield* invoke(
+              "accountWaitForLoad",
+              { settleMs: patience.lookGapMs },
+              target,
+            ).pipe(Effect.andThen(inspect(step)), Effect.option);
             if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
             if (looked._tag === "None") continue;
             ({ page, timestamp, otpPeriod, continuation } = looked.value);
             action = decide(page);
             if (action.type !== "needs-user" || action.kind === undefined)
               return "continue" as const;
-            if (timestamp - startedAt >= 180_000) break;
+            if (timestamp - startedAt >= patience.waitMs) break;
             yield* update();
             yield* noteCodeNeeded;
             const found =
@@ -364,7 +420,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
             message:
               result === "cancelled"
                 ? "The user cancelled the sign-in."
-                : "The user did not finish signing in within 3 minutes.",
+                : `The user did not finish signing in within ${Math.round(patience.waitMs / 60_000)} minutes.`,
             tabId: target,
           };
         // A code belongs to the page that asked for it; another site asking gets the user.
@@ -411,6 +467,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         fields: action.fields.map(({ field }) => field),
         otpPeriod,
       });
+      if (action.fields.some(({ field }) => field === "password")) options.onTyped?.(page.origin);
       submittedAt = yield* Clock.currentTimeMillis;
       if (action.submit) yield* invoke("click", { selector: action.submit }, target);
       else yield* invoke("press", { key: "Enter" }, target);
@@ -446,11 +503,13 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         : result,
     ),
     // A sign-in that worked after Scient typed the saved password shows that password works.
-    Effect.map((result) =>
-      result.outcome === "signed-in" &&
+    Effect.map((result) => ({
+      ...result,
+      ...(result.outcome === "signed-in" &&
       submissions.some(({ fields }) => fields.includes("password"))
-        ? { ...result, savedPasswordUsed: true as const }
-        : result,
-    ),
+        ? { savedPasswordUsed: true as const }
+        : {}),
+      ...(options.person?.learnOrigins ? { learned: [...learned] } : {}),
+    })),
   );
 });
