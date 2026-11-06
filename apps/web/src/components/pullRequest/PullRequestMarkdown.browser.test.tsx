@@ -10,7 +10,8 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlState: (_environmentId, resource) => {
     requested.push(resource);
-    return { _tag: "Loading" };
+    // SCIENT-FORK: Scient asset states carry a refresh action.
+    return { _tag: "Loading", refresh: () => {} };
   },
 }));
 

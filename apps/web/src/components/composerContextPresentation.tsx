@@ -3,9 +3,7 @@ import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type {
   EnvironmentContextRecord,
-  EnvironmentId,
   PreviewAnnotationPayload,
-  ServerProviderSkill,
   ThreadContextRecord,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";

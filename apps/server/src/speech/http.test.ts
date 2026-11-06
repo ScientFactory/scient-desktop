@@ -34,6 +34,8 @@ const dependencies = Layer.mergeAll(
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+    // SCIENT-FORK: Scient's settings service also reads committed custom models.
+    committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
   }),
   Layer.succeed(
     TextGeneration.TextGeneration,

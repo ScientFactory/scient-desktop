@@ -16,7 +16,10 @@ import {
   type PendingStartOwner,
 } from "./scient-fork/PendingStartOwner.ts";
 import { retainCommittedQuestionAnswers } from "./scient-fork/committedQuestionAnswers.ts";
-import { makeCommitPublication } from "./scient-fork/CommitPublication.ts";
+import {
+  isCommitPublicationTransactionError,
+  makeCommitPublication,
+} from "./scient-fork/CommitPublication.ts";
 import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
 import {
   readCurrentRunningForkOwner,
@@ -127,8 +130,9 @@ interface EventSinkTransactionHooks {
 
 export interface EventSinkV2Shape {
   readonly consumeProviderEvents: <E, R, E2, R2>(
-    source: Stream.Stream<ProviderAdapter.ProviderAdapterV2Event, E, R>,
-    process: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void, E2, R2>,
+    // SCIENT-FORK: the stream also carries Scient's running-fork text batches.
+    source: Stream.Stream<ProviderAdapter.ProviderAdapterV2InternalEvent, E, R>,
+    process: (event: ProviderAdapter.ProviderAdapterV2InternalEvent) => Effect.Effect<void, E2, R2>,
     after: Effect.Effect<boolean, E2, R2>,
     canBatch: Effect.Effect<boolean, never, R2>,
   ) => Effect.Effect<
@@ -1165,7 +1169,8 @@ const layerBase: Layer.Layer<
           times: 2,
         }),
         Effect.mapError((cause) =>
-          SqlError.isSqlError(cause)
+          // SCIENT-FORK: Scient's commit order can also refuse a nested publishing write.
+          SqlError.isSqlError(cause) || isCommitPublicationTransactionError(cause)
             ? new EventSinkWriteError({ eventCount: batch.eventCount, cause })
             : cause,
         ),

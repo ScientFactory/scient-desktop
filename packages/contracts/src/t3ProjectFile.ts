@@ -49,7 +49,7 @@ export const T3ProjectFileScript = Schema.Struct({
   stopOnSettle: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "When true, T3 stops this action's terminal and child processes when its thread settles.",
+        "When true, Scient stops this action's terminal and child processes when its thread settles.",
     }),
   ),
   async: Schema.optionalKey(

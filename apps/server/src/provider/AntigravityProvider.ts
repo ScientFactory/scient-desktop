@@ -1,6 +1,7 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
+  settingsSecretLiteral,
   type AntigravitySettings,
   type ProviderSetupError,
   type ServerProvider,
@@ -185,7 +186,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       : "Connect with the credentials in the Antigravity provider settings.";
   const authUncheckedMessage = usesCredentials
     ? `Antigravity is installed. Connect with ${options.auth.label} to load models.`
-    : (antigravityAuthConfigIssue(settings) ??
+    : (antigravityAuthConfigIssue({
+        ...settings,
+        apiKey: settingsSecretLiteral(settings.apiKey),
+      }) ??
       (usesBrowser
         ? "Antigravity is installed. Google account access is not checked yet."
         : "Antigravity is installed. Configured credentials have not been checked yet."));

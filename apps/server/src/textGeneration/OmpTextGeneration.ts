@@ -42,6 +42,7 @@ import {
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "@t3tools/provider-core/server/textGenerationUtils";
+import { transcriptionCleanupUnsupported } from "../scient/voice/transcriptionCleanupUnsupported.ts";
 
 const TIMEOUT_MS = 120_000;
 
@@ -426,5 +427,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
       );
     },
     generateReviewGuide: () => Effect.fail(investigationUnsupported("generateReviewGuide", "OMP")),
+    // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
+    generateTranscriptionPostProcessing: () => transcriptionCleanupUnsupported("OMP"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

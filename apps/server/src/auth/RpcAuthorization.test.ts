@@ -62,7 +62,12 @@ describe("RPC authorization scopes", () => {
       const handler = group.toLayerHandler(tag, ({ kind }) =>
         Effect.sync(() => {
           accesses.push(kind);
-          return { labels: [{ name: "bug", color: null }], authors: [], truncated: false };
+          return {
+            labels: [{ name: "bug", color: null }],
+            authors: [],
+            references: [],
+            truncated: false,
+          };
         }),
       );
       const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>

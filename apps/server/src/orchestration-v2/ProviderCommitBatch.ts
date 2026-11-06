@@ -19,7 +19,8 @@ export const enabled = Config.Boolean("T3CODE_PROVIDER_COMMIT_BATCHING").pipe(
   Effect.orDie,
 );
 
-type Event = ProviderAdapter.ProviderAdapterV2Event;
+// SCIENT-FORK: Scient's running-fork text batches share the stream; they never batch.
+type Event = ProviderAdapter.ProviderAdapterV2InternalEvent;
 const isSnapshot = (event: Event) =>
   event.type === "node.updated" ||
   event.type === "message.updated" ||
@@ -232,9 +233,10 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
       ),
     );
   });
-  const consume = Effect.fnUntraced(function* <E, R, E2, R2>(
-    source: Stream.Stream<Event, E, R>,
-    process: (event: Event) => Effect.Effect<void, E2, R2>,
+  // SCIENT-FORK: generic in the event, so a consumer keeps its own stream's event type.
+  const consume = Effect.fnUntraced(function* <Ev extends Event, E, R, E2, R2>(
+    source: Stream.Stream<Ev, E, R>,
+    process: (event: Ev) => Effect.Effect<void, E2, R2>,
     after: Effect.Effect<boolean, E2, R2>,
     canBatch: Effect.Effect<boolean, never, R2> = Effect.succeed(true),
   ) {

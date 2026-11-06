@@ -28,6 +28,22 @@ import {
   waitForRun,
 } from "./thread.ts";
 
+vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
+  return {
+    ...actual,
+    layerRuntime: Layer.mock(actual.EnvironmentAuth)({
+      issueMcpClientSession: () =>
+        Effect.map(DateTime.now, (expiresAt) => ({
+          sessionId: AuthSessionId.make("test-session"),
+          token: "synthetic-token",
+          expiresAt,
+        })),
+      revokeSession: () => Effect.succeed(true),
+    }),
+  };
+});
+
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
 

@@ -148,7 +148,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         Effect.provideService(HostProcess.Architecture, host.architecture),
         Effect.provideService(HostProcess.LinuxLibc, "libc" in host ? host.libc : "gnu"),
       );
-      expect(descriptor.capabilities.voiceTranscription).toBe(host.supported);
+      // SCIENT-FORK: T3's environment transcription is dormant in Scient for now.
+      expect(descriptor.capabilities.voiceTranscription).toBe(false);
+      expect(typeof host.supported).toBe("boolean");
     }),
   );
   it.effect.each([

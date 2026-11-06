@@ -5,7 +5,7 @@ import {
   findVoiceReplacementModel,
   shouldSelectVoiceModelAfterDownload,
   voiceModelProgressPercent,
-} from "./VoiceSettingsPanel.tsx";
+} from "./ScientVoiceSettingsPanel.tsx";
 
 const small: VoiceModelSummary = {
   id: "whisper-small-multilingual-q5_1",

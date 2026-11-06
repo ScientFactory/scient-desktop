@@ -114,7 +114,8 @@ export function antigravitySessionMeta(
 export function antigravityClientInfo(version: string | null | undefined) {
   const parsed = parseAntigravityVersion(version);
   return parsed !== undefined && compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0
-    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
+    ? // SCIENT-FORK: Scient names itself; these releases serve every client.
+      { name: "scient", title: "Scient", version: packageJson.version }
     : { name: "zed", version: "0.0.0" };
 }
 

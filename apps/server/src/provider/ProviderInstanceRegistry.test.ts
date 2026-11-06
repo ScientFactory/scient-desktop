@@ -47,7 +47,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "@t3tools/provider-cursor/server";
-import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import { GrokDriver, type GrokCompositionRequirements } from "./AppProviderDriverComposition.ts";
 import { OpenCodeDriver, type OpenCodeCompositionEnv } from "./OpenCodeDriverComposition.ts";
 import * as ModelManifest from "./ModelManifest.ts";

@@ -26,8 +26,12 @@ import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isSpeechPlatformSupported } from "../speech/platform.ts";
+
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
+
+// SCIENT-FORK: T3's environment transcription is dormant in Scient for now.
+const SCIENT_T3_VOICE_TRANSCRIPTION: boolean = false;
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -287,7 +291,12 @@ export const make = Effect.gen(function* () {
       freshContext: true,
       scheduledTaskThreadModes: true,
       npmReleaseLookup: true,
-      voiceTranscription: isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),
+      // SCIENT-FORK:START — Scient's own voice stays the only dictation until the voice decision;
+      // with this off, every client hides T3's environment microphone controls.
+      voiceTranscription:
+        SCIENT_T3_VOICE_TRANSCRIPTION &&
+        isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),
+      // SCIENT-FORK:END
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

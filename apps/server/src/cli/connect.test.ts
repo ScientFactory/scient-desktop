@@ -34,7 +34,6 @@ const unreachableBootService = BootService.BootService.of({
   status: Effect.die("D4 service guard was bypassed"),
 });
 
-
 const managedExecutable = {
   status: "available",
   executablePath: "/tmp/cloudflared",

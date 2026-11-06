@@ -366,7 +366,7 @@ terminals that wait at an idle prompt, and keeps their output. A terminal that
 runs a command, such as a dev server, stays open unless its action has **Stop this action
 when the thread settles** enabled in Settings > Projects > Actions. You can also set
 `"stopOnSettle": true` on a `t3.json` action and import it there. Start the command through
-that action so T3 can stop its terminal and child processes. Commands started through an
+that action so Scient can stop its terminal and child processes. Commands started through an
 agent's own shell tools are managed by the provider.
 
 If reordering is unavailable for one environment, update the Scient server

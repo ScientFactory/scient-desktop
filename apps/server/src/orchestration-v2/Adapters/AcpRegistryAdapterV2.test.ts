@@ -1266,7 +1266,9 @@ describe("AcpRegistryAdapterV2", () => {
         providerInstanceId: instanceId,
         endpoint,
         authorizationHeader: "Bearer thread-env-token",
-        browserToolsAvailable: false,
+        // SCIENT-FORK: Scient session configs carry tool capabilities and connectors.
+        capabilities: new Set<never>(),
+        connectors: [],
       });
       // Several agents can run from one directory at once; the spawn env is how
       // a process the agent starts (an MCP server, a shell tool) finds its own
