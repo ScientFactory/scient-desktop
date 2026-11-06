@@ -2,7 +2,9 @@ import { use, useState } from "react";
 import { MarkdownFindContext, findRevealRef } from "~/components/chat/markdownFindContext";
 import { MermaidDiagramCard } from "../diagrams/MermaidDiagramCard";
 import { PlotlyChartCard } from "../visualizations/PlotlyChartCard";
+import { getPlotlyRuntimePromise } from "../visualizations/plotlyRuntime";
 import { VegaLiteChartCard } from "../visualizations/VegaLiteChartCard";
+import { loadVegaLiteRuntime } from "../visualizations/vegaLiteRuntime";
 
 import type { ScientRichFenceKind } from "./scientRichFenceKind";
 import type {
@@ -15,6 +17,14 @@ const SCIENT_RICH_FENCE_RENDERERS = {
   plotly: PlotlyChartCard,
   "vega-lite": VegaLiteChartCard,
 } as const satisfies Record<ScientRichFenceKind, unknown>;
+
+/** Starts a chart renderer's download while its fence streams, so the chart can draw on close. */
+export function preloadScientRichFenceRuntime(kind: ScientRichFenceKind): void {
+  if (kind === "mermaid") return;
+  void (kind === "plotly" ? getPlotlyRuntimePromise() : loadVegaLiteRuntime()).catch(
+    () => undefined,
+  );
+}
 
 interface ScientRichFenceProps {
   readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
