@@ -41,7 +41,6 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -1515,11 +1514,11 @@ export const layer: Layer.Layer<
           providerEventIngestor,
         });
         // SCIENT-FORK:END
-        const providerEventFiber = yield* (
-          snapshotSubscription?.snapshotEvents ?? eventSubscription.events
-        ).pipe(
-          Stream.mapEffect((event) =>
-            Effect.gen(function* () {
+        const providerEventFiber = yield* eventSink
+          .consumeProviderEvents(
+            snapshotSubscription?.snapshotEvents ?? eventSubscription.events,
+            (event) =>
+              Effect.gen(function* () {
               if (event.type === "internal.text_snapshot") {
                 // SCIENT-FORK:START — a running fork captures this live root's streamed text.
                 const consumer = snapshotSubscription?.textSnapshotConsumer;
@@ -1713,15 +1712,14 @@ export const layer: Layer.Layer<
               }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),
-          ),
-          // Also after events this run does not accept, such as a child handed to another run.
-          Stream.tap(() =>
+            // Also after events this run does not accept, such as a child handed to another run.
             Effect.gen(function* () {
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
+              return yield* shouldStopProviderEventIngestion;
             }),
-          ),
-          Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
-          Stream.runDrain,
+            Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
+          )
+          .pipe(
           Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
           Effect.flatMap(() =>
             Effect.gen(function* () {

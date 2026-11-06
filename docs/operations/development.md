@@ -49,6 +49,11 @@ can identify a listener, but a port or worktree match alone does not establish
 ownership. Never pipe a process search into a kill command. Managed Electron
 candidates use the [local dev app stop command](./local-dev-app.md) instead.
 
+To stop a worktree's dev stack when its thread settles, import the **Dev** action from
+`t3.json` in Settings > Projects > Actions and start it through the action menu or its
+keybinding. Its `stopOnSettle` option lets Scient stop the terminal and its child processes.
+Running `vp run dev` through an agent's own shell tool does not attach it to this lifecycle.
+
 ### State and ports
 
 Scient candidate apps use their worktree-owned `.scient-next` state. The stable development
@@ -362,7 +367,7 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
+`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor

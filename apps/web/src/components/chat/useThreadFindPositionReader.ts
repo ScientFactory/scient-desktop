@@ -1,5 +1,6 @@
 import { useLayoutEffect } from "react";
 import type { RunId } from "@t3tools/contracts";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { TimelineEntry } from "../../session-logic";
 import {
   timelineTurnFoldRunIdsByEntryId,
@@ -21,6 +22,7 @@ export function useThreadFindPositionReader({
   runningRunId,
   isWorking,
   runlessWorkActive,
+  toolCallVisibility,
   rows,
   contentInsetEndAdjustment,
 }: {
@@ -34,6 +36,7 @@ export function useThreadFindPositionReader({
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
   readonly rows: ReadonlyArray<MessagesTimelineRow>;
+  readonly toolCallVisibility: ToolCallVisibility;
   readonly contentInsetEndAdjustment: number;
 }) {
   // Layout effect so a find opened right after a thread switch reads this viewport.
@@ -49,6 +52,7 @@ export function useThreadFindPositionReader({
           runningRunId,
           isWorking,
           runlessWorkActive,
+          toolCallVisibility,
         });
       const entryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
       return readThreadFindPosition(
@@ -99,5 +103,6 @@ export function useThreadFindPositionReader({
     runningRunId,
     timelineEntries,
     timelineViewportElement,
+    toolCallVisibility,
   ]);
 }

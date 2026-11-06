@@ -9,6 +9,10 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",
+  "transcribe-cpp",
+  "@transcribe-cpp/",
+  "koffi",
+  "@koromix/",
   "@napi-rs/keyring",
   // SCIENT-FORK:START — Scient-only disk loaders: PDF.js loads @napi-rs/canvas through
   // createRequire, and the Accounts 1Password SDK loads WASM and native libraries.
