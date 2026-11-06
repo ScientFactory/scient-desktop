@@ -56,7 +56,10 @@ function setup() {
     NodeFS.readFileSync(new URL("../.github/scripts/ci-changes.cjs", import.meta.url), "utf8"),
   );
   write("pnpm-workspace.yaml", "packages:\n");
-  write("package.json", '{"type":"module","scripts":{"knip:check":"knip --include files"}}\n');
+  write(
+    "package.json",
+    '{"type":"module","scripts":{"knip:check:files":"knip --include files","knip:check:exports":"knip --exports"}}\n',
+  );
   NodeFS.mkdirSync(NodePath.join(root, "node_modules"), { recursive: true });
   // The script's own dependencies (Effect, typescript-legacy) resolve beside it.
   NodeFS.symlinkSync(

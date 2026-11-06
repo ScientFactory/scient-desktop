@@ -99,8 +99,12 @@ it.live.each([scientAgentTarget, ompTarget])(
               subagentId: task.id,
             });
             yield* completed(commandId);
-            const stopped = yield* waitFor((p) =>
-              p.subagents.some((s) => s.id === task.id && s.status === "cancelled"),
+            // Provider writes are batched, so the node and item can commit just after the subagent.
+            const stopped = yield* waitFor(
+              (p) =>
+                p.subagents.some((s) => s.id === task.id && s.status === "cancelled") &&
+                p.nodes.some((n) => n.id === task.id && n.status === "cancelled") &&
+                p.turnItems.some((i) => i.nodeId === task.id && i.status === "cancelled"),
             );
             assert.equal(stopped.nodes.find((n) => n.id === task.id)?.status, "cancelled");
             assert.equal(stopped.turnItems.find((i) => i.nodeId === task.id)?.status, "cancelled");

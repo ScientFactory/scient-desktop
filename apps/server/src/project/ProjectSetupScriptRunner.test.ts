@@ -333,6 +333,7 @@ describe("ProjectSetupScriptRunner", () => {
             NO_COLOR: "1",
             FORCE_COLOR: "0",
           },
+          stopOnSettle: false,
         });
         expect(write).toHaveBeenCalledWith({
           threadId: "thread-1",
@@ -452,6 +453,7 @@ describe("ProjectSetupScriptRunner", () => {
           NO_COLOR: "1",
           FORCE_COLOR: "0",
         },
+        stopOnSettle: false,
       });
       expect(write).toHaveBeenCalledWith({
         threadId: "thread-1",

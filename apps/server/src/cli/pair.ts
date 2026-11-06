@@ -51,7 +51,6 @@ import {
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -69,14 +68,13 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   {
     checkedStatePaths: Schema.Array(Schema.String),
     inLinkedWorktree: Schema.Boolean,
-    serveCommand: Schema.String,
   },
 ) {
   override get message(): string {
     return [
       "No running Scient server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      `Start one with \`${this.serveCommand}\`.`,
+      "Start one with `scient serve`.",
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
@@ -252,8 +250,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
 ) {
   const bases: Array<string> = [];
   let inLinkedWorktree = false;
-  const hasExplicitBaseDir = explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0;
-  if (hasExplicitBaseDir) {
+  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
     // Same precedence as dev-runner: inside a linked worktree only its own
@@ -300,13 +297,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       } satisfies DiscoveredPairTarget;
     }
   }
-  const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
-  return yield* new NoRunningServerError({
-    checkedStatePaths,
-    inLinkedWorktree,
-    // SCIENT-FORK: Scient resolves this installation's own command; it has no T3 Connect.
-    serveCommand: yield* resolveCliCommand(["serve", ...baseDirArgs]),
-  });
+  return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
 });
 
 /** Use the discovered state directory, independent of ambient config variables. */

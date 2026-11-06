@@ -32,7 +32,6 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
-import { transcriptionCleanupUnsupported } from "../scient/voice/transcriptionCleanupUnsupported.ts";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const DEFAULT_MODEL = "gemini-3.7-flash";
@@ -305,6 +304,12 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     generateReviewGuide: () =>
       Effect.fail(investigationUnsupported("generateReviewGuide", "Antigravity")),
     // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
-    generateTranscriptionPostProcessing: () => transcriptionCleanupUnsupported("Antigravity"),
+    generateTranscriptionPostProcessing: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "Antigravity does not clean up voice transcripts.",
+        }),
+      ),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -52,8 +52,14 @@ it.effect(
         buildInput: fixture.buildInput,
         driver,
         harness: CodexOrchestratorReplayHarness,
+        // SCIENT-FORK: Scient's Codex fixtures replay with the owner reload, as above.
         materializeWorkspace: (transcript, workspace) =>
-          Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
+          Effect.succeed(
+            materializeReplayTranscriptWorkspace(
+              materializeCodexFixtureOwnerReload(transcript, fixture.name),
+              workspace,
+            ),
+          ),
       }).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true));
       assert.equal(
         writes.reduce((total, count) => total + count, 0),

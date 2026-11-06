@@ -11921,12 +11921,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                           Effect.provideService(Path.Path, path),
                         );
-                  const querySession = yield* openQuery(turnInput, nativeThreadId, startGeneration);
-                  const autoCompactWindow = yield* resolveAutoCompactWindow(
-                    querySession.settingsCwd,
+                  // SCIENT-FORK:START — read the compaction window before a new query opens, so a
+                  // fast native exit cannot slip between open and start publication. A reused
+                  // query keeps the settings directory it opened with.
+                  const turnCwd = turnInput.runtimePolicy.cwd;
+                  const turnCompactWindow = yield* resolveAutoCompactWindow(
+                    turnCwd,
                     turnInput.modelSelection,
-                    querySession.launchArgSettings,
+                    yield* readClaudeLaunchArgSettings({
+                      settings: adapterOptions.settings,
+                      cwd: turnCwd,
+                      fileSystem,
+                      path,
+                    }),
                   );
+                  const querySession = yield* openQuery(turnInput, nativeThreadId, startGeneration);
+                  const autoCompactWindow =
+                    querySession.settingsCwd === turnCwd
+                      ? turnCompactWindow
+                      : yield* resolveAutoCompactWindow(
+                          querySession.settingsCwd,
+                          turnInput.modelSelection,
+                          querySession.launchArgSettings,
+                        );
+                  // SCIENT-FORK:END
                   const context: ActiveClaudeTurnContext = {
                     input: turnInput,
                     autoCompactWindow,

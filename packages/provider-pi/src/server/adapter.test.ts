@@ -804,6 +804,8 @@ describe("PiAdapterV2", () => {
         });
         yield* startTurn(runtime, providerThread);
         yield* fake.takeRequest("prompt");
+        // SCIENT-FORK: Scient's Pi turn is accepted by the prompt response.
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
         yield* fake.emit({
           type: "extension_ui_request",
           method: "setStatus",
@@ -828,6 +830,9 @@ describe("PiAdapterV2", () => {
         assert.deepEqual(runtime.providerSession.extensionStatuses, [
           { key: "watch", text: "Watching" },
         ]);
+        yield* fake.takeRequest("prompt");
+        // SCIENT-FORK: Scient's Pi turn is accepted by the prompt response.
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
         yield* fake.emit({ type: "agent_settled" });
         yield* takeEvent((event) => event.type === "turn.terminal");
         yield* runtime.ensureThread({
@@ -866,6 +871,8 @@ describe("PiAdapterV2", () => {
         );
         yield* fake.takeRequest(command);
         if (failure === "model error") {
+          // SCIENT-FORK: Scient's Pi turn is accepted by the prompt response.
+          yield* fake.emit({ type: "response", command: "prompt", success: true });
           yield* fake.emit({
             type: "message_end",
             message: { role: "assistant", stopReason: "error", errorMessage: "Rate limited" },
@@ -906,6 +913,8 @@ describe("PiAdapterV2", () => {
 
         yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
         yield* fake.takeRequest("prompt");
+        // SCIENT-FORK: Scient's Pi turn is accepted by the prompt response.
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
         yield* fake.emit({ type: "agent_settled" });
         const nextTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(nextTerminal.type === "turn.terminal" && nextTerminal.status === "completed");

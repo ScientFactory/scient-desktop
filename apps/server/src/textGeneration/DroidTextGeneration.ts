@@ -35,7 +35,6 @@ import {
   type DroidAcpRuntimeFactory,
   type DroidToolGuard,
 } from "../provider/acp/DroidAcpSupport.ts";
-import { transcriptionCleanupUnsupported } from "../scient/voice/transcriptionCleanupUnsupported.ts";
 
 const DROID_TIMEOUT_MS = 180_000;
 
@@ -511,6 +510,12 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
     generateReviewGuide: () =>
       Effect.fail(investigationUnsupported("generateReviewGuide", "Droid")),
     // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
-    generateTranscriptionPostProcessing: () => transcriptionCleanupUnsupported("Droid"),
+    generateTranscriptionPostProcessing: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "Droid does not clean up voice transcripts.",
+        }),
+      ),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

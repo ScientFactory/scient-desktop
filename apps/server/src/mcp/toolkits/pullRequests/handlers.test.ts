@@ -243,7 +243,7 @@ describe("pull request toolkit handlers", () => {
           url: "https://github.com/t3tools/t3code/pull/123",
         })
         .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestThreadNotFoundError", threadId: THREAD_ID });
+      expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
@@ -879,10 +879,7 @@ describe("native review-guide project scope", () => {
         const error = yield* harness
           .call("read_pull_request_guide", { url: "https://github.com/acme/web/pull/7" })
           .pipe(Effect.flip);
-        expect(error).toMatchObject({
-          _tag: "PullRequestThreadNotFoundError",
-          threadId: THREAD_ID,
-        });
+        expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
         expect(yield* Ref.get(harness.guideReads)).toEqual([]);
       }),
   );

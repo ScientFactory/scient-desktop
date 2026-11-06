@@ -1248,7 +1248,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
-      assert.deepStrictEqual(mac.asarUnpack, [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`]);
+      assert.deepStrictEqual(mac.asarUnpack, [
+        `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`,
+        "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
+      ]);
       assert.deepStrictEqual(linux.asarUnpack, mac.asarUnpack);
       assert.deepStrictEqual(win.asar, { smartUnpack: false });
       assert.deepStrictEqual(win.asarUnpack, [

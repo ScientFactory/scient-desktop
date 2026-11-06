@@ -935,7 +935,12 @@ it.effect.each([{ name: "same-provider", sameProvider: true }] as const)(
         createdBy: "user",
         creationSource: "web",
       });
-      yield* worker.drain();
+      // Background writes can wait behind queued provider batches; drain until the run starts.
+      // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- the run's start effect has no signal to await; drains are bounded.
+      for (let attempt = 0; attempt < 50 && opened.length === 0; attempt += 1) {
+        yield* worker.drain();
+        if (opened.length === 0) yield* Effect.yieldNow;
+      }
 
       const projection = yield* orchestrator.getThreadProjection(targetThreadId);
       // SCIENT-FORK:START

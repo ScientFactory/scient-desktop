@@ -1,13 +1,24 @@
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { useDictationShortcut } from "./useDictationShortcut";
 
 vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
 
+// SCIENT-FORK: T3 dictation has no default shortcut while it is dormant, so bind T3's chord here.
+const DICTATION_KEYBINDINGS = [
+  ...DEFAULT_RESOLVED_KEYBINDINGS,
+  ...compileResolvedKeybindingsConfig([
+    { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
+  ]),
+];
+
 function Probe({ speech }: { speech: Parameters<typeof useDictationShortcut>[0]["speech"] }) {
   useDictationShortcut({
-    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    keybindings: DICTATION_KEYBINDINGS,
     speech,
     disabled: false,
     terminalOpen: false,

@@ -769,12 +769,13 @@ describe("isRichTextBoldShortcut", () => {
 describe("composer and pull request shortcuts", () => {
   it("uses the dictation chord outside the terminal and preserves terminal split", () => {
     const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    // SCIENT-FORK: T3 dictation is dormant, so the chord stays Duplicate tab.
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
-      "composer.dictation",
+      "rightPanel.duplicateTab",
     );
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
