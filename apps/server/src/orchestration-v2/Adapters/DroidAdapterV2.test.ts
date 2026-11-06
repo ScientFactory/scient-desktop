@@ -1396,6 +1396,31 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
     ),
   );
   it.effect(
+    "holds a Steer on the turn that launched a background Task while Droid works after it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          const first = h.recorded.find((event) => event.type === "provider_turn.updated");
+          if (first?.type !== "provider_turn.updated") return yield* Effect.die("Missing the turn");
+          const reserve = h.runtime.reserveDroidSteer!({
+            attemptId: RunAttemptId.make("droid-attempt-1"),
+            providerTurnId: first.providerTurn.id,
+            revision: "steer",
+          });
+          assert.isUndefined(yield* reserve);
+          // Its run stays open for the held Steer, so no follow-up run can take this work.
+          yield* h.signal("finished");
+          yield* Queue.take(h.continuations);
+          assert.isUndefined(yield* reserve);
+          yield* TestClock.adjust("19 seconds");
+          assert.isUndefined(yield* reserve);
+        }),
+      ),
+  );
+  it.effect(
     "forgets unfinished Tasks after completion and uses the configured next-turn window",
     () =>
       Effect.scoped(

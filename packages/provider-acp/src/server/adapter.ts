@@ -325,8 +325,8 @@ export interface AcpAdapterV2ApplicationBridge {
       readonly enabled: boolean;
       readonly testHooks: AcpDroidSteerTestHooks | undefined;
       // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
-      /** The agent would absorb a prompt sent now into this owner's work, and never answer it. */
-      readonly holdsSteer?: (context: Turn) => boolean;
+      /** The agent would absorb a prompt sent now into its own work, and never answer it. */
+      readonly holdsSteer?: () => Effect.Effect<boolean>;
       // SCIENT-FORK:END
     }) => AcpDroidSteerSupervision<Turn>;
     /** The app error keeps the manager's refusal and retry semantics intact. */
@@ -2177,6 +2177,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.continuationSilence !== undefined &&
           flavor.deferFinalizeForBackgroundWork !== true &&
           acpIsProviderContinuationMessage(context.input.message);
+        /** Root traffic while no prompt runs: work the agent started itself, which a prompt joins. */
+        const postTurnWork: {
+          lastOutput?: EffectAcpSchema.SessionUpdate;
+          lastOutputAt?: number | undefined;
+          readonly tools: Set<string>;
+        } = { tools: new Set() };
+        let postTurnWorkOpen: Effect.Effect<boolean> = Effect.succeed(false);
         // SCIENT-FORK:END
         const droidSteerApplication = flavor.application?.droidSteering;
         const droidSteer =
@@ -2185,7 +2192,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : droidSteerApplication.makeSupervision<ActiveAcpTurn>({
                 enabled: droidSteerApplication.enabled,
                 // SCIENT-FORK:START — post-turn work has no prompt to cancel; Steer waits for its end.
-                holdsSteer: (context) => settlesOnSilence(context) && !context.finalized,
+                holdsSteer: () => postTurnWorkOpen,
                 // SCIENT-FORK:END
                 testHooks: {
                   ...(options.testHooks?.afterDroidDecodedBatchBegin === undefined
@@ -4105,8 +4112,48 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.toolPresentation?.outlivesTurn?.(tool.toolCallId) !== true
             );
           });
+        postTurnWorkOpen = Effect.gen(function* () {
+          const continuationSilence = flavor.continuationSilence;
+          if (continuationSilence === undefined) return false;
+          const context = yield* Ref.get(activeTurn);
+          if (context !== null && settlesOnSilence(context) && !context.finalized) return true;
+          const presentation =
+            context?.toolPresentation ?? (yield* Ref.get(carryoverSubagents))?.toolPresentation;
+          if (
+            openAgentRequests.size > 0 ||
+            (yield* Ref.get(pendingRuntimeRequests)).size > 0 ||
+            [...postTurnWork.tools].some((id) => presentation?.outlivesTurn?.(id) !== true)
+          )
+            return true;
+          if (postTurnWork.lastOutputAt === undefined) return false;
+          const quietFor = (yield* Clock.currentTimeMillis) - postTurnWork.lastOutputAt;
+          return quietFor < Duration.toMillis(continuationSilence(postTurnWork.lastOutput));
+        });
+        const observePostTurnWork = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const update = notification.update;
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const { toolCallId, status } = event.toolCall;
+              if (status !== "pending" && status !== "inProgress" && status !== "requiresAction")
+                postTurnWork.tools.delete(toolCallId);
+              else if (update.sessionUpdate === "tool_call") postTurnWork.tools.add(toolCallId);
+            }
+          }
+          if (acpRootSessionUpdateIngestsOutput(notification)) {
+            postTurnWork.lastOutput = update;
+            postTurnWork.lastOutputAt = yield* Clock.currentTimeMillis;
+          }
+        });
+        const forgetPostTurnWork = () => {
+          postTurnWork.tools.clear();
+          postTurnWork.lastOutputAt = undefined;
+        };
         // Work that settles on silence has no native prompt to fail when the runtime dies.
         const failSilentContinuationWork = Effect.gen(function* () {
+          forgetPostTurnWork();
           const context = yield* Ref.get(activeTurn);
           if (context !== null && settlesOnSilence(context) && context.promptSettled) {
             yield* finalizeTurn(
@@ -5347,6 +5394,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (droidSteer.isRetiredToolUpdate(update, context)) return;
           // SCIENT: observe before presentation cleanup, also after the successful root prompt returned.
           droidSteer.observe(notification);
+          // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+          if (
+            flavor.continuationSilence !== undefined &&
+            (context === null || context.finalized || context.promptSettled) &&
+            notification.sessionId === (yield* Ref.get(activeSessionId))
+          )
+            yield* observePostTurnWork(notification);
+          // SCIENT-FORK:END
           if (
             followsAgentWorkState &&
             flavor.extractSubagentSessionEvent !== undefined &&
@@ -8692,6 +8747,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return wasRequested;
               }),
             );
+            // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
+            if (!isContinuationTurn) forgetPostTurnWork();
+            // SCIENT-FORK:END
             if (!isContinuationTurn && flavor.beforeTurnStart)
               yield* flavor.beforeTurnStart(runtime, turnInput.runtimePolicy, turnInput);
             const promptParts = isContinuationTurn

@@ -124,7 +124,7 @@ type DroidSteerRuntimeMethods = Pick<
  */
 export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(input: {
   readonly enabled: boolean;
-  readonly holdsSteer?: (context: Turn) => boolean;
+  readonly holdsSteer?: () => Effect.Effect<boolean>;
   readonly testHooks:
     | {
         readonly afterDroidDecodedBatchBegin?: () => Effect.Effect<void>;
@@ -274,22 +274,23 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
               consumedDroidLease !== undefined &&
               (lease === undefined || consumedDroidLease === lease),
             reserveDroidSteer: (identity) =>
-              Effect.sync(() => {
-                if (
-                  droidClosed ||
-                  droidBatchDepth !== 0 ||
-                  droidPendingRequestCount !== 0 ||
-                  droidOwner?.providerTurnId !== identity.providerTurnId ||
-                  droidOwner.input.attemptId !== identity.attemptId ||
-                  droidOwner.interrupted ||
-                  input.holdsSteer?.(droidOwner) === true
-                )
-                  return undefined;
-                const id = droidOwner.droidSteerSafety?.reserve(identity.revision);
-                if (id !== undefined)
-                  droidLease = { id, epoch: droidBatchEpoch, context: droidOwner };
-                return id;
-              }).pipe(
+              (input.holdsSteer?.() ?? Effect.succeed(false)).pipe(
+                Effect.map((holds) => {
+                  if (
+                    holds ||
+                    droidClosed ||
+                    droidBatchDepth !== 0 ||
+                    droidPendingRequestCount !== 0 ||
+                    droidOwner?.providerTurnId !== identity.providerTurnId ||
+                    droidOwner.input.attemptId !== identity.attemptId ||
+                    droidOwner.interrupted
+                  )
+                    return undefined;
+                  const id = droidOwner.droidSteerSafety?.reserve(identity.revision);
+                  if (id !== undefined)
+                    droidLease = { id, epoch: droidBatchEpoch, context: droidOwner };
+                  return id;
+                }),
                 Effect.tap((id) =>
                   id === undefined
                     ? Effect.void
