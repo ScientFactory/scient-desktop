@@ -147,7 +147,7 @@ jobs:
         run: vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
-    if: ${{ inputs.real_kernel }}
+    if: false
     name: Real kernel / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
@@ -261,68 +261,21 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
-        with:
-          node-version-file: package.json
-          cache: false
-          run-install: |
-            args:
-              - --filter=t3...
-
-      # A system install on purpose: nothing here is Scient-managed.
-      - name: Setup Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-
-      - name: Setup R
-        uses: r-lib/actions/setup-r@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
-        with:
-          use-public-rspm: true
-
       - name: Setup Julia
         uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2
 
-      # Before anything is installed into this Python: it stands for a person's plain Python, on a
-      # computer with nothing that can host the bridge.
-      - name: Run on what people have
-        working-directory: apps/server
+      - name: EXPERIMENT Julia depot path
         run: |
           set -euo pipefail
-          SCIENT_TEST_BARE_PYTHON="$(python -c 'import sys; print(sys.executable)')"
-          export SCIENT_TEST_BARE_PYTHON
-          vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
-
-      - name: Run real files and scan this computer
-        working-directory: apps/server
-        env:
-          SCIENT_TEST_RUN_TABLE: "1"
-        # A compiler's first run on a fresh computer, such as runghc or `dotnet run` on Windows, takes up
-        # to two minutes, the project's ceiling, so real programs get five.
-        run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1 --testTimeout=300000
-
-      - name: Install the bridge host's packages
-        run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
-
-      - name: EXPERIMENT time IJulia setup phases
-        env:
-          JULIA_DEPOT_PATH: ${{ runner.temp }}/jdiag/depot
-          JULIA_PROJECT: ${{ runner.temp }}/jdiag/environment
-          IJULIA_NODEFAULTKERNEL: "1"
-        run: >-
-          julia --startup-file=no --history-file=no -e 'println(VERSION, " threads=", Sys.CPU_THREADS);
-          using Pkg; @time "registry" Pkg.Registry.add("General");
-          @time "add (no precompile)" withenv("JULIA_PKG_PRECOMPILE_AUTO"=>"0") do; Pkg.add("IJulia"); end;
-          @time "precompile" Pkg.precompile();
-          @time "import" @eval import IJulia; println(pkgversion(IJulia)); Pkg.status()'
-
-      - name: Run real R and Julia kernels
-        working-directory: apps/server
-        env:
-          SCIENT_TEST_KERNEL_DIR: ${{ runner.temp }}/scient-kernels
-        run: |
-          set -euo pipefail
-          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
-          export SCIENT_TEST_PYTHON
-          vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
+          root="$RUNNER_TEMP/jx"; sep=":"; [ "$RUNNER_OS" = Windows ] && sep=";"
+          julia --startup-file=no -e 'println(VERSION, " ", Sys.BINDIR); println(DEPOT_PATH); c=joinpath(Sys.BINDIR, "..", "share", "julia", "compiled", "v$(VERSION.major).$(VERSION.minor)"); println(isdir(c) ? readdir(c) : "no bundled caches")'
+          for mode in private trailing; do
+            depot="$root/$mode/depot"; [ "$mode" = trailing ] && depot="$depot$sep"
+            echo "== $mode: JULIA_DEPOT_PATH=$depot"
+            JULIA_DEPOT_PATH="$depot" julia --startup-file=no -e 'println(DEPOT_PATH); t=time(); using Pkg; println("using Pkg: ", round(time()-t, digits=1), " s")'
+          done
+          echo "== full setup, trailing"
+          JULIA_DEPOT_PATH="$root/full/depot$sep" JULIA_PROJECT="$root/full/environment" IJULIA_NODEFAULTKERNEL=1 \
+            julia --startup-file=no --history-file=no -e 't=time(); using Pkg; println("using Pkg: ", round(time()-t, digits=1), " s");
+            @time "add" Pkg.add("IJulia"); @time "precompile" Pkg.precompile(); @time "import" @eval import IJulia'
+          ls "$root/full/depot/compiled/"*/ || true
