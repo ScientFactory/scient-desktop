@@ -278,6 +278,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { registerAnalysisRpcTests } from "./scient/analysis/AnalysisRpcServerTests.ts";
 import { registerComputeRpcTests } from "./scient/compute/ComputeRpcServerTests.ts";
+import { ComputeRecipeNetwork } from "./scient/compute/ComputeRecipeSource.ts";
 import { registerMarkdownTransportTests } from "./scient/markdown/MarkdownTransportServerTests.ts";
 import {
   measureHttpGet,
@@ -1266,6 +1267,9 @@ const buildAppUnderTest = (options?: {
       .pipe(
         // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
         Layer.provide(AccountsTestkit.layer),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — Compute recipe updates come from GitHub; harnesses keep the shipped recipes.
+        Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
         // SCIENT-FORK:END
         Layer.provide(ManagedPolicy.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
