@@ -5,23 +5,21 @@ import { JULIA_KERNEL_LANGUAGE } from "./JuliaComputeRuntime.ts";
 const { setup } = JULIA_KERNEL_LANGUAGE;
 
 describe("Julia kernel setup", () => {
-  // Julia reads the standard library it ships compiled only from its installation's depots; a
-  // depot path naming Scient's depot alone made every first setup compile it again.
-  it.each([
-    { platform: "darwin", separator: ":" },
-    { platform: "linux", separator: ":" },
-    { platform: "win32", separator: ";" },
-  ] as const)("keeps the installation's own depots after Scient's on $platform", (input) => {
-    if (typeof setup !== "function") return expect.unreachable("Julia sets up by running Julia");
-    const { environment } = setup(
-      "/scient/julia",
-      { JULIA_DEPOT_PATH: "/people/own/depot" },
-      input.platform,
-    );
-    // The empty last entry stands for the installation's depots, never the person's.
-    expect(environment.JULIA_DEPOT_PATH?.split(input.separator)).toEqual([
-      expect.stringMatching(/^[/\\]scient[/\\]julia[/\\]depot$/u),
-      "",
-    ]);
-  });
+  it.each(["darwin", "linux", "win32"] as const)(
+    "names Scient's depot alone and adds the installation's from inside Julia on %s",
+    (platform) => {
+      if (typeof setup !== "function") return expect.unreachable("Julia sets up by running Julia");
+      const { args, environment } = setup(
+        "/scient/julia",
+        { JULIA_DEPOT_PATH: "/people/own/depot" },
+        platform,
+      );
+      // An empty entry would bring in the person's ~/.julia before Julia 1.11.
+      expect(environment.JULIA_DEPOT_PATH).toMatch(/^[/\\]scient[/\\]julia[/\\]depot$/u);
+      // Without the installation's depots Julia compiles its standard library again.
+      const script = args.at(-1) ?? "";
+      expect(script.indexOf("Sys.BINDIR")).toBeGreaterThan(-1);
+      expect(script.indexOf('ENV["JULIA_DEPOT_PATH"]')).toBeLessThan(script.indexOf("using Pkg"));
+    },
+  );
 });

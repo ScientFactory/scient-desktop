@@ -17,7 +17,19 @@ const PROBE = [
   "end",
 ].join("\n");
 
+// Julia keeps its standard library compiled in its installation's depots. Setup names Scient's
+// depot alone, because an empty entry also brings in the person's ~/.julia before Julia 1.11, so
+// these are added here, as Julia adds them itself, and passed on to the processes Pkg starts.
+// Without them every first setup compiled the standard library again: one to four minutes.
+const BUNDLED_DEPOTS = [
+  'for depot in (abspath(Sys.BINDIR, "..", "local", "share", "julia"), abspath(Sys.BINDIR, Base.DATAROOTDIR, "julia"))',
+  "  depot in DEPOT_PATH || push!(DEPOT_PATH, depot)",
+  "end",
+  'ENV["JULIA_DEPOT_PATH"] = join(DEPOT_PATH, Sys.iswindows() ? ";" : ":")',
+].join("; ");
+
 const SETUP = [
+  BUNDLED_DEPOTS,
   "using Pkg",
   'Pkg.add("IJulia")',
   "Pkg.precompile()",
@@ -104,24 +116,18 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
     };
   },
   inEnvironment: () => ["bin/julia"],
-  setup: (privateDirectory, environment, platform) => {
-    const separator = platform === "win32" ? ";" : ":";
-    return {
-      args: [...JULIA_FLAGS, "-e", SETUP],
-      // Only Scient's depot and project are written; no kernelspec is registered with Jupyter.
-      environment: {
-        ...environment,
-        // The trailing empty entry adds the installation's own depots, never the person's: without
-        // them Julia cannot load the standard library it ships compiled, and builds it again, which
-        // took one to four minutes before IJulia was even fetched.
-        JULIA_DEPOT_PATH: `${NodePath.join(privateDirectory, "depot")}${separator}`,
-        JULIA_PROJECT: NodePath.join(privateDirectory, "environment"),
-        JULIA_LOAD_PATH: `@${separator}@stdlib`,
-        JUPYTER_DATA_DIR: NodePath.join(privateDirectory, "jupyter"),
-        IJULIA_NODEFAULTKERNEL: "1",
-      },
-    };
-  },
+  setup: (privateDirectory, environment, platform) => ({
+    args: [...JULIA_FLAGS, "-e", SETUP],
+    // Only Scient's depot and project are written; no kernelspec is registered with Jupyter.
+    environment: {
+      ...environment,
+      JULIA_DEPOT_PATH: NodePath.join(privateDirectory, "depot"),
+      JULIA_PROJECT: NodePath.join(privateDirectory, "environment"),
+      JULIA_LOAD_PATH: `@${platform === "win32" ? ";" : ":"}@stdlib`,
+      JUPYTER_DATA_DIR: NodePath.join(privateDirectory, "jupyter"),
+      IJULIA_NODEFAULTKERNEL: "1",
+    },
+  }),
   launch: ({ executable, privateDirectory, environment, platform }) => {
     const separator = platform === "win32" ? ";" : ":";
     // The project folder's Project.toml, unless the person already named an environment.
