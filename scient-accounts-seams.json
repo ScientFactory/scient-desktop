@@ -8,6 +8,7 @@
     "apps/server/src/scient/papers"
   ],
   "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/accounts.ts",
     "packages/contracts/src/scient/accountRpcs.ts",
     "packages/contracts/src/scient/desktopAccountsBridge.ts",
