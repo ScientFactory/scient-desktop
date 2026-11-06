@@ -17,7 +17,19 @@ const PROBE = [
   "end",
 ].join("\n");
 
+// Julia keeps its standard library compiled in its installation's depots. Setup names Scient's
+// depot alone, because an empty entry also brings in the person's ~/.julia before Julia 1.11, so
+// these are added here, as Julia adds them itself, and passed on to the processes Pkg starts.
+// Without them every first setup compiled the standard library again: one to four minutes.
+const BUNDLED_DEPOTS = [
+  'for depot in (abspath(Sys.BINDIR, "..", "local", "share", "julia"), abspath(Sys.BINDIR, Base.DATAROOTDIR, "julia"))',
+  "  depot in DEPOT_PATH || push!(DEPOT_PATH, depot)",
+  "end",
+  'ENV["JULIA_DEPOT_PATH"] = join(DEPOT_PATH, Sys.iswindows() ? ";" : ":")',
+].join("; ");
+
 const SETUP = [
+  BUNDLED_DEPOTS,
   "using Pkg",
   'Pkg.add("IJulia")',
   "Pkg.precompile()",
