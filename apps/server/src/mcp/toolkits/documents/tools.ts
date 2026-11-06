@@ -168,7 +168,7 @@ export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {
 
 export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
   description:
-    "Build a project LaTeX file into a PDF at the project path you give, and open it in Scient's Split view. Scient finds the main document; if the file belongs to several, pass rootSourcePath. Returns compiler diagnostics. Scient may download missing TeX packages. If the result is in-progress, wait retryAfterMs, then call again with the same paths. It does not check how the pages look.",
+    "Build a project LaTeX file into a PDF at the project path you give, and open it in Scient's Split view. Scient finds the main document; pass rootSourcePath when the file belongs to several. Returns compiler diagnostics, and may download missing TeX packages. If the result is in-progress, wait retryAfterMs, then call again with the same paths. It does not check how the pages look.",
   parameters: ScientLatexPdfBuildInput,
   success: ScientLatexPdfBuildResult,
   failure: ScientLatexBuildToolError,
@@ -183,7 +183,7 @@ export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
 
 const ScientDocumentExportTool = Tool.make("scient_document_export", {
   description:
-    "Export a project Markdown file to the project path you give, and open it in Scient. The output extension picks the format; PDF is available. Missing images become placeholders listed in warnings. Needs a connected Scient desktop. It does not check how the pages look.",
+    "Export a project Markdown file to a PDF at the project path you give, and open it in Scient. Missing images become placeholders listed in warnings. Needs a connected Scient desktop. It does not check how the pages look.",
   parameters: ScientDocumentExportInput,
   success: ScientDocumentExportResult,
   failure: ScientDocumentExportToolError,

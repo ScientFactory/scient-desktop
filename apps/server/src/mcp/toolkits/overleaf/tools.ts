@@ -88,40 +88,40 @@ const overleafOperation = (id: string): OperationDefinition => ({
 });
 
 const ConnectionId = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,63}$/u)).annotate({
-  description: "A link's connectionId, as scient_overleaf_status lists it.",
+  description: "From scient_overleaf_status.",
 });
 const Folder = Schema.String.check(Schema.isMaxLength(4_096));
 const Choices = Schema.Array(
   Schema.Struct({
     key: Schema.String.check(Schema.isMaxLength(200)).annotate({
-      description: "A conflict's key from the last preview or sync result.",
+      description: "A conflict's key from the last result.",
     }),
     choice: ScientOverleafConflictChoice.annotate({
       description:
-        "mine keeps this folder's version, theirs takes Overleaf's, markers writes both into the file between conflict marks for you to merge. Use one of the conflict's allowed choices.",
+        "mine keeps this folder's version, theirs takes Overleaf's, markers writes both between conflict marks for you to merge. Use one of the conflict's allowed choices.",
     }),
   }),
 )
   .check(Schema.isMaxLength(4_000))
-  .annotate({ description: "One choice per conflict to settle." });
+  .annotate({ description: "One choice per conflict." });
 const FilePaths = Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).check(
   Schema.isMaxLength(2_000),
 );
 const Files = Schema.Struct({
   keepOnlyHere: Schema.optional(FilePaths).annotate({
-    description: "New files to keep only here: not sent, and remembered until you send them.",
+    description: "New files to keep only here, not sent until you send them.",
   }),
   send: Schema.optional(FilePaths).annotate({
     description:
-      "Files to send anyway: new files the rule skips (build output, hidden files, Scient's own files) or files kept only here.",
+      "Files to send anyway: skipped new files (build output, hidden, Scient's own) or files kept only here.",
   }),
   release: Schema.optional(FilePaths).annotate({
     description:
-      "Files held back for their conflict marks to send as they are, marks included: only for a file whose marks are its content (a guide that quotes them, say). Otherwise merge the marks instead.",
+      "Files with conflict marks to send as they are, only when the marks are the file's real content. Otherwise merge the marks.",
   }),
 }).annotate({
   description:
-    "Per-file decisions, paths relative to the linked folder. New files are sent by default; the review's additions say which are skipped and why.",
+    "Per-file decisions, paths relative to the linked folder. New files are sent unless the review lists them as skipped.",
 });
 
 /** A link with its folder and copy, as every result names it. */
@@ -135,7 +135,7 @@ const LinkedCopy = Schema.Struct({
 
 const ScientOverleafStatusTool = Tool.make("scient_overleaf_status", {
   description:
-    "Show this project's Overleaf links without going online. Without connectionId: whether an Overleaf Git token is saved, and every linked folder with its connectionId, Overleaf project, which copy of the project it belongs to, and its status. With connectionId: that link's status only. Status says whether the folder has edits to send, files with conflict marks, kept copies, unanswered sends, or a problem and what fixes it. Call this first to find a connectionId.",
+    "Show this project's Overleaf links without going online: whether a Git token is saved, and each linked folder's connectionId, Overleaf project, copy and status (edits to send, conflict marks, kept copies, unanswered sends, or a problem and its fix). With connectionId, that link only. Call this first.",
   parameters: Schema.Struct({ connectionId: Schema.optional(ConnectionId) }),
   success: Schema.Struct({
     lines: Lines,
@@ -160,14 +160,14 @@ const ScientOverleafStatusTool = Tool.make("scient_overleaf_status", {
 
 const ScientOverleafPreviewTool = Tool.make("scient_overleaf_preview", {
   description:
-    "Show what a sync of one link would bring in from Overleaf and send to it, with any conflicts, changing nothing on Overleaf (like git status and git diff before a push). It fetches from Overleaf. If an earlier sync was interrupted, it settles that first (which may write the folder), so it saves the folder's open editors before anything else, and stops if one cannot be saved. Pass choices to see the result of settling conflicts, and files to see a per-file decision. Sync with scient_overleaf_sync.",
+    "Show what a sync of one link would bring in from Overleaf and send to it, with any conflicts, without changing Overleaf (like git status and git diff before a push). It fetches from Overleaf. It first settles an interrupted sync, which may write the folder, so it saves the folder's open editors. Pass choices or files to see their effect. Sync with scient_overleaf_sync.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
     files: Schema.optional(Files),
     diff: Schema.optional(Schema.Boolean).annotate({
       description:
-        "Include bounded line-diff text pairs from the sync base to the fetched Overleaf and publication trees. Binary and oversized files are listed without contents.",
+        "Include bounded line diffs. Binary and oversized files are listed without contents.",
     }),
   }),
   success: Schema.Struct({
@@ -188,15 +188,16 @@ const ScientOverleafPreviewTool = Tool.make("scient_overleaf_preview", {
 
 const ScientOverleafConnectTool = Tool.make("scient_overleaf_connect", {
   description:
-    "Link an Overleaf project to a folder of this project. One Overleaf project lives in its own folder, and everything in that folder syncs. mode new-folder (the default choice) creates `folder`, which must not exist or be empty, and brings the project into it at the first sync; name it after the paper, for example `paper` or `thesis`. mode link-folder links an existing folder that holds just the paper. project is the Overleaf project's link or its 24-character ID. Connecting changes no file and sends nothing; the result shows what the first sync would bring in and send, and says when the folder looks like more than a paper (then prefer a new folder). Then call scient_overleaf_sync. Needs a saved Overleaf Git token (scient_overleaf_token).",
+    "Link an Overleaf project to a folder of this project; everything in that folder syncs. Prefer mode new-folder: it creates `folder`, which must be missing or empty, and the first sync brings the project into it; name it after the paper, such as `paper` or `thesis`. mode link-folder links an existing folder that holds only the paper. Connecting sends nothing and writes no file; the result shows what the first sync would do. Then call scient_overleaf_sync. Needs a saved Overleaf Git token (scient_overleaf_token).",
   parameters: Schema.Struct({
     project: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_048)).annotate({
-      description: "The Overleaf project's link (https://www.overleaf.com/project/<id>) or ID.",
+      description:
+        "The Overleaf project's link (https://www.overleaf.com/project/<id>) or 24-character ID.",
     }),
     mode: Schema.Literals(["new-folder", "link-folder"]),
     folder: Folder.annotate({
       description:
-        "Project-relative folder with / separators. Empty links the project's top folder (link-folder only, and only when the whole project is the paper).",
+        "Project-relative, with / separators. Empty is the project's top folder: link-folder only, when the whole project is the paper.",
     }),
   }),
   success: Schema.Struct({
@@ -217,14 +218,13 @@ const ScientOverleafConnectTool = Tool.make("scient_overleaf_connect", {
 
 const ScientOverleafSyncTool = Tool.make("scient_overleaf_sync", {
   description:
-    "Sync one linked folder with Overleaf: save the folder's open editors, bring Overleaf's changes in, then send the folder's changes (like git pull then git push). New files, deletions, renames and older versions are all synced, then reported; new files that are build output, hidden or Scient's own are skipped unless sent with files.send, and files.keepOnlyHere keeps a new file only here. Only a conflict stops it: none of that review's changes are applied (the result first says if this sync finished an interrupted sync or applied an earlier attempt before it stopped), and the result lists each conflict's key and allowed choices; call again with choices and reviewedRemote from that result. If Overleaf changed since, the choices don't answer the new review and the result asks again. For choice markers, edit each marked file to merge the two versions, remove every conflict mark, then sync again; a file with marks is not sent. If the thread works in another worktree, this syncs the linked copy and says so. Read `lines` and act on them.",
+    "Sync one linked folder with Overleaf, like git pull then git push: save its open editors, bring Overleaf's changes in, then send the folder's changes, including new files, deletions and renames. New files that are build output, hidden or Scient's own are skipped unless listed in files.send. At a conflict it applies none of that review's changes and lists each conflict's key and allowed choices: call again with choices and reviewedRemote from that result. A file with conflict marks is not sent until you merge it and remove every mark. Read `lines` and act on them.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
     reviewedRemote: Schema.optional(
       Schema.String.check(Schema.isPattern(/^[0-9a-f]{40,64}$/u)).annotate({
-        description:
-          "With choices: the review's remoteTree that the choices answer, from the result that listed the conflicts.",
+        description: "With choices: the remoteTree of the result that listed the conflicts.",
       }),
     ),
     files: Schema.optional(Files),
@@ -242,7 +242,7 @@ const ScientOverleafSyncTool = Tool.make("scient_overleaf_sync", {
 
 const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
   description:
-    "List the copies a sync kept of files it replaced, or restore one. Without restore: each copy's path, when it was kept, and its revisions. With restore: save the folder's open editors, then put that copy back in the folder; the file it replaces is kept as a copy in turn. Pass applyId, kept, keptRevision and currentRevision exactly as the listing gave them. A restored file is a local change that the next sync sends like any other.",
+    "List the copies a sync kept of files it replaced, or restore one: pass applyId, kept, keptRevision and currentRevision exactly as listed. Restoring saves the folder's open editors and keeps the file it replaces as a copy in turn. The next sync sends the restored file.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     restore: Schema.optional(
@@ -286,7 +286,7 @@ const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
 
 const ScientOverleafUndoTool = Tool.make("scient_overleaf_undo", {
   description:
-    "Undo one send to Overleaf: put back what Overleaf had before it, then sync, so collaborators' earlier text returns (after an older branch's files were sent over newer text, say, or a deletion sent by mistake). Without attemptNumber: list the sends that can be undone, newest first, with what each changed. With attemptNumber (the send # a sync result or the listing gives): save the folder's open editors, put back the earlier version of every file that send changed (removing files it added, writing back files it deleted), keep the replaced files as copies, then sync; a file edited since that send is left as it is and reported. Only a send Overleaf accepted can be undone. If the thread works in another worktree, this acts on the linked copy and says so. Read `lines` and act on them.",
+    "Undo one send that Overleaf accepted: put back what Overleaf had before it, then sync, so collaborators' earlier text returns (after a deletion or an older version was sent by mistake, say). Without attemptNumber, list the sends that can be undone. With it, save the folder's open editors, put back every file that send changed and keep the replaced files as copies; a file edited since is left as it is and reported. Read `lines` and act on them.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     attemptNumber: Schema.optional(
@@ -296,7 +296,7 @@ const ScientOverleafUndoTool = Tool.make("scient_overleaf_undo", {
     ),
     files: Schema.optional(Files).annotate({
       description:
-        "Per-file decisions for the sync after the undo, as scient_overleaf_sync takes them (a new file to keep only here, say).",
+        "Per-file decisions for the sync after the undo, as scient_overleaf_sync takes them.",
     }),
   }),
   success: Schema.Struct({
@@ -318,7 +318,7 @@ const ScientOverleafUndoTool = Tool.make("scient_overleaf_undo", {
 
 const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
   description:
-    "Manage one link. disconnect unlinks the folder from Overleaf; nothing is deleted on either side, and linking the same folder to the same project again keeps its history. relink records the link's folder (`folder`, project-relative) in this thread's copy of the project, after the folder moved or status says relink. recover saves the folder's open editors, then settles an interrupted sync (the result says whether its changes reached the folder) and checks Overleaf for earlier sends that got no answer. cancel asks this link's running sync to stop before its next step; a step already applying or sending finishes.",
+    "Manage one link. disconnect unlinks the folder; nothing is deleted on either side, and linking the same folder and project again keeps its history. relink records the link's `folder` in this thread's copy of the project, after the folder moved or when status says relink. recover saves the folder's open editors, settles an interrupted sync and checks Overleaf for sends that got no answer. cancel asks a running sync to stop before its next step.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     action: Schema.Literals(["disconnect", "relink", "recover", "cancel"]),
@@ -350,11 +350,11 @@ const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
 
 const ScientOverleafTokenTool = Tool.make("scient_overleaf_token", {
   description:
-    "The Overleaf Git token, which Scient keeps in its secret storage, one per Overleaf site. status says whether one is saved. To save one: call request_secret (label it Overleaf Git token, and say the user creates it in Overleaf under Account settings, Git integration), then call this with action save and the returned secretRef. Never ask for the token in chat. remove deletes the saved token.",
+    "The Overleaf Git token, kept in Scient's secret storage, one per Overleaf site. status says whether one is saved; remove deletes it. To save one, call request_secret (label it Overleaf Git token; the user creates it in Overleaf under Account settings, Git integration), then call this with action save and the returned secretRef. Never ask for the token in chat.",
   parameters: Schema.Struct({
     action: Schema.Literals(["status", "save", "remove"]),
     secretRef: Schema.optional(SecretRef).annotate({
-      description: "For save: the secretRef request_secret returned. It is consumed.",
+      description: "For save: the secretRef from request_secret. It works once.",
     }),
   }),
   success: Schema.Struct({ lines: Lines, saved: Schema.Boolean }),
