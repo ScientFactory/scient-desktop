@@ -4117,6 +4117,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (continuationSilence === undefined) return false;
           const context = yield* Ref.get(activeTurn);
           if (context !== null && settlesOnSilence(context) && !context.finalized) return true;
+          if (context !== null && !context.finalized && !context.promptSettled) return false;
           const presentation =
             context?.toolPresentation ?? (yield* Ref.get(carryoverSubagents))?.toolPresentation;
           if (
@@ -4137,7 +4138,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
               const { toolCallId, status } = event.toolCall;
-              if (status !== "pending" && status !== "inProgress" && status !== "requiresAction")
+              // A progress update may omit the status; only a terminal one ends the tool.
+              if (status === "completed" || status === "failed")
                 postTurnWork.tools.delete(toolCallId);
               else if (update.sessionUpdate === "tool_call") postTurnWork.tools.add(toolCallId);
             }
@@ -8747,9 +8749,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return wasRequested;
               }),
             );
-            // SCIENT-FORK:START — see AcpAdapterV2Flavor.continuationSilence.
-            if (!isContinuationTurn) forgetPostTurnWork();
-            // SCIENT-FORK:END
             if (!isContinuationTurn && flavor.beforeTurnStart)
               yield* flavor.beforeTurnStart(runtime, turnInput.runtimePolicy, turnInput);
             const promptParts = isContinuationTurn
@@ -8858,6 +8857,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             droidSteer.adopt(context);
             yield* Ref.set(activeTurn, context);
+            // SCIENT-FORK:START — the prompt now owns the session's traffic.
+            if (!isContinuationTurn) forgetPostTurnWork();
+            // SCIENT-FORK:END
             yield* Ref.set(stoppedRunQuarantine, false);
             const runningTurn = providerTurnPayload(context, "running", null);
             yield* Ref.update(providerTurns, (current) => {

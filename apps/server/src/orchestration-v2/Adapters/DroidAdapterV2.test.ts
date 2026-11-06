@@ -826,6 +826,8 @@ const wait = (id, taskId, block, timeout) => update({ sessionUpdate: "tool_call"
 
 /** Droid 1.2.0: a background Task's call stays open past its turn, then Droid works on. */
 const backgroundTaskBody = `let answering;
+// Carries no output; its projection shows the updates before it were handled.
+const mark = (title) => update({ sessionUpdate: "session_info_update", title });
 function onPrompt(message) {
   if (state.prompts > 1) {
     if (process.env.ANSWER_IN_SECOND_PROMPT !== "1") return reply(message, { stopReason: "end_turn" });
@@ -853,6 +855,10 @@ function onPrompt(message) {
         return reply(answering, { stopReason: "end_turn" });
       }
       update({ sessionUpdate: "tool_call", toolCallId: "check", title: "Execute", kind: "execute", status: "pending", rawInput: { command: "sleep 90" } });
+      mark("finished");
+    } else if (next === "progress") {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "check", content: [{ type: "content", content: { type: "text", text: "still sleeping" } }] });
+      mark("progress");
     } else if (next === "die") {
       process.exit(7);
     } else if (next === "ask") {
@@ -867,6 +873,7 @@ function onPrompt(message) {
     } else {
       update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " Checked." } });
       update({ sessionUpdate: "tool_call_update", toolCallId: "check", status: "completed", rawOutput: { text: "done" } });
+      mark("checked");
     }
   }, 5);
 }`;
@@ -1411,14 +1418,70 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
             revision: "steer",
           });
           assert.isUndefined(yield* reserve);
+          const handled = (title: string) =>
+            untilRecorded(
+              h,
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.title === title,
+            );
           // Its run stays open for the held Steer, so no follow-up run can take this work.
           yield* h.signal("finished");
-          yield* Queue.take(h.continuations);
+          yield* handled("finished");
           assert.isUndefined(yield* reserve);
-          yield* TestClock.adjust("19 seconds");
+          // Droid's own tool holds it past the silence, through a progress update without a status.
+          yield* TestClock.adjust("41 seconds");
           assert.isUndefined(yield* reserve);
+          yield* h.signal("progress");
+          yield* handled("progress");
+          yield* TestClock.adjust("41 seconds");
+          assert.isUndefined(yield* reserve);
+          yield* h.signal("checked");
+          yield* handled("checked");
+          yield* TestClock.adjust("39 seconds");
+          assert.isUndefined(yield* reserve);
+          yield* TestClock.adjust("2 seconds");
+          const lease = yield* reserve;
+          if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
+          assert.isTrue(
+            yield* h.runtime.consumeDroidSteer!({
+              providerThread: h.providerThread,
+              providerTurnId: first.providerTurn.id,
+              droidSteerLease: lease,
+            }),
+          );
         }),
       ),
+  );
+  it.effect("hands Droid's post-turn work to a user prompt that starts during it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        yield* h.signal("finished");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.title === "finished",
+        );
+        yield* h.send(2, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const second = h.recorded.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        if (second?.type !== "provider_turn.updated") return yield* Effect.die("Missing the turn");
+        assert.isDefined(
+          yield* h.runtime.reserveDroidSteer!({
+            attemptId: RunAttemptId.make("droid-attempt-2"),
+            providerTurnId: second.providerTurn.id,
+            revision: "steer",
+          }),
+        );
+      }),
+    ),
   );
   it.effect(
     "forgets unfinished Tasks after completion and uses the configured next-turn window",
