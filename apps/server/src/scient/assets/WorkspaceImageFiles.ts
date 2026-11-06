@@ -10,7 +10,7 @@ import {
   type ScientMarkdownImageUploadResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 
@@ -20,9 +20,10 @@ interface SupportedImage {
   readonly acceptedExtensions: ReadonlySet<string>;
 }
 
-class WorkspaceImageOperationError extends Data.TaggedError("WorkspaceImageOperationError")<{
-  readonly cause: unknown;
-}> {}
+class WorkspaceImageOperationError extends Schema.TaggedError<WorkspaceImageOperationError>()(
+  "WorkspaceImageOperationError",
+  { cause: Schema.Defect() },
+) {}
 
 const PNG: SupportedImage = {
   extension: "png",

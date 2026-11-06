@@ -42,7 +42,7 @@ import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPan
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
-import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 
 const { workspaceSearch, filesystemMetadata, resolveFileLink } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),

@@ -119,15 +119,14 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
   const inspectProject = Effect.fn("ScientSkillManagement.inspectProject")(function* (
     projectRoot: string,
   ) {
-    const catalog = yield* Effect.tryPromise(() => loadProjectSkillCatalog(projectRoot)).pipe(
-      Effect.mapError(
-        () =>
-          new ScientSkillManagementError({
-            operation: "list",
-            message: "Project skills could not be inspected.",
-          }),
-      ),
-    );
+    const catalog = yield* Effect.tryPromise({
+      try: () => loadProjectSkillCatalog(projectRoot),
+      catch: () =>
+        new ScientSkillManagementError({
+          operation: "list",
+          message: "Project skills could not be inspected.",
+        }),
+    });
     const snapshot = yield* policy.snapshot;
     const registry = yield* skillRegistry.current;
     const reservedNames = new Set(

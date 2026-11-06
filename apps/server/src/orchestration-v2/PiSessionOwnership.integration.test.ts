@@ -197,7 +197,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
               Layer.provide(dependencies),
               Layer.provide(
                 Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                  getInstance: () => Effect.succeed(undefined),
+                  getInstance: () => Effect.undefined,
                 }),
               ),
             ),

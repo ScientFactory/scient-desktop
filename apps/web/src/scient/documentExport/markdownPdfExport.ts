@@ -7,6 +7,7 @@ import type {
   ScientDocumentPdfPublishInput,
   ScientMarkdownPdfPrepareInput,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 /**
  * Exporting a project Markdown file from the editor: save pending edits,
@@ -15,9 +16,10 @@ import type {
  * dependency so the sequence is testable without a desktop or server.
  */
 
-export class MarkdownPdfExportError extends Error {
-  override readonly name = "MarkdownPdfExportError";
-}
+export class MarkdownPdfExportError extends Schema.TaggedError<MarkdownPdfExportError>()(
+  "MarkdownPdfExportError",
+  { message: Schema.String },
+) {}
 
 export interface MarkdownPdfExportSnapshot {
   readonly pending: boolean;
@@ -50,18 +52,21 @@ export async function runMarkdownPdfExport(
   target: { readonly cwd: string; readonly relativePath: string },
 ): Promise<ScientDocumentPdfPublished> {
   if (!(await dependencies.flush())) {
-    throw new MarkdownPdfExportError(
-      "Scient could not save your latest edits, so nothing was exported. Resolve the save problem and export again.",
-    );
+    throw new MarkdownPdfExportError({
+      message:
+        "Scient could not save your latest edits, so nothing was exported. Resolve the save problem and export again.",
+    });
   }
   const snapshot = dependencies.snapshot();
   if (snapshot.pending || snapshot.hasProblem) {
-    throw new MarkdownPdfExportError(
-      "The document has unsaved changes or a save conflict. Resolve it and export again.",
-    );
+    throw new MarkdownPdfExportError({
+      message: "The document has unsaved changes or a save conflict. Resolve it and export again.",
+    });
   }
   if (!REVISION_PATTERN.test(snapshot.baselineRevision)) {
-    throw new MarkdownPdfExportError("The saved revision of this document is unknown.");
+    throw new MarkdownPdfExportError({
+      message: "The saved revision of this document is unknown.",
+    });
   }
   const prepared = await dependencies.prepare({
     cwd: target.cwd,
@@ -95,9 +100,9 @@ export async function printAndPublishDocumentPdf(
   }
   if (outcome._tag === "rejected") {
     await dependencies.release(captureId).catch(() => undefined);
-    throw new MarkdownPdfExportError(
-      outcome.reason === "too-large" ? tooLargeMessage : outcome.detail,
-    );
+    throw new MarkdownPdfExportError({
+      message: outcome.reason === "too-large" ? tooLargeMessage : outcome.detail,
+    });
   }
   return dependencies.publish({ captureId, render: outcome.result });
 }

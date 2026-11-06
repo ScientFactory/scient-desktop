@@ -187,12 +187,13 @@ it.effect.each(["remove", "disable"] as const)(
                 } satisfies ProviderInstance;
               }),
           };
+          const initialSettings = yield* settings.getSettings;
           const { registry, mutator } = yield* makeProviderInstanceRegistry({
             drivers: [driver],
-            configMap: deriveProviderInstanceConfigMap(yield* settings.getSettings),
+            configMap: deriveProviderInstanceConfigMap(initialSettings),
           });
           yield* Layer.build(
-            layerSettingsWatcher(changes).pipe(
+            layerSettingsWatcher(changes, initialSettings).pipe(
               Layer.provide(Layer.succeed(Mutator.ProviderInstanceRegistryMutator, mutator)),
             ),
           );

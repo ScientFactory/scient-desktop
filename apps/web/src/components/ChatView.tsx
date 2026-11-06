@@ -65,7 +65,10 @@ import {
   useScientRightPanelOpeners,
 } from "~/scient/rightPanel/useScientRightPanelOpeners";
 import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
-import { type OptimisticUserMessage } from "~/scient/threadQueue/optimisticQueuePresentation";
+import {
+  optimisticTimelineMessages,
+  type OptimisticUserMessage,
+} from "~/scient/threadQueue/optimisticQueuePresentation";
 import { useLegacyQueueRecoveryError } from "~/scient/threadQueue/useLegacyQueueRecoveryError";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import {
@@ -136,8 +139,10 @@ import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
+import { checkpointSupportsRewind, type UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
+import { freshSessionBannerItem } from "./chat/ComposerFreshSession";
+import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./chat/freshSessionArms";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
@@ -420,15 +425,13 @@ import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/Compos
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
-import {
-  hasAvailableCompactionProvider,
-  hasDismissedResumeCompaction,
-  shouldOfferResumeCompaction,
-} from "./chat/ContextWindowMeter.logic";
+import { hasAvailableCompactionProvider } from "./chat/ContextWindowMeter.logic";
 import {
   deriveLatestContextWindowSnapshot,
+  hasDismissedResumeCompaction,
   latestProviderTurnTokenUsage,
-} from "../lib/contextWindow";
+  shouldOfferResumeCompaction,
+} from "@t3tools/client-runtime/state/context-window";
 import {
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
@@ -1891,8 +1894,12 @@ function ChatViewContent(props: ChatViewProps) {
           { ...codexFeedbackMessage(submission, "assistant"), runId: null },
         ],
   );
+  // SCIENT-FORK:START — a queue-admission preview shows in the queue strip, not the timeline.
+  const timelineOptimisticMessages = optimisticTimelineMessages(optimisticUserMessages);
+  // SCIENT-FORK:END
   const timelineEntriesInput = {
-    optimisticMessages: optimisticUserMessages,
+    // SCIENT-FORK: without queue-admission previews.
+    optimisticMessages: timelineOptimisticMessages,
     anchoredMessages: anchoredTimelineMessages,
     attachmentUrlById: timelineAttachmentUrlById,
     ...(serverProjection === null
@@ -1913,7 +1920,8 @@ function ChatViewContent(props: ChatViewProps) {
     ...timelineEntriesInput,
     visibleTurnItems: serverTimelineRows,
   });
-  const draftTimelineEntries = optimisticUserMessages.map(
+  // SCIENT-FORK: without queue-admission previews.
+  const draftTimelineEntries = timelineOptimisticMessages.map(
     (message) =>
       ({
         id: message.id,
@@ -2051,6 +2059,15 @@ function ChatViewContent(props: ChatViewProps) {
   const threadStartCheckpointReady =
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
+  // SCIENT-FORK:START — without a captured snapshot only the conversation rewinds.
+  const pendingRevertCheckpoint =
+    pendingRevert === null
+      ? undefined
+      : findRevertCheckpoint(serverProjection?.checkpoints ?? [], pendingRevert.turnCount);
+  const revertFilesUnavailable =
+    pendingRevertCheckpoint !== undefined &&
+    !checkpointSupportsRewind(pendingRevertCheckpoint, true);
+  // SCIENT-FORK:END
 
   const workspaceMutationId = deriveWorkspaceMutationId(
     serverVisibleTurnItems,
@@ -3223,8 +3240,15 @@ function ChatViewContent(props: ChatViewProps) {
       return next;
     });
   };
+  const freshSessionAvailable =
+    activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
+  // While a question or approval owns the composer, its text answers that, not the agent.
+  const freshSessionCommandAvailable =
+    freshSessionAvailable && activePendingApproval === null && pendingUserInputs.length === 0;
+  const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
   const toggleKeepFullHistory = () => setKeepFullHistory(routeThreadKey, !keepFullHistory);
   const toggleKeepFullHistoryStable = useStableCallback(toggleKeepFullHistory);
+  const armFreshSessionStable = useStableCallback(() => armFreshSession(routeThreadKey));
   const handleRestoreThreadBranch = () => {
     if (!canWriteSourceControl) return;
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
@@ -3251,6 +3275,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
           runId: activeThreadShell.latestRun.runId,
+          errorCode: serverRuntime.lastErrorCode ?? null,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
@@ -3327,6 +3352,11 @@ function ChatViewContent(props: ChatViewProps) {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    // An approval's feedback goes to that approval; the armed session waits for the next message.
+    const freshSessionItems =
+      freshSessionAvailable && freshSessionArmed && activePendingApproval === null
+        ? [freshSessionBannerItem(() => disarmFreshSession(routeThreadKey))]
+        : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -3334,6 +3364,7 @@ function ChatViewContent(props: ChatViewProps) {
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...freshSessionItems,
         ...systemComposerBannerItems,
         ...tokenLimitItems,
         ...conversationImportItems,
@@ -3346,6 +3377,7 @@ function ChatViewContent(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...freshSessionItems,
       ...systemComposerBannerItems,
       ...tokenLimitItems,
       branchMismatchBannerItem({
@@ -3697,6 +3729,7 @@ function ChatViewContent(props: ChatViewProps) {
     panelAnimationsActive,
     panelAnimationDurationMs,
     keepFullHistory,
+    freshSessionAvailable: freshSessionCommandAvailable,
     resumeCompactionTokens,
     showPlanFollowUpPrompt,
     usageLimitsKey,
@@ -4601,6 +4634,9 @@ function ChatViewContent(props: ChatViewProps) {
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
                               sideChatAvailable={sideChat.available}
                               sideChatDisabledReason={sideChatDisabledReason}
+                              onFreshSession={
+                                freshSessionCommandAvailable ? armFreshSessionStable : undefined
+                              }
                               onUsageLimitsCommand={
                                 usageLimitsOffered &&
                                 usageLimitsKey !== null &&
@@ -5020,6 +5056,9 @@ function ChatViewContent(props: ChatViewProps) {
             <AlertDialogDescription>
               Rewind chat to before this message. Your prompt and attachments return to the
               composer.
+              {revertFilesUnavailable
+                ? " Your files stay as they are: Scient could not save a snapshot of them from before this message."
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ScientRevertDialogDiagnostics
@@ -5032,20 +5071,22 @@ function ChatViewContent(props: ChatViewProps) {
             >
               Cancel
             </AlertDialogClose>
-            <Button
-              variant="destructive"
-              disabled={isRevertingCheckpoint}
-              onClick={() => {
-                if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                void onRevertToTurnCountStable(
-                  pendingRevert.turnCount,
-                  pendingRevert.messageId,
-                  true,
-                );
-              }}
-            >
-              Revert files too
-            </Button>
+            {revertFilesUnavailable ? null : (
+              <Button
+                variant="destructive"
+                disabled={isRevertingCheckpoint}
+                onClick={() => {
+                  if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
+                  void onRevertToTurnCountStable(
+                    pendingRevert.turnCount,
+                    pendingRevert.messageId,
+                    true,
+                  );
+                }}
+              >
+                Revert files too
+              </Button>
+            )}
             <Button
               disabled={isRevertingCheckpoint}
               onClick={() => {
@@ -5057,7 +5098,7 @@ function ChatViewContent(props: ChatViewProps) {
                 );
               }}
             >
-              Revert and keep changes
+              {revertFilesUnavailable ? "Rewind chat" : "Revert and keep changes"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

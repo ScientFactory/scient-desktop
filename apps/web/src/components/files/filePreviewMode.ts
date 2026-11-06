@@ -5,6 +5,7 @@ import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLang
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { isHostPath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
   if (path === null) return null;
@@ -66,23 +67,7 @@ export function shouldShowFileExplorer(input: {
   return input.explorerOpen || input.relativePath === null;
 }
 
-export function setMarkdownTaskChecked(
-  markdown: string,
-  markerOffset: number,
-  checked: boolean,
-): string {
-  if (
-    markerOffset < 0 ||
-    markdown[markerOffset] !== "[" ||
-    !/[ xX]/.test(markdown[markerOffset + 1] ?? "") ||
-    markdown[markerOffset + 2] !== "]"
-  ) {
-    return markdown;
-  }
-
-  return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
-}
-
+// SCIENT-FORK:START — rendered task toggles never rewrite a truncated read.
 export function resolveMarkdownTaskPreviewUpdate(input: {
   readonly markdown: string;
   readonly markerOffset: number;
@@ -93,6 +78,7 @@ export function resolveMarkdownTaskPreviewUpdate(input: {
   const nextMarkdown = setMarkdownTaskChecked(input.markdown, input.markerOffset, input.checked);
   return nextMarkdown === input.markdown ? null : nextMarkdown;
 }
+// SCIENT-FORK:END
 
 /**
  * The server only signs `workspace-file` assets below the workspace root, so a

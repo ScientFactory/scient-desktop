@@ -1444,7 +1444,7 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-            getInstance: () => Effect.succeed(undefined),
+            getInstance: () => Effect.undefined,
           }),
           imageStoresLayer,
           imageSinkLayer,

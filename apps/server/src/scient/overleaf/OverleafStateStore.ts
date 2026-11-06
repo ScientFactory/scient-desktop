@@ -47,6 +47,7 @@ import {
 } from "./OverleafConnectionState.ts";
 
 import { overleafCloudRoot } from "./overleafCloudRoots.ts";
+import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
   ensureNativePrivateRetentionDirectory,
   resolveNativeFilePublicationHelperPath,
@@ -107,13 +108,15 @@ export class OverleafConnectionUnavailableError extends Schema.TaggedError<Overl
   "OverleafConnectionUnavailableError",
   {
     connectionId: Schema.String,
-    condition: Schema.Literals(["missing", "corrupt", "unsupported", "valid"]),
+    condition: Schema.Literals(["missing", "corrupt", "unsupported", "valid", "unfinished"]),
   },
 ) {
   override get message(): string {
     return this.condition === "valid"
       ? "A readable Overleaf connection is never quarantined."
-      : `The Overleaf connection is ${this.condition}.`;
+      : this.condition === "unfinished"
+        ? "The Overleaf connection records an unfinished sync, so it stays where it is."
+        : `The Overleaf connection is ${this.condition}.`;
   }
 }
 
@@ -193,12 +196,89 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
   }
 }
 
+/** What an unreadable document still shows, read as this release's field names. */
+export interface OverleafUnreadableShows {
+  /** The linked folder, when the document names its checkout and folder. */
+  readonly folder: string | null;
+  /** A sync stopped part-way: an apply in progress or staged source copies. Null when it doesn't say. */
+  readonly unfinished: boolean | null;
+}
+
 /** What is on disk for one connection. Unreadable documents are reported, never reset. */
 export type OverleafConnectionRead =
   | { readonly _tag: "missing" }
   | { readonly _tag: "ready"; readonly document: OverleafConnectionDocument }
-  | { readonly _tag: "corrupt" }
-  | { readonly _tag: "unsupported" };
+  | { readonly _tag: "corrupt"; readonly shows: OverleafUnreadableShows }
+  | { readonly _tag: "unsupported"; readonly shows: OverleafUnreadableShows };
+
+export type OverleafUnreadableRead = Extract<
+  OverleafConnectionRead,
+  { readonly _tag: "corrupt" | "unsupported" }
+>;
+
+const objectField = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+
+const unreadableShows = (value: unknown): OverleafUnreadableShows => {
+  const root = objectField(objectField(value, "checkout"), "canonicalRoot");
+  const relative = objectField(objectField(value, "folder"), "relativePath");
+  // Held to the rules a readable document's paths meet, so the folder stays inside its checkout.
+  const folder =
+    typeof root === "string" &&
+    NodePath.isAbsolute(root) &&
+    NodePath.resolve(root) === root &&
+    typeof relative === "string" &&
+    (relative === "" || manuscriptPathProblem(relative) === null)
+      ? relative === ""
+        ? root
+        : NodePath.join(root, ...relative.split("/"))
+      : null;
+  const apply = objectField(value, "activeApply");
+  const staging = objectField(value, "stagingPaths");
+  const applying = apply === undefined ? null : apply !== null;
+  const staged = Array.isArray(staging) ? staging.length > 0 : null;
+  // Without a version number the record may be any release's, which may keep pending work
+  // in fields this release has never seen. A newer number still holds its checkout back.
+  const version = objectField(value, "schemaVersion");
+  const versioned = Number.isInteger(version) && (version as number) >= 1;
+  const unfinished =
+    applying === true || staged === true
+      ? true
+      : versioned && applying === false && staged === false
+        ? false
+        : null;
+  return { folder, unfinished };
+};
+
+/**
+ * What an unreadable document holds back besides linking. It might record an unfinished
+ * sync, so bulk changes wait at its checkout, or at every checkout when it names none. A
+ * newer release's fields can't prove it settled, but a damaged one that shows no unfinished
+ * sync holds nothing back.
+ */
+export const unreadableHolds = (
+  read: OverleafUnreadableRead,
+): "linking" | "checkout" | "every-checkout" =>
+  read._tag === "corrupt" && read.shows.unfinished === false
+    ? "linking"
+    : read.shows.folder === null
+      ? "every-checkout"
+      : "checkout";
+
+/**
+ * Whether an unreadable document may be moved aside. A newer release's document stays
+ * unless it plainly records no unfinished sync: that release can still settle it. A
+ * damaged one that shows unfinished work goes only once the user accepts that its staged
+ * files lose their protection, since no release can settle it.
+ */
+export const unreadableSetAside = (read: OverleafUnreadableRead): "allowed" | "confirm" | "held" =>
+  read._tag === "unsupported"
+    ? read.shows.unfinished === false
+      ? "allowed"
+      : "held"
+    : read.shows.unfinished === true
+      ? "confirm"
+      : "allowed";
 
 type WriteError =
   | OverleafStateLockedError
@@ -237,9 +317,14 @@ export class OverleafStateStore extends Context.Service<
       | OverleafTransitionRejectedError
       | OverleafRecordInvalidError
     >;
-    /** Moves an unreadable document aside, bytes intact; returns its quarantine name. */
+    /**
+     * Moves an unreadable document aside, bytes intact; returns its quarantine name. Once
+     * aside, it no longer holds bulk checkout changes back from a sync's staged files, so
+     * `unreadableSetAside` decides, and `acceptUnfinished` admits a damaged unfinished one.
+     */
     readonly quarantineConnection: (
       connectionId: string,
+      options?: { readonly acceptUnfinished?: boolean },
     ) => Effect.Effect<string, WriteError | OverleafConnectionUnavailableError>;
     /**
      * Records a request before its operation runs. A repeated request with the
@@ -572,19 +657,25 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
       const decoded = decodeOverleafConnectionDocument(text);
       if (decoded !== null) {
         // A document filed under another name is not this connection's state.
-        if (decoded.connectionId !== connectionId) return { _tag: "corrupt" };
+        if (decoded.connectionId !== connectionId)
+          return { _tag: "corrupt", shows: unreadableShows(decoded) };
         return { _tag: "ready", document: decoded };
       }
-      let version: unknown;
+      let value: unknown;
       try {
-        version = (JSON.parse(text) as { schemaVersion?: unknown } | null)?.schemaVersion;
+        value = JSON.parse(text);
       } catch {
-        return { _tag: "corrupt" };
+        return { _tag: "corrupt", shows: unreadableShows(undefined) };
       }
+      const version = objectField(value, "schemaVersion");
       // A newer version is another release's; an older one that does not upgrade is damaged.
-      return typeof version === "number" && version > OVERLEAF_CONNECTION_SCHEMA_VERSION
-        ? { _tag: "unsupported" }
-        : { _tag: "corrupt" };
+      return {
+        _tag:
+          typeof version === "number" && version > OVERLEAF_CONNECTION_SCHEMA_VERSION
+            ? "unsupported"
+            : "corrupt",
+        shows: unreadableShows(value),
+      };
     });
 
   const listConnections: OverleafStateStore["Service"]["listConnections"] = io("list", async () => {
@@ -651,6 +742,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
 
   const quarantineConnection: OverleafStateStore["Service"]["quarantineConnection"] = (
     connectionId,
+    options,
   ) =>
     withLease(
       Effect.gen(function* () {
@@ -659,6 +751,12 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
           return yield* new OverleafConnectionUnavailableError({
             connectionId,
             condition: current._tag === "ready" ? "valid" : "missing",
+          });
+        const rule = unreadableSetAside(current);
+        if (rule === "held" || (rule === "confirm" && options?.acceptUnfinished !== true))
+          return yield* new OverleafConnectionUnavailableError({
+            connectionId,
+            condition: "unfinished",
           });
         const now = yield* Clock.currentTimeMillis;
         return yield* io("quarantine", async () => {

@@ -354,7 +354,7 @@ export function refusalText(
     case "request-incomplete":
       return "An earlier attempt stopped before it finished, so it isn't run again. Try again.";
     case "records-unreadable":
-      return "Scient can't read its Overleaf link records, so nothing was linked or changed.";
+      return "Scient can't read one of its Overleaf link records, so nothing was linked or changed. Set it aside in Settings › Synced folders › Overleaf.";
     case "editor-unsaved":
       return refusal.path
         ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.`

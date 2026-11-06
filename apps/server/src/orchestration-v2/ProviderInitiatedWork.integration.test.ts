@@ -145,7 +145,7 @@ const withInitiatedWork = <A, E, R>(
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-              getInstance: () => Effect.succeed(undefined),
+              getInstance: () => Effect.undefined,
             }),
           ),
         ),

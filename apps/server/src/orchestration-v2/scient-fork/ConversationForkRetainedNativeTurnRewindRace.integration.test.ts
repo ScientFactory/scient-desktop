@@ -112,7 +112,7 @@ it.effect(
             Layer.provide(layerGitVcsDriverWithoutBranches),
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                getInstance: () => Effect.succeed(undefined),
+                getInstance: () => Effect.undefined,
               }),
             ),
           ),

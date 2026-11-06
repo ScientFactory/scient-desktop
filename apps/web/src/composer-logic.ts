@@ -22,7 +22,7 @@ import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 // SCIENT-FORK: "fork" reseats conversation forks in the composer slash menu.
-export type ComposerSlashCommand = "model" | "fork" | "plan" | "default" | "side" | "btw";
+export type ComposerSlashCommand = "model" | "fork" | "plan" | "default" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -357,7 +357,7 @@ export function parseSideChatCommand(text: string): { prompt: string } | null {
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model" | "fork" | "side" | "btw"> | null {
+): Exclude<ComposerSlashCommand, "model" | "fork" | "side" | "btw" | "clear"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

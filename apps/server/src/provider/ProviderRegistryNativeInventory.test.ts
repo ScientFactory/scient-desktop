@@ -721,7 +721,7 @@ describe("ProviderRegistry provider-native inventory", () => {
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         yield* harness.registry.refreshInstance(INSTANCE_ID);
-        yield* Ref.set(harness.listingReadRef, () => Effect.succeed(undefined));
+        yield* Ref.set(harness.listingReadRef, () => Effect.undefined);
         const reply = yield* harness.registry.refreshWorkspaceSnapshot({
           instanceId: INSTANCE_ID,
           cwd: "/repo",

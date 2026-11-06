@@ -1,5 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -14,6 +15,7 @@ describe("Scient Agent plugin process source gate", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const env = yield* HostProcess.Environment;
         const root = yield* fs.makeTempDirectoryScoped();
         const gate = yield* makeOmpExecutableGate();
         for (const [version, expected] of [
@@ -34,7 +36,7 @@ describe("Scient Agent plugin process source gate", () => {
           yield* fs.chmod(executable, 0o700);
           const output = yield* runScientAgentPluginCommand(
             executable,
-            { PATH: process.env.PATH, SCIENT_AGENT_ENABLE_SOURCES: "untrusted" },
+            { PATH: env.PATH, SCIENT_AGENT_ENABLE_SOURCES: "untrusted" },
             root,
             ["plugin", "list", "--json"],
           ).pipe(Effect.provideService(OmpExecutableGate, gate));

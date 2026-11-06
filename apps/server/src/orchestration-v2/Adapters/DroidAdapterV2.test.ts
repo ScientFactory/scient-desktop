@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
@@ -62,6 +63,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
 import type { DroidControlClientFactory } from "../../provider/droid/DroidControl.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -134,6 +136,7 @@ const harness = Effect.fnUntraced(function* (
     readonly sensitiveValues?: ReadonlyArray<string>;
     readonly onPeer?: (peer: Effect.Success<ReturnType<typeof scriptedDroid>>) => void;
     readonly makeControlClient?: DroidControlClientFactory;
+    readonly beforeContinuationSettled?: () => Effect.Effect<void>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -196,6 +199,8 @@ const harness = Effect.fnUntraced(function* (
   const toolLogBlocked = yield* Deferred.make<void>();
   const releaseToolLog = yield* Deferred.make<void>();
   const rejectedAuthentication: string[] = [];
+  const continuations =
+    yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
   const adapter = yield* makeDroidAdapterV2({
     instanceId,
     settings: yield* decodeDroidSettings({
@@ -203,7 +208,7 @@ const harness = Effect.fnUntraced(function* (
       binaryPath: scripted?.binaryPath ?? binary,
     }),
     environment: {
-      PATH: process.env.PATH,
+      PATH: (yield* HostProcess.Environment).PATH,
       ...(scenario?.idleMillis === undefined
         ? {}
         : { SCIENT_DROID_TURN_IDLE_TIMEOUT_MS: String(scenario.idleMillis) }),
@@ -289,6 +294,12 @@ const harness = Effect.fnUntraced(function* (
         rejectedAuthentication.push(message);
       }),
     ...(scenario?.makeControlClient ? { makeControlClient: scenario.makeControlClient } : {}),
+    ...(scenario?.beforeContinuationSettled
+      ? { testHooks: { beforeContinuationSettled: scenario.beforeContinuationSettled } }
+      : {}),
+    continuationRequests: {
+      offer: (request) => Queue.offer(continuations, request).pipe(Effect.asVoid),
+    },
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -363,6 +374,27 @@ const harness = Effect.fnUntraced(function* (
         creationSource: "web",
       },
     });
+  /** The run Scient starts when Droid works on after a turn, as the orchestrator starts it. */
+  const continueTurn = (ordinal: number) =>
+    runtime.startTurn({
+      appThread,
+      threadId,
+      providerThread,
+      modelSelection,
+      runtimePolicy: { ...runtimePolicy, runtimeMode: "full-access" },
+      runId: RunId.make(`droid-run-${ordinal}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(`droid-attempt-${ordinal}`),
+      rootNodeId: NodeId.make(`droid-root-${ordinal}`),
+      message: {
+        messageId: MessageId.make(`droid-message-${ordinal}`),
+        text: "Background work finished.",
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "provider",
+      },
+    });
   const terminal = Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue);
@@ -414,6 +446,8 @@ const harness = Effect.fnUntraced(function* (
     rejectedAuthentication,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
     send,
+    continueTurn,
+    continuations,
     terminal,
     requests,
     recorded,
@@ -790,6 +824,60 @@ const result = (id, status, text) => update({ sessionUpdate: "tool_call_update",
 const wait = (id, taskId, block, timeout) => update({ sessionUpdate: "tool_call", toolCallId: id, title: "TaskOutput", kind: "other", status: "pending", rawInput: { task_id: taskId, block, ...(timeout === undefined ? {} : { timeout }) } });
 `;
 
+/** Droid 1.2.0: a background Task's call stays open past its turn, then Droid works on. */
+const backgroundTaskBody = `let answering;
+// Carries no output; its projection shows the updates before it were handled.
+const mark = (title) => update({ sessionUpdate: "session_info_update", title });
+function onPrompt(message) {
+  if (state.prompts > 1) {
+    if (process.env.ANSWER_IN_SECOND_PROMPT !== "1") return reply(message, { stopReason: "end_turn" });
+    answering = message;
+    return update({ sessionUpdate: "tool_call", toolCallId: "look", title: "Read", kind: "read", status: "in_progress", rawInput: { path: "notes.md" } });
+  }
+  update({ sessionUpdate: "tool_call", toolCallId: "task", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "worker", description: "Sleep", prompt: "Sleep, then report." } });
+  update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "in_progress", rawOutput: { text: "Running in background" } });
+  if (process.env.SECOND_BACKGROUND === "1") {
+    update({ sessionUpdate: "tool_call", toolCallId: "task-2", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "worker", description: "Watch", prompt: "Watch the logs." } });
+    update({ sessionUpdate: "tool_call_update", toolCallId: "task-2", status: "in_progress", rawOutput: { text: "Running in background" } });
+  }
+  reply(message, { stopReason: "end_turn" });
+  let previous = "";
+  setInterval(() => {
+    if (!fs.existsSync(__CONTROL_PATH__)) return;
+    const next = fs.readFileSync(__CONTROL_PATH__, "utf8");
+    if (next === previous) return;
+    previous = next;
+    if (next === "finished") {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "completed", rawOutput: { text: "Slept." } });
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The background task finished." } });
+      if (answering) {
+        update({ sessionUpdate: "tool_call_update", toolCallId: "look", status: "completed", rawOutput: { text: "notes" } });
+        return reply(answering, { stopReason: "end_turn" });
+      }
+      update({ sessionUpdate: "tool_call", toolCallId: "check", title: "Execute", kind: "execute", status: "pending", rawInput: { command: "sleep 90" } });
+      mark("finished");
+    } else if (next === "progress") {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "check", content: [{ type: "content", content: { type: "text", text: "still sleeping" } }] });
+      mark("progress");
+    } else if (next === "die") {
+      process.exit(7);
+    } else if (next === "ask") {
+      request("session/request_permission", {
+        toolCall: { toolCallId: "edit", title: "Edit file", kind: "edit", status: "pending" },
+        options: [{ optionId: "once", name: "Allow once", kind: "allow_once" }, { optionId: "no", name: "Decline", kind: "reject_once" }],
+      }).then(() => {
+        update({ sessionUpdate: "tool_call_update", toolCallId: "edit", status: "completed", rawOutput: { text: "edited" } });
+        update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "completed", rawOutput: { text: "Slept." } });
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Edited." } });
+      });
+    } else {
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " Checked." } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "check", status: "completed", rawOutput: { text: "done" } });
+      mark("checked");
+    }
+  }, 5);
+}`;
+
 const silentBody = `function onPrompt(message) {
   if (message.params.prompt.some(block => block.text?.includes("recover"))) return reply(message, { stopReason: "end_turn" });
   update({ sessionUpdate: "tool_call", toolCallId: "read", title: "Read file", kind: "read", status: "in_progress", rawInput: { path: "file.txt" }, rawOutput: { text: "Partial tool output." } });
@@ -1073,6 +1161,325 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
         assert.include(failed.failure?.message ?? "", "idle timeout (10m)");
         assert.notInclude(failed.failure?.message ?? "", "subagent");
         assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+  it.effect.each(
+    (["after its turn", "after a later turn", "while another runs on"] as const).map((when) => ({
+      caseTitle: `follows a Droid 1.2.0 background Task that ends ${when} into the work Droid starts`,
+      later: when === "after a later turn",
+      second: when === "while another runs on",
+    })),
+  )("$caseTitle", ({ later, second }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: backgroundTaskBody,
+          ...(second ? { environment: { SECOND_BACKGROUND: "1" } } : {}),
+        });
+        const latest = (nativeId: string) =>
+          nativeTasks(h).findLast((task) => task.nativeTaskRef?.nativeId === nativeId);
+        const checkTool = (done: boolean) => (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "check" &&
+          (event.turnItem.status === "completed") === done;
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const launched = latest("task");
+        assert.equal(launched?.status, "running");
+        if (later) {
+          yield* h.send(2, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          assert.equal(nativeTasks(h).at(-1)?.status, "running");
+        }
+        assert.equal(yield* Queue.size(h.continuations), 0);
+
+        yield* h.signal("finished");
+        yield* Queue.take(h.continuations);
+        const wakeOrdinal = later ? 3 : 2;
+        yield* h.continueTurn(wakeOrdinal);
+        yield* untilRecorded(h, checkTool(false));
+        const finished = latest("task");
+        assert.deepEqual(
+          [finished?.id, finished?.runId, finished?.status, finished?.result],
+          [launched?.id, launched?.runId, "completed", "Slept."],
+        );
+        // Droid marks no end to this work: an open tool holds it open however long it runs.
+        yield* TestClock.adjust("5 minutes");
+        assert.lengthOf(terminals(h), wakeOrdinal - 1);
+
+        yield* h.signal("checked");
+        yield* untilRecorded(h, checkTool(true));
+        yield* TestClock.adjust("39 seconds");
+        assert.lengthOf(terminals(h), wakeOrdinal - 1);
+        yield* TestClock.adjust("2 seconds");
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.isTrue(
+          h.recorded.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.runId === RunId.make(`droid-run-${wakeOrdinal}`) &&
+              event.message.text.startsWith("The background task finished."),
+          ),
+        );
+        assert.equal(new Set(nativeTasks(h).map((task) => task.id)).size, second ? 2 : 1);
+        assert.equal(latest("task-2")?.status, second ? "running" : undefined);
+      }),
+    ),
+  );
+  it.effect("ends a Droid 1.2.0 background Task inside the user turn Droid reports it in", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: backgroundTaskBody,
+          environment: { ANSWER_IN_SECOND_PROMPT: "1" },
+        });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const launched = nativeTasks(h).at(-1);
+        yield* h.send(2, "full-access");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "look",
+        );
+        yield* h.signal("finished");
+        assert.equal((yield* h.terminal).status, "completed");
+        const finished = nativeTasks(h).at(-1);
+        assert.deepEqual(
+          [finished?.id, finished?.runId, finished?.status, finished?.result],
+          [launched?.id, launched?.runId, "completed", "Slept."],
+        );
+        assert.equal(yield* Queue.size(h.continuations), 0);
+      }),
+    ),
+  );
+  it.effect.each(
+    (["while Droid works on after its turn", "between turns"] as const).map((when) => ({
+      caseTitle: `ends a Droid 1.2.0 background Task when Droid dies ${when}`,
+      working: when === "while Droid works on after its turn",
+    })),
+  )("$caseTitle", ({ working }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: backgroundTaskBody,
+          environment: { SECOND_BACKGROUND: "1" },
+        });
+        const watch = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "subagent.updated" &&
+          event.subagent.nativeTaskRef?.nativeId === "task-2" &&
+          event.subagent.status !== "running";
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        if (working) {
+          yield* h.signal("finished");
+          yield* Queue.take(h.continuations);
+          yield* h.continueTurn(2);
+          yield* untilRecorded(
+            h,
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "check",
+          );
+        }
+        yield* h.signal("die");
+        if (working) {
+          const ended = yield* h.terminal;
+          assert.deepEqual([ended.status, ended.failure?.class], ["failed", "transport_error"]);
+        }
+        yield* untilRecorded(h, watch);
+      }),
+    ),
+  );
+  it.effect(
+    "fails work Droid started after its turn when Droid dies while that work attaches",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const attaching = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const h = yield* harness(false, false, false, undefined, {
+            body: backgroundTaskBody,
+            beforeContinuationSettled: () =>
+              Deferred.succeed(attaching, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+          });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* h.signal("finished");
+          yield* Queue.take(h.continuations);
+          const started = yield* Effect.forkScoped(h.continueTurn(2));
+          yield* Deferred.await(attaching);
+          yield* h.signal("die");
+          yield* h.nativeTerminated;
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(started);
+          const ended = yield* h.terminal;
+          assert.deepEqual([ended.status, ended.failure?.class], ["failed", "transport_error"]);
+        }),
+      ),
+  );
+  it.effect("answers a Droid permission request made after its turn in the work Droid starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        // Droid asks before it reports the sub-agent's end, so nothing else offers the work.
+        yield* h.signal("ask");
+        yield* Queue.take(h.continuations);
+        yield* h.continueTurn(2);
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === "task" &&
+            event.subagent.status === "completed",
+        );
+        // Its last output is text, so it ends 20 s later, before the watcher's first 40 s wait.
+        yield* TestClock.adjust("19 seconds");
+        assert.lengthOf(terminals(h), 1);
+        yield* TestClock.adjust("2 seconds");
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.isTrue(
+          h.recorded.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.runId === RunId.make("droid-run-2") &&
+              event.message.text === "Edited.",
+          ),
+        );
+        assert.deepEqual(
+          (yield* h.readLog!())
+            .filter((message) => message.result?.outcome)
+            .map((message) => message.result?.outcome),
+          [{ outcome: "selected", optionId: "once" }],
+        );
+      }),
+    ),
+  );
+  it.effect("holds a Steer until work Droid started after its turn ends in silence", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        yield* h.signal("finished");
+        yield* Queue.take(h.continuations);
+        yield* h.continueTurn(2);
+        yield* h.signal("checked");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "check" &&
+            event.turnItem.status === "completed",
+        );
+        const running = h.recorded.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (running?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing the continuation turn");
+        const reserve = h.runtime.reserveDroidSteer!({
+          attemptId: RunAttemptId.make("droid-attempt-2"),
+          providerTurnId: running.providerTurn.id,
+          revision: "steer",
+        });
+        // Droid 1.2.0 folds a prompt sent now into this work and never answers it.
+        assert.isUndefined(yield* reserve);
+        yield* TestClock.adjust("41 seconds");
+        assert.equal((yield* h.terminal).status, "completed");
+        const lease = yield* reserve;
+        if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
+        assert.isTrue(
+          yield* h.runtime.consumeDroidSteer!({
+            providerThread: h.providerThread,
+            providerTurnId: running.providerTurn.id,
+            droidSteerLease: lease,
+          }),
+        );
+      }),
+    ),
+  );
+  it.effect(
+    "holds a Steer on the turn that launched a background Task while Droid works after it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          const first = h.recorded.find((event) => event.type === "provider_turn.updated");
+          if (first?.type !== "provider_turn.updated") return yield* Effect.die("Missing the turn");
+          const reserve = h.runtime.reserveDroidSteer!({
+            attemptId: RunAttemptId.make("droid-attempt-1"),
+            providerTurnId: first.providerTurn.id,
+            revision: "steer",
+          });
+          assert.isUndefined(yield* reserve);
+          const handled = (title: string) =>
+            untilRecorded(
+              h,
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.title === title,
+            );
+          // Its run stays open for the held Steer, so no follow-up run can take this work.
+          yield* h.signal("finished");
+          yield* handled("finished");
+          assert.isUndefined(yield* reserve);
+          // Droid's own tool holds it past the silence, through a progress update without a status.
+          yield* TestClock.adjust("41 seconds");
+          assert.isUndefined(yield* reserve);
+          yield* h.signal("progress");
+          yield* handled("progress");
+          yield* TestClock.adjust("41 seconds");
+          assert.isUndefined(yield* reserve);
+          yield* h.signal("checked");
+          yield* handled("checked");
+          yield* TestClock.adjust("39 seconds");
+          assert.isUndefined(yield* reserve);
+          yield* TestClock.adjust("2 seconds");
+          const lease = yield* reserve;
+          if (lease === undefined) return yield* Effect.die("Droid was not ready for a Steer");
+          assert.isTrue(
+            yield* h.runtime.consumeDroidSteer!({
+              providerThread: h.providerThread,
+              providerTurnId: first.providerTurn.id,
+              droidSteerLease: lease,
+            }),
+          );
+        }),
+      ),
+  );
+  it.effect("hands Droid's post-turn work to a user prompt that starts during it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, { body: backgroundTaskBody });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        yield* h.signal("finished");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.title === "finished",
+        );
+        yield* h.send(2, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const second = h.recorded.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        if (second?.type !== "provider_turn.updated") return yield* Effect.die("Missing the turn");
+        assert.isDefined(
+          yield* h.runtime.reserveDroidSteer!({
+            attemptId: RunAttemptId.make("droid-attempt-2"),
+            providerTurnId: second.providerTurn.id,
+            revision: "steer",
+          }),
+        );
       }),
     ),
   );

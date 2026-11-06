@@ -609,7 +609,7 @@ describe("ProviderPluginManagement MCP sign-in", () => {
         assert.strictEqual(unknown.reason, "not-found");
 
         const gone = yield* makeGeneration({
-          readMcpServer: () => Effect.succeed(undefined),
+          readMcpServer: () => Effect.undefined,
         });
         const goneError = yield* (yield* makeHarness({ actions: gone.actions })).management
           .act(signIn("notion"))
