@@ -15,17 +15,19 @@ import {
   isBuiltInBrowserProfileId,
 } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
-import { siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
+import { siteOf, siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readPrimaryEnvironmentId } from "~/state/environments";
+import { environmentPresentations } from "~/state/presentation";
 
 import { accountsState } from "./accountsState";
 import { loadSourceProfiles, matchExistingProfile } from "./accountsView";
 import { removeBrowserProfile } from "./removeBrowserProfile";
+import type { CookieMetadata } from "./sessionDetection";
 
 type FillMain = NonNullable<DesktopAccountsBridge["fillMain"]>;
 
@@ -428,6 +430,11 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
         importedName: (name) => matchExistingProfile(name, sources) !== undefined,
         fill: (profileId) =>
           filled.has(profileId) ? Promise.resolve(filled.get(profileId)!) : fill(after, profileId),
+        signedIn: async (profileId) => {
+          const cookies = await readCookies(profileId);
+          return cookies && sessionSites(cookies);
+        },
+        elsewhere: (profileId) => heldElsewhere(registry, environmentId, profileId),
         fold: async (profileId) =>
           (
             await removeBrowserProfile(registry, environmentId, profileId, {
@@ -567,6 +574,50 @@ export async function copySignInIntoMain(environmentId: EnvironmentId, row: Acco
   return result.units[0]?.outcome;
 }
 
+const readCookies = async (profileId: string, environmentId?: EnvironmentId) =>
+  (await window.desktopBridge?.accounts
+    ?.cookieMetadata?.(profileId, environmentId)
+    .catch(() => null)) ?? null;
+
+/** Sites where a jar holds a live HttpOnly cookie, as a session cookie is; scripts' cookies aren't. */
+function sessionSites(cookies: ReadonlyArray<CookieMetadata>, now = Date.now()) {
+  return [
+    ...new Set(
+      cookies
+        .filter(
+          (cookie) =>
+            cookie.httpOnly === true &&
+            (cookie.expires === undefined || cookie.expires <= 0 || cookie.expires * 1000 > now),
+        )
+        .map((cookie) => siteOf(cookie.domain)),
+    ),
+  ];
+}
+
+/**
+ * Whether the profile's removal would clear sign-ins the fold never copied: any server's browser
+ * keeps its own jar per profile, and this desktop keeps one per other environment. Null when an
+ * environment's config or jar can't be read.
+ */
+async function heldElsewhere(
+  registry: AtomRegistry.AtomRegistry,
+  primaryId: EnvironmentId,
+  profileId: string,
+) {
+  const configs = registry.get(environmentPresentations.serverConfigsAtom);
+  let unknown = false;
+  for (const environmentId of registry.get(environmentPresentations.presentationsAtom).keys()) {
+    const config = configs.get(environmentId);
+    if (!config) unknown = true;
+    else if (config.environment.capabilities.serverBrowser) return true;
+    if (environmentId === primaryId) continue;
+    const cookies = await readCookies(profileId, environmentId);
+    if (cookies === null) unknown = true;
+    else if (cookies.length > 0) return true;
+  }
+  return unknown ? null : false;
+}
+
 /** Imported profiles first, by when they were imported, then the rest in list order. */
 export function backfillOrder(
   snapshot: Pick<AccountsSnapshot, "profiles">,
@@ -643,25 +694,32 @@ const sameUser = (a: string | undefined, b: string | undefined) =>
 
 /**
  * Whether Main now holds what the profile does: each unit copied or already the same. A unit Main
- * holds differently matters where one of the profile's rows names its site, unless Main has a row
- * for the same person there; one kept out by Main's sign-out matters wherever a row names it.
+ * holds differently matters where the profile is signed in (a row names the site, or it holds a
+ * session cookie there), unless the profile's rows there all name a person Main has a row for; one
+ * kept out by Main's sign-out matters wherever the profile is signed in.
  */
 function foldsWhole(
   accounts: ReadonlyArray<AccountSummary>,
   profileId: string,
   result: DesktopFillMainResult,
   skipSites: ReadonlyArray<string>,
+  signedIn: ReadonlyArray<string>,
 ) {
   const rows = accounts.filter((row) => website(row)?.profileId === profileId);
   const named = (sites: ReadonlyArray<string>) =>
     rows.filter((row) => sitesNest(website(row)!.sites, sites));
+  const signedInAt = (sites: ReadonlyArray<string>) =>
+    named(sites).length > 0 || sitesNest(sites, signedIn);
   return result.units.every(({ sites, outcome }) => {
     switch (outcome) {
       case "copied":
       case "same":
         return true;
-      case "conflict":
-        return named(sites).every((row) =>
+      case "conflict": {
+        const here = named(sites);
+        // Without a row, nothing says who the profile's session there is.
+        if (here.length === 0) return !sitesNest(sites, signedIn);
+        return here.every((row) =>
           accounts.some((main) => {
             const details = website(main);
             return (
@@ -671,9 +729,10 @@ function foldsWhole(
             );
           }),
         );
+      }
       // Not kept out by Main's sign-out, a blocked unit had nothing live to copy.
       case "blocked":
-        return !sitesNest(sites, skipSites) || named(sites).length === 0;
+        return !sitesNest(sites, skipSites) || !signedInAt(sites);
       default:
         return false;
     }
@@ -682,8 +741,9 @@ function foldsWhole(
 
 /**
  * Once per environment, after the back-fill: each profile made in Scient whose sessions Main holds
- * whole merges into Main and is removed; any other stays as it is. Recorded even when none merged;
- * an unreadable jar or a failed merge leaves it unrecorded, so the next launch tries the rest.
+ * whole, and that holds nothing elsewhere its removal would clear, merges into Main and is removed;
+ * any other stays as it is. Recorded even when none merged; anything unread or a failed merge
+ * leaves it unrecorded, so the next launch tries the rest.
  */
 export async function foldIntoMain(
   snapshot: AccountsSnapshot,
@@ -691,6 +751,13 @@ export async function foldIntoMain(
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly importedName: (name: string) => boolean;
     readonly fill: (profileId: string) => Promise<DesktopFillMainResult | null>;
+    /** The profile's sites holding a session cookie in this desktop's jar; null if unreadable. */
+    readonly signedIn: (profileId: string) => Promise<ReadonlyArray<string> | null>;
+    /**
+     * Whether the profile holds anything the fold doesn't copy but its removal clears: another
+     * environment's jar or a server's browser. Null when that can't be told.
+     */
+    readonly elsewhere: (profileId: string) => Promise<boolean | null>;
     /** Repoints what names the profile to Main and removes it; true once done. */
     readonly fold: (profileId: string) => Promise<boolean>;
     readonly done: (names: ReadonlyArray<string>) => Promise<boolean>;
@@ -700,12 +767,19 @@ export async function foldIntoMain(
   const merged: string[] = [];
   let complete = true;
   for (const { id, name } of foldCandidates(snapshot, deps.profiles, deps.importedName)) {
-    const result = await deps.fill(id);
-    if (!result || !foldsWhole(snapshot.accounts, id, result, mainSignOuts(snapshot))) {
-      // A jar that couldn't be read decided nothing about the profile.
-      if (!result) complete = false;
+    const elsewhere = await deps.elsewhere(id).catch(() => null);
+    // Anything unread decided nothing about the profile: the next launch looks again.
+    if (elsewhere !== false) {
+      if (elsewhere === null) complete = false;
       continue;
     }
+    const result = await deps.fill(id);
+    const signedIn = result && (await deps.signedIn(id).catch(() => null));
+    if (!result || !signedIn) {
+      complete = false;
+      continue;
+    }
+    if (!foldsWhole(snapshot.accounts, id, result, mainSignOuts(snapshot), signedIn)) continue;
     if (await deps.fold(id)) merged.push(name);
     else complete = false;
   }

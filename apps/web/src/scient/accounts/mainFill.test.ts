@@ -661,7 +661,12 @@ describe("the one-time fold into Main", () => {
   const run = async (
     accounts: ReadonlyArray<AccountSummary>,
     result: DesktopFillMainResult | null,
-    options: { readonly main?: object; readonly folds?: boolean } = {},
+    options: {
+      readonly main?: object;
+      readonly folds?: boolean;
+      readonly signedIn?: ReadonlyArray<string> | null;
+      readonly elsewhere?: boolean | null;
+    } = {},
   ) => {
     const calls: string[] = [];
     const done: Array<ReadonlyArray<string>> = [];
@@ -672,6 +677,8 @@ describe("the one-time fold into Main", () => {
         calls.push(`fill ${id}`);
         return result;
       },
+      signedIn: async () => (options.signedIn === undefined ? [] : options.signedIn),
+      elsewhere: async () => (options.elsewhere === undefined ? false : options.elsewhere),
       fold: async (id) => {
         calls.push(`fold ${id}`);
         return options.folds ?? true;
@@ -735,8 +742,36 @@ describe("the one-time fold into Main", () => {
     expect(await run([theirs], units(["github.com", "blocked"]))).toEqual(merged);
   });
 
+  it("keeps a profile signed in to a site Main holds differently, even without a row", async () => {
+    const conflict = units(["github.com", "conflict"], ["consent.example", "conflict"]);
+    expect(await run([], conflict, { signedIn: ["github.com"] })).toEqual({
+      calls: ["fill made"],
+      done: [[]],
+    });
+    // Only script-set cookies there, such as a consent or analytics cookie: no sign-in to lose.
+    expect(await run([], conflict, { signedIn: [] })).toEqual({
+      calls: ["fill made", "fold made"],
+      done: [["made"]],
+    });
+  });
+
+  it("keeps a profile that holds something on another computer, and asks again when unsure", async () => {
+    expect(await run([], units(["github.com", "copied"]), { elsewhere: true })).toEqual({
+      calls: [],
+      done: [[]],
+    });
+    expect(await run([], units(["github.com", "copied"]), { elsewhere: null })).toEqual({
+      calls: [],
+      done: [],
+    });
+  });
+
   it("leaves the fold unrecorded when a jar was unreadable or a merge failed, to try next launch", async () => {
     expect(await run([], null)).toEqual({ calls: ["fill made"], done: [] });
+    expect(await run([], units(["github.com", "copied"]), { signedIn: null })).toEqual({
+      calls: ["fill made"],
+      done: [],
+    });
     expect(await run([], units(["github.com", "copied"]), { folds: false })).toEqual({
       calls: ["fill made", "fold made"],
       done: [],
