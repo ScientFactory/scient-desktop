@@ -41,6 +41,8 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
+// SCIENT-FORK: T3 voice is dormant, so its first-run microphone is not offered.
+import { SCIENT_OFFERS_T3_VOICE_SETUP } from "../scient/voice/t3VoiceDormancy";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -128,7 +130,9 @@ export function useVoiceTranscriptionDestination() {
       provider ? "cloudVoiceTranscription" : "voiceTranscription"
     ] === true;
   return {
-    ...(hydrated && choice === null ? { offerFirstRunSetup: true } : {}),
+    ...(SCIENT_OFFERS_T3_VOICE_SETUP && hydrated && choice === null
+      ? { offerFirstRunSetup: true }
+      : {}),
     environmentId,
     ...(provider ? { cloudProvider: provider } : {}),
     ...(model ? { cloudModel: model } : {}),

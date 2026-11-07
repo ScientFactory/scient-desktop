@@ -72,6 +72,8 @@ vi.mock("../state/session", () => ({
     return Option.some(prepared);
   },
 }));
+// SCIENT-FORK: these tests cover T3's first-run offer, which Scient turns off while T3 voice is dormant.
+vi.mock("../scient/voice/t3VoiceDormancy", () => ({ SCIENT_OFFERS_T3_VOICE_SETUP: true }));
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
   useEnvironment: (environmentId: string | null) =>
