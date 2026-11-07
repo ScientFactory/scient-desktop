@@ -79,6 +79,7 @@ vi.mock("./useAccounts", () => ({
     return { ok: true, value: state.results[command.label] ?? {} };
   },
   usePasswordStorePermission: () => true,
+  toastAccountFailure: () => undefined,
 }));
 
 function fixture(platform = "MacIntel", desktop = true) {

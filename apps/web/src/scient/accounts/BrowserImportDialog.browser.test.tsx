@@ -34,6 +34,7 @@ vi.mock("~/components/ui/toast", async (importOriginal) => ({
 }));
 vi.mock("./useAccounts", () => ({
   useAccountCommand: () => state.command,
+  toastAccountFailure: () => undefined,
 }));
 const snapshot: AccountsSnapshot = {
   agentAccess: true,

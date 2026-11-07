@@ -38,8 +38,6 @@ vi.mock("~/hooks/useSettings", () => ({
     ],
   }),
 }));
-// The fold's removal is a dependency here; the real one clears jars through the desktop.
-vi.mock("./removeBrowserProfile", () => ({ removeBrowserProfile: async () => undefined }));
 vi.mock("./accountsState", () => ({
   accountsState: {
     snapshot: () => ({}),

@@ -26,7 +26,6 @@ import { environmentPresentations } from "~/state/presentation";
 
 import { accountsState } from "./accountsState";
 import { loadSourceProfiles, matchExistingProfile } from "./accountsView";
-import { removeBrowserProfile } from "./removeBrowserProfile";
 import type { CookieMetadata } from "./sessionDetection";
 
 type FillMain = NonNullable<DesktopAccountsBridge["fillMain"]>;
@@ -436,13 +435,16 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
         },
         elsewhere: (profileId) => heldElsewhere(registry, environmentId, profileId),
         fold: async (profileId) =>
+          // Loaded here: the removal imports the settings page, which imports this module.
           (
-            await removeBrowserProfile(registry, environmentId, profileId, {
-              intoMain: true,
-            }).catch((cause: unknown) => {
-              warn("Couldn't merge a profile into Main", cause);
-              return null;
-            })
+            await import("./removeBrowserProfile")
+              .then(({ removeBrowserProfile }) =>
+                removeBrowserProfile(registry, environmentId, profileId, { intoMain: true }),
+              )
+              .catch((cause: unknown) => {
+                warn("Couldn't merge a profile into Main", cause);
+                return null;
+              })
           )?._tag === "Success",
         done: async (profiles) =>
           (
