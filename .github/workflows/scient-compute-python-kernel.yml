@@ -57,6 +57,13 @@ jobs:
       run:
         shell: bash
     steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -105,6 +112,13 @@ jobs:
       run:
         shell: bash
     steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
