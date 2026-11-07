@@ -853,12 +853,27 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 - **Other agents**: inventory still depends on each provider exposing a verified
   owner interface. Codex, Claude, and Scient Agent have the paths above.
 
-GitHub uses a bearer personal access token by default, linked from its add dialog.
-Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
-“Sign in with GitHub” through the existing connector OAuth/PKCE flow and callback.
-It stays hidden when unset; registering the Scient OAuth app and configuring the
-provider's callback/client requirements remain prerequisites for live sign-in.
-Only user-added URLs expose custom OAuth client settings.
+GitHub's hosted MCP server has no dynamic client registration, so its connector
+borrows Source Control's GitHub credential (`source-control` auth) instead of
+connector OAuth. The GitHub driver's `credential` capability returns Source
+Control's effective credential in Source Control's order (saved token, Scient
+for GitHub app sign-in, `GH_TOKEN`, `gh`) with the login `GET /user` reports for
+that token; the record stores only that login. A pinned login gets its own
+credential or none, never another account's: none sets `needs-credential`. The
+token goes only to `https://api.githubcopilot.com/mcp/` and paths below it,
+checked on add and on every request; a 401 hands that token back to its own
+source and replays once with a different one. Credential errors carry no source
+text. Listings and session starts follow Source Control at most once a minute:
+GitHub is added when nothing points at that server and
+`githubFromSourceControlDeclined` (set when the user removes GitHub, cleared
+when they add it) is unset, and Source Control connectors move between
+`connected` and `needs-credential` without touching enablement or availability.
+
+Scient for GitHub (client ID `Iv23lieBEtqTwH75xtnk`, device flow, no secret) is
+the default app sign-in on every server; `T3CODE_GITHUB_APP_CLIENT_ID` overrides
+it, and an empty value turns it off. Device sign-in from the add dialog shows
+the code and opens `github.com/login/device` in Scient's browser. A token remains
+available. Only user-added URLs expose custom OAuth client settings.
 
 ## Plugin key detection
 

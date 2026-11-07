@@ -57,6 +57,11 @@ export function ThreadAccountRequests(props: {
             {handoff.kind === "push" && handoff.number ? ` Tap ${handoff.number}.` : ""}
             {handoff.kind === "captcha" || handoff.kind === "passkey" ? " On your computer." : ""}
           </Text>
+          {handoff.reason ? (
+            <Text className="font-sans text-sm leading-5 text-foreground-muted">
+              {handoff.reason}
+            </Text>
+          ) : null}
           <Button
             label="Cancel sign-in"
             tone="text"

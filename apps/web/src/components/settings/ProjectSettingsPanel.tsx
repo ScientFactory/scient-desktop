@@ -61,6 +61,7 @@ import { ProjectSkillsSettings } from "../../scient/skills/ProjectSkillsSettings
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 // SCIENT-FORK:START — Project Settings ▸ Overleaf
 import { OverleafProjectSettingsSection } from "../../scient/overleaf/OverleafSettings";
+import { ProjectBrowserProfile } from "../../scient/accounts/ProjectBrowserProfile";
 // SCIENT-FORK:END
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
@@ -663,6 +664,10 @@ function ProjectDetail({
         <OverleafProjectSettingsSection
           environmentId={representative.environmentId}
           workspaceRoot={representative.workspaceRoot}
+        />
+        <ProjectBrowserProfile
+          environmentId={representative.environmentId}
+          projectId={representative.id}
         />
         {/* SCIENT-FORK:END */}
         <SettingsSection title="Skills">

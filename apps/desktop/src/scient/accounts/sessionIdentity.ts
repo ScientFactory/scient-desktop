@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 const ProfileScope = Schema.fromJsonString(Schema.Tuple([Schema.String, BrowserProfileId]));
 const decodeProfileScope = Schema.decodeOption(ProfileScope);
 const identities = new WeakMap<
-  Session,
+  object,
   { environmentId: string; profileId: string; persistent: boolean }
 >();
 
@@ -37,6 +37,6 @@ export function rememberAccountsSession(
   }
 }
 
-export function accountsSessionIdentity(session: Session) {
+export function accountsSessionIdentity(session: object) {
   return identities.get(session);
 }

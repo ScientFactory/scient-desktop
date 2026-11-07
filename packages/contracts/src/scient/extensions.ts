@@ -85,11 +85,18 @@ export const ConnectorAuthSummary = Schema.Union([
     /** `owned`: entered for this connector only. `bound`: a user secret from Secrets. */
     storage: Schema.Literals(["owned", "bound"]),
   }),
+  /** Source Control's own credential for `host`, only while it still belongs to `account`. */
+  Schema.Struct({
+    type: Schema.Literal("source-control"),
+    host: TrimmedNonEmptyString,
+    /** The login the host reported for the credential when it was connected. */
+    account: TrimmedNonEmptyString,
+  }),
 ]);
 export type ConnectorAuthSummary = typeof ConnectorAuthSummary.Type;
 
 /**
- * `needs-auth`: OAuth sign-in required. `needs-credential`: the bound or owned
+ * `needs-auth`: OAuth sign-in required. `needs-credential`: the bound, owned or Source Control
  * credential is gone (for example unbound in Settings → Secrets); never falls back.
  */
 export const ConnectorStatus = Schema.Literals(["connected", "needs-auth", "needs-credential"]);
@@ -237,6 +244,12 @@ export const ConnectorAddInput = Schema.Struct({
         headerName: Schema.optional(TrimmedNonEmptyString),
         /** A user secret; adding the connector is the user's binding confirmation. */
         secretRef: VaultSecretRef,
+      }),
+      /** GitHub's own MCP server only: Source Control's GitHub account. */
+      Schema.Struct({
+        type: Schema.Literal("source-control"),
+        /** One of Source Control's GitHub logins; Source Control's own choice when absent. */
+        account: Schema.optional(TrimmedNonEmptyString),
       }),
     ]),
   ),

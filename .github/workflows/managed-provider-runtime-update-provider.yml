@@ -379,6 +379,7 @@ jobs:
             apps/server/src/provider \
             apps/server/src/resourceTelemetry \
             apps/server/src/scient/providerLifecycle \
+            apps/server/src/scient/sourceControl \
             apps/server/src/scient/threadSections \
             apps/server/src/scient/workspace/CheckoutBarrier.ts \
             apps/server/src/scient/workspace/NativeFilePublication.ts \

@@ -52,7 +52,10 @@ const addRecord = (directory: string) =>
   Effect.gen(function* () {
     const store = yield* makeConnectorStateStore(directory);
     return yield* store.update((current) =>
-      Effect.succeed([undefined, { connectors: [...current.connectors, record] }] as const),
+      Effect.succeed([
+        undefined,
+        { ...current, connectors: [...current.connectors, record] },
+      ] as const),
     );
   });
 
@@ -80,7 +83,10 @@ describe("connector state size limit", () => {
       const store = yield* makeConnectorStateStore(over);
       const refused = yield* Effect.flip(
         store.update((current) =>
-          Effect.succeed([undefined, { connectors: [...current.connectors, record] }] as const),
+          Effect.succeed([
+            undefined,
+            { ...current, connectors: [...current.connectors, record] },
+          ] as const),
         ),
       );
       expect(refused.reason).toBe("limit-reached");
@@ -124,6 +130,7 @@ describe("connector state size limit", () => {
           Effect.succeed([
             undefined,
             {
+              ...current,
               connectors: current.connectors.map((entry) => ({ ...entry, displayName: "Renamed" })),
             },
           ] as const),
@@ -138,6 +145,33 @@ describe("connector state size limit", () => {
       expect(reloaded.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
         "connector-record-unreadable",
       ]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("GitHub removal", () => {
+  it.live("is remembered across restarts, and files without it still load", () =>
+    Effect.gen(function* () {
+      const directory = yield* seededDirectory(
+        JSON.stringify({ formatVersion: 2, connectors: [encodeRecord(record)] }),
+      );
+      const store = yield* makeConnectorStateStore(directory);
+      expect(yield* store.read).toMatchObject({
+        connectors: [record],
+        githubFromSourceControlDeclined: false,
+      });
+      yield* store.update(() =>
+        Effect.succeed([
+          undefined,
+          { connectors: [], githubFromSourceControlDeclined: true },
+        ] as const),
+      );
+      expect(JSON.parse(yield* stateText(directory))).toMatchObject({
+        githubFromSourceControlDeclined: true,
+      });
+      expect(
+        (yield* (yield* makeConnectorStateStore(directory)).read).githubFromSourceControlDeclined,
+      ).toBe(true);
     }).pipe(Effect.scoped),
   );
 });

@@ -51,9 +51,11 @@ import {
 } from "./ConnectorOAuth.ts";
 import { controlFetch, egressPolicyFor, STRICT_EGRESS_POLICY } from "./ConnectorOutbound.ts";
 import { probeConnector } from "./ConnectorProbe.ts";
+import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.ts";
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
 import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
+import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
 
 /**
  * A fake vendor: MCP endpoints without auth, behind OAuth (with and without
@@ -327,6 +329,7 @@ const handleVendor = async (
   response: NodeHttp.ServerResponse,
 ) => {
   const url = new URL(request.url ?? "/", vendor.base);
+  if (url.pathname.startsWith("/gh/mcp")) return handleMcp(request, response, "Bearer");
   if (url.pathname.startsWith("/secure/mcp")) {
     return handleMcp(
       request,
@@ -548,6 +551,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
       eligibility: PluginConnectorEligibility.PluginConnectorEligibilityShape,
     ) => PluginConnectorEligibility.PluginConnectorEligibilityShape;
     readonly onStreamClosed?: Effect.Effect<void>;
+    /** Stands in for Source Control's GitHub credential. */
+    readonly github?: GitHubSourceControlCredential["Service"];
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -570,6 +575,9 @@ const makeHarness = Effect.fn("makeHarness")(function* (
       PluginConnectorEligibility.PluginConnectorEligibility,
       options.wrapEligibility?.(eligibility) ?? eligibility,
     ),
+    options.github === undefined
+      ? (effect) => effect
+      : Effect.provideService(GitHubSourceControlCredential, options.github),
   );
 
   const delivered = new Set<string>();
@@ -2194,5 +2202,210 @@ describe("bound connector credentials", () => {
         yield* reloaded.remove({ connectorId });
         expect(yield* connectorSecrets(harness.config)).toEqual([]);
       }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+/** Source Control's GitHub logins: tokens in Source Control's own order, each with its login. */
+const fakeSourceControl = (logins: Record<string, string>) => {
+  const state = {
+    tokens: Object.keys(logins),
+    failing: false,
+    reads: 0,
+    invalidated: [] as Array<string>,
+  };
+  const service = GitHubSourceControlCredential.of({
+    mcpUrl: `${vendor.base}/gh/mcp/`,
+    get: (host, options) =>
+      Effect.suspend(() => {
+        state.reads++;
+        if (state.failing) return Effect.fail(new SourceControlCredentialError({ host }));
+        const token = state.tokens.find(
+          (candidate) => options?.account === undefined || logins[candidate] === options.account,
+        );
+        return Effect.succeed(
+          token === undefined
+            ? Option.none()
+            : Option.some({
+                token: Redacted.make(token),
+                via: "cli" as const,
+                login: logins[token]!,
+              }),
+        );
+      }),
+    invalidate: (_host, credential) =>
+      Effect.sync(() => {
+        const token = Redacted.value(credential.token);
+        state.invalidated.push(token);
+        state.tokens = state.tokens.filter((candidate) => candidate !== token);
+      }),
+  });
+  return { state, service };
+};
+
+const OCTO_TOKEN = "gho_octo_first_token_0000";
+const OCTO_ROTATED = "gho_octo_rotated_token_111";
+const OTHER_TOKEN = "gho_someone_else_token_22";
+
+describe("GitHub with Source Control's account", () => {
+  const connectGitHub = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
+    harness.runtime
+      .add({
+        target: { type: "url", url: `${vendor.base}/gh/mcp/` },
+        displayName: "GitHub",
+        credential: { type: "source-control" },
+      })
+      .pipe(
+        Effect.tap((added) =>
+          Effect.sync(() => harness.delivered.add(added.connector.connectorId)),
+        ),
+        Effect.map((added) => added.connector),
+      );
+
+  it.live("connects as the account's login and never shows or stores the token", () =>
+    Effect.gen(function* () {
+      vendor.validTokens.add(OCTO_TOKEN);
+      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+      const harness = yield* makeHarness({ github: github.service });
+      const connector = yield* connectGitHub(harness);
+      expect(connector).toMatchObject({
+        status: "connected",
+        auth: { type: "source-control", host: "github.com", account: "octo" },
+      });
+      const echoed = yield* harness.proxy(connector.connectorId, toolCall(1, "echo-auth"));
+      expect(vendor.upstream.at(-1)?.authorization).toBe(`Bearer ${OCTO_TOKEN}`);
+      expect(yield* readText(echoed)).not.toContain(OCTO_TOKEN);
+      expect(
+        yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8")),
+      ).not.toContain(OCTO_TOKEN);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("hands a refused token back to Source Control and replays once with its successor", () =>
+    Effect.gen(function* () {
+      vendor.validTokens.add(OCTO_TOKEN).add(OCTO_ROTATED);
+      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo", [OCTO_ROTATED]: "octo" });
+      const harness = yield* makeHarness({ github: github.service });
+      const connector = yield* connectGitHub(harness);
+      vendor.refusedTokens.add(OCTO_TOKEN);
+      const answered = yield* harness.proxy(connector.connectorId, toolCall(1));
+      expect(JSON.parse(yield* readText(answered))).toMatchObject({ id: 1, result: {} });
+      expect(github.state.invalidated).toEqual([OCTO_TOKEN]);
+      expect(vendor.upstream.at(-1)?.authorization).toBe(`Bearer ${OCTO_ROTATED}`);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "never falls back to another account, and reconnects after a restart once it is back",
+    () =>
+      Effect.gen(function* () {
+        vendor.validTokens.add(OCTO_TOKEN).add(OTHER_TOKEN);
+        const github = fakeSourceControl({ [OCTO_TOKEN]: "octo", [OTHER_TOKEN]: "someone-else" });
+        const harness = yield* makeHarness({ github: github.service });
+        const connector = yield* connectGitHub(harness);
+        github.state.tokens = [OTHER_TOKEN];
+        const refused = yield* harness.proxy(connector.connectorId, toolCall(1));
+        expect(yield* readText(refused)).toContain("error");
+        expect(vendor.upstream.some((entry) => entry.authorization.includes(OTHER_TOKEN))).toBe(
+          false,
+        );
+        expect((yield* harness.runtime.list()).connectors[0]).toMatchObject({
+          status: "needs-credential",
+          lastError: expect.stringContaining("octo"),
+        });
+
+        github.state.tokens = [OCTO_TOKEN];
+        const restarted = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir }).pipe(
+          Effect.provideService(GitHubSourceControlCredential, github.service),
+        );
+        expect((yield* restarted.list()).connectors[0]).toMatchObject({
+          status: "connected",
+          auth: { account: "octo" },
+        });
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("sends the credential only to GitHub's own MCP server", () =>
+    Effect.gen(function* () {
+      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+      const hostile = {
+        connectorId: "con_hostile1",
+        serverName: "github",
+        displayName: "GitHub",
+        url: `${vendor.base}/secure/mcp`,
+        source: { type: "url" },
+        auth: { type: "source-control", host: "github.com", account: "octo" },
+        status: "connected",
+        enabled: true,
+        availability: { type: "all-projects" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      const harness = yield* makeHarness({
+        github: github.service,
+        seedStateFile: JSON.stringify({ formatVersion: 2, connectors: [hostile] }),
+      });
+      harness.delivered.add(hostile.connectorId);
+      const refused = yield* Effect.flip(
+        harness.runtime.add({
+          target: { type: "url", url: `${vendor.base}/open/mcp` },
+          credential: { type: "source-control" },
+        }),
+      );
+      expect(refused.reason).toBe("invalid-input");
+      yield* harness.proxy(hostile.connectorId, toolCall(1));
+      expect(vendor.upstream).toEqual([]);
+      expect(github.state.reads).toBe(0);
+      expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-credential");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("answers a retry when Source Control cannot hand over its credential", () =>
+    Effect.gen(function* () {
+      vendor.validTokens.add(OCTO_TOKEN);
+      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+      const harness = yield* makeHarness({ github: github.service });
+      const connector = yield* connectGitHub(harness);
+      github.state.failing = true;
+      const answered = yield* harness.proxy(connector.connectorId, toolCall(1));
+      expect(yield* readText(answered)).toContain("Retry shortly");
+      const after = (yield* harness.runtime.list()).connectors[0];
+      expect(after?.status).toBe("connected");
+      expect(after?.lastError).toBeUndefined();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("connects GitHub on its own and keeps the user's choices until they remove it", () =>
+    Effect.gen(function* () {
+      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+      const harness = yield* makeHarness({ github: github.service });
+      const restart = makeConnectorRuntime({ stateDir: harness.config.stateDir }).pipe(
+        Effect.provideService(GitHubSourceControlCredential, github.service),
+      );
+      const [added] = (yield* harness.runtime.list()).connectors;
+      expect(added).toMatchObject({
+        url: `${vendor.base}/gh/mcp/`,
+        status: "connected",
+        enabled: true,
+        availability: { type: "all-projects" },
+        auth: { type: "source-control", account: "octo" },
+      });
+      const availability = { type: "projects", projectIds: [PROJECT] } as const;
+      yield* harness.runtime.update({
+        connectorId: added!.connectorId,
+        enabled: false,
+        availability,
+      });
+      expect((yield* (yield* restart).list()).connectors).toMatchObject([
+        { connectorId: added!.connectorId, enabled: false, availability },
+      ]);
+
+      yield* harness.runtime.remove({ connectorId: added!.connectorId });
+      expect((yield* (yield* restart).list()).connectors).toEqual([]);
+
+      // Adding it again is the user's go: it stays, and is never added twice.
+      vendor.validTokens.add(OCTO_TOKEN);
+      yield* connectGitHub(harness);
+      expect((yield* (yield* restart).list()).connectors).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer)),
   );
 });
