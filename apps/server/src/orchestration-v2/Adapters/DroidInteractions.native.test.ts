@@ -120,10 +120,12 @@ it.layer(layer, { excludeTestServices: true })("Droid native persisted interacti
               creationSource: "web",
               dispatchMode: { type: "start_immediately" },
             });
-            const pending = yield* waitFor((projection) =>
-              projection.runtimeRequests.some(
-                (request) => request.kind === "user_input" && request.status === "pending",
-              ),
+            // Provider writes are batched, so the question item can commit just after its request.
+            const pending = yield* waitFor(
+              (projection) =>
+                projection.runtimeRequests.some(
+                  (request) => request.kind === "user_input" && request.status === "pending",
+                ) && projection.turnItems.some((item) => item.type === "user_input_request"),
             );
             const request = pending.runtimeRequests.find(
               (request) => request.kind === "user_input" && request.status === "pending",

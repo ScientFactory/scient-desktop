@@ -63,6 +63,7 @@ require a cosmetic folder migration.
 - [New browser tab](./user/browser-new-tab.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
+- [Secrets](./user/secrets.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
 - [Keeping app and server in sync](./user/updating.md)

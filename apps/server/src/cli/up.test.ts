@@ -223,7 +223,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up` again.",
+      // SCIENT-FORK:START — Scient prints this installation's own command.
+      prints: " up --base-dir <baseDir>` again.",
+      // SCIENT-FORK:END
       installed: true,
       status: { current: false },
       installFails: true,

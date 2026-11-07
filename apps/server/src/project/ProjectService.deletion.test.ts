@@ -745,7 +745,9 @@ it.effect.each(
       const gatedSink = EventSink.layer.pipe(
         Layer.provide(Layer.succeed(EventStore.EventStoreV2, gatedEvents)),
       );
-      const service = yield* ProjectService.make.pipe(Effect.provide(Layer.fresh(gatedSink)));
+      // The sink's batch worker lives as long as its layer, so build it in the test's scope.
+      const sinkContext = yield* Layer.build(Layer.fresh(gatedSink));
+      const service = yield* ProjectService.make.pipe(Effect.provide(sinkContext));
       yield* tracker.start(
         {
           projectId,
