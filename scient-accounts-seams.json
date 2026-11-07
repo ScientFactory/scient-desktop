@@ -327,6 +327,11 @@
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
     },
     {
+      "path": "apps/web/src/browser/browserDefaults.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: profiles merged into Main are not offered.",
+      "purpose": "Offer only active profiles: one merged into Main is hidden from pickers and defaults."
+    },
+    {
       "path": "apps/web/src/browser/openFileInPreview.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
