@@ -321,6 +321,35 @@ const make = Effect.gen(function* () {
       startedAt: Date.parse(receipt.startedAt),
       ...(status === "active" ? {} : { finishedAt: yield* Clock.currentTimeMillis }),
       trigger: "user",
+      ...(status === "active"
+        ? {}
+        : {
+            capture: {
+              captureSchemaVersion: 2 as const,
+              captureSource: "run-file" as const,
+              captureOutcome:
+                capture === "succeeded"
+                  ? run.artifacts.length > 0
+                    ? ("retained" as const)
+                    : ("none" as const)
+                  : run.artifacts.length > 0
+                    ? ("partial" as const)
+                    : status === "cancelled"
+                      ? ("unobserved" as const)
+                      : ("failed" as const),
+              captureCoverage:
+                capture === "succeeded" ? ("complete" as const) : ("unavailable" as const),
+              captureReason:
+                capture === "succeeded"
+                  ? ("none" as const)
+                  : status === "cancelled"
+                    ? ("observation-unavailable" as const)
+                    : ("artifact-collection-failed" as const),
+              retainedOutputCount: run.artifacts.length,
+              // A failed receipt does not enumerate candidates; do not invent a rejection count.
+              rejectedOutputCount: capture === "succeeded" || status === "cancelled" ? 0 : -1,
+            },
+          }),
     });
   });
 

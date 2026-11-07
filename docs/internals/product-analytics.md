@@ -384,14 +384,26 @@ Interactive compute uses `ComputeOutputAnalytics` to summarize retained rich
 output at **one capture workflow per newly admitted execution**. Images,
 non-plain-text MIME bundles and display updates use the existing persistence
 result; generated project figures use that same path after collection. The
-observer stores only retained/rejected flags, coalesces repeated updates, and
-emits a terminal summary when the execution ends. A rejection, persistence
-failure or project-collection warning makes capture failed, including partial
-capture. Retained output without a capture failure completes even when the
+observer stores bounded retained/rejected counts and structured coverage facts,
+and emits one terminal summary when the execution ends. A known rejection or
+persistence failure makes capture failed, including partial retention.
+Project-scan warnings describe incomplete coverage independently: reaching a
+depth, entry or time limit does not establish that an artifact was lost.
+Retained output without a known rejection completes even when the
 code later fails or is interrupted. No rich output or capture failure means
 skipped, regardless of the execution outcome; execution failure and cancellation
 remain separately recorded as `compute-run` outcomes. Plain text and
 clear-output controls alone are not artifacts.
+
+Capture schema version 2 distinguishes `retained`, `partial`, `none`, `failed`,
+and `unobserved`, alongside `complete`, `partial`, or `unavailable` project-scan
+coverage and a closed reason category. Empty output with incomplete coverage is
+`unobserved`, not evidence that no figures existed. Counts are bounded and bucketed;
+interactive counts include retained display updates, not unique files or figures.
+Run File uses its saved receipt and identifies its separate publication owner;
+when that receipt does not enumerate rejected candidates, their count is unknown.
+Historical events without the version marker retain their older, coarser meaning.
+Do not combine them into a version-2 capture failure rate.
 
 The summary does not read transcripts, files, chart contents or warning text,
 and adds no network or persistence request. At most 1,000 active executions
@@ -402,6 +414,28 @@ capture. Existing output storage and execution ownership are unchanged.
 Durations include queueing/execution, not just persistence. Completion proves
 technical retention, not that a chart rendered or a researcher accepted it;
 a failed capture is not proof that no partial write occurred.
+
+Voice schema version 2 measures one committed dictation job, beginning when the
+user stops recording (including the final audio flush), with exactly one local
+completed, failed or cancelled outcome. Empty clips close as audio failures;
+cancelling correction closes as cancelled and bypassing correction delivers the
+original transcript once. Microphone/recorder failures and recording cancellation
+use separate `voice.recording.*` events, outside the transcription denominator.
+Total job, transcription and correction timings are separate buckets. Correction
+can be disabled, corrected, fallback, bypassed or cancelled; fallback remains a
+successful usable local transcript. Completion measures the delivery callback,
+not proof that the user submitted or accepted the transcript.
+
+The UI binds the job to its original connection and collection context. A
+previously verified context does not expire mid-job; the server validates it on
+every voice event and strips it before queueing. Unknown/Off work is never replayed,
+and consent changes, deletion or a server restart invalidate old outcomes. A
+server must advertise lifecycle version 2 before the UI sends these job events.
+Essential permits failure metadata only; recording and successful-use events
+remain Product. Audio, transcripts, correction requests, document contents and
+raw error text are never analytics properties. These additive bounded properties
+use the existing revision-10 gateway wire contract; no new ingestion endpoint or
+gateway deployment is required.
 
 Browser PDF export emits `pdf-export` once for the initiating coalesced render/
 publication operation. Completion waits until its existing source checks,

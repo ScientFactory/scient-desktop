@@ -1704,11 +1704,11 @@ describe("interactive capture analytics", () => {
         "scient.operation.started",
         `scient.operation.${expected}`,
       ]);
-      expect(captures[1]?.properties).toEqual({
+      expect(captures[1]?.properties).toMatchObject({
         operationKind: "compute-artifact",
         trigger: "other",
         durationMs: expect.any(Number),
-        failureClass: "unknown",
+        captureSchemaVersion: 2,
       });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(
         /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
@@ -1740,6 +1740,10 @@ describe("interactive capture analytics", () => {
           .filter((event) => event.properties?.operationKind === "compute-artifact")
           .map((event) => event.name),
       ).toEqual(["scient.operation.started", "scient.operation.failed"]);
+      expect(f.events.at(-1)?.properties).toMatchObject({
+        captureReason: "output-limit",
+        rejectedOutputCount: 1,
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -1869,9 +1873,64 @@ describe("interactive capture analytics", () => {
         f.events
           .filter((event) => event.properties?.operationKind === "compute-artifact")
           .map((event) => event.name),
-      ).toEqual(["scient.operation.started", "scient.operation.failed"]);
+      ).toEqual(["scient.operation.started", "scient.operation.completed"]);
+      expect(f.events.at(-1)?.properties).toMatchObject({
+        captureOutcome: "retained",
+        captureCoverage: "unavailable",
+        captureReason: "observation-unavailable",
+      });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(/private|project-warning|synthetic/u);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect.each(["print(1)", "chart"])(
+    "separates known retained output from partial scan coverage for %s",
+    (code) =>
+      Effect.gen(function* () {
+        const f = analyticsFixture();
+        const test = yield* harness({
+          analytics: f.service,
+          projectOutputs: {
+            begin: () =>
+              Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
+            collect: () =>
+              Effect.succeed({
+                images: [],
+                tables: [],
+                warnings: ["private scan detail /private/path"],
+                capture: {
+                  coverage: "partial",
+                  coverageReason: "scan-entry-limit",
+                  rejectedCount: 0,
+                },
+              }),
+          },
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            yield* start;
+            yield* submit(code, "partial-scan");
+            const result = yield* waitForExecution(
+              ComputeExecutionId.make("partial-scan"),
+              "succeeded",
+            );
+            expect(result.result?.status).toBe("succeeded");
+          }),
+        );
+        const capture = f.events
+          .filter((event) => event.properties?.operationKind === "compute-artifact")
+          .at(-1);
+        expect(capture).toMatchObject({
+          name: code === "chart" ? "scient.operation.completed" : "scient.operation.skipped",
+          properties: {
+            captureOutcome: code === "chart" ? "retained" : "unobserved",
+            captureCoverage: "partial",
+            captureReason: "scan-entry-limit",
+            rejectedOutputCount: 0,
+          },
+        });
+        expect(yield* encodeUnknownJson(f.events)).not.toMatch(/private|partial-scan|synthetic/u);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect.each(
