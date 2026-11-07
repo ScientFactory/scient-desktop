@@ -1949,14 +1949,17 @@ describe("AcpAdapterV2", () => {
           id: "question_1",
           header: "Format",
           question: "Which reply format?",
+          // The generic ACP form shows each choice's title and answers with its value.
           options: droidChoice.oneOf.map((option) => ({
-            label: option.const,
+            label: option.title,
             description: option.title,
+            value: option.const,
           })),
+          allowCustomAnswer: false,
         },
       ],
-      answers: { question_1: "Markdown" },
-      result: { action: "accept", content: { question_1: "Markdown" } },
+      answers: { question_1: "option_1" },
+      result: { action: "accept", content: { question_1: "option_1" } },
     },
   ])("Droid elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
     Effect.gen(function* () {

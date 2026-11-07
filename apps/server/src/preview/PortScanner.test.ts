@@ -958,7 +958,8 @@ effectIt.effect("uses Linux /proc listener metadata for explicit URLs when lsof 
       first.map(({ port, pid, processName, url }) => ({ port, pid, processName, url })),
     ).toEqual([{ port: 8765, pid: 4242, processName: "python3", url: explicitUrl }]);
     yield* scanner.scan([explicitUrl]);
-    expect(lsofSpawns).toBe(1);
+    // A usable /proc is read before lsof is tried.
+    expect(lsofSpawns).toBe(0);
     // Ports 22 and 3001 have no readable owner, so the second scan walks
     // again; it stops at 77, which holds no listener, once nothing is left.
     expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
@@ -1236,34 +1237,48 @@ effectIt.effect(
 
     return Effect.gen(function* () {
       const scanner = yield* ownedScanner([4242]);
-      const first = yield* scanner.scan();
+      // SCIENT-FORK: Scient lists only declared URLs, so each scan names both servers and the
+      // checks read terminal ownership.
+      const urls = ["http://localhost:3001/", "http://localhost:8765/"];
+      const first = (yield* scanner.scan(urls)).filter(({ terminal }) => terminal != null);
       expect(
         first.map(({ port, pid, processName, url }) => ({ port, pid, processName, url })),
       ).toEqual([
-        { port: 3001, pid: 4242, processName: "python3", url: "http://localhost:3001" },
-        { port: 8765, pid: 4242, processName: "python3", url: "http://localhost:8765" },
+        { port: 3001, pid: 4242, processName: "python3", url: "http://localhost:3001/" },
+        { port: 8765, pid: 4242, processName: "python3", url: "http://localhost:8765/" },
       ]);
-      yield* scanner.scan();
+      yield* scanner.scan(urls);
       expect(lsofSpawns).toBe(0);
       expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
-      yield* scanner.scan();
-      yield* scanner.scan();
+      yield* scanner.scan(urls);
+      yield* scanner.scan(urls);
       expect(fdWalks).toEqual(["77", "4242", "77", "4242", "77", "4242"]);
       procFds["77"]!["6"] = "socket:[5006]";
       procFiles["/proc/net/tcp6"] =
         PROC_NET_TCP6 + PROC_NET_TCP.split("\n")[1]!.replace("5001", "5006");
-      expect((yield* scanner.scan()).map(({ port }) => port)).toEqual([3001]);
+      expect(
+        (yield* scanner.scan(urls))
+          .filter(({ terminal }) => terminal != null)
+          .map(({ port }) => port),
+      ).toEqual([3001]);
       const walksAfterCollision = fdWalks.length;
       procFiles["/proc/net/tcp"] = PROC_NET_TCP.split("\n")[0]!;
       procFiles["/proc/net/tcp6"] = PROC_NET_TCP6.split("\n")[0]!;
-      expect(yield* scanner.scan()).toEqual([]);
+      expect((yield* scanner.scan(urls)).filter(({ terminal }) => terminal != null)).toEqual([]);
       expect(lsofSpawns).toBe(0);
       expect(fdWalks).toHaveLength(walksAfterCollision);
-      expect(requests).toEqual([]);
+      // SCIENT-FORK: only the declared URLs are ever probed.
+      expect(requests.filter((url) => !urls.some((declared) => url.startsWith(declared)))).toEqual(
+        [],
+      );
 
       procFiles["/proc/net/tcp"] = PROC_NET_TCP;
       procFiles["/proc/net/tcp6"] = PROC_NET_TCP6;
-      expect((yield* scanner.scan()).map(({ pid }) => pid)).toEqual([4242, 4242]);
+      expect(
+        (yield* scanner.scan(urls))
+          .filter(({ terminal }) => terminal != null)
+          .map(({ pid }) => pid),
+      ).toEqual([4242, 4242]);
       yield* scanner.retain.pipe(Effect.scoped);
       procFds["77"] = procFds["4242"]!;
       delete procFds["4242"];
@@ -1273,7 +1288,11 @@ effectIt.effect(
         terminalId: "scanner-terminal",
         processIds: [77],
       });
-      expect((yield* scanner.scan()).map(({ port, pid }) => ({ port, pid }))).toEqual([
+      expect(
+        (yield* scanner.scan(urls))
+          .filter(({ terminal }) => terminal != null)
+          .map(({ port, pid }) => ({ port, pid })),
+      ).toEqual([
         { port: 3001, pid: 77 },
         { port: 8765, pid: 77 },
       ]);
@@ -1351,7 +1370,14 @@ effectIt.effect.each([
           },
         }),
         Layer.succeed(HostProcess.Platform, mode === "darwin" ? "darwin" : "linux"),
-        FetchHttpClient.layer,
+        FetchHttpClient.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FetchHttpClient.Fetch, (() =>
+              Promise.resolve(
+                new Response("hello", { headers: { "content-type": "text/html" } }),
+              )) as typeof globalThis.fetch),
+          ),
+        ),
         // SCIENT-FORK: Scient's scanner reports only endpoints its owned registry knows.
         TestOwnedLocalEndpointsLive,
       ),
@@ -1359,12 +1385,16 @@ effectIt.effect.each([
   );
   return Effect.gen(function* () {
     const scanner = yield* ownedScanner();
-    expect((yield* scanner.scan()).map(({ port }) => port)).toEqual(
-      mode === "fd-budget-no-lsof" ? [8765] : fallback ? [LSOF_TEST_PORT] : [],
-    );
+    // SCIENT-FORK: Scient lists only declared URLs.
+    const urls = [`http://localhost:${LSOF_TEST_PORT}/`, "http://localhost:8765/"];
+    expect(
+      (yield* scanner.scan(urls)).filter(({ pid }) => pid !== null).map(({ port }) => port),
+    ).toEqual(mode === "fd-budget-no-lsof" ? [8765] : fallback ? [LSOF_TEST_PORT] : []);
     if (mode === "fd-budget-no-lsof") {
       for (let i = 0; i < 3; i += 1) {
-        expect((yield* scanner.scan()).map(({ port }) => port)).toEqual([8765]);
+        expect(
+          (yield* scanner.scan(urls)).filter(({ pid }) => pid !== null).map(({ port }) => port),
+        ).toEqual([8765]);
       }
       expect(procWalks).toBe(4);
     }
