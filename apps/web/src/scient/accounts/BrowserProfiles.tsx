@@ -752,23 +752,23 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
   ) : null;
 }
 
-/** Google refuses signing in from Scient's browser: the way back is the user's own browser. */
-export const GOOGLE_BLOCKED = "Google blocks signing in here.";
+/** Google signed this profile out; Google refuses signing in from Scient's browser, so the way back is a browser's sign-in. */
+export const GOOGLE_SIGNED_OUT = "Signed out of Google.";
 
-/** What a signed-out profile does instead: sign in in a browser, then bring that in. */
+/** What a signed-out profile does: bring the browser's Google sign-in in again. */
 export function googleRecovery(
   source: BrowserProfileRecord["source"],
   actions: { readonly refresh: () => void; readonly importProfile: () => void },
 ) {
   if (!source)
     return {
-      message: `${GOOGLE_BLOCKED} Sign in in your browser, then import that profile`,
+      message: `${GOOGLE_SIGNED_OUT} Import it from your browser`,
       action: "Import from a browser…",
       onAction: actions.importProfile,
     };
   const browser = browserName(source.browser);
   return {
-    message: `${GOOGLE_BLOCKED} Sign in in ${browser}, then Refresh from ${browser}`,
+    message: GOOGLE_SIGNED_OUT,
     action: `Refresh from ${browser}`,
     onAction: actions.refresh,
   };
@@ -970,6 +970,8 @@ export function BrowserProfiles({
       });
     }
     await followSourceNames(renames);
+    // Google and every row look again at what the refresh brought.
+    window.dispatchEvent(new Event("scient-accounts-session-changed"));
     if (failed) profileError();
     else if (running.size)
       toastManager.add({
