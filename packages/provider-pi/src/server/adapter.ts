@@ -3045,6 +3045,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (baselineThinking === null && appliedThinking === null) {
           baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
+          appliedThinking = baselineThinking;
         }
         // switch_session accepts a file path, not Pi's display session UUID.
         const nativeId = recordString(stateData, "sessionFile");

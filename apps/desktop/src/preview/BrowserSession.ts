@@ -355,6 +355,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
+          // SCIENT-FORK: Electron allows one header listener per session. Scient's site identity
+          // above already drops the Electron token for every site, Teams included.
           const next = new Map(sessions);
           next.set(partition, browserSession);
           return [browserSession, next] as const;

@@ -37,6 +37,7 @@ describe("inlineCodeFilePathCandidate", () => {
     ["docs/סיכום.md", null],
     ["Recorded evidence here: /tmp/image.png", null],
     // SCIENT-FORK:END
+    ["allocator.cc:217", "allocator.cc:217"],
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
