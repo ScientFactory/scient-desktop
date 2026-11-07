@@ -57,6 +57,7 @@ import {
   type EditorId,
   type EnvironmentId,
   type ProjectFilePublicationAttention,
+  type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -258,6 +259,7 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  projectId?: ProjectId | undefined;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
@@ -839,6 +841,7 @@ interface EditableFileSurfaceProps {
   citationBaseline?: string | undefined;
   citationRootRelativePath?: string | undefined;
   environmentId: EnvironmentId;
+  projectId?: ProjectId | undefined;
   cwd: string;
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -911,6 +914,7 @@ export function EditableFileEditor({
   citationBaseline,
   citationRootRelativePath,
   environmentId,
+  projectId,
   cwd,
   relativePath,
   composerDraftTarget,
@@ -1411,6 +1415,14 @@ export function EditableFileEditor({
                 {annotation.metadata.entries.map((entry) => (
                   <DiffCommentAnnotation
                     key={entry.id}
+                    environmentId={environmentId}
+                    projectId={projectId}
+                    ownerKey={JSON.stringify([
+                      environmentId,
+                      composerDraftTarget,
+                      relativePath,
+                      entry.id,
+                    ])}
                     kind={entry.kind}
                     rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
                     text={entry.text}
@@ -1535,6 +1547,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
+  projectId,
   relativePath: requestedPath,
   attachment,
   threadRef,
@@ -2959,6 +2972,7 @@ export default function FilePreviewPanel({
                 citationBaseline={file.authoritativeData?.contents}
                 key={`${relativePath}:${resolvedTheme}`}
                 environmentId={environmentId}
+                projectId={projectId}
                 cwd={cwd}
                 relativePath={relativePath}
                 composerDraftTarget={composerDraftTarget}

@@ -10,6 +10,41 @@ Code: `apps/server/src/scient/accounts`, `apps/web/src/scient/accounts`,
 `accountRpcs.ts`, `desktopAccountsBridge.ts` and `secrets.ts`. Every upstream integration point is
 listed in `scient-accounts-seams.json`; `pnpm accounts:seams:check` verifies it.
 
+## Invariants
+
+The rules every change here keeps. The sections below explain each one.
+
+- **Main has one writer.** Scient changes Main's cookies only in the desktop's `mainFill.ts`,
+  under one lock per environment: copies, imports through a staging partition, and Accounts'
+  Sign out on Main. A page writing during a copy always wins (`busy`). Scient's background work
+  (Main fill, Google sessions, keep-signed-in, delivery) runs in one window, the one that owns
+  Accounts (`accountsOwner`).
+- **Lock order.** Outer locks come first, then the profile's browser context, then the Accounts
+  write lock. The outer locks are the sign-in attempt lock (`SignInAttempts.exclusive`, per real
+  site and identity) and the receiver's lock (`RemoteSessions`: bind, receive, withdraw, sweep).
+  The profile's browser context is a `ServerBrowserContexts` lease, or the desktop's Main lock.
+  The Accounts write lock (`writes`) is short and uninterruptible, and is never held across
+  browser work. No code takes an outer lock while holding an inner one.
+- **Withdraw only what we wrote.** A Main copy is taken back only while Main's unit still holds
+  that exact copy (`withdrawCopies`, by digest). A receiver deletes a sender's unit only while the
+  sender owns it, by having written it (a `same` keeps an earlier claim on exactly the same sites and
+  digest, and never makes, widens or refreshes one; another sender's write ends it, and a
+  take-back that finds nothing of its own answers `kept`, ending nobody's), and the unit still holds exactly the sender's copy. A unit missing from a jar is never deleted for its
+  absence, and a cookie a site wrote since stays.
+- **Copies follow user actions.** Copies into Main and to other computers come from these
+  triggers only: a newer `signed-in` action (`by: "action"`), an import or Refresh, Send again,
+  the one-time back-fill, or a profile becoming shareable. A look never copies. Revisions decide
+  order, never clocks.
+- **One attempt per real site.** Every sign-in goes through `guardedSignIn`, which runs one
+  attempt per real site and username at a time. A failed attempt holds the key until the user
+  acts: a hand sign-in, a password or 2FA edit, or a press. An agent never retries past that hold.
+- **The secret boundary.** Passwords, 2FA keys and API keys are decrypted only in the server, and
+  only when the account's controls allow it. They never go to another computer.
+  - Cookie values cross the desktop bridge only for a copy or a delivery, and travel as
+    `Redacted`.
+  - No RPC result, snapshot, log or agent result carries a cookie value, a sender key or a
+    sign-in code. Snapshots strip the send log's units and the copies' digests.
+
 ## Model
 
 An account (`AccountSummary`) has a kind, kind details (`AccountDetails`), secret fields and four
@@ -139,13 +174,95 @@ reach every profile.
 Each time Accounts opens, linked profiles take the source browser's current picture, colour, name
 and email, found by folder (older links: by unique name and email). That needs neither quitting the
 browser nor the Keychain. A Scient profile still named after its source follows a rename there; a
-name chosen in Scient stays. A picture that can't be read keeps the one shown. The manual refresh
+name chosen in Scient stays, and its row shows the source after it ("Lab · Chrome · Yaacov"). A picture that can't be read keeps the one shown. The manual refresh
 (the button beside Browser profiles, or Refresh in a profile's menu) also re-copies sign-ins, once
 the browser is closed, and imports saved passwords; it reports a running browser instead of
 skipping silently. It leaves sites that are working in that profile alone (`sitesToKeep`), and
 Google once the profile has a Google row, because a copy stops working and would replace the
-session and remembered device. An import writes the profile's record and the new-tab default before its
-passwords, so an interrupted import still leaves a complete profile.
+session and remembered device. An import writes the profile's record before its passwords, so an
+interrupted import still leaves a complete profile. A profile made in Scient carries
+`madeInScient`; one imported or made elsewhere can't be told apart, so none is ever folded away.
+
+Main is filled from the other profiles by one desktop writer, `fillMain`
+(`apps/desktop/src/scient/accounts/mainFill.ts`), under a lock per environment. Each unit (a
+registrable site, or every site of one multi-site sign-in) is one transaction in the shared
+`applyUnit` (`@t3tools/shared/scientSessionCookies`): snapshot Main's unit, decide, write through
+CDP on a blank script-free page (`sessionCookies.ts`), read the whole unit back, and on a failed
+check restore the snapshot; a failed restore refuses the unit until restart. A cookie a page or
+response writes into one of the unit's slots during the copy is newer than the copy: the unit is
+left as the site made it (the site's cookie put back if the copy overwrote it) and reported `busy`,
+which trigger 2 retries. Sign-ins that share a registrable site are merged into one unit first. Fill copies only into an empty unit. Replace needs Main's row signed out and
+the insert tracker (`mainInserts.ts`, from `keepSessionCookies`) to vouch that nothing else wrote
+the unit since; never on Google. Otherwise the result is a conflict, and the other identity stays
+reachable. Copies follow a newer action only: an import or Refresh (`fillMainFromProfile`; an
+import whose target is Main goes through an in-memory staging partition), a row in another
+unrestricted profile recording a newer `signed-in` with `by: "action"` (`watchMainFill`, from the
+Accounts snapshot stream; a look never copies), and
+the one-time back-fill per environment and profile (`backfilled` on Main's record), whose first run
+in the primary environment makes Main the new-tab default. `accounts.mainFilled` gives Main its row
+as `unknown`, "Copied from …"; `accounts.profiles.signedOut` keeps Accounts' Sign out on Main in
+`signedOutSites`, which imports and the back-fill skip, cleared only by a sign-in action in Main.
+`scripts/qualify-session-copy.mjs` qualifies the CDP executor on each platform in a dev app.
+
+### The same profiles on every computer
+
+The desktop copies each shareable profile's sign-ins (persistent, Allowed or Ask for all projects,
+scripts on) into the same profile on every other computer it is connected to, one way. No password
+or 2FA key goes. Decisions use revisions, never clocks:
+
+- **Send log.** Each desktop profile record keeps `send`: one counter, and the newest revision per
+  unit, written in the commit that records the action (`sendLog.ts`, from `commit`): a newer sign-in
+  action (`isNewerAction`, the one seam for item 4's `by: "action"`), Main's copy (`mainFilled`),
+  Accounts' Sign out (`accounts.profiles.signedOut`, a delete), Main giving back a restricted
+  profile's copy (`accounts.main.withdrawn`, a `copyOnly` delete: a remote removes only its copy
+  as sent, by digest, and Main keeps no sign-out), an import or Send again
+  (`accounts.profiles.resend`, the whole jar), and a profile turning restricted (`withdrawn`) or
+  shareable again (the jar). Past 5,000 copies the log falls back to a jar revision; a deletion
+  is never dropped until every computer in `sharedWith` applied it. Unlinking removes the computer
+  from `sharedWith` (`accounts.profiles.unshared`); one linked again is reconciled in full: the jar
+  goes whole and copies the jar no longer has are deleted. Clients see only `send.head`.
+- **Delivery** (`deliverOnce` in `@t3tools/shared/scientSessionDelivery`, run by
+  `apps/web/src/scient/accounts/remoteSessions.ts`) runs on the desktop, serially per remote,
+  from durable state: `accounts.profiles.sendLog`, the jar through the bridge's `readSessions`
+  (under item 3's Main lock), and the remote's `accounts.sessions.applied`. The pure
+  `planDelivery` fills a remote that never received, withdraws a restricted profile, and otherwise
+  sends units whose revision is newer than the remote applied. A unit gone from the jar is never
+  deleted for its absence. Batches hold at most 100 units and 1,000 cookies, values `Redacted`.
+  Before each batch the route (`allowedRoute`: SSH tunnel end, TLS, a Tailscale name, loopback, or
+  this desktop's WSL backend at its topology's address; never a relay), the catalog entry, the
+  settings permission and the remote's `accountsProtocol` are checked again; a change stops the run.
+  The profile's controls are read again before every read and send; a change drops the batch and
+  plans the profile again, which withdraws it if it is now restricted.
+- **Receiver** (`apps/server/src/scient/accounts/remoteSessions.ts`): on its first
+  `accounts.sessions.bind` a desktop gets a random key from the remote, which keeps only its hash;
+  the desktop keeps the key encrypted with its Accounts. Every later call proves it, so a renewed or
+  new session of the same desktop is the same sender, and any other connection is refused. Bind,
+  receive, withdrawal and sweeps run under one lock, and revoked senders are swept before a bind.
+  Under that lock it applies the sent controls (a project limit is
+  Off), checks them and the university (`travels`) against its own rows, refuses a revision not
+  newer than applied (`stale`) and a unit with an open tab (`busy`), then runs item 3's `applyUnit`
+  through `ServerBrowser.profileCookies` (a context lease in `ServerBrowserContexts`, which tabs
+  wait for and go before the next one; a cookie operation past 30 s is aborted by closing its
+  helper page, its unit restored and reported busy, and the lease released; CDP Network
+  commands on a helper page of the profile's own context). Only applied units are recorded in
+  `received`. Unlink calls `accounts.sessions.withdraw({ all: true })` first, with a 5 s limit; the
+  desktop drops its key only once that is confirmed, so a computer unlinked while offline is
+  proven and reconciled when linked again. The session that bound a sender gets a new key if it
+  lost the bind answer. On the remote, Forget this computer (`accounts.sessions.forget`) deletes the
+  copies a sender wrote and its registration, so a reinstalled desktop can bind again. A unit a
+  copy found already there (`same`, unclaimed) is the remote's own: only signing out there
+  removes it. A
+  remote drops a sender, and its copies, when the session it last proved its key over is revoked
+  (it watches session removals) or after `SENDER_KEEP_DAYS` (30) days without it, checked at start
+  and daily. Only units still holding exactly the sender's copy are deleted.
+- **Never mid-sign-in.** A profile's unit that shares a site with a row whose sign-in attempt is
+  under way isn't read or sent; it waits until the attempt ends.
+- **Needs you.** A page on a received unit that asks to sign in marks it `needsYou`, and the agent's
+  note asks for `scient_account_add` (attended) or to stop (unattended). A sign-out control there
+  clears it.
+
+`accounts.sessions.qualify` (development servers only, those started with a dev URL) runs item 3's cases on
+a remote's browser; `qualify-session-copy.mjs --environment <id>` calls it.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
 session may use, and `preview_open` refuses an Off profile (or asks for an Ask one), including the
@@ -287,7 +404,9 @@ consumer's project. Activity names the plugin, variable and agent.
 - **`request_secret` values** (upstream, one use, 24 hours) stay one-time secrets, sealed at rest
   through `secretRequestStoreLayer`. Their salt stays plain, because it is read at startup and
   startup must not wait for the keychain.
-  `scient_account_add` reuses upstream's card for keys worth keeping: it calls
+  `scient_account_add` (kind `api-key`, the default) reuses upstream's card for keys worth keeping;
+  kinds `website` and `university` run the person sign-in in the conversation's card instead. For a
+  key it calls
   `OrchestratorMcpService.requestSecret` with a server-written label and a `scient-account:`
   `clientRequestId`, consumes the answer through `SecretRequests.consume`, and saves an API-key
   account (or replaces one key, keeping name, details and controls). A matching account in the
@@ -309,17 +428,17 @@ consumer's project. Activity names the plugin, variable and agent.
 Family `accounts`, capability `accounts`, granted to every provider session by
 `prepareMcpSession`. Values never appear in tool output, thread items, logs, errors or exports.
 
-| Tool                             | What it does                                                                                                                                                                 |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, username (unless Off), access, whether readable, how to use it, status, last check                        |
-| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                  |
-| `scient_account_fill`            | Types one saved field into the agent's own tab on a page of the account's sites; the agent handles the page, in any language. One password fill per account every 15 minutes |
-| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                 |
-| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                              |
-| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts  |
-| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                     |
-| `scient_account_add`             | Upstream's private secret card, saved as an API-key account; returns its id and usage, or the matching account                                                               |
-| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the publisher and each connected university in the browser, then a preprint                     |
+| Tool                             | What it does                                                                                                                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, username (unless Off), access, whether readable, how to use it, status, last check                                             |
+| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                                       |
+| `scient_account_fill`            | Types one saved field into the agent's own tab on a page of the account's sites; the agent handles the page, in any language. One password fill per account every 15 minutes                      |
+| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                                      |
+| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                                                   |
+| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts                       |
+| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                                          |
+| `scient_account_add`             | `api-key`: upstream's private secret card, saved as an API-key account. `website`, `university`: the person sign-in in the conversation's card. Returns the id and usage, or the matching account |
+| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the publisher and each connected university in the browser, then a preprint                                          |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
 in this conversation", "Always in this project", "Always") and waits up to ten minutes.
@@ -394,9 +513,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 ## The user's side
 
 - **Settings → Accounts & secrets**: the global switch and the accounts added on purpose, then one row
-  each for lists that grow on their own (Saved passwords, Browser sign-ins recorded while browsing,
-  Other sign-ins managed in Claude, Codex, Source Control or Extensions), each opening a dialog;
-  then browser profiles and password stores. The route stays `/settings/accounts`.
+  each for lists that grow on their own (Saved passwords, Apps and connectors managed in Claude,
+  Codex, Source Control or Extensions), each opening a dialog; then browser profiles, each opening
+  its sites (its sign-in rows with access and status, then other cookie sites), and password stores. The route stays `/settings/accounts`.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
   the Browser page, which links to Accounts; the rest of the browser settings stay there.
@@ -434,9 +553,16 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 `AccountSummary.signIn` is the one sign-in state: `signed-in`, `signed-out`, `needs-you`,
 `password-rejected`, `code-rejected`, `limited`, `failed` or `unknown`, with when and an optional
-detail. Every sign-in outcome (`outcomeSignInState`) and every look at the site writes it through
-`withSignIn` in `AccountDecisions.ts`, whose doc comments hold the holds and what may replace what:
-a refusal outlasts every look, a limit outlasts all but a working session for an hour. A refused API
+detail and `by`. Every sign-in outcome (`outcomeSignInState`) and every look at the site writes it
+through `withSignIn` in `AccountDecisions.ts`, whose doc comments hold the holds and what may
+replace what: an action (an attempt, a recording, Google showing a new account) always writes with a
+new date; a look that finds the same state within the hour writes nothing, and only a working
+session seen replaces an attempt state. Only `signed-in` is evidence of a session
+(`profileSignIns`); an imported or copied row (`unknown`, "Imported from …" or "Copied from …") is
+not. `accounts.sessionsSeen` is the one writer of session rows in a profile: an import makes one
+where there is none, a sign-in seen there is an action on it; saved passwords, universities and
+Google never take a session. A page tagged with who is signed in (`meta[name=user-login]`,
+`meta[name=ol-usersEmail]`) names a session row on a look. A refused API
 key is `failed` with the service's answer. `accounts.signInSeen` records the user's own sign-in, when
 a submitted saved password leaves no login form six seconds later. A saved password, 2FA secret or
 key resets it. Rows show it through `accountStatusLabel`. Stored accounts from before carried
@@ -448,10 +574,38 @@ one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
 so the profile is always named. A session shows by a sign-out link, a login wall or sign-in link, then
 a protected cookie, which only counts for a sign-in known to have worked because anonymous visitors
 get those too; an OpenAthens university by OpenAthens' own `/check` answer on
-`my.openathens.net`; another university by its sign-in link coming all the way back. A signed-out
-account with a saved password gets one unattended sign-in, only if the last one worked or none was
-tried: one that needed the user or failed would do the same with nobody there. A whole
-run skips imported passwords with no history and stops at 40 accounts.
+`my.openathens.net`; another university by its sign-in link coming all the way back. Check is the
+user's own press: a signed-out account with a saved password gets one sign-in, held or not, unless
+its access is Off. A whole run skips imported passwords with no history and stops at 40 accounts,
+least recently seen first.
+
+`agent/guardedSignIn.ts` is the one way into the sign-in engine, for every caller: an agent, a
+page an agent opened, Check, a paper fetch, and the user's own press (`person`: Sign in, the paper
+chip, Add an account, `scient_account_add`). It locks per real site and identity (`attemptKey`:
+the sign-in origin, a university's learned or identity-provider origin, plus the lowercased
+username) and reads Accounts afresh inside the lock. The newest status among that key's rows holds
+it while it is an attempt state; only a user action resets it (a hand sign-in, a password or 2FA
+edit, written as `unknown` "Password changed" by an action, or a press). Account controls decide
+every resolve of a stored password or 2FA key: an agent through `authorize`, a page and an agent's
+paper request only when Allowed, Check, a person and the user's own paper request unless Off.
+`find` picks the saved sign-in for a page with `signInsForPage` (this profile, else no profile,
+else another profile's only when it is the only one). An attempt stopped at a second factor keeps
+its tab as the key's pending attempt, in memory, with its submissions; the next person press or
+attended agent call in that tab's thread resumes it (`SignInOptions.resume`) instead of typing
+again. Person mode opens a visible tab and hands whatever Scient can't do to the person for 15
+minutes at 400 ms. A university counts as signed in only once `checkAccountNow` reaches a journal,
+before anything is recorded; then the return tab and leftovers close and waiting papers continue.
+`snapshot.attempts` lists the tabs of running and pending attempts; `authorizePreviewTab` refuses
+every guarded preview operation on them, and on a university's own sign-in pages, and
+`scient_account_browser_session` refuses a site with an attempt under way, and any site of a
+profile an attempt runs or waits in (the attempt's `profileId`), checked right before the cookie
+read: cookies belong to the profile, and a sign-in may have reached any site. While an attempt runs,
+the desktop's capture of its tab goes to `accounts.keepTyped` (`signInKeeps.ts`); after the
+sign-in is proven, a typed password is kept only when it is the one password the person submitted
+in the attempt, captured before the sign-in finished, with no password field back on its page and
+nothing asked elsewhere since. It is kept unverified (no `verifiedAt`), so autofill never submits it;
+only a later sign-in where Scient types it verifies it, and a wrong one is rejected once and held
+(`AccountsService.keepTyped`: never on a removed or Off row, never over a linked password).
 
 Autofill submits only on the user's own tab, when the site has one saved sign-in whose password
 has worked (`verifiedAt` on the password, set when a sign-in where Scient typed it ends signed in,
@@ -589,48 +743,53 @@ provider environment. The existing proxy redacts reflected values in responses.
 - **Search** covers the bundled catalogue, sites the user's Scient browser profiles are signed in to
   (domain metadata only) and matching Keychain items (debounced). "Search the web" is an explicit
   last row that opens a search in Scient's browser; typing sends nothing.
-- **Sign in with the browser** opens the site in the chosen profile and shows a "Sign in to <name>,
-  then press Done" notification. A typed password is offered by the browser's usual save prompt.
-  Done keeps any other sign-in (Google, SSO, an existing session) as a website account with no
-  password that uses that profile's session. Scient does not guess completion from cookies: many
-  sites set session cookies before anyone signs in.
+- **Sign in with the browser** saves a passwordless row and runs the person sign-in for it
+  (`accounts.signInAsPerson`, `accounts.universities.signIn` for older servers), which drops the
+  row again if nothing comes of it.
 - **Signing in while browsing**: returning from a known identity provider (Google, Microsoft, Apple,
   GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie records a website account for that
   profile without asking, with an Undo toast. The site is the new session cookie's domain; a
   cookie that also covers the sign-in page is the provider's own session (Google's sign-in, then
-  Docs), so nothing is recorded. Never in incognito or for a site the profile already has. Only
+  Docs), so nothing is recorded. Never in incognito or in a tab Scient is signing in on. It goes
+  through `accounts.sessionsSeen`, so it also confirms an imported row. Only
   cookie domain, expiry and HttpOnly flags are read. Remote server browsers and browser-only
   clients can't read cookie metadata. The Accounts list shows one row per site for sign-ins from
   several profiles (`accountListRows`).
 - **Which profile a tab opens in**: `pickBrowserProfile` (`@t3tools/shared/scientBrowserProfileChoice`)
   serves both the app (three marked hooks where upstream read the default profile) and
-  `authorizePreviewProfile` for agents (allowed profiles only). Order: the user's switch for the
-  page's host in this conversation; the only profile with evidence of a session on the page
-  (`profileSignIns`; ties: latest switch for the host anywhere, the conversation's, the project's,
-  the default, list order); the latest switch for the host anywhere; the conversation's; the
-  project's; the default. Choices live in Accounts state
+  `authorizePreviewProfile` for agents (allowed profiles only). Order: this conversation's choice
+  for the page's host, or a host the same sign-in covers ("site"); else the conversation's profile,
+  else the project's, unless some profile has evidence of a session on the page
+  (`profileSignIns`, refused and limited rows excluded) and it has none; then the default if it has
+  evidence, else the oldest identity (`siteIdentities`, by `createdAt`). A switch in another
+  conversation never decides. The pick carries its reason for the profile switcher. A site-only
+  choice (`siteOnly`, from the agent's fallback) leaves the conversation's profile alone. Choices live in Accounts state
   (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
   own profile: Scient has no record of most sites a profile is signed in to, so a missing record
-  doesn't mean signed out. An empty tab's Gmail link and the
-  Sign in link in `BrowserProfiles` open `GMAIL_URL` in the selected profile: signed out, Google
-  shows its own sign-in and returns to the inbox, so Scient adds no flow of its own, and the Google
-  check that follows clears the label. `/mail/u/<address>/` gives "Temporary Error", so it is not
-  used.
+  doesn't mean signed out. Google refuses signing in from Scient's browser ("This browser or app
+  may not be secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity
+  (Electron 44, 2026-11-04). Scient never offers a Google sign-in here as a way back
+  (`googleRecovery`). A signed-out profile imported from a browser says to sign in there and
+  offers Refresh from that browser; one with no source says to sign in in a browser and offers
+  Import from a browser…. When Main's Google doesn't work, its browser sign-in row offers Copy
+  from the profile that holds a working one (`copySignInIntoMain`, a fill through `fillMain`,
+  so never over a Google sign-in Main still holds), or, with none, the same import. Gmail is
+  only a home shortcut; `/mail/u/<address>/` gives "Temporary Error".
 - **University access**: a website account with `institution` (from the public directory) or
   `proxyUrl` (a library link with `{url}`) reaches a university's subscriptions; older `library`
   accounts fold into this shape when read (`foldStoredAccounts`). `accounts.universities.signIn`
-  (`universitySignIn.ts`) opens the sign-in link visibly beside a conversation, in the account's
+  runs the person sign-in (`guardedSignIn`) visibly beside a conversation, in the account's
   profile. An OpenAthens university (`usesOpenAthens`: its directory entity is an OpenAthens one)
   signs in at `my.openathens.net/auth` with the entity preselected, which goes straight to the
   university's page and back to the person's MyAthens page; no journal is involved. Other
   universities have no sign-in page of their own, so a publisher's institutional link asks for
-  them. Scient watches the tab every 0.4 s and closes it the moment the link comes back, before
-  confirming, so the publisher's page never stays. A tab Scient opened for a sign-in, or after a
-  restart one in the account's profile showing a sign-in page at a learned address or OpenAthens'
-  sign-in, is reused, and such leftovers close when a sign-in succeeds; other pages are never
-  touched. A full `sites` list keeps the sign-in addresses and the university's domain and drops
+  them. Scient looks at the tab every 0.4 s and closes it once the link comes back and the check
+  agrees, so the publisher's page never stays. A tab still on the university's sign-in from an
+  earlier try (an attempt's tab, or after a restart one in the account's profile showing a sign-in
+  page at a learned address or OpenAthens' sign-in) closes when a sign-in succeeds; other pages are
+  never touched. A full `sites` list keeps the sign-in addresses and the university's domain and drops
   other domains first. It adds each exact origin that asked the person for something to `sites`, even under a
   domain `sites` already covers, so a saved password can only ever go where the person already
   signed in and the export guard knows the address; directory data never authorizes that. The sign-in counts once the hidden check agrees; it
@@ -638,8 +797,8 @@ provider environment. The existing proxy redacts reflected values in responses.
   While any university is connected, `scient_account_browser_session` refuses every sign-in or
   identity page (`isLoginPlace`, `isIdentityPage`), `*.openathens.net`, and the learned sign-in
   origins: that session also opens the university's other services, and the guard doesn't depend
-  on what the bounded `sites` list still holds. Sign-in tabs are tracked with the account they
-  sign in, so one university never takes over another's.
+  on what the bounded `sites` list still holds. Attempt tabs carry the account they sign in, so
+  one university never takes over another's.
   Quiet keep-alive visits use `my.openathens.net/check` for OpenAthens universities.
 - **Browsing access**: `accounts.universities.browse` (`universityBrowsing.ts`) runs 2.5 s after a
   tab settles on an `https` address, only for a university signed in and living in that tab's

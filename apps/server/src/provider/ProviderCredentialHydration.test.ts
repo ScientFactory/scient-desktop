@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AntigravitySettings,
+  settingsSecretLiteral,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -145,7 +146,11 @@ it.effect.each(["remove", "disable"] as const)(
             defaultConfig: () => decodeAntigravitySettings({}),
             create: ({ instanceId, config: providerConfig, enabled }) =>
               Effect.sync(() => {
-                created.push({ instanceId, key: providerConfig.apiKey, enabled });
+                created.push({
+                  instanceId,
+                  key: settingsSecretLiteral(providerConfig.apiKey),
+                  enabled,
+                });
                 return {
                   instanceId,
                   driverKind,

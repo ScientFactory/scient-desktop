@@ -39,6 +39,7 @@ import {
   connectorStatusText,
   entryName,
   entryNeedsSetup,
+  connectorFacts,
   entryFacts,
   entryTagline,
   pluginGlyph,
@@ -206,9 +207,7 @@ export function ConnectorItem({
       name={entry ? entryName(entry) : connector.displayName}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
-      facts={entryFacts(entry)
-        .map(([, value]) => value)
-        .join(" · ")}
+      facts={connectorFacts(entry, connector).join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>

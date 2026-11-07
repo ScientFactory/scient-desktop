@@ -1,4 +1,4 @@
-import { isClearComposerCommand } from "@t3tools/shared/composerTrigger";
+import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import { MessageId } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -96,7 +96,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   type ComposerSubmissionIntent,
-  parseSideChatCommand,
   parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";

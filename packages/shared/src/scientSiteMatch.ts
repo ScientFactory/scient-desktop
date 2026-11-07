@@ -1,3 +1,5 @@
+import { getDomain } from "tldts";
+
 /**
  * The account-site rule: `https:` only, no username or password in the URL. A `https://…` site
  * matches the page whose origin (scheme, host, port) is its own; a bare site such as `example.com`
@@ -30,4 +32,28 @@ function parse(url: string) {
   } catch {
     return undefined;
   }
+}
+
+/** The registrable site of a host or cookie domain, such as `huji.ac.il` for `.idp.cc.huji.ac.il`. */
+export function siteOf(host: string): string {
+  const bare = host.replace(/^\./, "").toLowerCase();
+  return getDomain(bare, { allowPrivateDomains: true }) ?? bare;
+}
+
+/** The host an account site names: a bare site as written, or a `https://` origin's host. */
+export function siteHost(site: string): string {
+  if (!site.startsWith("https://")) return site.replace(/^\./, "").toLowerCase();
+  return parse(site)?.hostname ?? site.replace(/^\./, "").toLowerCase();
+}
+
+/** Whether `site`'s host is `ancestor`'s host or lies under it, such as `idp.example.ac.il`. */
+export function siteUnder(site: string, ancestor: string): boolean {
+  const host = siteHost(site);
+  const above = siteHost(ancestor);
+  return host === above || host.endsWith(`.${above}`);
+}
+
+/** Whether a site of `a` and a site of `b` lie one under the other. */
+export function sitesNest(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+  return a.some((left) => b.some((right) => siteUnder(left, right) || siteUnder(right, left)));
 }

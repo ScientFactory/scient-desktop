@@ -10,7 +10,8 @@ import { LoaderCircleIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
 import { accountsState } from "./accountsState";
-import { UniversityPicker, useUniversitySignIn } from "./University";
+import { UniversityPicker } from "./University";
+import { useSignIn } from "./useSignIn";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 
@@ -48,18 +49,17 @@ function Requests({
 }) {
   const resume = useAccountCommand(accountsState.continuePapers, environmentId);
   const openBrowser = useAccountBrowser(environmentId);
-  const signIn = useUniversitySignIn(environmentId);
+  const signIn = useSignIn(environmentId);
   const [connecting, setConnecting] = useState(false);
   const act = (request: PaperRequest) => {
     if (request.kind === "university") return setConnecting((current) => !current);
     // Papers go on by themselves when the sign-in finishes.
     if (request.kind === "sign-in" && request.accountId)
-      return void signIn(request.accountId, threadId);
+      return void signIn(request.accountId, threadId ? { threadId } : {});
     if (request.openUrl)
       void openBrowser(
         request.openUrl,
         request.profileId,
-        undefined,
         threadId ? scopeThreadRef(environmentId, threadId) : undefined,
       );
     void resume({ root: queue.root });

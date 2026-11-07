@@ -1,5 +1,5 @@
 import type { AccountsSnapshot, ScopedThreadRef } from "@t3tools/contracts";
-import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import { pickBrowserProfile, profileRows } from "@t3tools/shared/scientBrowserProfileChoice";
 import { AsyncResult } from "effect/reactivity";
 import type { BrowserDefaults } from "~/browser/browserDefaults";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -22,8 +22,8 @@ async function accountsSnapshot(threadRef: ScopedThreadRef) {
 
 /**
  * The profile for a tab the user opens without naming one: their switch for this site in this
- * conversation, the profile signed in to the site, this conversation's, the project's, then the
- * default (`pickBrowserProfile`).
+ * conversation, this conversation's or the project's profile while it has a row for the site, else
+ * Main, then the default (`pickBrowserProfile`).
  */
 export async function openProfileId(
   threadRef: ScopedThreadRef,
@@ -41,7 +41,7 @@ export async function openProfileId(
     profiles: defaults.profiles
       .filter((profile) => profile.kind !== "incognito")
       .map((profile) => profile.id),
-    signIns: profileSignIns(snapshot.accounts),
+    rows: profileRows(snapshot.accounts),
     choices: snapshot.profileChoices,
     defaultProfileId: defaults.profileId,
   }).profileId;

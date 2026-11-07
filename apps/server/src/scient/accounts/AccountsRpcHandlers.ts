@@ -10,24 +10,24 @@ import {
   type PaperQueueInput,
   type PaperQueueRequestInput,
   type Institution,
-  type UniversitySignInInput,
+  type AccountSignInAsPersonInput,
   type UniversityBrowseInput,
   type AccountPlainKey,
   type AccountPlainKeyInput,
   type AccountsCheckInput,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Redacted, Schema, Stream } from "effect";
 import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
   continuePapersAsUser,
-  continueWaitingPapers,
   getPaperForSource,
   listPapersAsUser,
   requestPapersAsUser,
 } from "../papers/getPaper.ts";
-import { startUniversitySignIn } from "./universitySignIn.ts";
+import { AccountAgentService } from "./agent/AccountAgentService.ts";
 import { openThroughUniversity } from "./universityBrowsing.ts";
 import { searchUniversities } from "../papers/universityDirectory.ts";
 import { FetchHttpClient } from "effect/http";
@@ -35,12 +35,49 @@ import { messagesReadable } from "./signIn/messageCodes.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
+import { makeSignInAttempts } from "./agent/signInAttempts.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
+import { RemoteSessions, type AccountsCallerSession } from "./remoteSessions.ts";
 
 const isAccountsError = Schema.is(AccountsError);
 
+/** Another computer's copies need the socket's own session. */
+const withCaller = <A>(
+  caller: AccountsCallerSession | undefined,
+  use: (
+    remote: RemoteSessions["Service"],
+    caller: AccountsCallerSession,
+  ) => Effect.Effect<A, AccountsError>,
+) =>
+  caller === undefined
+    ? Effect.fail(
+        new AccountsError({ reason: "denied", message: "This connection can't send sign-ins." }),
+      )
+    : withRemoteSessions((remote) => use(remote, caller));
+
+/** The server-lifetime receiver; older test harnesses and servers without a browser have none. */
+const withRemoteSessions = <A>(
+  use: (remote: RemoteSessions["Service"]) => Effect.Effect<A, AccountsError>,
+) =>
+  Effect.serviceOption(RemoteSessions).pipe(
+    Effect.flatMap((remote) =>
+      Option.isSome(remote)
+        ? use(remote.value)
+        : Effect.fail(
+            new AccountsError({
+              reason: "unavailable",
+              message: "This computer can't receive sign-ins.",
+            }),
+          ),
+    ),
+  );
+
+/** The person's own sign-ins and typing; absent where Accounts runs without a browser. */
+const accountAgent = Effect.serviceOption(AccountAgentService);
+
 export const makeAccountsRpcHandlers = ({
   accounts,
+  caller,
   observeRpcEffect,
   observeRpcStream,
   check,
@@ -50,6 +87,8 @@ export const makeAccountsRpcHandlers = ({
   plainKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
+  /** The socket's authenticated session; another computer's copies are bound to it. */
+  readonly caller?: AccountsCallerSession;
   readonly check: (
     input: AccountsCheckInput,
   ) => Effect.Effect<{ checked: number; alreadyRunning?: boolean }, AccountsError>;
@@ -63,9 +102,12 @@ export const makeAccountsRpcHandlers = ({
     readonly list: (
       input: PaperQueueInput,
     ) => Effect.Effect<ReadonlyArray<PaperItem>, AccountsError>;
-    readonly universitySignIn: (
-      input: UniversitySignInInput,
-    ) => Effect.Effect<{ readonly tabId: PreviewTabId }, AccountsError>;
+    readonly signInAsPerson: (
+      input: AccountSignInAsPersonInput,
+    ) => Effect.Effect<
+      { readonly tabId: PreviewTabId; readonly threadId: ThreadId },
+      AccountsError
+    >;
     readonly universityBrowse: (
       input: UniversityBrowseInput,
     ) => Effect.Effect<{ readonly routed: boolean }, AccountsError>;
@@ -150,6 +192,18 @@ export const makeAccountsRpcHandlers = ({
         accounts.googleSessionsSeen(input).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsSessionsSeen]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsSessionsSeen, accounts.sessionsSeen(input), attributes),
+    [WS_METHODS.accountsKeepTyped]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsKeepTyped,
+        accountAgent.pipe(
+          Effect.flatMap((agent) =>
+            Option.isNone(agent) ? Effect.succeed({ kept: false }) : agent.value.keepTyped(input),
+          ),
+        ),
+        attributes,
+      ),
     [WS_METHODS.accountsSessionEnded]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSessionEnded,
@@ -184,10 +238,12 @@ export const makeAccountsRpcHandlers = ({
       ),
     [WS_METHODS.accountsPapersList]: (input) =>
       observeRpcEffect(WS_METHODS.accountsPapersList, papers.list(input), attributes),
+    [WS_METHODS.accountsSignInAsPerson]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsSignInAsPerson, papers.signInAsPerson(input), attributes),
     [WS_METHODS.accountsUniversitySignIn]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsUniversitySignIn,
-        papers.universitySignIn(input),
+        papers.signInAsPerson(input),
         attributes,
       ),
     [WS_METHODS.accountsUniversityBrowse]: (input) =>
@@ -240,6 +296,134 @@ export const makeAccountsRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.accountsProfileRemove,
         accounts.removeProfile(input.profileId).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsMainFilled]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainFilled,
+        accounts.mainFilled(input).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileSignedOut]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileSignedOut,
+        accounts
+          .profileSignedOut(input.profileId, input.site)
+          .pipe(Effect.map((revision) => ({ revision }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsMainWithdrawn]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainWithdrawn,
+        accounts.mainWithdrawn(input.sites).pipe(Effect.map((revision) => ({ revision }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileResend]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileResend,
+        accounts.profileResend(input.profileId).pipe(Effect.map((revision) => ({ revision }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileSendLog]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileSendLog,
+        accounts.profileSendLog(input.profileId),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileShared]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileShared,
+        accounts.profileShared(input.profileId, input.share).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfilesUnshared]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfilesUnshared,
+        accounts
+          .profilesUnshared(input.environmentId, input.forgetKey === true)
+          .pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsBind]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsBind,
+        withCaller(caller, (remote, session) => remote.bind(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsForget]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsForget,
+        withRemoteSessions((remote) => remote.forgetSender(input.source)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSenderKey]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSenderKey,
+        accounts
+          .senderKey(input.environmentId)
+          .pipe(Effect.map((key) => (key === undefined ? {} : { key: Redacted.make(key) }))),
+        attributes,
+      ),
+    [WS_METHODS.accountsKeepSenderKey]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsKeepSenderKey,
+        accounts.keepSenderKey(input.environmentId, Redacted.value(input.key)).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsReceive]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsReceive,
+        withCaller(caller, (remote, session) => remote.receive(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsApplied]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsApplied,
+        withCaller(caller, (remote, session) => remote.applied(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsWithdraw]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsWithdraw,
+        withCaller(caller, (remote, session) => remote.withdraw(session, input)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsList]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsList,
+        withRemoteSessions((remote) => remote.list(input.profileId)),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsSignOutLocal]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsSignOutLocal,
+        withRemoteSessions((remote) => remote.signOutLocal(input.profileId, input.site)),
+        attributes,
+      ),
+    [WS_METHODS.accountsMainBackfilled]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainBackfilled,
+        accounts.mainBackfilled(input.profileIds).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsProfileRetire]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileRetire,
+        accounts
+          .retireProfile(input.profileId, "undo" in input ? "undo" : { name: input.name })
+          .pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsMainFolded]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainFolded,
+        accounts.mainFolded(input.profiles).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsSessionsQualify]: () =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionsQualify,
+        withRemoteSessions((remote) => remote.qualify()),
         attributes,
       ),
     [WS_METHODS.accountsProfileChoose]: (input) =>
@@ -325,6 +509,7 @@ const unavailable = Effect.fn("AccountsService.unavailable")(function* () {
 /** What the user runs themselves through the browser, which RPC handlers otherwise don't need. */
 export const accountsUserRunsForRpc = Effect.gen(function* () {
   const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
+  const agent = yield* Effect.serviceOption(AccountAgentService);
   const accounts = yield* accountsForRpc;
   const environment = yield* ServerEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -364,10 +549,12 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
         ),
       ),
     papers: {
-      universitySignIn: (input: UniversitySignInInput) =>
-        run((environmentId) =>
-          startUniversitySignIn(input, environmentId, continueWaitingPapers(environmentId)),
-        ),
+      signInAsPerson: (input: AccountSignInAsPersonInput) =>
+        Option.isNone(agent)
+          ? Effect.fail(
+              new AccountsError({ reason: "unavailable", message: "The browser is unavailable." }),
+            )
+          : run((environmentId) => agent.value.signInAsPerson(input, environmentId)),
       universityBrowse: (input: UniversityBrowseInput) =>
         run((environmentId) =>
           accounts.snapshot.pipe(
@@ -393,6 +580,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
   Effect.map(
     Option.getOrElse(() =>
       AccountsService.of({
+        signInAttempts: Effect.succeed(makeSignInAttempts()),
         passwordStore: unavailable,
         snapshot: missingService,
         changes: Stream.empty,
@@ -401,6 +589,8 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         test: unavailable,
         recordCheck: unavailable,
         googleSessionsSeen: unavailable,
+        sessionsSeen: unavailable,
+        keepTyped: unavailable,
         setCodeSources: unavailable,
         setKeyLink: unavailable,
         setControls: unavailable,
@@ -408,8 +598,27 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         updateProfile: unavailable,
         removeProfile: unavailable,
         chooseProfile: unavailable,
+        mainFilled: unavailable,
+        profileSignedOut: unavailable,
+        mainWithdrawn: unavailable,
+        profileResend: unavailable,
+        profileSendLog: unavailable,
+        profileShared: unavailable,
+        profilesUnshared: unavailable,
+        receivedProfiles: Effect.succeed([]),
+        remoteSenders: Effect.succeed([]),
+        setRemoteSender: unavailable,
+        senderKey: unavailable,
+        keepSenderKey: unavailable,
+        updateReceived: unavailable,
+        mainBackfilled: unavailable,
+        mainFolded: unavailable,
+        retireProfile: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
+        attempts: Effect.succeed([]),
+        setAttempt: Effect.fn("AccountsService.setAttempt")(() => Effect.void),
+        removeAttempt: Effect.fn("AccountsService.removeAttempt")(() => Effect.void),
         setPaperQueue: Effect.fn("AccountsService.setPaperQueue")(() => Effect.void),
         handoffCancelled: Effect.fn("AccountsService.handoffCancelled")(() =>
           Effect.succeed(false),

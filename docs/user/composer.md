@@ -317,18 +317,28 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on web and desktop
+
+Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
+is transcribed on an environment you choose in **Settings → Voice**; nothing is
+sent until you choose one. See [Voice input](./voice-input.md).
+
 ## Voice input on mobile
 
-On supported iPhones with iOS 26 or later and Android devices with Android 12 or
-later, use the composer's microphone to record, then confirm to transcribe. Text is
+Use the composer's microphone to record, then confirm to transcribe. Text is
 inserted where your selection was when recording started, ready for you to review
 and edit before sending.
 
-Voice input uses on-device speech transcription: Apple's on iOS, and compatible
-Google speech services on Android. When it is unavailable for the device or its
-language, the composer has no microphone button and **Settings → Microphone** says
-voice input isn't available. On Android, keep the app open while recording and
-transcribing.
+By default, audio stays on the phone. Local transcription needs a supported iPhone
+with iOS 26 or later, or Android 12 or later with compatible Google speech services.
+To use a paired environment instead, open **Settings → Voice → Transcribe on**,
+choose the environment, and confirm. Finished recordings go only to that environment,
+even when a draft belongs to another one. This also works on phones without local
+speech recognition. If the chosen environment disconnects, dictation stops; it never
+switches hosts. Choose **This device** to revoke access and discard pending audio.
+For [cloud dictation](./voice-input.md#choose-where-audio-goes), open **Cloud providers**
+under the environment in **Settings → Voice** and confirm which provider may receive recordings.
+On Android, keep Scient open while recording and transcribing.
 
 The first use may download a speech model and needs a network connection.
 Later transcription works offline for that language. On Android, transcription
@@ -338,7 +348,7 @@ preserves your existing draft. Navigating to another screen keeps dictation acti
 use the floating controls to finish or cancel. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
-Choose a preferred order in **Settings → Microphone**. Voice input requests the first
+Choose a preferred order in **Settings → Voice**. Voice input requests the first
 connected microphone in the list. The list mixes kinds (built-in, other wired, other
 Bluetooth, and CarPlay on iOS) with wired and Bluetooth devices you have dictated
 with, listed by name. Drag to rank them together:

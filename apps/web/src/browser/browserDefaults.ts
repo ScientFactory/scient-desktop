@@ -1,6 +1,5 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
-  resolveBrowserProfiles,
   type BrowserProfile,
   type DesktopPreviewTabDefaults,
   type PreviewAppearancePreference,
@@ -14,6 +13,9 @@ import {
 } from "~/hooks/useSettings";
 
 import { resolveResponsiveBrowserViewportSize } from "./browserViewportLayout";
+// SCIENT-FORK:START — Scient Accounts: profiles merged into Main are not offered.
+import { activeProfiles, useRetiredProfiles } from "~/scient/accounts/activeProfiles";
+// SCIENT-FORK:END
 
 export interface BrowserDefaults {
   readonly viewport: PreviewViewportSetting;
@@ -32,7 +34,9 @@ const toBrowserDefaults = (settings: {
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
 }): BrowserDefaults => {
-  const profiles = resolveBrowserProfiles(settings.browserProfiles);
+  // SCIENT-FORK:START — Scient Accounts: profiles merged into Main are not offered.
+  const profiles = activeProfiles(settings.browserProfiles);
+  // SCIENT-FORK:END
   return {
     viewport: settings.browserDefaultViewport,
     zoomFactor: settings.browserDefaultZoomFactor,
@@ -58,7 +62,10 @@ export async function resolveBrowserDefaults(): Promise<BrowserDefaults> {
 }
 
 export function useBrowserDefaults(): BrowserDefaults {
-  return useClientSettings(toBrowserDefaults);
+  // SCIENT-FORK:START — Scient Accounts: a merge into Main re-renders and reselects.
+  useRetiredProfiles();
+  return useClientSettings((settings) => toBrowserDefaults(settings));
+  // SCIENT-FORK:END
 }
 
 export function browserDefaultTabState(defaults: BrowserDefaults): DesktopPreviewTabDefaults {

@@ -52,6 +52,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.accountsPapersRequest]: () => use("papers.get", "request"),
   [WS_METHODS.accountsPapersContinue]: () => use("papers.continue"),
   [WS_METHODS.accountsUniversitySearch]: () => use("university.search"),
+  [WS_METHODS.accountsSignInAsPerson]: () => use("university.sign_in"),
   [WS_METHODS.accountsUniversitySignIn]: () => use("university.sign_in"),
   [WS_METHODS.accountsUniversityBrowse]: () => use("university.browse"),
   [WS_METHODS.accountsSetAgentAccess]: () => use("accounts.agent_access.set"),

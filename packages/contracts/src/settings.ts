@@ -40,6 +40,7 @@ import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -88,6 +89,15 @@ import { CustomModelsSettings } from "./customModels.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 // SCIENT-FORK: conversation-fork preferences.
 import { ScientForkSettings, ScientForkSettingsPatch } from "./scientForkSettings.ts";
+import {
+  CloudSpeechModelId,
+  SpeechAcceleration,
+  SpeechCorrectionCue,
+  SpeechCustomWords,
+  SpeechLanguage,
+  SpeechModelUnloadTimeout,
+  SpeechPostProcessingPromptSettings,
+} from "./speech.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -390,6 +400,9 @@ export type ChatWidth = typeof ChatWidth.Type;
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
 
+export const ToolCallVisibility = Schema.Literals(["showAll", "hideSuccessful", "hideAll", "zen"]);
+export type ToolCallVisibility = typeof ToolCallVisibility.Type;
+
 export const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
@@ -404,6 +417,29 @@ export type ModelPreferences = {
   readonly favorites: typeof ModelFavorites.Type;
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
+
+export const VoiceShortcutMode = Schema.Literals(["auto", "hold", "toggle"]);
+export type VoiceShortcutMode = typeof VoiceShortcutMode.Type;
+
+/**
+ * Where this device sends microphone audio. A cloud grant names the forwarding environment and
+ * the provider; an OpenRouter grant also names the exact model, since OpenRouter has no default.
+ */
+export const VoiceTranscriptionDestination = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("environment"), environmentId: EnvironmentId }),
+  Schema.Struct({
+    kind: Schema.Literal("cloud"),
+    environmentId: EnvironmentId,
+    provider: Schema.Literals(["openai", "xai"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("cloud"),
+    environmentId: EnvironmentId,
+    provider: Schema.Literal("openrouter"),
+    model: CloudSpeechModelId,
+  }),
+]);
+export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
@@ -477,6 +513,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // SCIENT-FORK:START — keep the computer awake while this computer's threads work.
   keepComputerAwake: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.
+  signInSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
+  mainDefaultNotice: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // SCIENT-FORK:END
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -547,6 +589,9 @@ export const ClientSettingsSchema = Schema.Struct({
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  toolCallVisibility: ToolCallVisibility.pipe(
+    Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
+  ),
   // Retired Labs toggle. Still read as the default for the Usage item in threadDetailsItems.
   threadDetailsUsageEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Sparse show/hide overrides for thread details card items. Missing ids use the client's
@@ -584,6 +629,20 @@ export const ClientSettingsSchema = Schema.Struct({
   voiceLanguagePreference: VoiceLanguagePreference.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_LANGUAGE_PREFERENCE)),
   ),
+  // Device-local input device id. An empty string follows the operating system default.
+  voiceMicrophone: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  voiceShortcutMode: VoiceShortcutMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  speechSilenceFiltering: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  speechPostProcessingPrompt: SpeechPostProcessingPromptSettings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ mode: "default" as const, customInstructions: "" }),
+    ),
+  ),
+  speechCorrectionWord: SpeechCorrectionCue.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -895,7 +954,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         },
       }),
     ),
-    apiKey: TrimmedString.pipe(
+    apiKey: SettingsSecretValue.pipe(
       secretSetting,
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -1165,6 +1224,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleKeepPullRequests",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
+  "speechProjectCustomWords",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1202,6 +1262,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1296,6 +1357,15 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+const CloudSpeechCredential = SettingsSecretValue.pipe(
+  Schema.withDecodingDefault(Effect.succeed("")),
+);
+export const CloudSpeechCredentials = Schema.Struct({
+  openai: CloudSpeechCredential,
+  xai: CloudSpeechCredential,
+  openrouter: CloudSpeechCredential,
+});
+
 export const ServerSettings = Schema.Struct({
   customModels: CustomModelsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // SCIENT-FORK:START
@@ -1339,6 +1409,22 @@ export const ServerSettings = Schema.Struct({
    * The user browser panel and baseline Sources/document capabilities are independent of this setting.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  cloudSpeechCredentials: CloudSpeechCredentials.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
+  ),
+  speechModelId: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
+  ),
+  speechAcceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
+    Schema.withDecodingDefault(Effect.succeed("min_15")),
+  ),
+  // Vocabulary shared by everyone who dictates in a project; it lives with the project's environment.
+  speechProjectCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Null follows textGenerationModelSelection; a selection pins transcript cleanup to its own model.
+  speechPostProcessingModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1507,9 +1593,6 @@ export const ServerSettings = Schema.Struct({
   ),
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
-  ),
-  cursorKeychainUsageEnabled: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
 
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
@@ -1783,6 +1866,18 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  cloudSpeechCredentials: Schema.optionalKey(
+    Schema.Struct({
+      openai: Schema.optionalKey(SettingsSecretValue),
+      xai: Schema.optionalKey(SettingsSecretValue),
+      openrouter: Schema.optionalKey(SettingsSecretValue),
+    }),
+  ),
+  speechModelId: Schema.optionalKey(Schema.String),
+  speechAcceleration: Schema.optionalKey(SpeechAcceleration),
+  speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
+  speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
+  speechPostProcessingModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
@@ -1919,7 +2014,6 @@ export const ServerSettingsPatch = Schema.Struct({
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
   ),
-  cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
 
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
@@ -1948,6 +2042,10 @@ export function requiredScopesForServerSettingsPatch(
     } else {
       changesSettings = true;
     }
+  }
+  // Removing a secret provider also clears the settings fields that read from it.
+  if (Object.values(patch.secretProviders ?? {}).some((entry) => entry === null)) {
+    changesSettings = true;
   }
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
@@ -1997,6 +2095,12 @@ export const ClientSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — keep the computer awake while this computer's threads work.
   keepComputerAwake: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers only once turned on in Labs.
+  signInSharingEnabled: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Accounts says once that new tabs now open in Main.
+  mainDefaultNotice: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
@@ -2033,6 +2137,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
@@ -2046,6 +2151,15 @@ export const ClientSettingsPatch = Schema.Struct({
   timestampFormat: Schema.optionalKey(TimestampFormat),
   voiceTranscriptCorrectionEnabled: Schema.optionalKey(Schema.Boolean),
   voiceLanguagePreference: Schema.optionalKey(VoiceLanguagePreference),
+  voiceMicrophone: Schema.optionalKey(Schema.String),
+  voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),
+  speechLanguage: Schema.optionalKey(SpeechLanguage),
+  speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
+  speechCustomWords: Schema.optionalKey(SpeechCustomWords),
+  speechSilenceFiltering: Schema.optionalKey(Schema.Boolean),
+  speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
+  speechPostProcessingPrompt: Schema.optionalKey(SpeechPostProcessingPromptSettings),
+  speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

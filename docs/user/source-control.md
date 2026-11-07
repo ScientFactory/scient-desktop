@@ -57,9 +57,12 @@ order of precedence:
 
 1. A token saved in **Settings → Source control → GitHub**. It is kept in the server's secret
    store, and works without the GitHub CLI.
-2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
+2. **Sign in with GitHub** in the same place, through the Scient for GitHub app. GitHub shows
+   a code to enter; no GitHub CLI or token is needed. The app reaches only the accounts and
+   organizations it is installed on; **Install on an organization** adds one.
+3. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
    server's environment.
-3. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
+4. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
 
 If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same place to pick
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence

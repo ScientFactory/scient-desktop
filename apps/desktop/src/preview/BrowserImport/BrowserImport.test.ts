@@ -213,7 +213,14 @@ describe("BrowserImport.writeCookies", () => {
       );
 
       assert.deepEqual(events, ["set", "set", "flush"]);
-      assert.deepEqual(result, { imported: 2, skipped: 0, skippedDomains: [] });
+      assert.deepEqual(result, {
+        imported: 2,
+        skipped: 0,
+        skippedDomains: [],
+        // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+        importedSites: 1,
+        // SCIENT-FORK:END
+      });
     }),
   );
 });

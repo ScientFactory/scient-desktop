@@ -19,6 +19,28 @@ export const WINDOWS_VOICE_FILES = [
   "provenance.json",
 ] as const;
 
+/** T3's transcribe.cpp 0.4.1 engine; it ships a Windows build for x64 only. */
+export function windowsTranscribeFiles(arch: "x64" | "arm64") {
+  if (arch !== "x64") return [];
+  return [
+    "ggml-base.dll",
+    ...[
+      "alderlake",
+      "cannonlake",
+      "cascadelake",
+      "haswell",
+      "icelake",
+      "sandybridge",
+      "skylakex",
+      "sse42",
+      "x64",
+    ].map((cpu) => `ggml-cpu-${cpu}.dll`),
+    "ggml-vulkan.dll",
+    "ggml.dll",
+    "transcribe.dll",
+  ];
+}
+
 export function windowsCursorFiles(arch: "x64" | "arm64") {
   return ["win32", "linux"].flatMap((platform) => {
     const prefix = `sdk-${platform}-${arch}/`;
@@ -53,6 +75,8 @@ export function windowsNativeIgnoreGlobs(arch: "x64" | "arm64", linuxBackend: bo
     "**/node_modules/**/*-freebsd-*",
     "**/node_modules/**/*-win32-ia32-*",
     `**/node_modules/**/*-win32-${otherArch}*`,
+    // The Windows backend transcribes on Windows only; WSL ships its own runtime archive.
+    "**/node_modules/@transcribe-cpp/linux-*",
     ...(linuxBackend
       ? [
           `**/node_modules/node-pty/prebuilds/linux-${otherArch}`,
@@ -99,6 +123,13 @@ export function analyzeWindowsPayloadInventory(input: {
       files: windowsCursorFiles(input.arch),
     },
     { name: "preview", root: "resources/conversation-preview/", files: input.previewFiles ?? [] },
+    // Optional: older payloads predate the engine; a present one must match exactly.
+    {
+      name: "transcribe",
+      root: "resources/server.asar.unpacked/node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/",
+      files: windowsTranscribeFiles(input.arch),
+      optional: true,
+    },
   ];
   const missingFiles: string[] = [];
   const unexpectedFiles: string[] = unexpectedWindowsNativeFiles(input.files, input.arch);
@@ -108,10 +139,11 @@ export function analyzeWindowsPayloadInventory(input: {
   for (const component of components) {
     const expected = new Set(component.files.map((file) => component.root + file));
     const actual = input.files.filter((file) => file.startsWith(component.root));
-    missingFiles.push(...[...expected].filter((file) => !present.has(file)));
+    if (!("optional" in component) || actual.length > 0)
+      missingFiles.push(...[...expected].filter((file) => !present.has(file)));
     unexpectedFiles.push(...actual.filter((file) => !expected.has(file)));
     counts[component.name] = actual.length;
-    allowance += expected.size;
+    allowance += "optional" in component && actual.length === 0 ? 0 : expected.size;
   }
   counts.core =
     input.files.length - Object.values(counts).reduce((total, count) => total + count, 0);

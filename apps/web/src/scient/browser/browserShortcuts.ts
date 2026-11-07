@@ -6,7 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { isLocalLoopbackHost, normalizeHostname } from "~/browser/browserTargetResolver";
 import { resolveStorage } from "~/lib/storage";
-import { byDomain, GMAIL_URL } from "~/scient/accounts/accountsView";
+import { byDomain } from "~/scient/accounts/accountsView";
 import { isIdentityProvider } from "~/scient/accounts/sessionDetection";
 
 import ICONS from "./browserHomeIcons.json";
@@ -49,6 +49,8 @@ interface BrowserShortcutsState extends ShortcutsByProfile {
   save: (profileId: string, previous: Shortcut | null, link: string, name: string) => void;
   remove: (profileId: string, shortcut: Shortcut) => void;
   forgetProfile: (profileId: string) => void;
+  /** A profile merged into another: its shortcuts and visits join the other's, after its own. */
+  mergeProfile: (from: string, into: string) => void;
   claimUnclaimed: (profileId: string) => void;
 }
 
@@ -64,7 +66,11 @@ const GOOGLE: HomeSite = {
   url: "https://www.google.com/",
   icon: ICONS.google,
 };
-export const GMAIL: HomeSite = { name: "Gmail", url: GMAIL_URL, icon: ICONS.gmail };
+export const GMAIL: HomeSite = {
+  name: "Gmail",
+  url: "https://mail.google.com/mail/",
+  icon: ICONS.gmail,
+};
 
 const DRIVE: HomeSite = { name: "Drive", url: "https://drive.google.com/", icon: ICONS.drive };
 const CALENDAR: HomeSite = {
@@ -358,6 +364,14 @@ export const useBrowserShortcuts = create<BrowserShortcutsState>()(
             Object.entries(state.profiles).filter(([id]) => id !== profileId),
           ),
         })),
+      mergeProfile: (from, into) =>
+        set((state) => {
+          const { [from]: merging, ...profiles } = state.profiles;
+          if (!merging) return state;
+          return {
+            profiles: { ...profiles, [into]: combined(profiles[into] ?? NO_SHORTCUTS, merging) },
+          };
+        }),
       claimUnclaimed: (profileId) =>
         set((state) =>
           state.unclaimed

@@ -146,11 +146,11 @@ describe("pull request filter-option state", () => {
       [
         [
           EnvironmentId.make("healthy"),
-          { labels, authors, truncated: false } satisfies PullRequestFilterOptions,
+          { labels, authors, references: [], truncated: false } satisfies PullRequestFilterOptions,
         ],
         [
           EnvironmentId.make("partial"),
-          { labels: [], authors: [], truncated: false, partialFailure },
+          { labels: [], authors: [], references: [], truncated: false, partialFailure },
         ],
       ],
       queryError,

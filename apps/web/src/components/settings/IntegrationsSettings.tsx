@@ -1,6 +1,7 @@
 // SCIENT-FORK:START — Scient Accounts: link the browser profile owner.
 import { importProfileName } from "~/scient/accounts/accountsView";
 import { AccountsSettingsLink } from "~/scient/accounts/AccountsSettingsLink";
+import { fillMainFromProfile, importIntoMain } from "~/scient/accounts/mainFill";
 // SCIENT-FORK:END
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
@@ -227,10 +228,32 @@ export async function importBrowserCookiesIntoTarget(
     readonly profileName?: string;
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
     readonly keepSites?: ReadonlyArray<string>;
+    /** False when the caller fills Main itself, once the import's rows exist. */
+    readonly fillMain?: boolean;
     // SCIENT-FORK:END
   },
-): Promise<ImportOutcome> {
+  // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+): Promise<ImportOutcome & { readonly importedSites?: number }> {
+  // SCIENT-FORK:END
   try {
+    // Main is written only by the desktop's one coordinator, which fills what it lacks.
+    if (input.target.profileId === DEFAULT_BROWSER_PROFILE_ID) {
+      const filled = await importIntoMain(environmentId, source.id, input.sourceProfileDirectory);
+      if (!filled) return { kind: "blocked", reason: "readFailed" };
+      const missed = filled.units.filter(
+        ({ outcome }) => outcome !== "copied" && outcome !== "same",
+      );
+      // Each unit is a site, so the count is per site, like an import elsewhere.
+      const copied = filled.units.filter(({ outcome }) => outcome === "copied").length;
+      return {
+        kind: "imported",
+        imported: copied,
+        importedSites: copied,
+        skipped: missed.length + filled.unsupported,
+        skippedDomains: missed.flatMap(({ sites }) => sites).slice(0, 20),
+        targetName: input.target.kind === "existing" ? input.target.name : "Main",
+      };
+    }
     const result = await bridge.importBrowserCookies({
       environmentId,
       sourceId: source.id,
@@ -293,12 +316,18 @@ export async function importBrowserCookiesIntoTarget(
     } else {
       targetName = input.target.name;
     }
+    // The import stands even when Main can't be filled now; a later sign-in or Refresh does it.
+    if (result.imported > 0 && input.fillMain !== false)
+      await fillMainFromProfile(environmentId, input.target.profileId).catch(() => undefined);
     return {
       kind: "imported",
       imported: result.imported,
       skipped: result.skipped,
       skippedDomains: result.skippedDomains,
       targetName,
+      // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+      ...(result.importedSites === undefined ? {} : { importedSites: result.importedSites }),
+      // SCIENT-FORK:END
     };
   } catch (cause) {
     const policyRefusal = importPolicyRefusal(cause);

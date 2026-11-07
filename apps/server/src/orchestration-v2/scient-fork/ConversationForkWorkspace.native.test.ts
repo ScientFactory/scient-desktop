@@ -1019,6 +1019,8 @@ it.live(
           const absent = yield* checkpoints.materializeBaselineCheckpoint({
             scope,
             ordinalWithinScope: 0,
+            nodeId: scope.nodeId,
+            capturedAt: scope.createdAt,
           });
           assert.equal(absent.status, "missing");
           assert.equal(

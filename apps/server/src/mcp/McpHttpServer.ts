@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import { ScientAccountsToolkit } from "../scient/accounts/agent/tools.ts";
 import { AccountSessionFilesLive } from "../scient/accounts/agent/sessionFiles.ts";
 import { ScientAccountsToolkitHandlersLive } from "../scient/accounts/agent/handlers.ts";
+import { AccountsError } from "@t3tools/contracts";
 // SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -246,8 +247,9 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
-    const request = yield* HttpServerRequest.HttpServerRequest;
+  const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
     const authorization = request.headers.authorization;
     const token = parseBearerToken(request) ?? "";
     const invocation =
@@ -277,11 +279,14 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    return { ...limited, linkedEnvironments };
+  });
+  // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
+  return Effect.fnUntraced(function* (httpEffect) {
+    const admitted = yield* authenticateRequest(yield* HttpServerRequest.HttpServerRequest);
+    if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
     return yield* httpEffect.pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, {
-        ...limited,
-        linkedEnvironments,
-      }),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
@@ -509,6 +514,9 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
   ) as unknown as Toolkit.Toolkit<Tools>;
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+// SCIENT-FORK:START — Scient Accounts: a refusal's message reaches the agent.
+const isAccountsRefusal = Schema.is(AccountsError);
+// SCIENT-FORK:END
 
 const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   cause: Cause.Cause<E>,
@@ -526,7 +534,12 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
       ? firstFailure._tag
       : "PreviewSnapshotError";
   // Preview errors contain server-authored recovery guidance, never page output.
-  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
+  const message =
+    isPreviewAutomationError(firstFailure) ||
+    // SCIENT-FORK: an Accounts refusal is server-written guidance too, such as a sign-in under way.
+    isAccountsRefusal(firstFailure)
+      ? firstFailure.message
+      : undefined;
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
@@ -1264,6 +1277,36 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+/** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
+const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const tracingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      const name = options.tool.name;
+      return server.addTool({
+        ...options,
+        // Never the current span: Toolkit.handle annotates that one with the raw arguments.
+        handle: (payload) =>
+          Effect.useSpan(
+            `mcp.tool.${name}`,
+            {
+              attributes: {
+                "rpc.system": "mcp",
+                "rpc.method": "tools/call",
+                "mcp.tool.name": name,
+              },
+            },
+            () => options.handle(payload),
+          ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
+});
+
 /** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
 const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   Tools extends Record<string, Tool.Any>,
@@ -1302,7 +1345,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) => {
   return Layer.effectDiscard(
-    withToolAnalytics(withAdvertisedSchemas(toolkit, registerRequestToolkit(toolkit))),
+    withToolAnalytics(
+      withToolSpans(withAdvertisedSchemas(toolkit, registerRequestToolkit(toolkit))),
+    ),
   ).pipe(
     Layer.provide(McpServer.McpServer.layer),
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
@@ -1313,7 +1358,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(register)).pipe(
+  Layer.effectDiscard(withToolAnalytics(withToolSpans(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 

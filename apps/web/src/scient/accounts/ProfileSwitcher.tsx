@@ -1,5 +1,11 @@
 import { INCOGNITO_BROWSER_PROFILE_ID, type ScopedThreadRef } from "@t3tools/contracts";
-import { profileSignIns, profilesSignedIn } from "@t3tools/shared/scientBrowserProfileChoice";
+import {
+  pageSite,
+  pickBrowserProfile,
+  profileRows,
+  siteIdentities,
+  type ProfilePick,
+} from "@t3tools/shared/scientBrowserProfileChoice";
 import { CheckIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
@@ -8,6 +14,8 @@ import { Button } from "~/components/ui/button";
 import {
   Menu,
   MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
   MenuItem,
   MenuPopup,
   MenuSeparator,
@@ -29,6 +37,23 @@ const BrowserImportDialog = lazy(() =>
   import("./BrowserProfiles").then((module) => ({ default: module.BrowserImportDialog })),
 );
 
+/** Why the tab is in its profile, in the words the switcher shows. */
+function pickReason({ reason }: ProfilePick, url: string) {
+  const site = pageSite(url)?.hostname.replace(/^www\./, "");
+  switch (reason) {
+    case "site":
+      return site ? `for ${site}` : undefined;
+    case "conversation":
+      return "this conversation";
+    case "project":
+      return "this project";
+    case "main":
+      return "has your sign-ins";
+    case "default":
+      return "default";
+  }
+}
+
 /**
  * The tab's browser profile, there even with only Main so people find profiles. Choosing another
  * opens the same page in a new tab in it and is remembered for this conversation and the page's
@@ -47,6 +72,7 @@ export function ProfileSwitcher({
 }) {
   const environmentId = threadRef.environmentId;
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
+  const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const { data, canWrite } = useAccounts(environmentId);
   const choose = useAccountCommand(accountsState.chooseProfile, environmentId);
   const projectId = useQuietThreadShell(threadRef)?.projectId;
@@ -59,15 +85,26 @@ export function ProfileSwitcher({
     onOpenInProfile(profileId);
   };
   const addProfile = () =>
-    addBrowserProfile()
+    addBrowserProfile(environmentId)
       .then((profileId) => {
         if (profileId) openIn(profileId);
       })
       .catch(() => toastManager.add({ type: "error", title: "Could not add a profile" }));
-  const profileIds = profiles.map((profile) => profile.id);
-  const signIns = profileSignIns(data?.accounts ?? []);
-  const holders = profilesSignedIn(url, profileIds, signIns);
+  const holders = siteIdentities(data?.accounts ?? [], url).map((signIn) => signIn.profileId);
   const projectProfileId = projectId ? data?.profileChoices?.projects[projectId] : undefined;
+  const pick = data
+    ? pickBrowserProfile({
+        url,
+        threadId: threadRef.threadId,
+        projectId,
+        profiles: profiles.map((profile) => profile.id),
+        rows: profileRows(data.accounts),
+        choices: data.profileChoices,
+        defaultProfileId,
+      })
+    : undefined;
+  const reason = pick?.profileId === active.id ? pickReason(pick, url) : undefined;
+  const label = reason ? `${active.name} · ${reason}` : active.name;
   return (
     <>
       <Menu>
@@ -84,40 +121,47 @@ export function ProfileSwitcher({
                   name={active.name}
                   picture={active.record.picture}
                   color={active.record.color}
+                  id={active.id}
+                  browser={active.record.source?.browser}
                 />
               </MenuTrigger>
             }
           />
-          <TooltipPopup>Browser profile: {active.name}</TooltipPopup>
+          <TooltipPopup>Browser profile: {label}</TooltipPopup>
         </Tooltip>
         <MenuPopup align="start">
-          {profiles.map((profile) => {
-            const detail = holders.includes(profile.id)
-              ? `Signed in to ${new URL(url).hostname}`
-              : profile.record.source?.email;
-            return (
-              <MenuItem
-                key={profile.id}
-                onClick={() => {
-                  if (profile.id !== activeProfileId) openIn(profile.id);
-                }}
-              >
-                <ProfilePicture
-                  size="sm"
-                  name={profile.name}
-                  picture={profile.record.picture}
-                  color={profile.record.color}
-                />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{profile.name}</span>
-                  {detail ? (
-                    <span className="truncate text-xs text-muted-foreground">{detail}</span>
-                  ) : null}
-                </span>
-                {profile.id === activeProfileId ? <CheckIcon /> : null}
-              </MenuItem>
-            );
-          })}
+          <MenuGroup>
+            <MenuGroupLabel>{label}</MenuGroupLabel>
+            {profiles.map((profile) => {
+              const detail = holders.includes(profile.id)
+                ? `Signed in to ${new URL(url).hostname}`
+                : profile.record.source?.email;
+              return (
+                <MenuItem
+                  key={profile.id}
+                  onClick={() => {
+                    if (profile.id !== activeProfileId) openIn(profile.id);
+                  }}
+                >
+                  <ProfilePicture
+                    size="sm"
+                    name={profile.name}
+                    picture={profile.record.picture}
+                    color={profile.record.color}
+                    id={profile.id}
+                    browser={profile.record.source?.browser}
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{profile.name}</span>
+                    {detail ? (
+                      <span className="truncate text-xs text-muted-foreground">{detail}</span>
+                    ) : null}
+                  </span>
+                  {profile.id === activeProfileId ? <CheckIcon /> : null}
+                </MenuItem>
+              );
+            })}
+          </MenuGroup>
           {projectId ? (
             <>
               <MenuSeparator />

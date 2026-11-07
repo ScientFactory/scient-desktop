@@ -17,7 +17,6 @@ import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/Cod
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
@@ -50,11 +49,6 @@ const providerDependenciesLayer = baseLayer.pipe(
       ProviderLatestVersions.layer,
       McpProviderSessions.layer,
     ),
-  ),
-  Layer.provideMerge(
-    Layer.succeed(CursorKeychain.CursorKeychain, {
-      accessToken: Effect.die("Continuation identity must not read real Keychain credentials"),
-    }),
   ),
   Layer.provideMerge(
     Layer.succeed(CursorSdk.CursorSdk, {

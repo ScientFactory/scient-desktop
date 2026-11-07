@@ -3,15 +3,14 @@ import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type {
   EnvironmentContextRecord,
-  EnvironmentId,
   PreviewAnnotationPayload,
-  ServerProviderSkill,
   ThreadContextRecord,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
 import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
-import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
+import { createContext, type ReactElement, type ReactNode, use } from "react";
+import { ComposerContextActionsContext } from "./composerContextActions";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
@@ -69,26 +68,10 @@ export type ComposerDraftContextRecord =
   | { kind: "thread"; record: ThreadContextRecord }
   | { kind: "environment"; record: EnvironmentContextRecord };
 
-export interface ComposerContextActions {
-  environmentId: EnvironmentId | null;
-  cwd?: string | undefined;
-  expandImage: (imageId: string) => void;
-  expandVideo: (fileId: string) => void;
-  openFile: (fileId: string) => void;
-  openMention: (path: string) => void;
-  openSkill: (skill: ServerProviderSkill) => void;
-  openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
-}
-
-export const ComposerContextActionsContext = createContext<ComposerContextActions>({
-  environmentId: null,
-  expandImage: () => {},
-  expandVideo: () => {},
-  openFile: () => {},
-  openMention: () => {},
-  openSkill: () => {},
-  openPullRequest: () => {},
-});
+export {
+  ComposerContextActionsContext,
+  type ComposerContextActions,
+} from "./composerContextActions";
 
 export type ComposerDraftContextRecords = ReadonlyMap<string, ComposerDraftContextRecord>;
 

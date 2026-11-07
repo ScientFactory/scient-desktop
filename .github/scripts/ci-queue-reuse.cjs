@@ -27,6 +27,8 @@ const RECEIPT_KEYS = [
 ];
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
+// The test_web and test_server matrix sizes in ci.yml.
+const SHARDS = { web: 6, server: 12 };
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
@@ -400,10 +402,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
       validateResult(transfer);
       staged.set("thread-transfer-result.json", transfer);
     }
-    for (const [suite, count] of [
-      ["web", 3],
-      ["server", 8],
-    ]) {
+    for (const [suite, count] of Object.entries(SHARDS)) {
       if (!source.receipt.reports[suite]) continue;
       for (let shard = 1; shard <= count; shard++) {
         const filename = `vitest-${suite}-${shard}.json`;
@@ -449,4 +448,4 @@ async function restore({ github, context, core, env = process.env, archiveReader
   }
 }
 
-module.exports = { writeReceipt, restore, readArchive };
+module.exports = { writeReceipt, restore, readArchive, SHARDS };
