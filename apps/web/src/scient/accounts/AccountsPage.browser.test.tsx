@@ -179,9 +179,10 @@ it("says once that new tabs now open in Main, until dismissed", async () => {
   }
 });
 
-it("names the profiles merged into Main, and Undo lists them again", async () => {
+it("hides a profile merged into Main though this client lists it, and Undo brings it back", async () => {
   using _fixture = fixture();
-  state.settings = {};
+  const personal = { id: "personal", name: "Personal", kind: "persistent" as const };
+  state.settings = { browserProfiles: [personal] };
   state.calls = [];
   const merged = {
     ...defaultBrowserProfileRecord("personal"),
@@ -205,10 +206,11 @@ it("names the profiles merged into Main, and Undo lists them again", async () =>
       .element(page.getByRole("button", { name: "Signed-in sites for Personal" }))
       .not.toBeInTheDocument();
     await page.getByRole("button", { name: "Undo" }).click();
-    await vi.waitFor(() => expect(state.calls).toEqual([["record", { profileId: "personal" }]]));
-    expect(state.settings.browserProfiles).toEqual([
-      { id: "personal", name: "Personal", kind: "persistent" },
-    ]);
+    await vi.waitFor(() =>
+      expect(state.calls).toEqual([["record", { profileId: "personal", undo: true }]]),
+    );
+    // The server's mark alone hid it: this client's list never changed.
+    expect(state.settings.browserProfiles).toEqual([personal]);
   } finally {
     state.settings = {};
   }

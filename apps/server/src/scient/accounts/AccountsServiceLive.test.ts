@@ -344,10 +344,12 @@ describe("AccountsService profiles and evidence", () => {
           profileId,
           url: "https://github.com/",
         });
-        yield* service.retireProfile(profileId, "Made");
+        yield* service.retireProfile(profileId, { name: "Made" });
         const { accounts, profileChoices, profiles } = yield* service.snapshot;
-        const record = () => profiles.find((profile) => profile.profileId === profileId);
-        expect(record()?.retired).toMatchObject({ into: "main", name: "Made" });
+        expect(profiles.find((profile) => profile.profileId === profileId)?.retired).toMatchObject({
+          into: "main",
+          name: "Made",
+        });
         expect(
           accounts.map(({ details }) =>
             details.kind === "website" ? [details.sites[0], details.profileId] : [],
@@ -361,19 +363,48 @@ describe("AccountsService profiles and evidence", () => {
           profileId: "default",
           sites: { "github.com": { profileId: "default" } },
         });
-        // Agents no longer see it; Undo lists it again and leaves the rows with Main.
-        expect(
-          (yield* service.forSession(scope)).profiles.some(
-            (profile) => profile.profileId === profileId,
-          ),
-        ).toBe(false);
-        yield* service.retireProfile(profileId);
-        const undone = yield* service.snapshot;
-        expect(
-          undone.profiles.find((profile) => profile.profileId === profileId)?.retired,
-        ).toBeUndefined();
-        expect(undone.accounts).toHaveLength(2);
       }),
+  );
+
+  it.effect("keeps a profile merged into Main from agents, by any id they hold", () =>
+    Effect.gen(function* () {
+      const profileId = BrowserProfileId.make("profile-made");
+      // A window that still lists it reports it among the browser's profiles.
+      const { service } = yield* makeHarness({
+        sourceOverrides: { profiles: Effect.succeed(["default", profileId]) },
+      });
+      yield* service.retireProfile(profileId, { name: "Made" });
+      const listed = (ids?: ReadonlyArray<string>) =>
+        Effect.map(service.forSession(scope, ids), ({ profiles }) =>
+          profiles.some((profile) => profile.profileId === profileId),
+        );
+      expect(yield* listed()).toBe(false);
+      expect(yield* listed([profileId])).toBe(false);
+      expect(
+        yield* service.authorize(scope, { type: "profile", profileId }, "open-profile"),
+      ).toEqual({ decision: "denied", reason: "off" });
+    }),
+  );
+
+  it.effect("undoes a merge once: a merge read before Undo is refused after it", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const profileId = BrowserProfileId.make("profile-made");
+      const record = Effect.map(service.snapshot, ({ profiles }) =>
+        profiles.find((profile) => profile.profileId === profileId),
+      );
+      yield* service.retireProfile(profileId, { name: "Made" });
+      const first = (yield* record)?.retired?.at;
+      // A second merge, as from another launch, keeps the first.
+      yield* service.retireProfile(profileId, { name: "Made" });
+      expect((yield* record)?.retired?.at).toBe(first);
+      yield* service.retireProfile(profileId, "undo");
+      expect(yield* record).toMatchObject({ undone: expect.any(String) });
+      expect((yield* record)?.retired).toBeUndefined();
+      const stale = yield* service.retireProfile(profileId, { name: "Made" }).pipe(Effect.flip);
+      expect(stale.reason).toBe("conflict");
+      expect((yield* record)?.retired).toBeUndefined();
+    }),
   );
 });
 

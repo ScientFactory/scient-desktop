@@ -126,12 +126,12 @@ export interface AccountsServiceShape {
   ) => Effect.Effect<void, AccountsError>;
   readonly removeProfile: (profileId: BrowserProfileId) => Effect.Effect<void, AccountsError>;
   /**
-   * With `name`, the fold's merge into Main: rows and choices naming the profile name Main, Main's
-   * own duplicate winning, and its record is kept, marked retired. Without, Undo clears the mark.
+   * The fold's merge into Main: rows and choices naming the profile name Main, Main's own duplicate
+   * winning, and its record is kept, marked retired. "undo" clears the mark for good.
    */
   readonly retireProfile: (
     profileId: BrowserProfileId,
-    name?: string,
+    change: { readonly name: string } | "undo",
   ) => Effect.Effect<void, AccountsError>;
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;

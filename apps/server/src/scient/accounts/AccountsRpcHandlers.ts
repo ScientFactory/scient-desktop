@@ -409,7 +409,9 @@ export const makeAccountsRpcHandlers = ({
     [WS_METHODS.accountsProfileRetire]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsProfileRetire,
-        accounts.retireProfile(input.profileId, input.name).pipe(Effect.as({})),
+        accounts
+          .retireProfile(input.profileId, "undo" in input ? "undo" : { name: input.name })
+          .pipe(Effect.as({})),
         attributes,
       ),
     [WS_METHODS.accountsMainFolded]: (input) =>

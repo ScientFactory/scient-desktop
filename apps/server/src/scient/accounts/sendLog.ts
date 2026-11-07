@@ -111,12 +111,15 @@ export function withSendLog<S extends State>(before: S, next: S): S {
     if (!profileId || summary.details.kind !== "website") continue;
     if (!isNewerAction(previousRows.get(summary.accountId), summary)) continue;
     const current = record(profileId);
+    if (current.retired) continue;
     changed.set(profileId, {
       ...current,
       send: issueUnit(current.send, summary.details.sites, "copy"),
     });
   }
   for (const profile of next.profiles) {
+    // Merged into Main: its copies elsewhere stay as they are, neither sent to nor taken back.
+    if (profile.retired) continue;
     const was = shareable(profile.profileId, effectiveProfile(before.profiles, profile.profileId));
     const is = shareable(profile.profileId, profile);
     if (was === is) continue;

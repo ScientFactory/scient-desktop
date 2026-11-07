@@ -466,12 +466,14 @@ export const BrowserProfileRecord = Schema.Struct({
    */
   madeInScient: Schema.optional(IsoDateTime),
   /**
-   * Merged into Main by the one-time fold: hidden and unused, its jar kept as it was. `name` is
-   * what the client listed it as, for Undo.
+   * Merged into Main by the one-time fold: hidden and unused everywhere, its jar kept as it was.
+   * `name` is what the client listed it as, for the line that offers Undo.
    */
   retired: Schema.optional(
     Schema.Struct({ at: IsoDateTime, into: Schema.Literal("main"), name: FoldedProfileName }),
   ),
+  /** When Undo brought it back from Main; such a profile is never merged again. */
+  undone: Schema.optional(IsoDateTime),
   /** Main's own record; no other profile has one. */
   main: Schema.optional(MainProfileState),
   /** On the desktop: the actions other computers follow. */
@@ -973,12 +975,12 @@ export const BrowserProfileRecordRemoveInput = Schema.Struct({ profileId: Browse
 
 /**
  * The fold merges a profile into Main: its rows and choices name Main and its record is marked
- * retired, its jar untouched. Undo (`name` absent) clears the mark; rows and choices stay on Main.
+ * retired, its jar untouched. Undo clears the mark for good; rows and choices stay on Main.
  */
-export const BrowserProfileRetireInput = Schema.Struct({
-  profileId: BrowserProfileId,
-  name: Schema.optional(FoldedProfileName),
-});
+export const BrowserProfileRetireInput = Schema.Union([
+  Schema.Struct({ profileId: BrowserProfileId, name: FoldedProfileName }),
+  Schema.Struct({ profileId: BrowserProfileId, undo: Schema.Literal(true) }),
+]);
 
 /** A row's sign-in was copied into Main, or Main already held the same one. */
 export const AccountMainFilledInput = Schema.Struct({

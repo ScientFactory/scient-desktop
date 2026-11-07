@@ -353,10 +353,12 @@ export const layer = Layer.effect(
     });
     const findAccount = (accountId: AccountId) =>
       state.accounts.find((account) => account.summary.accountId === accountId);
-    const targetControls = (target: AccountTarget) =>
-      target.type === "account"
-        ? findAccount(target.accountId)?.summary.controls
-        : effectiveProfile(state.profiles, target.profileId);
+    const targetControls = (target: AccountTarget) => {
+      if (target.type === "account") return findAccount(target.accountId)?.summary.controls;
+      const record = effectiveProfile(state.profiles, target.profileId);
+      // Merged into Main: no agent uses it, whatever its controls were.
+      return record.retired ? { ...record, access: "off" as const } : record;
+    };
     const withProfile = (
       profileId: BrowserProfileId,
       change: (record: BrowserProfileRecord) => BrowserProfileRecord,
@@ -379,7 +381,8 @@ export const layer = Layer.effect(
     ) {
       const next = withProfile(
         profileId,
-        (record) => ({ ...record, send: change(record.send) }),
+        // Merged into Main: nothing more goes out for it, and nothing is taken back.
+        (record) => (record.retired ? record : { ...record, send: change(record.send) }),
         profiles,
       );
       yield* commit(next.state, true);
@@ -1001,18 +1004,23 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      retireProfile: Effect.fn("AccountsService.retireProfile")((profileId, name) =>
+      retireProfile: Effect.fn("AccountsService.retireProfile")((profileId, change) =>
         locked(
           Effect.gen(function* () {
-            const { retired, ...record } = effectiveProfile(state.profiles, profileId);
+            const current = effectiveProfile(state.profiles, profileId);
             const profiles = (next: BrowserProfileRecord) => [
               ...state.profiles.filter((profile) => profile.profileId !== profileId),
               next,
             ];
-            if (name === undefined) {
-              if (retired) yield* commit({ ...state, profiles: profiles(record) });
+            if (change === "undo") {
+              if (!current.retired) return;
+              const { retired: _, ...record } = current;
+              yield* commit({ ...state, profiles: profiles({ ...record, undone: yield* now }) });
               return;
             }
+            // A launch that read the profile before Undo can't merge it again.
+            if (current.undone)
+              return yield* fail("conflict", "This profile was brought back from Main.");
             yield* commit({
               ...state,
               // Again on a retry: a row named for the profile since joins Main too.
@@ -1021,8 +1029,8 @@ export const layer = Layer.effect(
                 profileId,
               ),
               profiles: profiles({
-                ...record,
-                retired: retired ?? { at: yield* now, into: "main", name },
+                ...current,
+                retired: current.retired ?? { at: yield* now, into: "main", name: change.name },
               }),
               ...(state.profileChoices
                 ? { profileChoices: withProfileAsMain(state.profileChoices, profileId) }
@@ -1373,12 +1381,17 @@ export const layer = Layer.effect(
         ),
       ),
       receivedProfiles: locked(
-        Effect.sync(() => state.profiles.filter((profile) => profile.received?.length)),
+        Effect.sync(() =>
+          state.profiles.filter((profile) => profile.received?.length && !profile.retired),
+        ),
       ),
       updateReceived: Effect.fn("AccountsService.updateReceived")((profileId, change) =>
         locked(
           Effect.gen(function* () {
             const before = effectiveProfile(state.profiles, profileId);
+            // Merged into Main here: its jar is kept as it was, so nothing more arrives in it.
+            if (before.retired)
+              return yield* fail("denied", "This profile was merged into Main on this computer.");
             const { received, controls } = change(before);
             const same =
               received === before.received || (!before.received && received.length === 0);
@@ -1790,10 +1803,7 @@ export const layer = Layer.effect(
             const profiles = [
               ...new Set([
                 ...(yield* sources.profiles),
-                // A profile merged into Main is no agent's to pick.
-                ...state.profiles.flatMap((profile) =>
-                  profile.retired ? [] : [profile.profileId],
-                ),
+                ...state.profiles.map((profile) => profile.profileId),
                 ...(profileIds ?? []),
               ]),
             ];
@@ -1807,7 +1817,10 @@ export const layer = Layer.effect(
               profiles: state.agentAccess
                 ? profiles
                     .map((id) => effectiveProfile(state.profiles, id))
-                    .filter((profile) => inScope(profile.scope, scope.projectId))
+                    // A profile merged into Main is no agent's to pick, however it was named.
+                    .filter(
+                      (profile) => !profile.retired && inScope(profile.scope, scope.projectId),
+                    )
                 : [],
               profileChoices: state.profileChoices,
             };

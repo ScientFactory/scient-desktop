@@ -27,6 +27,7 @@ import { useBrowserShortcuts } from "~/scient/browser/browserShortcuts";
 import { readPrimaryEnvironmentId } from "~/state/environments";
 
 import { accountsState } from "./accountsState";
+import { activeProfiles } from "./activeProfiles";
 import { loadSourceProfiles, matchExistingProfile } from "./accountsView";
 import type { CookieMetadata } from "./sessionDetection";
 
@@ -51,7 +52,7 @@ const website = (row: AccountSummary) => (row.details.kind === "website" ? row.d
 /** Persistent Scient profiles other than Main, which can give Main their sessions. */
 const otherPersistentProfile = (profileId: string) =>
   profileId !== DEFAULT_BROWSER_PROFILE_ID &&
-  resolveBrowserProfiles(getClientSettings().browserProfiles).some(
+  activeProfiles(getClientSettings().browserProfiles).some(
     (profile) => profile.id === profileId && profile.kind === "persistent",
   );
 
@@ -396,7 +397,7 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
       return () => clearTimeout(timer);
     },
     backfill: async (snapshot) => {
-      const profiles = resolveBrowserProfiles((await resolveBrowserDefaults()).profiles);
+      const profiles = activeProfiles((await resolveBrowserDefaults()).profiles, snapshot.profiles);
       await backfillMain(snapshot, {
         profiles,
         fill: async (profileId) =>
@@ -645,6 +646,7 @@ export function foldCandidates(
       !record.source &&
       !record.received &&
       !record.retired &&
+      !record.undone &&
       isUnrestricted(record) &&
       backfilled.has(id) &&
       (record.madeInScient !== undefined || !importedName(name))
@@ -732,13 +734,6 @@ export async function foldIntoMain(
   if (recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
   const merged: string[] = [];
   let complete = true;
-  const fold = async (profile: BrowserProfile) => {
-    if (await deps.fold(profile)) merged.push(profile.name);
-    else complete = false;
-  };
-  // Retired by an earlier run whose later steps failed: those are finished first.
-  for (const profile of deps.profiles)
-    if (recordOf(snapshot, profile.id).retired) await fold(profile);
   for (const profile of foldCandidates(snapshot, deps.profiles, deps.importedName)) {
     const { id } = profile;
     const at = await deps.read();
@@ -768,15 +763,16 @@ export async function foldIntoMain(
       complete = false;
       continue;
     }
-    await fold(profile);
+    if (await deps.fold(profile)) merged.push(profile.name);
+    else complete = false;
   }
   if (complete) await deps.done(merged);
 }
 
 /**
- * One profile's merge into Main, never touching its jar: the server repoints its rows and choices
- * and marks it retired, its shortcuts join Main's, then this client stops listing it. Each step
- * repeats harmlessly, and the profile stays listed until the last, so a later launch finishes it.
+ * One profile's merge into Main, in one server commit that never touches its jar: its rows and
+ * choices name Main and its record is marked retired, which hides it. Its shortcuts then join
+ * Main's; that merge repeats harmlessly. This client's list keeps it, so Undo needs nothing here.
  */
 export async function retireIntoMain(
   registry: AtomRegistry.AtomRegistry,
@@ -789,13 +785,6 @@ export async function retireIntoMain(
   });
   if (retired._tag !== "Success") return false;
   useBrowserShortcuts.getState().mergeProfile(profile.id, DEFAULT_BROWSER_PROFILE_ID);
-  await persistClientSettingsUpdate((current) => ({
-    ...current,
-    browserProfiles: current.browserProfiles.filter((item) => item.id !== profile.id),
-    ...(current.browserDefaultProfileId === profile.id
-      ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
-      : {}),
-  }));
   return true;
 }
 

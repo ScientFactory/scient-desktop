@@ -137,6 +137,8 @@ export async function deliverOnce(deps: DeliveryDeps): Promise<{ readonly waitin
     check();
     // A fresh desktop record each time: a profile restricted meanwhile switches to the withdrawal.
     const record = recordOf(profileId);
+    // Merged into Main: its copies on the remote stay, neither updated nor taken back.
+    if (record.retired) return 0;
     /** The controls this plan was made under still hold: checked before every read and send. */
     const hold = () => {
       check();

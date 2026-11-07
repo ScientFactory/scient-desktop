@@ -11,7 +11,6 @@ import {
   ACCOUNT_SECRET_FIELDS,
   defaultBrowserProfileRecord,
   isBuiltInBrowserProfileId,
-  resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   type AccountActivityEntry,
   type AccountControls,
@@ -37,6 +36,7 @@ import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorizatio
 import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
+import { activeProfiles } from "./activeProfiles";
 
 /** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
 export function profileAccounts(
@@ -92,15 +92,12 @@ export function mergeProfiles(
   records: ReadonlyArray<BrowserProfileRecord>,
 ) {
   const byId = new Map(records.map((record) => [record.profileId, record]));
-  return (
-    resolveBrowserProfiles(profiles)
-      // Merged into Main: hidden while this client still lists it.
-      .filter((profile) => profile.kind !== "incognito" && !byId.get(profile.id)?.retired)
-      .map((profile) => ({
-        ...profile,
-        record: byId.get(profile.id) ?? defaultBrowserProfileRecord(profile.id),
-      }))
-  );
+  return activeProfiles(profiles, records)
+    .filter((profile) => profile.kind !== "incognito")
+    .map((profile) => ({
+      ...profile,
+      record: byId.get(profile.id) ?? defaultBrowserProfileRecord(profile.id),
+    }));
 }
 
 /**

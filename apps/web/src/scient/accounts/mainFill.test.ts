@@ -52,25 +52,24 @@ vi.mock("~/scient/browser/browserShortcuts", () => ({
     }),
   },
 }));
-// The removal, which clears jars, must never be reached by the fold.
-vi.mock("./removeBrowserProfile", () => ({
-  removeBrowserProfile: () => state.steps.push("remove"),
-  clearProfileData: () => state.steps.push("clear"),
-}));
-vi.mock("./accountsState", () => ({
-  accountsState: {
-    snapshot: () => ({}),
-    readSnapshot: { run: async () => ({ _tag: "Success", value: state.snapshot }) },
-    mainFilled: { run: async (_registry: unknown, input: unknown) => state.filled.push(input) },
-    remove: { run: (_registry: unknown, input: unknown) => state.rowCommand("remove", input) },
-    sessionEnded: {
-      run: (_registry: unknown, input: unknown) => state.rowCommand("signed out", input),
+vi.mock("./accountsState", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const unread = Atom.make(AsyncResult.initial());
+  return {
+    accountsState: {
+      snapshot: () => unread,
+      readSnapshot: { run: async () => ({ _tag: "Success", value: state.snapshot }) },
+      mainFilled: { run: async (_registry: unknown, input: unknown) => state.filled.push(input) },
+      remove: { run: (_registry: unknown, input: unknown) => state.rowCommand("remove", input) },
+      sessionEnded: {
+        run: (_registry: unknown, input: unknown) => state.rowCommand("signed out", input),
+      },
+      retireProfile: {
+        run: (_registry: unknown, input: unknown) => state.rowCommand("retire", input),
+      },
     },
-    retireProfile: {
-      run: (_registry: unknown, input: unknown) => state.rowCommand("retire", input),
-    },
-  },
-}));
+  };
+});
 
 const environmentId = EnvironmentId.make("environment-fixture");
 let rows = 0;
@@ -652,14 +651,14 @@ describe("the one-time fold into Main", () => {
   const profiles = [
     persistent("default", "Main"),
     { id: "incognito", name: "Incognito", kind: "incognito" as const },
-    ...["made", "imported", "limited", "waiting", "chrome", "marked", "received"].map((id) =>
-      persistent(id),
+    ...["made", "imported", "limited", "waiting", "chrome", "marked", "received", "undone"].map(
+      (id) => persistent(id),
     ),
   ];
   const main = (patch: object = {}) =>
     record("default", {
       main: {
-        backfilled: ["made", "imported", "limited", "chrome", "marked", "received"],
+        backfilled: ["made", "imported", "limited", "chrome", "marked", "received", "undone"],
         ...patch,
       },
     });
@@ -668,6 +667,8 @@ describe("the one-time fold into Main", () => {
     record("limited", { scope: { type: "projects", projectIds: [] } }),
     record("marked", { madeInScient: AT }),
     record("received", { received: [] }),
+    // Brought back from Main by Undo: never merged again.
+    record("undone", { undone: AT }),
   ];
 
   it("takes persistent profiles made here, unlimited and back-filled, never an import", () => {
@@ -735,138 +736,140 @@ describe("the one-time fold into Main", () => {
     unsupported: 0,
   });
 
-  it("merges a profile only after Main took all of it, and records the names once", async () => {
-    expect(await run([], units(["github.com", "copied"], ["arxiv.org", "same"]))).toEqual({
-      calls: ["fill made", "fold made"],
-      done: [["made"]],
-    });
+  const outcomes = {
+    merged: { calls: ["fill made", "fold made"], done: [["made"]] },
+    kept: { calls: ["fill made"], done: [[]] },
+    // Decided nothing: the next launch looks again.
+    retried: { calls: ["fill made"], done: [] },
+    failed: { calls: ["fill made", "fold made"], done: [] },
+  };
+  const theirs = () => github("made", "other");
+  const same = () => github("made", "Person");
+  const mains = () => github("default", "person");
+  it.each<
+    [
+      string,
+      keyof typeof outcomes,
+      () => ReadonlyArray<AccountSummary>,
+      DesktopFillMainResult | null,
+      Parameters<typeof run>[2],
+    ]
+  >([
+    [
+      "Main took all of it",
+      "merged",
+      () => [],
+      units(["github.com", "copied"], ["arxiv.org", "same"]),
+      {},
+    ],
+    [
+      "Main holds the same person",
+      "merged",
+      () => [same(), mains()],
+      units(["github.com", "conflict"]),
+      {},
+    ],
+    [
+      "only script cookies differ",
+      "merged",
+      () => [],
+      units(["consent.example", "conflict"]),
+      { signedIn: [] },
+    ],
+    [
+      "only expired cookies were left",
+      "merged",
+      () => [same()],
+      units(["github.com", "blocked"]),
+      {},
+    ],
+    [
+      "another person on a site",
+      "kept",
+      () => [theirs(), mains()],
+      units(["github.com", "conflict"]),
+      {},
+    ],
+    [
+      "signed in where Main differs, without a row",
+      "kept",
+      () => [],
+      units(["github.com", "conflict"]),
+      { signedIn: ["github.com"] },
+    ],
+    ["a copy that failed", "kept", () => [], units(["github.com", "failed"]), {}],
+    ["cookies the copy can't carry", "kept", () => [], { units: [], unsupported: 1 }, {}],
+    [
+      "a site Main signed out of",
+      "kept",
+      () => [theirs()],
+      units(["github.com", "blocked"]),
+      { main: { signedOutSites: ["github.com"] } },
+    ],
+    [
+      "a sign-in since the copy",
+      "retried",
+      () => [],
+      units(["github.com", "copied"]),
+      { signedIn: ["github.com", "orcid.org"] },
+    ],
+    [
+      "a sign-out in Main since the copy",
+      "retried",
+      () => [],
+      units(["github.com", "copied"]),
+      { mainAfter: { signedOutSites: ["arxiv.org"] } },
+    ],
+    ["an open tab", "retried", () => [], units(["github.com", "copied"]), { inUse: true }],
+    ["an unreadable jar", "retried", () => [], null, {}],
+    [
+      "an unreadable session list",
+      "retried",
+      () => [],
+      units(["github.com", "copied"]),
+      { signedIn: null },
+    ],
+    ["a merge that failed", "failed", () => [], units(["github.com", "copied"]), { folds: false }],
+  ])("%s: %s", async (_, outcome, accounts, result, options) => {
+    expect(await run(accounts(), result, options)).toEqual(outcomes[outcome]);
+  });
+
+  it("runs once: a recorded fold does nothing", async () => {
     expect(
       await run([], units(["github.com", "copied"]), {
         main: { folded: { at: AT, profiles: [] } },
       }),
     ).toEqual({ calls: [], done: [] });
   });
-
-  it("keeps a profile with another person on a site, a failed copy, or a site Main signed out of", async () => {
-    const theirs = github("made", "other");
-    const mains = github("default", "person");
-    const kept = { calls: ["fill made"], done: [[]] };
-    expect(await run([theirs, mains], units(["github.com", "conflict"]))).toEqual(kept);
-    expect(await run([], units(["github.com", "failed"]))).toEqual(kept);
-    // A jar holding only cookies the copy can't carry: nothing reaches Main.
-    expect(await run([], { units: [], unsupported: 1 })).toEqual(kept);
-    expect(
-      await run([theirs], units(["github.com", "blocked"]), {
-        main: { signedOutSites: ["github.com"] },
-      }),
-    ).toEqual(kept);
-  });
-
-  it("merges where Main differs only on sites without a sign-in, or holds the same person", async () => {
-    const theirs = github("made", "Person");
-    const mains = github("default", "person");
-    const merged = { calls: ["fill made", "fold made"], done: [["made"]] };
-    expect(
-      await run([theirs, mains], units(["github.com", "conflict"], ["ads.example", "conflict"])),
-    ).toEqual(merged);
-    // Only expired cookies: nothing to lose.
-    expect(await run([theirs], units(["github.com", "blocked"]))).toEqual(merged);
-  });
-
-  it("keeps a profile signed in to a site Main holds differently, even without a row", async () => {
-    const conflict = units(["github.com", "conflict"], ["consent.example", "conflict"]);
-    expect(await run([], conflict, { signedIn: ["github.com"] })).toEqual({
-      calls: ["fill made"],
-      done: [[]],
-    });
-    // Only script-set cookies there, such as a consent or analytics cookie: no sign-in to lose.
-    expect(await run([], conflict, { signedIn: [] })).toEqual({
-      calls: ["fill made", "fold made"],
-      done: [["made"]],
-    });
-  });
-
-  it("judges the profile as it is after the copy: a new sign-in, a sign-out or an open tab waits", async () => {
-    const waits = { calls: ["fill made"], done: [] };
-    // Signed in to a site the copy didn't hold, since it ran.
-    expect(
-      await run([], units(["github.com", "copied"]), { signedIn: ["github.com", "orcid.org"] }),
-    ).toEqual(waits);
-    expect(
-      await run([], units(["github.com", "copied"]), {
-        mainAfter: { signedOutSites: ["arxiv.org"] },
-      }),
-    ).toEqual(waits);
-    expect(await run([], units(["github.com", "copied"]), { inUse: true })).toEqual(waits);
-  });
-
-  it("first finishes a profile an earlier run retired but couldn't unlist", async () => {
-    const calls: string[] = [];
-    const done: Array<ReadonlyArray<string>> = [];
-    const at = snapshot(
-      [],
-      [main(), record("made", { retired: { at: AT, into: "main", name: "Made" } })],
-    );
-    await foldIntoMain(at, {
-      profiles: [persistent("made", "Made")],
-      importedName: () => false,
-      read: async () => at,
-      fill: async () => {
-        calls.push("fill");
-        return null;
-      },
-      inUse: () => false,
-      signedIn: async () => [],
-      fold: async ({ id }) => {
-        calls.push(`fold ${id}`);
-        return true;
-      },
-      done: async (names) => done.push(names) > 0,
-    });
-    expect(calls).toEqual(["fold made"]);
-    expect(done).toEqual([["Made"]]);
-  });
-
-  it("leaves the fold unrecorded when a jar was unreadable or a merge failed, to try next launch", async () => {
-    expect(await run([], null)).toEqual({ calls: ["fill made"], done: [] });
-    expect(await run([], units(["github.com", "copied"]), { signedIn: null })).toEqual({
-      calls: ["fill made"],
-      done: [],
-    });
-    expect(await run([], units(["github.com", "copied"]), { folds: false })).toEqual({
-      calls: ["fill made", "fold made"],
-      done: [],
-    });
-  });
 });
 
 describe("retireIntoMain", () => {
-  it("hides the profile with its jar untouched, finishing on a later launch if a step failed", async () => {
-    // Bob's session swapped in after the copy, or Bob on a server while Alice is here: nothing
-    // is cleared anywhere, so neither is lost.
-    const profile = { id: "made", name: "Made", kind: "persistent" as const };
-    state.settings = { browserProfiles: [profile], browserDefaultProfileId: "made" };
-    state.steps = [];
-    let retired: unknown;
-    state.rowCommand = async (kind, input) => {
-      state.steps.push(kind);
-      retired = input;
-      return { _tag: "Success", value: {} };
-    };
-    expect(await retireIntoMain(AtomRegistry.make(), environmentId, profile)).toBe(true);
-    expect(retired).toEqual({ environmentId, input: { profileId: "made", name: "Made" } });
-    // Listed until the last step, so a failure before it leaves the profile for the next launch.
-    expect(state.steps).toEqual(["retire", "shortcuts made>default", "list"]);
-    expect(state.settings).toEqual({ browserProfiles: [], browserDefaultProfileId: "default" });
-    state.steps = [];
-    state.rowCommand = async (kind) => {
-      state.steps.push(kind);
-      return { _tag: "Failure" };
-    };
-    expect(await retireIntoMain(AtomRegistry.make(), environmentId, profile)).toBe(false);
-    expect(state.steps).toEqual(["retire"]);
-    state.rowCommand = () => Promise.resolve();
-  });
+  const profile = { id: "made", name: "Made", kind: "persistent" as const };
+  it.each([
+    ["merged", "Success", ["retire", "shortcuts made>default"], true],
+    // Failed, or refused once Undo brought it back: its shortcuts stay its own.
+    ["refused", "Failure", ["retire"], false],
+  ] as const)(
+    "%s by the server: only that, never this client's list",
+    async (_, tag, steps, ok) => {
+      state.settings = { browserProfiles: [profile], browserDefaultProfileId: "made" };
+      state.steps = [];
+      const sent: unknown[] = [];
+      state.rowCommand = async (kind, input) => {
+        state.steps.push(kind);
+        sent.push(input);
+        return { _tag: tag, value: {} };
+      };
+      expect(await retireIntoMain(AtomRegistry.make(), environmentId, profile)).toBe(ok);
+      expect(sent).toEqual([{ environmentId, input: { profileId: "made", name: "Made" } }]);
+      expect(state.steps).toEqual(steps);
+      expect(state.settings).toEqual({
+        browserProfiles: [profile],
+        browserDefaultProfileId: "made",
+      });
+      state.rowCommand = () => Promise.resolve();
+    },
+  );
 });
 
 describe("withdrawFromMain", () => {

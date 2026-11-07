@@ -606,6 +606,21 @@ describe("receiving a desktop's sign-ins", () => {
     }),
   );
 
+  it.effect(
+    "takes nothing more into a profile merged into Main here, from a sender it follows",
+    () =>
+      Effect.gen(function* () {
+        const { remote, jars, accounts } = yield* setup();
+        yield* remote.receive(desktop, batch([copy(1)]));
+        yield* accounts.retireProfile(WORK, { name: "Work" });
+        const refused = yield* remote
+          .receive(desktop, batch([copy(2, [cookie({ value: "synthetic-later" })])]))
+          .pipe(Effect.flip);
+        expect(refused.reason).toBe("denied");
+        expect(jars.get(WORK)?.map(({ value }) => value)).toEqual(["synthetic-desktop"]);
+      }),
+  );
+
   it.effect("drops a sender's copies after 30 days without it, not before", () =>
     Effect.gen(function* () {
       const { remote, jars, accounts } = yield* setup();

@@ -6,7 +6,6 @@ import {
   AuthSettingsWriteScope,
   BrowserProfileId,
   defaultBrowserProfileRecord,
-  resolveBrowserProfiles,
   type AccountsSnapshot,
   type DesktopEnvironmentBootstrap,
   type EnvironmentId,
@@ -26,6 +25,7 @@ import { environmentPresentations } from "~/state/presentation";
 import { environmentSession, readEnvironmentScope, readPreparedConnection } from "~/state/session";
 
 import { accountsState } from "./accountsState";
+import { activeProfiles } from "./activeProfiles";
 
 export type RouteRefusal = "relay" | "unencrypted";
 
@@ -168,8 +168,9 @@ function routeOf(registry: AtomRegistry.AtomRegistry, environmentId: Environment
   } as const;
 }
 
-const persistentProfiles = () =>
-  resolveBrowserProfiles(getClientSettings().browserProfiles).filter(
+/** Without the desktop's records yet, none counts as merged into Main. */
+const persistentProfiles = (snapshot: AccountsSnapshot | undefined) =>
+  activeProfiles(getClientSettings().browserProfiles, snapshot?.profiles ?? []).filter(
     (profile) => profile.kind === "persistent",
   );
 
@@ -226,7 +227,7 @@ export function watchRemoteSessions(
       remoteId: environmentId,
       remoteLabel: route.label,
       profiles: () =>
-        persistentProfiles().map(({ id }) => ({
+        persistentProfiles(desktop()).map(({ id }) => ({
           profileId: id,
           record: recordOf(desktop(), id),
         })),
@@ -336,7 +337,7 @@ export function watchRemoteSessions(
       route.identity,
       // A unit held for a sign-in goes once that sign-in ends.
       (desktop?.attempts ?? []).map(({ attemptId }) => attemptId),
-      persistentProfiles().map(({ id }) => {
+      persistentProfiles(desktop).map(({ id }) => {
         const record = recordOf(desktop, id);
         return [id, record.send?.head ?? 0, record.access, record.scope, record.scriptSignIn];
       }),
@@ -377,7 +378,7 @@ export async function sendAgain(registry: AtomRegistry.AtomRegistry, primaryId: 
   const desktop = value(
     registry.get(accountsState.snapshot({ environmentId: primaryId, input: {} })),
   );
-  for (const { id } of persistentProfiles())
+  for (const { id } of persistentProfiles(desktop))
     if (shareable(id, recordOf(desktop, id)))
       await call(registry, accountsState.profileResend, primaryId, {
         profileId: BrowserProfileId.make(id),

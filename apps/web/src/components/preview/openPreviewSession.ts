@@ -15,6 +15,7 @@ import { BrowserSettingsReadError, isBrowserSettingsReadError } from "~/browser/
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 // SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { activeProfileId } from "~/scient/accounts/activeProfiles";
 import { openProfileId } from "~/scient/accounts/openProfile";
 // SCIENT-FORK:END
 
@@ -44,7 +45,10 @@ export async function openPreviewSession<E>(
     return AsyncResult.failure(Cause.fail(defaults));
   }
   // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
-  const profileId = input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults));
+  const profileId =
+    input.profileId === undefined
+      ? await openProfileId(input.threadRef, input.url, defaults)
+      : activeProfileId(input.profileId);
   input.assertCurrent?.();
   // SCIENT-FORK:END
   const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);

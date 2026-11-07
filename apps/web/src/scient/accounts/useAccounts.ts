@@ -52,18 +52,14 @@ export function useAccountCommand<A, E, I>(
       }
       return { ok: true, value };
     }
-    toastAccountFailure(result.cause);
+    // Account errors are written for the user; anything else stays generic.
+    const error = Cause.squash(result.cause);
+    toastManager.add({
+      type: "error",
+      title: isAccountsError(error) ? error.message : "Account action failed",
+    });
     return { ok: false };
   };
-}
-
-/** Account errors are written for the user; anything else stays generic. */
-export function toastAccountFailure(cause: Cause.Cause<unknown>) {
-  const error = Cause.squash(cause);
-  toastManager.add({
-    type: "error",
-    title: isAccountsError(error) ? error.message : "Account action failed",
-  });
 }
 
 export function usePasswordStorePermission(environmentId: EnvironmentId) {
