@@ -215,7 +215,7 @@ it("reconciles a computer this desktop forgot: the jar whole, and copies it no l
   ]);
 });
 
-it("sends nothing more of a profile merged into Main or dropped while its read was pending", async () => {
+it("skips a profile merged into Main or dropped while its read was pending", async () => {
   for (const change of ["retired", "dropped"] as const) {
     const { deps, sent } = fixture({
       log: { head: 2, units: [{ sites: ["github.com"], revision: 2, kind: "copy" }] },
@@ -242,7 +242,7 @@ it("sends nothing more of a profile merged into Main or dropped while its read w
           : [];
       return units;
     };
-    await expect(deliverOnce(deps)).rejects.toMatchObject({ _tag: "DeliveryStopped" });
+    await expect(deliverOnce(deps)).resolves.toEqual({ waiting: 0 });
     expect(sent).toEqual([]);
     expect(deps.withdraw).not.toHaveBeenCalled();
   }

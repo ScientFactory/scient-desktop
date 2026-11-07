@@ -143,8 +143,8 @@ export async function deliverOnce(deps: DeliveryDeps): Promise<{ readonly waitin
     const hold = () => {
       check();
       const now = recordOf(profileId);
-      if (!now) throw new DeliveryStopped({ message: "profile gone" });
-      if (!sameProfileControls(now, record)) throw new ControlsChanged();
+      // Gone or merged: planned again, it sends nothing; the other profiles go on.
+      if (!now || !sameProfileControls(now, record)) throw new ControlsChanged();
     };
     const isShareable = shareable(profileId, record);
     const applied = await deps.applied(profileId, key);
