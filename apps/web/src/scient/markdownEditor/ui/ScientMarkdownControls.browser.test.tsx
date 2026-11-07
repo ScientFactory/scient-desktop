@@ -576,6 +576,12 @@ describe("formatting menu focus", () => {
     expect(grid.dataset.scientTableSizeOrigin).toBe("left");
     expect(grid.dir).toBe("ltr");
     const sizeLabel = picker.querySelector<HTMLElement>("[data-scient-table-size-label]")!;
+    const threeByThree = picker.querySelector<HTMLElement>(
+      '[aria-label="Insert table with 3 columns × 3 rows"]',
+    )!;
+    // The menu moves focus into the grid a frame after it opens, and the picker sends it on to
+    // 3 × 3. A pointer arriving before that focus would be overruled by it.
+    await vi.waitFor(() => expect(document.activeElement).toBe(threeByThree));
     expect(sizeLabel.textContent).toBe("3 × 3");
     const sixByThree = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 6 columns × 3 rows"]',
@@ -589,9 +595,6 @@ describe("formatting menu focus", () => {
     );
     expect(insertTable).not.toHaveBeenCalled();
 
-    const threeByThree = picker.querySelector<HTMLElement>(
-      '[aria-label="Insert table with 3 columns × 3 rows"]',
-    )!;
     await act(() => threeByThree.focus());
     await act(() => {
       threeByThree.dispatchEvent(
