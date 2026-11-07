@@ -426,5 +426,13 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
       );
     },
     generateReviewGuide: () => Effect.fail(investigationUnsupported("generateReviewGuide", "OMP")),
+    // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
+    generateTranscriptionPostProcessing: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "OMP does not clean up voice transcripts.",
+        }),
+      ),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

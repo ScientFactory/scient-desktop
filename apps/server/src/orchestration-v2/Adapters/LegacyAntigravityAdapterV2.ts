@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeAgySession } from "../../provider/antigravity/AgySession.ts";
+import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "../../provider/antigravity/WorkspaceInstructions.ts";
 import type { ServerConfig } from "../../config.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
@@ -87,6 +88,9 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
           .pipe(Effect.provideService(Scope.Scope, scope));
         yield* options.fileSystem.chmod(attachmentStagingDir, 0o700);
         let conversationId = input.initialNativeThreadId;
+        // agy has no system-prompt channel, so the first prompt of each process carries
+        // the file-tool rule in its own block; the user's text follows unchanged.
+        let workspaceRuleSent = false;
         const effort = getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort");
         const launch = (nativeId: string | undefined) =>
           makeAgySession({
@@ -154,9 +158,13 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
                   `[Attached ${attachment.type} "${attachment.name}" is available at: ${staged}]`,
                 );
               }
-              const text = [turnInput.message.text, ...attachmentLines]
+              const userText = [turnInput.message.text, ...attachmentLines]
                 .filter(Boolean)
                 .join("\n\n");
+              const text = workspaceRuleSent
+                ? userText
+                : `<scient_instructions>\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS.trim()}\n</scient_instructions>\n\n${userText}`;
+              workspaceRuleSent = true;
               yield* onUpdate({ type: "offered", nativeTurnId });
               yield* session
                 .prompt({
@@ -249,6 +257,7 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
               yield* session.close;
               session = yield* launch(nativeId);
               conversationId = nativeId;
+              workspaceRuleSent = false;
             },
             (effect, _argument0) => effect.pipe(Effect.mapError(nativeSessionFailure)),
           ),

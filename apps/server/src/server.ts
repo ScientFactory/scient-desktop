@@ -47,6 +47,10 @@ import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
+import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
+import * as SpeechService from "./speech/SpeechService.ts";
+import { speechHttpApiLayer } from "./speech/http.ts";
+import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -231,6 +235,9 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
+// SCIENT-FORK:START — generated-image temp files a crash left behind.
+import { generatedImageTempSweepLayer } from "./generatedImageAttachments.ts";
+// SCIENT-FORK:END
 import { conversationImportUploadRouteLayer } from "./scient/conversationImport/http.ts";
 import {
   makeScientRouteServices,
@@ -854,6 +861,7 @@ export const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(PullRequestHttp.layer),
       ScientRouteServices.provideScientHttpApiGroups,
       Layer.provide(ProjectHttp.layer),
+      Layer.provide(speechHttpApiLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -874,6 +882,10 @@ export const layerMakeRoutes = Layer.mergeAll(
     wordDiagramRequestBodyLayer,
     scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
+    // SCIENT-FORK:START — generated-image temp files a crash left behind.
+    generatedImageTempSweepLayer,
+    // SCIENT-FORK:END
+    speechStreamRouteLayer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
@@ -911,6 +923,13 @@ export const layerMakeRoutes = Layer.mergeAll(
       Layer.provideMerge(PeerLinks.layer),
     ),
   ),
+  Layer.provide(
+    SpeechService.layer.pipe(
+      Layer.provide(layerServerSettings),
+      Layer.provide(SpeechModelStore.layer),
+    ),
+  ),
+  Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   ScientRouteServices.provideScientRouteServices,
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),

@@ -62,7 +62,12 @@ describe("RPC authorization scopes", () => {
       const handler = group.toLayerHandler(tag, ({ kind }) =>
         Effect.sync(() => {
           accesses.push(kind);
-          return { labels: [{ name: "bug", color: null }], authors: [], truncated: false };
+          return {
+            labels: [{ name: "bug", color: null }],
+            authors: [],
+            references: [],
+            truncated: false,
+          };
         }),
       );
       const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
@@ -551,6 +556,12 @@ describe("settings mutation authorization", () => {
         yield* client[WS_METHODS.serverUpdateSettings]({
           patch: { defaultRuntimeMode: "full-access" },
           providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      // Removing a secret provider clears settings fields that read from it.
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       expect(handled).toBe(2);

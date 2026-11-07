@@ -206,7 +206,7 @@ describe("CI workflow decisions", () => {
     },
   );
 
-  it("has one required gate covering every job, eight server shards and three hosted web shards", () => {
+  it("has one required gate covering every job, twelve server shards and six hosted web shards", () => {
     expect(workflow.jobs.check).toMatchObject({ name: "Check", if: "${{ always() }}" });
     expect([...(workflow.jobs.check!.needs as string[])].sort()).toEqual(
       Object.keys(workflow.jobs)
@@ -216,11 +216,11 @@ describe("CI workflow decisions", () => {
     expect(workflow.jobs.lint!.name).toBe("Lint");
     expect(workflow.jobs.test_server).toMatchObject({
       "timeout-minutes": 20,
-      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8] } },
+      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } },
     });
     expect(workflow.jobs.test_web).toMatchObject({
       "runs-on": "ubuntu-24.04",
-      strategy: { matrix: { shard: [1, 2, 3] } },
+      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6] } },
     });
   });
 
@@ -368,23 +368,23 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 20],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 26],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 20],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 30],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 36],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 30],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 34],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 33],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 44],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 43],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      42,
+      53,
     ],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 29],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 20],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
-    ["main push", "docs/operations/development.md", "push", false, 45],
+    ["main push", "docs/operations/development.md", "push", false, 56],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {
@@ -412,9 +412,28 @@ describe("CI workflow decisions", () => {
     const test = workflow.jobs.test!.steps!.find((step) => step.name === "Test")!;
     expect(test.env).toBeUndefined();
     expect(test.run).toContain(
-      "vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test 2>&1",
+      "vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test 2>&1",
     );
     expect(test.run).not.toContain("TEST_PACKAGES");
+    // Part 1 runs everything except the server, web and root packages and what parts 2 and 3
+    // name, so the parts together run every workspace exactly once.
+    const parts = (
+      workflow.jobs.test!.strategy!.matrix as unknown as {
+        include: Array<{ part: number; packages: string }>;
+      }
+    ).include;
+    expect(parts.map((part) => part.part)).toEqual([1, 2, 3]);
+    const filters = (packages: string) =>
+      [...packages.matchAll(/--filter '?([^' ]+)'?/g)].map((match) => match[1]!);
+    const named = parts.slice(1).flatMap((part) => filters(part.packages));
+    expect(named.every((name) => !name.startsWith("!"))).toBe(true);
+    expect(new Set(named).size).toBe(named.length);
+    expect(filters(parts[0]!.packages).toSorted()).toEqual(
+      ["!t3", "!@t3tools/monorepo", "!@t3tools/web", ...named.map((name) => `!${name}`)].toSorted(),
+    );
+    expect(workflow.jobs.test!.name).toBe(
+      "${{ matrix.part == 1 && 'Test' || format('Test {0}', matrix.part) }}",
+    );
     for (const id of ["build", "test", "test_web", "test_server"])
       expect(workflow.jobs[id]!.if).not.toContain("needs.changes.outputs");
   });

@@ -1318,8 +1318,14 @@ const make = Effect.gen(function* () {
           )
           .pipe(
             Effect.catchTags({
-              CheckoutRecoveryRequiredError: () =>
-                Effect.succeed("an unfinished Overleaf sync needs recovery first"),
+              CheckoutRecoveryRequiredError: (error) =>
+                Effect.succeed(
+                  error.reason === "unreadable-record"
+                    ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
+                    : error.reason === "newer-unfinished-record"
+                      ? "a newer version of Scient left an Overleaf sync unfinished; finish it there"
+                      : "an unfinished Overleaf sync needs recovery first",
+                ),
               CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
             }),
           );
@@ -1610,9 +1616,12 @@ const make = Effect.gen(function* () {
           )
             return Effect.void;
         }
-        return anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
-          ? requestSweep
-          : Effect.void;
+        if (!anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)) return Effect.void;
+        return event.type === "provider-session.updated" && event.payload.status === "error"
+          ? providerSessions
+              .isLive(event.payload.id)
+              .pipe(Effect.flatMap((live) => (live ? Effect.void : requestSweep)))
+          : requestSweep;
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Storage cleanup event stream failed", { cause }),

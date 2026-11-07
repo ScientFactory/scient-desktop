@@ -104,6 +104,7 @@ type DroidSteerOwnerTurn = {
   readonly finalized: boolean;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   readonly tools: ReadonlyMap<string, unknown>;
+  readonly toolPresentation?: { readonly outlivesTurn?: (toolCallId: string) => boolean };
 };
 
 type DroidSteerRuntimeMethods = Pick<
@@ -123,6 +124,7 @@ type DroidSteerRuntimeMethods = Pick<
  */
 export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(input: {
   readonly enabled: boolean;
+  readonly holdsSteer?: () => Effect.Effect<boolean>;
   readonly testHooks:
     | {
         readonly afterDroidDecodedBatchBegin?: () => Effect.Effect<void>;
@@ -227,10 +229,12 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
         }
       }
     },
-    /** A new root prompt owns readiness; its predecessor's tools are retired. */
+    /** A new root prompt owns readiness; its predecessor's tools retire, unless they outlive it. */
     adopt(context: Turn) {
       if (enabled) {
-        for (const id of droidOwner?.droidSteerSafety?.toolIds() ?? []) retiredDroidToolIds.add(id);
+        const previous = droidOwner;
+        for (const id of previous?.droidSteerSafety?.toolIds() ?? [])
+          if (previous?.toolPresentation?.outlivesTurn?.(id) !== true) retiredDroidToolIds.add(id);
         while (retiredDroidToolIds.size > 2_000)
           retiredDroidToolIds.delete(retiredDroidToolIds.values().next().value!);
         invalidateDroidSteer();
@@ -270,21 +274,23 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
               consumedDroidLease !== undefined &&
               (lease === undefined || consumedDroidLease === lease),
             reserveDroidSteer: (identity) =>
-              Effect.sync(() => {
-                if (
-                  droidClosed ||
-                  droidBatchDepth !== 0 ||
-                  droidPendingRequestCount !== 0 ||
-                  droidOwner?.providerTurnId !== identity.providerTurnId ||
-                  droidOwner.input.attemptId !== identity.attemptId ||
-                  droidOwner.interrupted
-                )
-                  return undefined;
-                const id = droidOwner.droidSteerSafety?.reserve(identity.revision);
-                if (id !== undefined)
-                  droidLease = { id, epoch: droidBatchEpoch, context: droidOwner };
-                return id;
-              }).pipe(
+              (input.holdsSteer?.() ?? Effect.succeed(false)).pipe(
+                Effect.map((holds) => {
+                  if (
+                    holds ||
+                    droidClosed ||
+                    droidBatchDepth !== 0 ||
+                    droidPendingRequestCount !== 0 ||
+                    droidOwner?.providerTurnId !== identity.providerTurnId ||
+                    droidOwner.input.attemptId !== identity.attemptId ||
+                    droidOwner.interrupted
+                  )
+                    return undefined;
+                  const id = droidOwner.droidSteerSafety?.reserve(identity.revision);
+                  if (id !== undefined)
+                    droidLease = { id, epoch: droidBatchEpoch, context: droidOwner };
+                  return id;
+                }),
                 Effect.tap((id) =>
                   id === undefined
                     ? Effect.void

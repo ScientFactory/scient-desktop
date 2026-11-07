@@ -619,6 +619,26 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6577c6b6185167c0e502fa01f9e8e8f2dee6ff25` is recorded in
+[the 2026-11-06 6577c6b618 receipt](docs/internals/t3-upstream-sync-20261106-6577c6b618.md).
+Literal merge `2a52792f87706bd55cee4aaced2c1bd1ad90719c` has owned base
+`d733f61e1df59ceab8ccc4c340f6b588bf105272` and the frozen official target as parents, retaining
+the 194 official commits after `4aab23cd72`. Provider writes are batched per transaction, secret
+requests and provider credentials can use a secret provider, PR comments reach the chat, and
+Ultracode works at any effort. T3's local voice engine is merged but dormant until the voice
+decision; Scient's voice stays the one users see. No migrations. Release remains separate.
+
+The previous committed alignment through
+`4aab23cd72d71ab3b58878482f3d22f93a088125` is recorded in
+[the 2026-11-05 4aab23cd72 receipt](docs/internals/t3-upstream-sync-20261105-4aab23cd72.md).
+Literal merge `eb043f39aaa91ab794aae028ea3cb6c75d26615d` has owned base
+`e3e90a0f7437ff4d66dff2374d2dc52cae7c890d` and the frozen official target as parents, retaining
+the 18 official commits after `67eebaca23`. A message can start a fresh session in the same thread
+(`/clear`, and scheduled tasks that reuse one thread), side chats inherit the parent's permissions,
+a thread with a pending question can be snoozed, and threads follow their worktree's branch. T3's
+migration 80 lands at Scient's 084. Release remains separate.
+
+An earlier committed alignment through
 `67eebaca23f8f7bc46e8817434087fc9c5acf8e3` is recorded in
 [the 2026-11-05 67eebaca23 receipt](docs/internals/t3-upstream-sync-20261105-67eebaca23.md).
 Literal merge `db85f90ef1a339864f8b33da730b3fca03959fe0` has owned base
@@ -628,7 +648,7 @@ the 32 official commits after `a21d788752`. T3's stricter Effect rules now cover
 idle agent tabs free a slot at the server's tab limit, silent Antigravity prompts time out, and
 clones can use host/owner/repo folders. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `a21d788752695764028e6d26ba924f3963e05806` is recorded in
 [the 2026-11-05 a21d788752 receipt](docs/internals/t3-upstream-sync-20261105-a21d788752.md).
 Literal merge `de156f96e8b0e9a55a7231bd39f7e4cdf3d097aa` has owned base

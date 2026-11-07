@@ -106,10 +106,30 @@ describe("Compute CI suite selection", () => {
         managed_python: {
           steps: expect.arrayContaining([
             expect.objectContaining({
+              name: "Qualify recipes",
+              if: "${{ matrix.runner != 'windows-2025' }}",
+              "working-directory": "apps/server",
+              env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
+              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1",
+            }),
+            expect.objectContaining({
               name: "Qualify base, every toolkit combination, and retained kernels",
               "working-directory": "apps/server",
               env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
-              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1 && vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1",
+              run: "vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1",
+            }),
+          ]),
+        },
+        // Windows, where managed_python is longest, qualifies recipes beside it.
+        managed_recipes: {
+          if: "${{ inputs.managed_python && inputs.platforms != 'linux' }}",
+          "runs-on": "windows-2025",
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              name: "Qualify recipes",
+              "working-directory": "apps/server",
+              env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
+              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1",
             }),
           ]),
         },

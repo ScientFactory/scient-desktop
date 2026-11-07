@@ -935,7 +935,12 @@ it.effect.each([{ name: "same-provider", sameProvider: true }] as const)(
         createdBy: "user",
         creationSource: "web",
       });
-      yield* worker.drain();
+      // Background writes can wait behind queued provider batches; drain until the run starts.
+      // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- the run's start effect has no signal to await; drains are bounded.
+      for (let attempt = 0; attempt < 50 && opened.length === 0; attempt += 1) {
+        yield* worker.drain();
+        if (opened.length === 0) yield* Effect.yieldNow;
+      }
 
       const projection = yield* orchestrator.getThreadProjection(targetThreadId);
       // SCIENT-FORK:START
@@ -1263,12 +1268,37 @@ it.effect("a side chat of an idle parent still starts with the framing note", ()
     });
 
     yield* forkSideChat("side-chat-idle-fork", parentId, sideChatId);
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(sideChatId)).thread.runtimeMode,
+      "full-access",
+    );
+    yield* orchestrator.dispatch({
+      type: "thread.runtime-mode.set",
+      commandId: CommandId.make("side-chat-parent-mode-change"),
+      threadId: parentId,
+      runtimeMode: "approval-required",
+    });
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(sideChatId)).thread.runtimeMode,
+      "full-access",
+    );
+    yield* orchestrator.dispatch({
+      type: "thread.runtime-mode.set",
+      commandId: CommandId.make("side-chat-child-mode-change"),
+      threadId: sideChatId,
+      runtimeMode: "auto",
+    });
     yield* askSideChat(sideChatId, "side-chat-idle-first-message", {
       ...forkCases[0]!.modelSelection,
       model: "side-chat-model",
     });
 
     const started = yield* orchestrator.getThreadProjection(sideChatId);
+    assert.equal(started.thread.runtimeMode, "auto");
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(parentId)).thread.runtimeMode,
+      "approval-required",
+    );
     assert.isNotNull(started.providerThreads[0]?.forkedFrom);
     // The side chat does not show the parent's run, so it is no baseline.
     assert.isFalse(
@@ -1414,7 +1444,7 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
     yield* fork("side-chat-busy-fork", parentId, sideChatId);
     const created = yield* orchestrator.getThreadProjection(sideChatId);
     assert.isTrue(created.thread.lineage.sideChat);
-    assert.equal(created.thread.runtimeMode, "approval-required");
+    assert.equal(created.thread.runtimeMode, "full-access");
     assert.isNull(created.thread.forkedFrom);
     assert.deepEqual(created.contextTransfers[0]?.sourcePoint, { threadId: parentId });
 

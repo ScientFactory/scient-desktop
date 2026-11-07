@@ -509,5 +509,13 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
     generateThreadTitle,
     generateReviewGuide: () =>
       Effect.fail(investigationUnsupported("generateReviewGuide", "Droid")),
+    // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
+    generateTranscriptionPostProcessing: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "Droid does not clean up voice transcripts.",
+        }),
+      ),
   } satisfies TextGeneration.TextGeneration["Service"];
 });
