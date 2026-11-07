@@ -72,11 +72,15 @@ jobs:
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+      # No package cache in this workflow: on the Macs restoring the 0.9–1.6 GB store took longer
+      # than installing the filtered workspace from the registry (Apple Silicon 102–174 s against
+      # 41–52 s), and the cache's post step packed it again after every job. Windows and Linux
+      # measured the same either way.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
@@ -131,7 +135,7 @@ jobs:
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
@@ -148,20 +152,21 @@ jobs:
 
   real_kernel:
     if: ${{ inputs.real_kernel }}
-    name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
+    name: Real kernel / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         runner: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"]') }}
-        # Both ends of the supported range, because the failures this suite
-        # catches are version-dependent asyncio and kernel-startup behaviour:
-        # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
-        # user is most likely to already have.
-        python: ["3.10", "3.12"]
-
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -174,29 +179,69 @@ jobs:
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
 
-      - name: Setup Python ${{ matrix.python }}
+      # Both ends of the supported range, because the failures this suite
+      # catches are version-dependent asyncio and kernel-startup behaviour:
+      # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current
+      # user is most likely to already have. One job runs both, one after the
+      # other: a runner's setup costs more than the suite, and Mac runners are
+      # the scarcest.
+      - name: Setup Python 3.10
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.10"
 
-      - name: Install kernel dependencies
-        shell: bash
+      # Importing the font manager builds matplotlib's font cache: over a minute on a fresh
+      # Windows runner, which otherwise lands inside the suite's 90-second figure step.
+      - name: Install kernel dependencies on Python 3.10
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
+          python -c "import matplotlib.font_manager"
 
       # The absolute path rather than `python`: this value becomes the launch
       # plan's executable, so resolving it once here is what makes the kernel
-      # under test the interpreter this job set up.
-      - name: Run the real-kernel integration suite
+      # under test the interpreter this step set up.
+      - name: Run the real-kernel integration suite on Python 3.10
         working-directory: apps/server
-        shell: bash
+        env:
+          # Headless runners have no display, and a figure that opened a window
+          # would hang the execution the test is waiting on.
+          MPLBACKEND: Agg
+        run: |
+          set -euo pipefail
+          SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export SCIENT_TEST_PYTHON
+          vp test run \
+            src/scient/compute/PythonKernel.integration.test.ts \
+            src/scient/compute/PythonComputeService.integration.test.ts \
+            src/scient/compute/FreshCompute.integration.test.ts \
+            src/preview/PortScannerPythonCompute.integration.test.ts
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      # Importing the font manager builds matplotlib's font cache: over a minute on a fresh
+      # Windows runner, which otherwise lands inside the suite's 90-second figure step.
+      - name: Install kernel dependencies on Python 3.12
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
+          python -c "import matplotlib.font_manager"
+
+      # The absolute path rather than `python`: this value becomes the launch
+      # plan's executable, so resolving it once here is what makes the kernel
+      # under test the interpreter this step set up.
+      - name: Run the real-kernel integration suite on Python 3.12
+        working-directory: apps/server
         env:
           # Headless runners have no display, and a figure that opened a window
           # would hang the execution the test is waiting on.
@@ -224,6 +269,10 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -236,7 +285,7 @@ jobs:
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=t3...
