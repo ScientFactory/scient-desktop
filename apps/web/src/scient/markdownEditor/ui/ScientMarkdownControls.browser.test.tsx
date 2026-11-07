@@ -12,6 +12,22 @@ import { scientMarkdownShortcut } from "../shortcuts";
 import { ScientMarkdownControls } from "./ScientMarkdownControls";
 import { ScientMarkdownFooter } from "./ScientMarkdownFooter";
 
+/**
+ * The table picker once the menu's opening focus has landed. The menu moves focus into the grid a
+ * frame after the picker appears, and the picker sends it on to 3 × 3; a pointer arriving first
+ * would be overruled by that focus.
+ */
+async function openedTableSizePicker() {
+  return vi.waitFor(() => {
+    const picker = document.body.querySelector<HTMLElement>("[data-scient-table-size-picker]");
+    expect(picker).not.toBeNull();
+    expect(document.activeElement).toBe(
+      picker!.querySelector('[aria-label="Insert table with 3 columns × 3 rows"]'),
+    );
+    return picker!;
+  });
+}
+
 describe("formatting menu focus", () => {
   async function _cleanupFixture0(_fixture: _Fixture) {
     for (const cleanup of _fixture.cleanups.splice(0)) await cleanup();
@@ -563,11 +579,7 @@ describe("formatting menu focus", () => {
       tableTrigger.click();
     });
 
-    const picker = await vi.waitFor(() => {
-      const element = document.body.querySelector<HTMLElement>("[data-scient-table-size-picker]");
-      expect(element).not.toBeNull();
-      return element!;
-    });
+    const picker = await openedTableSizePicker();
     const choices = picker.querySelectorAll<HTMLElement>('[role="menuitem"]');
     expect(choices).toHaveLength(64);
     const grid = picker.querySelector<HTMLElement>("[data-scient-table-size-columns]")!;
@@ -579,9 +591,6 @@ describe("formatting menu focus", () => {
     const threeByThree = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 3 columns × 3 rows"]',
     )!;
-    // The menu moves focus into the grid a frame after it opens, and the picker sends it on to
-    // 3 × 3. A pointer arriving before that focus would be overruled by it.
-    await vi.waitFor(() => expect(document.activeElement).toBe(threeByThree));
     expect(sizeLabel.textContent).toBe("3 × 3");
     const sixByThree = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 6 columns × 3 rows"]',
@@ -642,11 +651,7 @@ describe("formatting menu focus", () => {
       tableTrigger.focus();
       tableTrigger.click();
     });
-    let picker = await vi.waitFor(() => {
-      const element = document.body.querySelector<HTMLElement>("[data-scient-table-size-picker]");
-      expect(element).not.toBeNull();
-      return element!;
-    });
+    let picker = await openedTableSizePicker();
     const grid = picker.querySelector<HTMLElement>("[data-scient-table-size-columns]")!;
     const viewport = picker.querySelector<HTMLElement>("[data-scient-table-size-viewport]")!;
     const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
@@ -717,11 +722,7 @@ describe("formatting menu focus", () => {
       tableTrigger.focus();
       tableTrigger.click();
     });
-    picker = await vi.waitFor(() => {
-      const element = document.body.querySelector<HTMLElement>("[data-scient-table-size-picker]");
-      expect(element).not.toBeNull();
-      return element!;
-    });
+    picker = await openedTableSizePicker();
     expect(picker.querySelector<HTMLElement>("[data-scient-table-size-label]")?.textContent).toBe(
       "3 × 3",
     );
@@ -744,11 +745,7 @@ describe("formatting menu focus", () => {
       tableTrigger.focus();
       tableTrigger.click();
     });
-    const picker = await vi.waitFor(() => {
-      const element = document.body.querySelector<HTMLElement>("[data-scient-table-size-picker]");
-      expect(element).not.toBeNull();
-      return element!;
-    });
+    const picker = await openedTableSizePicker();
     const grid = picker.querySelector<HTMLElement>("[data-scient-table-size-columns]")!;
     const viewport = picker.querySelector<HTMLElement>("[data-scient-table-size-viewport]")!;
     const sizeLabel = picker.querySelector<HTMLElement>("[data-scient-table-size-label]")!;
@@ -829,11 +826,7 @@ describe("formatting menu focus", () => {
       tableTrigger.focus();
       tableTrigger.click();
     });
-    const picker = await vi.waitFor(() => {
-      const element = document.body.querySelector<HTMLElement>("[data-scient-table-size-picker]");
-      expect(element).not.toBeNull();
-      return element!;
-    });
+    const picker = await openedTableSizePicker();
     const grid = picker.querySelector<HTMLElement>("[data-scient-table-size-columns]")!;
     const popup = picker.closest<HTMLElement>("[data-slot='menu-sub-content']")!;
     const positioner = popup.closest<HTMLElement>("[data-slot='menu-positioner']")!;
