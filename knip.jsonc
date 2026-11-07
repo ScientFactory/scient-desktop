@@ -124,6 +124,8 @@
         "scripts/prepare-dev-app-bundle.mjs",
         // Spawned by githubChannels.test.ts to exercise the locked Electron updater.
         "scripts/qualify-update-channels.cjs",
+        // Run by hand against a dev app to qualify session copies on each platform.
+        "scripts/qualify-session-copy.mjs",
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.

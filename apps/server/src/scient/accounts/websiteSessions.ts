@@ -21,6 +21,8 @@ export function endedWebsiteSessions(
 ): ReadonlyArray<AccountId> {
   return accounts.flatMap((account) => {
     if (account.details.kind !== "website") return [];
+    // Imported and copied rows are no evidence of a session, so its cookies leaving say nothing.
+    if (account.signIn?.from !== undefined) return [];
     // Without a named profile, sign-ins and "Open site" use the user's default profile.
     const { sites, profileId = defaultProfileId } = account.details;
     const hosts = sites.flatMap((site) => {

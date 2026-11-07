@@ -309,6 +309,39 @@ describe.runIf(enabled)("kernel language integration", () => {
           const userDepotExisted = NodeFS.existsSync(userDepot);
           const { session } = yield* kernelSession(JULIA_KERNEL_LANGUAGE, makeProject());
           expect(text(yield* execute(session, "x = 41 + 1"))).toContain("42");
+          // The person's depot stays first and Scient's comes last, on every Julia version.
+          const ownDepot = NodeChildProcess.execFileSync(
+            "julia",
+            ["--startup-file=no", "-e", "print(DEPOT_PATH[1])"],
+            { encoding: "utf8" },
+          );
+          expect(
+            text(
+              yield* execute(
+                session,
+                `(DEPOT_PATH[1] == ${JSON.stringify(ownDepot)}, basename(DEPOT_PATH[end]))`,
+              ),
+            ),
+          ).toContain('(true, "depot")');
+          // The probe reads the version of an IJulia it finds, as it does for a person's own.
+          const kernels = NodePath.join(KERNEL_DIR!, "kernels", "julia");
+          const installed = NodeFS.readdirSync(kernels)
+            .map((name) => NodePath.join(kernels, name))
+            .find((directory) => NodeFS.existsSync(NodePath.join(directory, "environment")));
+          const separator = NodePath.delimiter;
+          const probe = NodeChildProcess.execFileSync(
+            "julia",
+            [...JULIA_KERNEL_LANGUAGE.probeArgs],
+            {
+              encoding: "utf8",
+              env: {
+                ...NodeProcess.env,
+                JULIA_DEPOT_PATH: `${NodePath.join(installed!, "depot")}${separator}`,
+                JULIA_LOAD_PATH: `${NodePath.join(installed!, "environment")}${separator}@stdlib`,
+              },
+            },
+          );
+          expect(probe.trim().split("\t").at(-1)).toMatch(/^\d+\.\d+\.\d+/u);
           expect(errorOf(yield* execute(session, 'error("boom")'))?.value).toContain("boom");
           expect(text(yield* execute(session, 'HTML("<b>bold</b>")'), "text/html")).toContain(
             "<b>bold</b>",

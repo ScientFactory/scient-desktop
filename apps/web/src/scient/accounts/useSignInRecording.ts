@@ -7,14 +7,14 @@ import { isIdentityProvider, signedInSite, type CookieMetadata } from "./session
 import { accountsState } from "./accountsState";
 import { profileAccounts } from "./accountsView";
 import { useAccountCommand } from "./useAccounts";
-import { isSigningIn } from "./useAccountBrowser";
 
-const recorded = new Set<string>();
+/** Returns being recorded now, so two views of one tab record it once. */
+const recording = new Set<string>();
 
 /**
- * Records a sign-in through Google, a university or another identity provider as a website
- * account for this profile, without asking: it holds no password, only the fact that the
- * profile is signed in there. A toast offers Undo.
+ * Records a sign-in through Google, a university or another identity provider on this profile's
+ * session row for the site, without asking: the row holds no password, only the fact that the
+ * profile is signed in there. A new row gets a toast offering Undo.
  */
 export function useSignInRecording(input: {
   environmentId: EnvironmentId;
@@ -22,8 +22,13 @@ export function useSignInRecording(input: {
   tabId: string;
   url: string;
   accounts: ReadonlyArray<AccountSummary>;
+  /** The server keeps sessions seen (`accounts.sessionsSeen`); an older one only saves rows. */
+  sessionsSeen: boolean;
+  /** This tab's sign-in is Scient's own while it runs: its outcome is recorded there. */
+  signingIn: boolean;
   enabled: boolean;
 }) {
+  const seen = useAccountCommand(accountsState.sessionsSeen, input.environmentId);
   const save = useAccountCommand(accountsState.save, input.environmentId);
   const remove = useAccountCommand(accountsState.remove, input.environmentId);
   const profiles = useClientSettings((settings) => settings.browserProfiles);
@@ -36,44 +41,56 @@ export function useSignInRecording(input: {
     cookies: Promise<ReadonlyArray<CookieMetadata> | null>;
     announced?: boolean;
   } | null>(null);
+  const record = async (site: string) => {
+    if (input.sessionsSeen) {
+      const result = await seen({
+        profileId: input.profileId,
+        sessions: [{ site, how: "signed-in" }],
+      });
+      return result.ok ? result.value.created[0] : undefined;
+    }
+    if (profileAccounts(input.accounts, input.url, input.profileId, newTabProfileId).length > 0)
+      return undefined;
+    const result = await save({
+      name: site,
+      details: {
+        kind: "website",
+        sites: [site],
+        profileId: input.profileId,
+        origin: "browser-session",
+      },
+      secrets: {},
+    });
+    return result.ok ? result.value.accountId : undefined;
+  };
   const inspect = useEffectEvent(
     (
       previousUrl: string,
       before: ReadonlyArray<CookieMetadata>,
       after: ReadonlyArray<CookieMetadata>,
     ) => {
-      if (isSigningIn(input.environmentId, input.profileId, input.url)) return false;
+      if (input.signingIn) return false;
       // Where a university's own sign-in link lands is that sign-in, not a new site.
       if (universitiesOf(input.accounts).length > 0 && signInReturn(input.url)) return false;
-      const site = signedInSite({
-        previousUrl,
-        url: input.url,
-        before,
-        after,
-        incognito,
-        hasAccount:
-          profileAccounts(input.accounts, input.url, input.profileId, newTabProfileId).length > 0,
-      });
+      const site = signedInSite({ previousUrl, url: input.url, before, after, incognito });
       if (site === null) return false;
       const key = `${input.environmentId}:${input.profileId}:${site}`;
-      if (recorded.has(key)) return true;
-      recorded.add(key);
+      if (recording.has(key)) return true;
+      recording.add(key);
       const profileName = profiles.find((profile) => profile.id === input.profileId)?.name;
-      void save({
-        name: site,
-        details: { kind: "website", sites: [site], profileId: input.profileId },
-        secrets: {},
-      }).then((result) => {
-        if (!result.ok) return;
-        toastManager.add({
-          type: "success",
-          title: `${site} saved to Accounts${profileName ? ` for ${profileName}` : ""}`,
-          actionProps: {
-            children: "Undo",
-            onClick: () => void remove({ accountId: result.value.accountId }),
-          },
-        });
-      });
+      void record(site)
+        .then((created) => {
+          if (!created) return;
+          toastManager.add({
+            type: "success",
+            title: `${site} saved to Accounts${profileName ? ` for ${profileName}` : ""}`,
+            actionProps: {
+              children: "Undo",
+              onClick: () => void remove({ accountId: created }),
+            },
+          });
+        })
+        .finally(() => recording.delete(key));
       return true;
     },
   );

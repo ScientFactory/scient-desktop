@@ -30,6 +30,7 @@ import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
@@ -86,6 +87,11 @@ import {
   redactString,
 } from "./ConnectorRedaction.ts";
 import { ConnectorSessionBindings } from "./ConnectorSessionBindings.ts";
+import {
+  GitHubSourceControlCredential,
+  isCredentialDestination,
+} from "./GitHubSourceControlCredential.ts";
+import type { SourceControlCredential } from "@t3tools/source-control-core/server/driver";
 import { curatedServerForUrl } from "../discover/curatedCatalog.ts";
 import {
   type ConnectorAuthRecord,
@@ -93,6 +99,7 @@ import {
   type ConnectorStateData,
   makeConnectorStateStore,
 } from "./ConnectorStateStore.ts";
+import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
@@ -104,6 +111,8 @@ const TOKEN_REFRESH_LEEWAY_MS = 60_000;
  */
 export const MAX_IN_FLIGHT_PER_CONNECTOR = 32;
 const MAX_SERVER_NAME_BASE = 44;
+/** Source Control is followed at most this often, from listings and session starts. */
+const FOLLOW_SOURCE_CONTROL_MS = 60_000;
 /** JSON-RPC server-error code for a connector the agent can no longer use. */
 const CONNECTOR_UNAVAILABLE_CODE = -32001;
 const FORBIDDEN_CREDENTIAL_HEADERS: Readonly<Record<string, true>> = {
@@ -130,8 +139,11 @@ type Credential =
       readonly accessToken: string | undefined;
       /** Every credential value applied or held for this request, for redaction. */
       readonly secrets: ReadonlyArray<string | undefined>;
+      /** Borrowed from Source Control, which is told when the service refuses it. */
+      readonly borrowed?: SourceControlCredential;
     }
-  | { readonly type: "lost"; readonly message: string };
+  | { readonly type: "lost"; readonly message: string }
+  | { readonly type: "failed"; readonly message: string };
 
 type SendOutcome =
   | {
@@ -187,6 +199,8 @@ const authSummary = (auth: ConnectorAuthRecord): ConnectorAuthSummary => {
         storage: auth.storage,
         ...(auth.headerName === undefined ? {} : { headerName: auth.headerName }),
       };
+    case "source-control":
+      return { type: "source-control", host: auth.host, account: auth.account };
   }
 };
 
@@ -381,6 +395,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 ) {
   const credentials = yield* ConnectorCredentialStore;
   const accounts = yield* Effect.serviceOption(AccountsService);
+  const github = yield* Effect.serviceOption(GitHubSourceControlCredential);
   const pluginHttp = new Map<
     string,
     {
@@ -573,6 +588,57 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }),
     );
 
+  /** A borrowed credential is back: the connector works again under the same revision. */
+  const markConnected = (record: ConnectorRecord) =>
+    updateRecord(record.connectorId, (current, updatedAt) =>
+      current.authRevision !== record.authRevision || current.status === "connected"
+        ? current
+        : { ...current, status: "connected", lastError: undefined, updatedAt },
+    ).pipe(Effect.ignore);
+
+  const isGitHubDestination = (url: string) =>
+    Option.isSome(github) && isCredentialDestination(url, github.value.mcpUrl);
+
+  const accountGone = (account: string) =>
+    `Source Control no longer has a GitHub sign-in for ${account}. Sign in to GitHub as ${account} again, or remove GitHub and add it with another account.`;
+
+  /** Source Control's credential for the record's own account; never another account's. */
+  const borrow = Effect.fn("ConnectorRuntime.borrow")(function* (
+    record: ConnectorRecord,
+    auth: Extract<ConnectorAuthRecord, { type: "source-control" }>,
+  ) {
+    const lost = { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
+    if (Option.isNone(github) || !isCredentialDestination(record.url, github.value.mcpUrl)) {
+      yield* markStatus(
+        record,
+        "needs-credential",
+        "Scient sends Source Control's GitHub credential only to GitHub's own MCP server.",
+      );
+      return lost;
+    }
+    const lent = yield* github.value.get(auth.host, { account: auth.account }).pipe(Effect.result);
+    if (Result.isFailure(lent)) {
+      yield* Effect.logWarning("connector could not borrow Source Control's credential", {
+        connectorId: record.connectorId,
+      });
+      return { type: "failed", message: lent.failure.message } satisfies Credential;
+    }
+    const borrowed = Option.getOrUndefined(lent.success);
+    const token = borrowed === undefined ? "" : Redacted.value(borrowed.token);
+    if (borrowed === undefined || !isProtectableCredential(token)) {
+      yield* markStatus(record, "needs-credential", accountGone(auth.account));
+      return lost;
+    }
+    if (record.status !== "connected") yield* markConnected(record);
+    return {
+      type: "ok",
+      headers: { authorization: `Bearer ${token}` },
+      accessToken: undefined,
+      secrets: [token],
+      borrowed,
+    } satisfies Credential;
+  });
+
   const readStoredOAuth = Effect.fn("ConnectorRuntime.readStoredOAuth")(function* (
     record: ConnectorRecord,
   ) {
@@ -736,7 +802,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   const credentialFor = Effect.fn("ConnectorRuntime.credentialFor")(function* (
     record: ConnectorRecord,
-    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
+    scope?: McpInvocationScope,
   ) {
     if (!isLive(record.connectorId)) {
       return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
@@ -831,7 +897,59 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           secrets: [...held, ...sessionSecrets(session)],
         } satisfies Credential;
       }
+      case "source-control":
+        return yield* borrow(record, auth);
     }
+  });
+
+  /**
+   * After a 401 to a borrowed credential: Source Control forgets that token, and the request is
+   * sent once more only with a different one for the same account.
+   */
+  const replayBorrowed = Effect.fn("ConnectorRuntime.replayBorrowed")(function* (
+    record: ConnectorRecord,
+    auth: Extract<ConnectorAuthRecord, { type: "source-control" }>,
+    refused: Extract<Credential, { type: "ok" }>,
+    send: (
+      headers: Readonly<Record<string, string>>,
+    ) => Effect.Effect<Exit.Exit<Response, ConnectorUpstreamError>>,
+    scope?: McpInvocationScope,
+  ) {
+    const rejected = Effect.gen(function* () {
+      const message = `GitHub refused Source Control's credential for ${auth.account}. Check the sign-in in Settings → Source Control.`;
+      yield* markStatus(record, "connected", message);
+      return { type: "failed", message } satisfies SendOutcome;
+    });
+    if (Option.isNone(github) || refused.borrowed === undefined) return yield* rejected;
+    yield* github.value.invalidate(auth.host, refused.borrowed);
+    const next: Credential = yield* credentialFor(record, scope);
+    if (next.type !== "ok") return next satisfies SendOutcome;
+    if (!isLive(record.connectorId)) {
+      return { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
+    }
+    if (
+      next.borrowed === undefined ||
+      Redacted.value(next.borrowed.token) === Redacted.value(refused.borrowed.token)
+    ) {
+      return yield* rejected;
+    }
+    const replay = yield* send(next.headers);
+    if (Exit.isFailure(replay)) {
+      return {
+        type: "failed",
+        message: describeEgressFailure(Option.getOrUndefined(Exit.findErrorOption(replay))?.cause),
+      } satisfies SendOutcome;
+    }
+    if (replay.value.status === 401) {
+      yield* cancelBody(replay.value);
+      yield* github.value.invalidate(auth.host, next.borrowed);
+      return yield* rejected;
+    }
+    return {
+      type: "response",
+      response: replay.value,
+      secrets: [...refused.secrets, ...next.secrets],
+    } satisfies SendOutcome;
   });
 
   /**
@@ -848,7 +966,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       readonly signal: AbortSignal | undefined;
     },
     fetch: (url: string, init: RequestInit) => Promise<Response>,
-    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
+    scope?: McpInvocationScope,
   ) {
     const lifetime = lifetimeOf(record.connectorId);
     const signal =
@@ -876,8 +994,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       );
     const gone = { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
 
-    const credential = yield* credentialFor(record, scope);
-    if (credential.type === "lost") return credential satisfies SendOutcome;
+    const credential: Credential = yield* credentialFor(record, scope);
+    if (credential.type !== "ok") return credential satisfies SendOutcome;
     if (!isLive(record.connectorId)) return gone;
     const first = yield* send(credential.headers);
     if (Exit.isFailure(first)) {
@@ -904,6 +1022,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       } satisfies SendOutcome;
     }
     yield* cancelBody(first.value);
+    if (record.auth.type === "source-control" && credential.borrowed !== undefined) {
+      return yield* replayBorrowed(record, record.auth, credential, send, scope);
+    }
     if (record.auth.type !== "oauth") {
       yield* markStatus(record, "connected", "The service rejected the stored credential.");
       return {
@@ -946,35 +1067,39 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     } satisfies SendOutcome;
   });
 
-  const commitNewRecord = (record: ConnectorRecord) =>
-    store.update((current) => {
-      if (current.connectors.length >= MAX_CONNECTORS) {
-        return Effect.fail(
-          extensionsError(
-            "limit-reached",
-            `Scient supports at most ${MAX_CONNECTORS} connected services.`,
-          ),
-        );
-      }
-      const duplicate = current.connectors.find((existing) => existing.url === record.url);
-      if (duplicate) {
-        return Effect.fail(
-          extensionsError(
-            "invalid-input",
-            `This service is already connected as ${duplicate.displayName}.`,
-          ),
-        );
-      }
-      const serverName = uniqueServerName(
-        record.serverName,
-        new Set(current.connectors.map((existing) => existing.serverName)),
+  /** Adding GitHub, whatever its sign-in, is the user's go to connect it again. */
+  const withNewRecord = Effect.fn("ConnectorRuntime.withNewRecord")(function* (
+    current: ConnectorStateData,
+    record: ConnectorRecord,
+  ) {
+    if (current.connectors.length >= MAX_CONNECTORS) {
+      return yield* extensionsError(
+        "limit-reached",
+        `Scient supports at most ${MAX_CONNECTORS} connected services.`,
       );
-      const created = { ...record, serverName };
-      return Effect.succeed([
-        created,
-        { ...current, connectors: [...current.connectors, created] },
-      ] as const);
-    });
+    }
+    const duplicate = current.connectors.find((existing) => existing.url === record.url);
+    if (duplicate) {
+      return yield* extensionsError(
+        "invalid-input",
+        `This service is already connected as ${duplicate.displayName}.`,
+      );
+    }
+    const serverName = uniqueServerName(
+      record.serverName,
+      new Set(current.connectors.map((existing) => existing.serverName)),
+    );
+    const created: ConnectorRecord = { ...record, serverName };
+    const next: ConnectorStateData = {
+      connectors: [...current.connectors, created],
+      githubFromSourceControlDeclined:
+        current.githubFromSourceControlDeclined && !isGitHubDestination(record.url),
+    };
+    return [created, next] as const;
+  });
+
+  const commitNewRecord = (record: ConnectorRecord) =>
+    store.update((current) => withNewRecord(current, record));
 
   const newConnectorId = random
     .randomBytes(12)
@@ -1006,6 +1131,103 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       "invalid-input",
       `The ${what} is too short to be a credential (at least ${MIN_CREDENTIAL_LENGTH} characters).`,
     );
+
+  /** GitHub with Source Control's account. Adding it again repoints the one already there. */
+  const connectSourceControl = Effect.fn("ConnectorRuntime.connectSourceControl")(
+    function* (input: {
+      readonly url: string;
+      readonly policy: ConnectorEgressPolicy;
+      readonly source: ConnectorRecord["source"];
+      readonly displayName: string;
+      readonly description: string | undefined;
+      readonly account: string | undefined;
+    }) {
+      if (Option.isNone(github) || !isCredentialDestination(input.url, github.value.mcpUrl)) {
+        return yield* extensionsError(
+          "invalid-input",
+          "Source Control's GitHub account connects only GitHub's own MCP server.",
+        );
+      }
+      const source = github.value;
+      const lent = yield* source
+        .get("github.com", input.account === undefined ? undefined : { account: input.account })
+        .pipe(Effect.mapError((error) => extensionsError("unreachable", error.message)));
+      if (Option.isNone(lent)) {
+        return yield* extensionsError(
+          "sign-in-failed",
+          input.account === undefined
+            ? "Source Control has no GitHub account. Sign in with GitHub first."
+            : `Source Control has no GitHub sign-in for ${input.account}.`,
+        );
+      }
+      const probe = yield* Effect.promise(() =>
+        probeConnector({
+          url: input.url,
+          fetch: controlFetch(input.policy),
+          headers: { authorization: `Bearer ${Redacted.value(lent.value.token)}` },
+        }),
+      );
+      if (probe.type === "auth-required") {
+        yield* source.invalidate("github.com", lent.value);
+        return yield* extensionsError(
+          "sign-in-failed",
+          "GitHub refused Source Control's credential. Check the sign-in in Settings → Source Control.",
+        );
+      }
+      if (probe.type !== "open") return yield* probeFailure(probe, input.displayName);
+      const auth = {
+        type: "source-control",
+        host: "github.com",
+        account: lent.value.login,
+      } as const;
+      const updatedAt = yield* isoNow;
+      const record: ConnectorRecord = {
+        connectorId: yield* newConnectorId,
+        serverName: input.displayName,
+        displayName: input.displayName,
+        ...(input.description === undefined ? {} : { description: input.description }),
+        url: input.url,
+        source: input.source,
+        auth,
+        status: "connected",
+        enabled: true,
+        authRevision: 0,
+        availability: { type: "all-projects" },
+        createdAt: updatedAt,
+        updatedAt,
+      };
+      const connected = yield* store.update((current) => {
+        const existing = current.connectors.find(
+          (entry) =>
+            entry.auth.type === "source-control" &&
+            isLive(entry.connectorId) &&
+            isCredentialDestination(entry.url, source.mcpUrl),
+        );
+        if (existing === undefined) return withNewRecord(current, record);
+        // On, off and the projects it reaches stay as the user left them.
+        const repointed: ConnectorRecord = {
+          ...existing,
+          auth,
+          status: "connected",
+          lastError: undefined,
+          authRevision:
+            existing.auth.type === "source-control" && existing.auth.account === auth.account
+              ? existing.authRevision
+              : existing.authRevision + 1,
+          updatedAt,
+        };
+        return Effect.succeed([
+          repointed,
+          {
+            connectors: current.connectors.map((entry) => (entry === existing ? repointed : entry)),
+            githubFromSourceControlDeclined: false,
+          },
+        ] as const);
+      });
+      yield* publishChange;
+      return { connector: toSummary(connected), nextStep: "ready" } satisfies ConnectorAddResult;
+    },
+  );
 
   const add: ConnectorRuntimeShape["add"] = Effect.fn("ConnectorRuntime.add")(function* (input) {
     const policy = egressPolicyFor(input.target.url, { type: input.target.type });
@@ -1040,9 +1262,29 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       (input.target.type === "registry"
         ? (input.target.name.split("/").pop() ?? input.target.name)
         : new URL(url).hostname);
-    if (curated?.id === "github" && (!input.credential || input.credential.strategy !== "bearer"))
-      return yield* extensionsError("invalid-input", "Add GitHub with a personal access token.");
+    if (
+      curated?.id === "github" &&
+      input.credential?.type !== "source-control" &&
+      input.credential?.strategy !== "bearer"
+    )
+      return yield* extensionsError(
+        "invalid-input",
+        "Add GitHub with your Source Control account or a personal access token.",
+      );
     const description = input.description ?? curated?.description;
+    if (input.credential?.type === "source-control") {
+      return yield* connectSourceControl({
+        url,
+        policy,
+        source:
+          input.target.type === "registry"
+            ? { type: "registry", name: input.target.name, version: input.target.version }
+            : { type: "url" },
+        displayName,
+        description,
+        account: input.credential.account,
+      });
+    }
     const connectorId = yield* newConnectorId;
     const owner = { type: "connector", connectorId } as const;
     const createdAt = yield* isoNow;
@@ -1204,11 +1446,14 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             (yield* readStoredOAuth(record).pipe(Effect.orElseSucceed(() => undefined)));
           // Commit the removal before cleanup: the connector stops being
           // delivered and granted even if credential cleanup or revocation fails.
+          // Removing GitHub, in the same write, keeps Source Control's account from coming back.
           yield* store.update((current) =>
             Effect.succeed([
               undefined,
               {
                 connectors: current.connectors.filter((entry) => entry.connectorId !== connectorId),
+                githubFromSourceControlDeclined:
+                  current.githubFromSourceControlDeclined || isGitHubDestination(record.url),
               } satisfies ConnectorStateData,
             ] as const),
           );
@@ -1216,6 +1461,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           yield* publishChange;
           const ref =
             record.auth.type === "none" ||
+            record.auth.type === "source-control" ||
             (record.auth.type === "credential" && record.auth.storage === "bound")
               ? undefined
               : record.auth.credentialRef;
@@ -1567,6 +1813,78 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     };
   });
 
+  /**
+   * Follows Source Control: connects GitHub with its account unless GitHub is there or the user
+   * removed it, and moves Source Control connectors between connected and needs-credential.
+   * Never changes whether a connector is on or which projects receive it.
+   */
+  const followSourceControl = Effect.fn("ConnectorRuntime.followSourceControl")(function* () {
+    if (Option.isNone(github)) return;
+    const source = github.value;
+    const state = yield* store.read;
+    if (!state.writable) return;
+    const present = state.connectors.filter((record) =>
+      isCredentialDestination(record.url, source.mcpUrl),
+    );
+    for (const record of present) {
+      if (record.auth.type !== "source-control" || !isLive(record.connectorId)) continue;
+      const lent = yield* source
+        .get(record.auth.host, { account: record.auth.account })
+        .pipe(Effect.option);
+      // Source Control could not answer just now: leave the status as it is.
+      if (Option.isNone(lent)) continue;
+      if (Option.isSome(lent.value)) {
+        if (record.status !== "connected") yield* markConnected(record);
+      } else if (record.status === "connected") {
+        yield* markStatus(record, "needs-credential", accountGone(record.auth.account));
+      }
+    }
+    if (present.length > 0 || state.githubFromSourceControlDeclined) return;
+    const lent = yield* source.get("github.com").pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(lent)) return;
+    const curated = curatedServerForUrl(source.mcpUrl);
+    const displayName = curated?.displayName ?? "GitHub";
+    const createdAt = yield* isoNow;
+    const record: ConnectorRecord = {
+      connectorId: yield* newConnectorId,
+      serverName: displayName,
+      displayName,
+      ...(curated?.description === undefined ? {} : { description: curated.description }),
+      url: source.mcpUrl,
+      source:
+        curated?.registry === undefined
+          ? { type: "url" }
+          : { type: "registry", name: curated.registry.name, version: curated.registry.version },
+      auth: { type: "source-control", host: "github.com", account: lent.value.login },
+      status: "connected",
+      enabled: true,
+      authRevision: 0,
+      availability: { type: "all-projects" },
+      createdAt,
+      updatedAt: createdAt,
+    };
+    // Checked again inside the write, so a removal that got there first wins.
+    const created = yield* store
+      .update((current) =>
+        current.githubFromSourceControlDeclined ||
+        current.connectors.some((entry) => isCredentialDestination(entry.url, source.mcpUrl))
+          ? Effect.succeed([false, current] as const)
+          : withNewRecord(current, record).pipe(Effect.map(([, next]) => [true, next] as const)),
+      )
+      .pipe(Effect.orElseSucceed(() => false));
+    if (created) yield* publishChange;
+  });
+
+  let followedAt = Number.NEGATIVE_INFINITY;
+  const followLock = Semaphore.makeUnsafe(1);
+  const followSourceControlNow = followLock.withPermits(1)(
+    Effect.suspend(() => {
+      if (now() - followedAt < FOLLOW_SOURCE_CONTROL_MS) return Effect.void;
+      followedAt = now();
+      return followSourceControl();
+    }),
+  );
+
   const forward: ConnectorRuntimeShape["forward"] = Effect.fn("ConnectorRuntime.forward")(
     function* (request) {
       const state = yield* store.read;
@@ -1776,6 +2094,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       return eligibleOf(record);
     }),
     list: Effect.fn("ConnectorRuntime.list")(function* () {
+      yield* followSourceControlNow;
       const state = yield* store.read;
       return {
         revision: yield* Ref.get(revision),
@@ -1848,6 +2167,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
     test,
     resolveDelivery: Effect.fn("ConnectorRuntime.resolveDelivery")(function* (input) {
+      yield* followSourceControlNow;
       const state = yield* store.read;
       const eligible: EligibleConnector[] = [];
       const skipped: Array<EligibleConnector & { readonly reason: ExtensionDeliverySkipReason }> =

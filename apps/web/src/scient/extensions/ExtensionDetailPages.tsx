@@ -449,13 +449,18 @@ function ToolsSection({
 
 function connectionState(connector: ConnectorSummary): string {
   if (connector.status === "needs-auth") return "Needs sign-in";
-  if (connector.status === "needs-credential") return "Key missing";
+  if (connector.status === "needs-credential") {
+    return connector.auth.type === "source-control" ? "Account missing" : "Key missing";
+  }
   return connector.auth.type === "none" ? "No account needed" : "Signed in";
 }
 
 function connectionDetail(connector: ConnectorSummary, busy: string | null): string {
   if (busy === "sign-in") return "Opening sign-in…";
   if (connector.status === "needs-credential") {
+    if (connector.auth.type === "source-control") {
+      return `Source Control no longer has ${connector.auth.account}. Sign in to GitHub again.`;
+    }
     return connector.auth.type === "credential" && connector.auth.storage === "bound"
       ? "The secret this service used is no longer available."
       : "The stored key is gone. Remove this service and add it again.";

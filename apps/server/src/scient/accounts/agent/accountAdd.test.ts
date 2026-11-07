@@ -8,14 +8,36 @@ import {
   type OrchestratorMcpRequestSecretResult,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
+import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
+import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey } from "./accountAdd.ts";
+import { addSignIn, askForAccountKey } from "./accountAdd.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
+
+const signIns = vi.hoisted(() => ({
+  calls: [] as unknown[],
+  outcome: { outcome: "signed-in", message: undefined as string | undefined },
+  universities: [] as Array<{ name: string; entityId: string; domain: string }>,
+}));
+vi.mock("./guardedSignIn.ts", async () => {
+  const { Effect: effects } = await import("effect");
+  return {
+    guardedSignIn: (request: unknown) =>
+      effects.sync(() => {
+        signIns.calls.push(request);
+        return { ...signIns.outcome, tabId: "tab-private" };
+      }),
+  };
+});
+vi.mock("../../papers/universityDirectory.ts", async () => {
+  const { Effect: effects } = await import("effect");
+  return { searchUniversities: () => effects.succeed(signIns.universities) };
+});
 
 const scope = {
   threadId: ThreadId.make("thread-add"),
@@ -172,5 +194,143 @@ it.effect("asks no one when nobody can answer, and keeps nothing when declined",
     const declined = yield* run(fake, input, { status: "declined" });
     expect(declined.result).toEqual({ status: "declined" });
     expect(fake.saves).toHaveLength(0);
+  }),
+);
+
+const signInWith = (
+  fake: ReturnType<typeof fakeAccounts>,
+  input: Parameters<typeof addSignIn>[1],
+  sessionScope = scope,
+) => {
+  signIns.calls = [];
+  // The sign-in itself is the mock above; it needs no browser here.
+  return addSignIn(sessionScope, input).pipe(
+    Effect.provideService(AccountsService, fake.service),
+    Effect.provideService(AgentInvocationContext, {} as never),
+    Effect.provideService(PreviewAutomationBroker, {} as never),
+  );
+};
+
+it.effect("adds a website the user signs in to in the card, and says only its name and use", () =>
+  Effect.gen(function* () {
+    signIns.outcome = { outcome: "signed-in", message: undefined };
+    const fake = fakeAccounts();
+    const result = yield* signInWith(fake, {
+      kind: "website",
+      name: "GitHub",
+      site: "github.com",
+      reason: "To read the project's issues.",
+    });
+    expect(fake.saves[0]).toMatchObject({
+      name: "GitHub",
+      details: {
+        kind: "website",
+        sites: ["github.com"],
+        profileId: "default",
+        origin: "browser-session",
+      },
+      secrets: {},
+    });
+    expect(signIns.calls[0]).toMatchObject({
+      signIn: { accountId: "acc_saved_0001" },
+      caller: {
+        kind: "person",
+        agent: scope,
+        reason: "To read the project's issues.",
+        discardIfUnfinished: true,
+      },
+    });
+    // Metadata only: no tab, no value.
+    expect(result).toEqual({
+      status: "signed-in",
+      accountId: "acc_saved_0001",
+      usage: expect.any(Array),
+    });
+  }),
+);
+
+it.effect("uses the row already there, and reports one turned off or signed in", () =>
+  Effect.gen(function* () {
+    const session: AccountSummary = {
+      ...openAi,
+      accountId: AccountId.make("acc_github0001"),
+      name: "GitHub",
+      details: { kind: "website", sites: ["github.com"], origin: "browser-session" },
+      secrets: {},
+    };
+    const input = { kind: "website", name: "GitHub", site: "github.com", reason: "r" } as const;
+    yield* signInWith(fakeAccounts({ accounts: [session] }), input);
+    expect(signIns.calls[0]).toMatchObject({ signIn: { accountId: session.accountId } });
+    expect(signIns.calls[0]).not.toMatchObject({ caller: { discardIfUnfinished: true } });
+    const signedIn = {
+      ...session,
+      signIn: { state: "signed-in", at: "2026-01-01T00:00:00Z" },
+    } as const;
+    expect(yield* signInWith(fakeAccounts({ accounts: [signedIn] }), input)).toMatchObject({
+      status: "exists",
+      accountId: session.accountId,
+    });
+    const off = { ...session, controls: { ...session.controls, access: "off" as const } };
+    expect(yield* signInWith(fakeAccounts({ accounts: [off] }), input)).toEqual({
+      status: "turned_off",
+      accountId: session.accountId,
+      name: "GitHub",
+    });
+    expect(signIns.calls).toEqual([]);
+  }),
+);
+
+it.effect("adds a university by its domain, or asks which when several match", () =>
+  Effect.gen(function* () {
+    signIns.outcome = { outcome: "signed-in", message: undefined };
+    signIns.universities = [
+      {
+        name: "Hebrew University",
+        entityId: "https://idp.huji.ac.il/entity",
+        domain: "huji.ac.il",
+      },
+      { name: "Hebrew Union College", entityId: "https://idp.huc.edu/entity", domain: "huc.edu" },
+    ];
+    const several = yield* signInWith(fakeAccounts(), {
+      kind: "university",
+      name: "Hebrew",
+      reason: "For papers.",
+    });
+    expect(several).toEqual({
+      status: "choose",
+      universities: [
+        { name: "Hebrew University", domain: "huji.ac.il" },
+        { name: "Hebrew Union College", domain: "huc.edu" },
+      ],
+    });
+    const fake = fakeAccounts();
+    yield* signInWith(fake, {
+      kind: "university",
+      name: "HUJI",
+      institution: "huji.ac.il",
+      reason: "For papers.",
+    });
+    expect(fake.saves[0]?.details).toMatchObject({
+      sites: ["huji.ac.il"],
+      profileId: "default",
+      institution: { entityId: "https://idp.huji.ac.il/entity" },
+    });
+  }),
+);
+
+it.effect("asks no one in an unattended run, and passes on a cancel or a timeout", () =>
+  Effect.gen(function* () {
+    const input = { kind: "website", name: "GitHub", site: "github.com", reason: "r" } as const;
+    expect((yield* signInWith(fakeAccounts(), input, { ...scope, unattended: true })).status).toBe(
+      "unavailable",
+    );
+    expect(signIns.calls).toEqual([]);
+    signIns.outcome = { outcome: "needs-user", message: "The user cancelled the sign-in." };
+    expect(yield* signInWith(fakeAccounts(), input)).toEqual({ status: "cancelled" });
+    signIns.outcome = {
+      outcome: "needs-user",
+      message: "The user did not finish signing in within 15 minutes.",
+    };
+    expect(yield* signInWith(fakeAccounts(), input)).toEqual({ status: "timed_out" });
   }),
 );

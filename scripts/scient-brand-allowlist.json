@@ -520,13 +520,6 @@
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
   },
   {
-    "path": "packages/provider-cursor/src/server/accountUsage.ts",
-    "line": "? `Allow Keychain access on the Mac running ${options?.productName ?? \"T3 Code\"}, then refresh.`",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
     "path": "packages/shared/src/promptLinks.ts",
     "line": "appName = \"T3 Code\",",
     "rules": ["inherited-brand", "bare-t3"],
@@ -646,13 +639,6 @@
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "unmounted-upstream",
     "reason": "Scient's SidebarUpdatePill replaces this upstream dialog and never mounts it; the file is kept unchanged for alignment."
-  },
-  {
-    "path": "packages/source-control-github/src/shared/definition.ts",
-    "line": "appName: \"T3 Code for GitHub\",",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "external-name",
-    "reason": "The registered name of T3's GitHub App. App sign-in stays off unless the operator sets T3CODE_GITHUB_APP_CLIENT_ID, which Scient builds do not ship."
   },
   {
     "path": "apps/server/src/cloud/selfUpdate.ts",

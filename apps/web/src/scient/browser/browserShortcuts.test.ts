@@ -354,6 +354,16 @@ describe("profiles", () => {
     useBrowserShortcuts.getState().forgetProfile("home");
     expect(Object.keys(useBrowserShortcuts.getState().profiles)).toEqual(["work"]);
   });
+
+  it("adds a merged profile's shortcuts after the other's own", () => {
+    profileActions("default").save(null, "https://example.org/", "");
+    profileActions("home").save(null, "https://example.com/", "");
+    profileActions("home").save(null, "https://example.org/", "");
+    useBrowserShortcuts.getState().mergeProfile("home", "default");
+    const { profiles } = useBrowserShortcuts.getState();
+    expect(Object.keys(profiles)).toEqual(["default"]);
+    expect(profiles["default"]?.added).toEqual(["https://example.org/", "https://example.com/"]);
+  });
 });
 
 describe("shortcuts saved before each profile had its own", () => {

@@ -11,10 +11,19 @@ const launches = vi.hoisted(() => ({
   persistent: vi.fn<BrowserType["launchPersistentContext"]>(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
+  // SCIENT-FORK:START — Scient Accounts: profile directories are made private.
+  chmod: vi.fn().mockResolvedValue(undefined),
+  // SCIENT-FORK:END
 }));
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
-vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
+vi.mock("node:fs/promises", () => ({
+  mkdir: launches.mkdir,
+  rm: launches.rm,
+  // SCIENT-FORK:START — Scient Accounts: profile directories are made private.
+  chmod: launches.chmod,
+  // SCIENT-FORK:END
+}));
 
 const makeContext = () => {
   const events = new NodeEvents.EventEmitter();

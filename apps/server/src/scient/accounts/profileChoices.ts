@@ -1,4 +1,9 @@
-import type { BrowserProfileChoiceInput, BrowserProfileChoices } from "@t3tools/contracts";
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  type BrowserProfileChoiceInput,
+  type BrowserProfileChoices,
+  type BrowserProfileId,
+} from "@t3tools/contracts";
 import { pageSite } from "@t3tools/shared/scientBrowserProfileChoice";
 
 const MAX_THREADS = 500;
@@ -15,21 +20,26 @@ const latest = <V>(
     [...entries.filter(([entry]) => entry !== key), [key, value] as const].slice(-max),
   );
 
-/** A switch in a conversation becomes its profile and, for the page's site, that site's profile. */
+/**
+ * A switch in a conversation becomes its profile and, for the page's site, that site's profile.
+ * A site-only choice leaves the conversation's profile as it was.
+ */
 export function withThreadChoice(
   choices: BrowserProfileChoices,
   input: Extract<BrowserProfileChoiceInput, { readonly threadId: unknown }>,
   at: string,
 ): BrowserProfileChoices {
   const site = pageSite(input.url)?.hostname;
-  const sites = choices.threads[input.threadId]?.sites ?? {};
+  const thread = choices.threads[input.threadId];
+  const sites = thread?.sites ?? {};
+  const profileId = input.siteOnly ? thread?.profileId : input.profileId;
   return {
     ...choices,
     threads: latest(
       Object.entries(choices.threads),
       input.threadId,
       {
-        profileId: input.profileId,
+        ...(profileId === undefined ? {} : { profileId }),
         sites:
           site === undefined
             ? sites
@@ -62,6 +72,32 @@ export function withoutProfile(choices: BrowserProfileChoices, profileId: string
               ],
             ],
       ),
+    ),
+  } as BrowserProfileChoices;
+}
+
+/** A profile merged into Main: wherever it was chosen, Main is. */
+export function withProfileAsMain(choices: BrowserProfileChoices, profileId: string) {
+  const main = (chosen: BrowserProfileId) =>
+    chosen === profileId ? DEFAULT_BROWSER_PROFILE_ID : chosen;
+  return {
+    projects: Object.fromEntries(
+      Object.entries(choices.projects).map(([projectId, chosen]) => [projectId, main(chosen)]),
+    ),
+    threads: Object.fromEntries(
+      Object.entries(choices.threads).map(([threadId, thread]) => [
+        threadId,
+        {
+          ...thread,
+          ...(thread.profileId === undefined ? {} : { profileId: main(thread.profileId) }),
+          sites: Object.fromEntries(
+            Object.entries(thread.sites).map(([site, chosen]) => [
+              site,
+              { ...chosen, profileId: main(chosen.profileId) },
+            ]),
+          ),
+        },
+      ]),
     ),
   } as BrowserProfileChoices;
 }

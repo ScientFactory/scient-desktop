@@ -1,6 +1,8 @@
 // @effect-diagnostics globalDate:off globalTimers:off -- Electron cookie events run outside Effect.
 import type { Cookie, CookiesSetDetails, Session } from "electron";
 
+import { markUpkeep, trackMainInserts } from "./mainInserts.ts";
+
 /** How long a kept sign-in lasts unless the site renews it; sites end their own sessions sooner. */
 const KEPT_SECONDS = 90 * 24 * 60 * 60;
 /** Chromium writes cookies about every 30 seconds; a fresh sign-in should survive a crash. */
@@ -30,12 +32,16 @@ export function keptCookie(cookie: Cookie, nowSeconds: number): CookiesSetDetail
  * where you left off. Signing out still removes it; packaged builds encrypt it like any cookie.
  */
 export function keepSessionCookies(session: Pick<Session, "cookies">) {
+  trackMainInserts(session);
   let saving: ReturnType<typeof setTimeout> | undefined;
   session.cookies.on("changed", (_event, cookie, _cause, removed) => {
     if (removed) return;
     if (cookie.session) {
       const kept = keptCookie(cookie, Date.now() / 1000);
-      if (kept) void session.cookies.set(kept).catch(() => undefined);
+      if (kept) {
+        markUpkeep(session, cookie);
+        void session.cookies.set(kept).catch(() => undefined);
+      }
     }
     // Sign-in cookies are almost always HttpOnly; trackers, which change constantly, are not.
     if (!cookie.httpOnly || saving !== undefined) return;

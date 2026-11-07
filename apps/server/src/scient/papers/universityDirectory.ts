@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
+import { getDomain } from "tldts";
 
 /** Public list of institutions that sign in to publishers, kept by SeamlessAccess. */
 const DIRECTORY = "https://md.seamlessaccess.org/entities/";
@@ -30,6 +32,9 @@ const domainsOf = (entry: typeof Entry.Type) =>
     .map((domain) => domain.trim().toLowerCase())
     .filter(Boolean);
 
+/** Whether a university's domain is the asked one or holds it, as huji.ac.il holds mail.huji.ac.il. */
+const holds = (domain: string, asked: string) => siteMatchesUrl(domain, `https://${asked}`);
+
 export function universitiesFrom(entries: unknown, query: string): ReadonlyArray<University> {
   const decoded = decodeEntries(entries);
   if (Option.isNone(decoded)) return [];
@@ -37,7 +42,7 @@ export function universitiesFrom(entries: unknown, query: string): ReadonlyArray
   return decoded.value
     .flatMap((entry) => {
       const domains = domainsOf(entry);
-      const domain = domains.find((item) => item === asked) ?? domains[0];
+      const domain = domains.find((item) => holds(item, asked)) ?? domains[0];
       return entry.hidden === "true" ||
         domain === undefined ||
         domains.length > MOST_DOMAINS ||
@@ -47,7 +52,7 @@ export function universitiesFrom(entries: unknown, query: string): ReadonlyArray
     })
     .toSorted(
       (a, b) =>
-        Number(b.domain === asked) - Number(a.domain === asked) ||
+        Number(holds(b.domain, asked)) - Number(holds(a.domain, asked)) ||
         Number(b.name.toLowerCase().startsWith(asked)) -
           Number(a.name.toLowerCase().startsWith(asked)) ||
         a.name.localeCompare(b.name),
@@ -59,13 +64,20 @@ export function universitiesFrom(entries: unknown, query: string): ReadonlyArray
 export const searchUniversities = Effect.fn("Papers.searchUniversities")(
   function* (query: string) {
     const http = yield* HttpClient.HttpClient;
-    const response = yield* http.execute(
-      HttpClientRequest.get(`${DIRECTORY}?q=${encodeURIComponent(query.trim())}`, {
-        headers: { accept: "application/json" },
-      }),
-    );
-    if (response.status !== 200) return [];
-    return universitiesFrom(yield* response.json, query);
+    const lookUp = Effect.fn(function* (text: string) {
+      const response = yield* http.execute(
+        HttpClientRequest.get(`${DIRECTORY}?q=${encodeURIComponent(text)}`, {
+          headers: { accept: "application/json" },
+        }),
+      );
+      return response.status === 200 ? universitiesFrom(yield* response.json, query) : [];
+    });
+    const found = yield* lookUp(query.trim());
+    // The directory knows a university by its own domain, not a mail host under it.
+    const domain = getDomain(query.trim());
+    return found.length > 0 || !domain || domain === query.trim().toLowerCase()
+      ? found
+      : yield* lookUp(domain);
   },
   Effect.timeoutOption("15 seconds"),
   Effect.map(Option.getOrElse((): ReadonlyArray<University> => [])),

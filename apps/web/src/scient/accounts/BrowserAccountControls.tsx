@@ -2,6 +2,7 @@ import { useSignInRecording } from "./useSignInRecording";
 import { useUniversityBrowsing } from "./useUniversityBrowsing";
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { CheckIcon, KeyRoundIcon } from "lucide-react";
+import { ACCOUNTS_PROTOCOL } from "@t3tools/contracts";
 import type {
   AccountSummary,
   AccountWriteStore,
@@ -160,6 +161,7 @@ function DesktopBrowserAccountControls({
   url: string;
 }) {
   const { data, canWrite } = useAccounts(environmentId);
+  const inAttempt = (data?.attempts ?? []).some((attempt) => attempt.tabId === previewTabId);
   const [pending, setPending] = useState<{
     capture: DesktopCapturedSignIn;
     comparison: AccountMatchSignInResult;
@@ -170,6 +172,8 @@ function DesktopBrowserAccountControls({
     profileId,
     url,
     accounts: data?.accounts ?? [],
+    sessionsSeen: (data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL,
+    signingIn: inAttempt,
     enabled: canWrite && pending === null,
   });
   useUniversityBrowsing({
@@ -199,6 +203,8 @@ function DesktopBrowserAccountControls({
   const signInSeen = useAccountCommand(accountsState.signInSeen, environmentId);
   const onCapture = useEffectEvent((capture: DesktopCapturedSignIn) => {
     if (capture.tabId !== tabId || capture.profileId !== profileId || !capture.password) return;
+    // Scient's own sign-in on this tab keeps what is typed once it is proven (`signInKeeps`).
+    if (inAttempt && (data?.accountsProtocol ?? 0) >= ACCOUNTS_PROTOCOL) return;
     try {
       const origin = new URL(capture.url).origin;
       if (!origin.startsWith("https://") || neverSaveSites().includes(origin)) return;

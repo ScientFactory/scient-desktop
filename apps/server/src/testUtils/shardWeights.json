@@ -580,7 +580,6 @@
   "src/provider/CodexProvider.test.ts": 1.02,
   "src/provider/CodexThreadRevert.test.ts": 0.512,
   "src/provider/codexUsageLimits.test.ts": 0.264,
-  "src/provider/cursorUsageLimits.scient.test.ts": 0.956,
   "src/provider/Drivers/AntigravityDriver.test.ts": 17.428,
   "src/provider/Drivers/AntigravitySkills.test.ts": 0.534,
   "src/provider/Drivers/antigravityUsageReader.test.ts": 0.515,

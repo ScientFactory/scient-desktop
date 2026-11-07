@@ -118,7 +118,6 @@ const GENERIC_HOSTNAME_TLDS = new Set([
   "xyz",
   "me",
   "tv",
-  "cc",
   "gg",
   "chat",
   "cloud",
@@ -161,6 +160,8 @@ const COUNTRY_HOSTNAME_TLDS = new Set([
   "tr",
   "sg",
   "hk",
+  // C++ sources end in `.cc`, so `allocator.cc:217` names a file, not a host and port.
+  "cc",
 ]);
 
 function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
