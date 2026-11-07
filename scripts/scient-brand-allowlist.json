@@ -520,13 +520,6 @@
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
   },
   {
-    "path": "packages/provider-cursor/src/server/accountUsage.ts",
-    "line": "? `Allow Keychain access on the Mac running ${options?.productName ?? \"T3 Code\"}, then refresh.`",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
     "path": "packages/shared/src/promptLinks.ts",
     "line": "appName = \"T3 Code\",",
     "rules": ["inherited-brand", "bare-t3"],

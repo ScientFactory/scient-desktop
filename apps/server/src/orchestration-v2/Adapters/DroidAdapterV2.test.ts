@@ -670,9 +670,10 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
             header: "Scope",
             question: "Which scope should Droid use?",
             options: [
-              { label: "workspace", description: "Workspace" },
-              { label: "session", description: "Session" },
+              { label: "Workspace", description: "Workspace", value: "workspace" },
+              { label: "Session", description: "Session", value: "session" },
             ],
+            allowCustomAnswer: false,
           },
         ]);
         yield* h.runtime.respondToRuntimeRequest({
@@ -2282,9 +2283,10 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
             header: "Scope",
             question: "Which scope should Droid use?",
             options: [
-              { label: "workspace", description: "Workspace" },
-              { label: "session", description: "Session" },
+              { label: "Workspace", description: "Workspace", value: "workspace" },
+              { label: "Session", description: "Session", value: "session" },
             ],
+            allowCustomAnswer: false,
           },
         ]);
         const initialize = (yield* h.readLog!()).find((message) => message.method === "initialize");

@@ -41,6 +41,7 @@ function layerElectronApp(
     name: Effect.succeed("Scient"),
     // SCIENT-FORK:END scient-branding
     systemLocale: Effect.succeed("en-US"),
+    preferredSystemLanguages: Effect.succeed(["en-US"]),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
     quit,

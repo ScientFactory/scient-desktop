@@ -212,6 +212,7 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -1043,6 +1044,8 @@ const buildAppUnderTest = (options?: {
         // backed by this fixture's state directory, project store and provider registry.
         Layer.provide(ScientExtensionsLayerLive.pipe(Layer.provide(ProjectStoreV2.layer))),
         // SCIENT-FORK:END
+        // Provider installs run through T3's service, over the mocked installations below.
+        Layer.provide(ProviderInstallation.layer),
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
