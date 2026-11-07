@@ -8,6 +8,9 @@ import * as NodePath from "node:path";
 import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
+// SCIENT-FORK:START — Scient Accounts: cookie copies hold a profile's context.
+import { ProfileContextLeases } from "../scient/accounts/profileContextLeases.ts";
+// SCIENT-FORK:END
 
 // Playwright needs its files on disk. createRequire also resolves it from a Node SEA executable.
 const requirePlaywright = NodeModule.createRequire(import.meta.url);
@@ -80,6 +83,12 @@ export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
   private readonly clearing = new Map<string, Promise<void>>();
+  // SCIENT-FORK:START — Scient Accounts: cookie copies hold a profile's context.
+  readonly leases = new ProfileContextLeases({
+    contexts: this.contexts,
+    contextFor: (profileId) => this.contextFor(profileId),
+  });
+  // SCIENT-FORK:END
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -174,6 +183,10 @@ export class ServerBrowserContexts {
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
     const key = JSON.stringify([profileId, isolationKey ?? null]);
+    // SCIENT-FORK:START — Scient Accounts: a tab waits for a cookie copy into its profile.
+    const held = this.leases.tabWaits(key, () => this.contextFor(profileId, isolationKey));
+    if (held) return held;
+    // SCIENT-FORK:END
     const cached = this.contexts.get(key);
     if (cached) return cached;
     const cleared = this.clearing.get(key)?.catch(constVoid) ?? Promise.resolve();
@@ -205,6 +218,9 @@ export class ServerBrowserContexts {
     }
     const directory = this.profileDirectory(profileId);
     await NodeFSP.mkdir(directory, { recursive: true });
+    // SCIENT-FORK:START — Scient Accounts: a profile's jar is private to the server's user (POSIX).
+    await NodeFSP.chmod(directory, 0o700);
+    // SCIENT-FORK:END
     const { executable, ...options } = await this.launchOptions();
     const { chromium } = loadPlaywright();
     return this.launch(executable, (executablePath) =>
@@ -249,6 +265,9 @@ export class ServerBrowserContexts {
     const existing = this.clearing.get(key);
     if (existing) return existing;
     const clearing = (async () => {
+      // SCIENT-FORK:START — Scient Accounts: a clear waits for a cookie copy into the profile.
+      if (this.leases.holds(key)) await this.leases.cleared(key);
+      // SCIENT-FORK:END
       const pending = this.contexts.get(key);
       if (pending) {
         this.contexts.delete(key);

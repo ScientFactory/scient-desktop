@@ -14,6 +14,9 @@ import {
 } from "@t3tools/source-control-core/shared/definition";
 
 import { gitHubMediaUrl } from "./gitHubMedia.ts";
+// SCIENT-FORK:START — Scient's own GitHub App.
+import { SCIENT_APP_SIGN_IN } from "./scientAppSignIn.ts";
+// SCIENT-FORK:END
 import { icon } from "./icon.ts";
 import { gitHubReferenceAutolinks } from "./referenceAutolinks.ts";
 
@@ -44,13 +47,9 @@ function isRepositoryPath(repository: string): boolean {
   );
 }
 
-/** Signing in through the T3 Code for GitHub app lifts the per-user API rate limit to the app's. */
-export const APP_SIGN_IN: SourceControlAppSignIn = {
-  appName: "T3 Code for GitHub",
-  hosts: ["github.com"],
-  installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
-  revokeUrl: "https://github.com/settings/apps/authorizations",
-};
+// SCIENT-FORK:START — Scient's own GitHub App; the server supplies its client ID.
+export const APP_SIGN_IN: SourceControlAppSignIn = SCIENT_APP_SIGN_IN;
+// SCIENT-FORK:END
 
 export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
 export type GitHubSettings = typeof settings.Type;

@@ -16,6 +16,12 @@ export interface ImportedCookie {
   readonly httpOnly: boolean;
   readonly expirationDate: number | undefined;
   readonly sameSite: "unspecified" | "no_restriction" | "lax" | "strict";
+  // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+  readonly partitionKey?: {
+    readonly topLevelSite: string;
+    readonly hasCrossSiteAncestor: boolean;
+  };
+  // SCIENT-FORK:END
 }
 
 export interface CookieReadResult {

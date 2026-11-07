@@ -1,4 +1,11 @@
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  AccountId,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  defaultAccountControls,
+  type AccountSummary,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -53,18 +60,17 @@ const browser = (page: Partial<PaperPage>) => {
   return { broker, operations };
 };
 
-const fetchWith = (page: Partial<PaperPage>) => {
+const fetchWith = (page: Partial<PaperPage>, accounts: ReadonlyArray<AccountSummary> = []) => {
   const { broker, operations } = browser(page);
   return fetchFromPage({
-    session: scope,
     url: "https://journal.example.org/article/1",
     profileId: undefined,
-    signIn: () => undefined,
+    caller: { kind: "paper", scope, requester: { accounts: "all" } },
     accept: () => Effect.succeed(true),
   }).pipe(
     Effect.map((result) => ({ result, operations })),
     Effect.provideService(PreviewAutomationBroker, broker),
-    Effect.provideService(AccountsService, fakeAccounts().service),
+    Effect.provideService(AccountsService, fakeAccounts({ accounts }).service),
     Effect.provideService(AgentInvocationContext, {
       ...scope,
       environmentId: EnvironmentId.make("env-fixture"),
@@ -100,5 +106,28 @@ it.effect("stops at a sign-in it has no saved account for, and says so", () =>
       profileId: "main",
     });
     expect(operations.at(-1)).toBe("close");
+  }),
+);
+
+it.effect("names a held saved sign-in, so the paper waits for the person to sign in", () =>
+  Effect.gen(function* () {
+    const held: AccountSummary = {
+      accountId: AccountId.make("acc_journal01"),
+      name: "Journal",
+      details: { kind: "website", sites: ["journal.example.org"], username: "person" },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: defaultAccountControls("website"),
+      status: "ready",
+      // An overnight attempt that found a slow page: no timer lifts the hold.
+      signIn: { state: "failed", at: "2026-11-04T02:00:00.000Z", by: "action" },
+      createdAt: "2026-11-01T00:00:00.000Z",
+      updatedAt: "2026-11-04T02:00:00.000Z",
+    };
+    const { result } = yield* fetchWith({ login: true }, [held]);
+    expect(result).toMatchObject({
+      status: "needs-sign-in",
+      reason: "sign-in",
+      signInAccountId: held.accountId,
+    });
   }),
 );

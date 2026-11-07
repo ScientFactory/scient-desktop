@@ -200,3 +200,153 @@ it.effect.each([
     if (scenario === "unattended") expect(inspections).toBe(1);
   }),
 );
+
+/** A tab on `origin`'s page; Scient's own fills and loads are counted. */
+const personBrowser = (page: Record<string, unknown>) => {
+  const seen = { opens: [] as Array<Record<string, unknown>>, gaps: [] as number[], fills: 0 };
+  const profileId = BrowserProfileId.make("default");
+  const status: PreviewAutomationStatus = {
+    available: true,
+    visible: true,
+    tabId: "tab-person",
+    url: "https://login.example.com",
+    title: null,
+    loading: false,
+    defaultProfileId: profileId,
+    profiles: [{ id: profileId, name: "Default" }],
+    tabs: [
+      { tabId: "tab-person", url: "https://login.example.com", profileId, ownedByCaller: true },
+    ],
+  };
+  const broker = PreviewAutomationBroker.of({
+    connect: () => Effect.succeed(Stream.empty),
+    focusHost: () => Effect.void,
+    respond: () => Effect.void,
+    invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+      Effect.sync(() => {
+        const input = (request.input ?? {}) as Record<string, unknown>;
+        if (request.operation === "open") seen.opens.push(input);
+        if (request.operation === "accountWaitForLoad") seen.gaps.push(input.settleMs as number);
+        if (request.operation === "accountType") seen.fills++;
+        if (request.operation === "evaluate")
+          return {
+            origin: "https://login.example.com",
+            username: null,
+            password: null,
+            otp: null,
+            submit: "button",
+            challenge: null,
+            signedIn: false,
+            ...page,
+          } as A;
+        return status as A;
+      }),
+  });
+  return { broker, seen };
+};
+
+const personRun = (
+  broker: PreviewAutomationBroker["Service"],
+  fake: ReturnType<typeof fakeAccounts>,
+  options: Parameters<typeof signIn>[4],
+  values: Parameters<typeof signIn>[2] = {},
+) => {
+  const scope = {
+    threadId: ThreadId.make("thread-person"),
+    projectId: undefined,
+    unattended: false,
+  };
+  return signIn(
+    scope,
+    {
+      accountId: AccountId.make("acc_person_fixture"),
+      name: "Fixture",
+      details: { kind: "website", sites: ["example.com"], username: "fixture-user" },
+      secrets: {},
+      controls: {
+        access: "allowed",
+        permission: "full",
+        visibility: "hidden",
+        scope: { type: "all-projects" },
+      },
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    values,
+    "tab-person",
+    options,
+  ).pipe(
+    Effect.provideService(AccountsService, fake.service),
+    Effect.provideService(PreviewAutomationBroker, broker),
+    Effect.provideService(AgentInvocationContext, {
+      ...scope,
+      environmentId: EnvironmentId.make("env-fixture"),
+      providerSessionId: "user-run:thread-person",
+      providerInstanceId: ProviderInstanceId.make("scient"),
+      capabilities: new Set(["preview", "accounts"] as const),
+      issuedAt: 0,
+    }),
+  );
+};
+
+it.effect("person mode: a step Scient can't name is the person's, for 15 minutes at 400 ms", () =>
+  Effect.gen(function* () {
+    const fake = fakeAccounts();
+    // A page off the row's sites, which an agent's sign-in would only report.
+    const { broker, seen } = personBrowser({ origin: "https://sso.unrelated.test" });
+    const published: string[] = [];
+    const watched = {
+      ...fake.service,
+      setHandoff: (handoff: Parameters<typeof fake.service.setHandoff>[0]) =>
+        Effect.sync(() => void published.push(handoff.kind)).pipe(
+          Effect.andThen(fake.service.setHandoff(handoff)),
+        ),
+    };
+    const result = yield* personRun(
+      broker,
+      { ...fake, service: watched },
+      {
+        userRun: true,
+        person: { waitMs: 15 * 60_000, lookGapMs: 400, learnOrigins: false },
+      },
+    );
+    expect(result).toMatchObject({
+      outcome: "needs-user",
+      message: "The user did not finish signing in within 15 minutes.",
+    });
+    expect(published[0]).toBe("other");
+    expect(seen.gaps.filter((gap) => gap === 400)).toHaveLength(2250);
+    // The person's tab opens where they can see it.
+    expect(seen.opens[0]).toMatchObject({ open: true });
+    expect(fake.handoffs.size).toBe(0);
+  }),
+);
+
+it.effect("resume: continues in the kept tab and never submits the password twice", () =>
+  Effect.gen(function* () {
+    const fake = fakeAccounts();
+    const resume = {
+      submissions: [
+        {
+          origin: "https://login.example.com",
+          fields: ["username", "password"] as const,
+          otpPeriod: undefined,
+        },
+      ],
+      submittedAt: 0,
+    };
+    // The password field is back on the origin that already took the password: a refusal.
+    const { broker, seen } = personBrowser({ password: "#password" });
+    const result = yield* personRun(
+      broker,
+      fake,
+      { userRun: true, resume },
+      { password: Redacted.make("synthetic-password") },
+    );
+    expect(result.outcome).toBe("password-rejected");
+    expect(seen.fills).toBe(0);
+    // Kept where it was: no address to go to.
+    expect(seen.opens[0]).not.toHaveProperty("url");
+  }),
+);

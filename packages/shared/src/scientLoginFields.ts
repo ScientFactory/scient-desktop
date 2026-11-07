@@ -66,8 +66,11 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
     }
     return -1;
   };
+  // A code field masked as a password is never the password, so a code can't replace it.
   const passwords = fields.flatMap((field, index) =>
-    field.usable && field.type === "password" ? [index] : [],
+    field.usable && field.type === "password" && !tokens[index]?.includes("one-time-code")
+      ? [index]
+      : [],
   );
   const isNew = (index: number) => tokens[index]?.includes("new-password") === true;
   const refused =

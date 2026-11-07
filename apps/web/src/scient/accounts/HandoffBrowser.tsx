@@ -35,36 +35,45 @@ export function HandoffBrowser({
   const inView = useFullyInView(frame);
   if (!snapshot) return fallback;
   const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
+  const streamed = snapshot.runtime === "server" && !nativeServerTab;
   return (
-    <div ref={setFrame} className={`relative ${className}`}>
-      {snapshot.runtime === "server" && !nativeServerTab ? (
-        <ServerBrowserSurface
-          environmentId={environmentId}
-          threadId={threadId}
-          tabId={tabId}
-          documentRuntimeTabId={runtimeTabId}
-          visible
-          followSize={false}
-          controlPosition="bottom"
-          className="size-full"
-        />
-      ) : (
-        <>
-          <BrowserSurfaceSlot
-            tabId={runtimeTabId}
-            visible={inView && Boolean(desktopOverlay?.hasWebContents)}
-            fitSourceContent
+    <>
+      {/* A streamed tab runs on the server's own browser, where nothing typed is captured. */}
+      {streamed ? (
+        <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">
+          What you type here isn't kept.
+        </p>
+      ) : null}
+      <div ref={setFrame} className={`relative ${className}`}>
+        {streamed ? (
+          <ServerBrowserSurface
+            environmentId={environmentId}
+            threadId={threadId}
+            tabId={tabId}
+            documentRuntimeTabId={runtimeTabId}
+            visible
+            followSize={false}
+            controlPosition="bottom"
             className="size-full"
           />
-          {/* The page is a native layer over the app, so it can't be half-hidden by scrolling. */}
-          {inView ? null : (
-            <div className="absolute inset-0 flex items-start justify-center bg-muted/40 pt-8 text-xs text-muted-foreground">
-              Scroll to bring the page into view
-            </div>
-          )}
-        </>
-      )}
-    </div>
+        ) : (
+          <>
+            <BrowserSurfaceSlot
+              tabId={runtimeTabId}
+              visible={inView && Boolean(desktopOverlay?.hasWebContents)}
+              fitSourceContent
+              className="size-full"
+            />
+            {/* The page is a native layer over the app, so it can't be half-hidden by scrolling. */}
+            {inView ? null : (
+              <div className="absolute inset-0 flex items-start justify-center bg-muted/40 pt-8 text-xs text-muted-foreground">
+                Scroll to bring the page into view
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
   );
 }
 

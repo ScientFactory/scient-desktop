@@ -30,6 +30,7 @@ import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
+import { GitHubConnect, type SourceControlLogin } from "./GitHubConnect";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
 import {
   entryAddTarget,
@@ -204,9 +205,7 @@ export function AddConnectorDialog({
   readonly callbackOrigin: string | null;
 }) {
   const github = entryNeedsToken(entry) === true;
-  const githubClientId = github
-    ? import.meta.env.VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID?.trim()
-    : undefined;
+  const [githubToken, setGithubToken] = useState(false);
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
   const [draft, setDraft] = useState(() => emptyDraft(entry));
@@ -227,6 +226,12 @@ export function AddConnectorDialog({
           ),
       ) ?? [])
     : [];
+  const githubLogins: ReadonlyArray<SourceControlLogin> =
+    accountsQuery.data?.managedElsewhere?.flatMap((row) =>
+      row.kind === "github" && (row.detail ?? "github.com").toLowerCase() === "github.com"
+        ? [{ login: row.name, via: row.via }]
+        : [],
+    ) ?? [];
   const errors = validateAddConnectorDraft(draft, entry, matchingAccounts);
   const shownErrors = attempted ? errors : {};
   const remotes = entry ? installableRemotes(entry) : [];
@@ -234,27 +239,39 @@ export function AddConnectorDialog({
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const close = () => onOpenChange(false);
 
-  const submit = async (githubOAuth = false) => {
-    if (submitting || (githubOAuth && !githubClientId)) return;
-    const sendingDraft = githubOAuth
-      ? {
-          ...draft,
-          authMode: "automatic" as const,
-          clientId: githubClientId!,
-          clientSecret: "",
-          value: "",
-          accountId: "",
-        }
-      : draft;
-    const sendingErrors = validateAddConnectorDraft(sendingDraft, entry, matchingAccounts);
-    const invalid = FIELD_IDS.find(([field]) => sendingErrors[field] !== undefined);
+  const connectWithSourceControl = async (account: string) => {
+    if (submitting) return;
+    setSubmitting(true);
+    setServerError(null);
+    const result = await add({
+      environmentId,
+      input: {
+        ...toAddInput({ ...draft, authMode: "automatic", clientId: "" }, entry),
+        credential: { type: "source-control", account },
+      },
+    });
+    setSubmitting(false);
+    if (result._tag === "Failure") {
+      setServerError(commandFailureMessage(result));
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: `${result.value.connector.displayName} connected as ${account}`,
+    });
+    close();
+  };
+
+  const submit = async () => {
+    if (submitting) return;
+    const invalid = FIELD_IDS.find(([field]) => errors[field] !== undefined);
     if (invalid) {
       setAttempted(true);
       document.getElementById(invalid[1])?.focus();
       return;
     }
-    const input = toAddInput(sendingDraft, entry);
-    const sentSecret = sendingDraft.value.length > 0 || sendingDraft.clientSecret.length > 0;
+    const input = toAddInput(draft, entry);
+    const sentSecret = draft.value.length > 0 || draft.clientSecret.length > 0;
     // Secrets leave the form as soon as they are sent, whatever the outcome.
     patch({ value: "", clientSecret: "" });
     setAttempted(false);
@@ -270,7 +287,6 @@ export function AddConnectorDialog({
     }
     if (result.value.nextStep === "sign-in-required") {
       setNeedsSignIn(result.value.connector);
-      if (githubOAuth) await signIn(result.value.connector);
       return;
     }
     toastManager.add({ type: "success", title: `${result.value.connector.displayName} connected` });
@@ -326,6 +342,35 @@ export function AddConnectorDialog({
                 onClick={() => void signIn(needsSignIn)}
               >
                 Sign in
+              </Button>
+            </DialogFooter>
+          </>
+        ) : github && !githubToken ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Add GitHub</DialogTitle>
+              <DialogDescription>
+                Connect GitHub to work with your repositories, issues and pull requests.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <div className="grid gap-3">
+                <GitHubConnect
+                  environmentId={environmentId}
+                  logins={githubLogins}
+                  busy={submitting}
+                  onConnect={(account) => void connectWithSourceControl(account)}
+                  onUseToken={() => {
+                    setServerError(null);
+                    setGithubToken(true);
+                  }}
+                />
+                <ActionError message={serverError} />
+              </div>
+            </DialogPanel>
+            <DialogFooter variant="bare">
+              <Button variant="outline" onClick={close}>
+                Cancel
               </Button>
             </DialogFooter>
           </>
@@ -401,16 +446,6 @@ export function AddConnectorDialog({
                       onChange={(event) => patch({ displayName: event.target.value })}
                     />
                   </div>
-                ) : null}
-                {githubClientId ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={submitting || callbackOrigin === null}
-                    onClick={() => void submit(true)}
-                  >
-                    Sign in with GitHub
-                  </Button>
                 ) : null}
                 {github ? (
                   <p className="text-sm text-muted-foreground">

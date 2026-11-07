@@ -9,19 +9,14 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 // SCIENT-FORK:START — Scient Accounts: hide and protect tabs in profiles this session may not see.
 import {
   profileUnavailable,
-  visibleProfiles,
+  visiblePreviewSessions,
   withPreviewAccounts,
 } from "../../../scient/accounts/agent/previewProfileAccess.ts";
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 
-/** The sessions whose profile this agent session may see; all of them without Accounts. */
+/** The sessions this agent session may see (its profiles, no sign-in under way); all without Accounts. */
 const visibleSessions = (sessions: ReadonlyArray<PreviewSessionSnapshot>) =>
-  withPreviewAccounts(Effect.succeed(sessions), (scope) =>
-    visibleProfiles(
-      scope,
-      sessions.flatMap((session) => (session.profileId ? [session.profileId] : [])),
-    ).pipe(Effect.map((visible) => sessions.filter((session) => visible(session.profileId)))),
-  );
+  withPreviewAccounts(Effect.succeed(sessions), (scope) => visiblePreviewSessions(scope, sessions));
 // SCIENT-FORK:END
 
 const access = Effect.gen(function* () {

@@ -384,6 +384,21 @@
       "purpose": "Expose the live account-token resolver and matching-account list consumed by Extensions bindings."
     },
     {
+      "path": "apps/server/src/scient/accounts/AccountsServiceLive.ts",
+      "anchor": "githubCredential.value.get",
+      "purpose": "List Source Control's effective GitHub login, through the connector's credential service, so Accounts groups it with the GitHub connector."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsLayers.ts",
+      "anchor": "GitHubSourceControlCredential.layer",
+      "purpose": "Provide the GitHub credential service the connector also uses to the Accounts service."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/Accounts.testkit.ts",
+      "anchor": "Layer.succeed(GitHubSourceControlCredential",
+      "purpose": "Let Accounts tests stand in for Source Control's GitHub credential."
+    },
+    {
       "path": "apps/web/src/scient/accounts/accountsView.ts",
       "anchor": "curatedIcons.json",
       "purpose": "Account logos reuse logos from the Extensions curated icon registry; the file only names that source."
