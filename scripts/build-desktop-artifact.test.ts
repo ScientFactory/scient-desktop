@@ -3937,6 +3937,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
+        voiceRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -3980,6 +3981,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             wslPrebuild: Option.none(),
             syncTexRuntime: Option.none(),
             wslSyncTexRuntime: Option.none(),
+            voiceRuntime: Option.none(),
           }),
         );
 
@@ -4006,6 +4008,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
+        voiceRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
@@ -4047,6 +4050,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         wslPrebuild: Option.none(),
         syncTexRuntime: Option.none(),
         wslSyncTexRuntime: Option.none(),
+        voiceRuntime: Option.none(),
       });
 
       assert.isTrue(resolved.signed);
