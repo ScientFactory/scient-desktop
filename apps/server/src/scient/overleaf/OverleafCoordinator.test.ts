@@ -332,6 +332,81 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
     ),
   );
 
+  it.live(
+    "holds bulk changes back at an unreadable record's own checkout, or every one when it names none",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+          const current = yield* w.connection;
+          const record = NodePath.join(w.stateRoot, "connections", `${current.connectionId}.json`);
+          const other = NodePath.join(NodePath.dirname(w.checkout), "other");
+          yield* Effect.promise(() =>
+            NodeFSP.mkdir(NodePath.join(other, ".git"), { recursive: true }),
+          );
+          const write = (contents: string) =>
+            Effect.promise(() => NodeFSP.writeFile(record, contents));
+          const bulk = (checkout: string) =>
+            w.barrier.bulk(checkout, Effect.void).pipe(
+              Effect.as("changed" as const),
+              Effect.catchTags({
+                CheckoutRecoveryRequiredError: (error) => Effect.succeed(error.reason ?? "recover"),
+              }),
+            );
+          const staged = { ...current, stagingPaths: [".scient-overleaf-apply-earlier-1"] };
+
+          // A newer release's unfinished sync: only its checkout waits, and the record stays.
+          yield* write(JSON.stringify({ ...staged, schemaVersion: 99 }));
+          expect(yield* bulk(w.checkout)).toBe("newer-unfinished-record");
+          expect(yield* bulk(other)).toBe("changed");
+          expect(
+            yield* Effect.flip(
+              w.store.quarantineConnection(current.connectionId, { acceptUnfinished: true }),
+            ),
+          ).toMatchObject({ condition: "unfinished" });
+
+          // A newer release's fields can't prove it settled: its checkout still waits.
+          yield* write(JSON.stringify({ ...current, schemaVersion: 99 }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+          expect(yield* bulk(other)).toBe("changed");
+
+          // A damaged record that shows no unfinished sync holds nothing back.
+          yield* write(JSON.stringify({ ...current, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("changed");
+
+          // Without a version this release knows, the same fields prove nothing.
+          const { schemaVersion: _version, ...unversioned } = current;
+          yield* write(JSON.stringify({ ...unversioned, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+
+          // A folder path a readable record couldn't have names no folder.
+          yield* write(
+            JSON.stringify({
+              ...staged,
+              revision: "damaged",
+              folder: { ...current.folder, relativePath: "../other" },
+            }),
+          );
+          expect(yield* bulk(other)).toBe("unreadable-record");
+
+          // A damaged record showing staged copies goes only once the user accepts it.
+          yield* write(JSON.stringify({ ...staged, revision: "damaged" }));
+          expect(yield* bulk(w.checkout)).toBe("unreadable-record");
+          expect(yield* bulk(other)).toBe("changed");
+          expect(
+            yield* Effect.flip(w.store.quarantineConnection(current.connectionId)),
+          ).toMatchObject({ condition: "unfinished" });
+
+          // One that names no folder holds every checkout back.
+          yield* write("{ not json");
+          expect(yield* bulk(other)).toBe("unreadable-record");
+          yield* write(JSON.stringify({ ...staged, revision: "damaged" }));
+          yield* w.store.quarantineConnection(current.connectionId, { acceptUnfinished: true });
+          expect(yield* bulk(w.checkout)).toBe("changed");
+        }),
+      ),
+  );
+
   it.live("refuses a bulk change when inline recovery finds structural copies", () => {
     let crash = true;
     let staging = "";

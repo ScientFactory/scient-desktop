@@ -1,12 +1,11 @@
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Layer from "effect/Layer";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
 import { readCursorAccountUsage, type CursorAccountUsageReadResult } from "./accountUsage.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
 
 export class CursorAccountReader extends Context.Service<
   CursorAccountReader,
@@ -19,24 +18,16 @@ export class CursorAccountReader extends Context.Service<
   }
 >()("@t3tools/provider-cursor/server/CursorAccountReader") {}
 
-export const make = Effect.fn("CursorAccountReader.make")(function* (
-  options: { readonly productName?: string } = {},
-) {
-  const keychain = yield* CursorKeychain.CursorKeychain;
-  const context = yield* Effect.context<
-    FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
-  >();
-  return CursorAccountReader.of({
-    // Only a Keychain login asks the Keychain. The dashboard reader turns
-    // its outcome, a failure included, into the source's message.
-    read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
-      return readCursorAccountUsage(
-        credentialSource,
-        sinceMs,
-        untilMs,
-        keychain.accessToken,
-        options,
-      ).pipe(Effect.provideContext(context));
-    }),
-  });
-});
+export const layer = Layer.effect(
+  CursorAccountReader,
+  Effect.gen(function* () {
+    const context = yield* Effect.context<Digest.Digest | HttpClient.HttpClient>();
+    return CursorAccountReader.of({
+      read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
+        return readCursorAccountUsage(credentialSource, sinceMs, untilMs).pipe(
+          Effect.provideContext(context),
+        );
+      }),
+    });
+  }),
+);

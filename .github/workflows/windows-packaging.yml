@@ -41,12 +41,67 @@ jobs:
           path: windows-prerequisites/
           if-no-files-found: error
 
+  # Starts beside linux_runtime and waits for its artifact only before the build needs it.
   package_windows:
     name: Windows packaging / Installer and native runtime
-    needs: linux_runtime
     runs-on: windows-2025
     timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
     steps:
+      # The runner's C: drive is slow for many small files; its D: drive, which holds the
+      # workspace, is several times faster. Temporary files (build stages, Python
+      # environments, extracted archives) go there.
+      - name: Use the D drive for temporary files
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: printf 'TEMP=%s\nTMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      # Caches here are saved only by pushes to main and read by every run. A pull request
+      # saving its own copies fills the repository's 10 GB cache and evicts main's.
+      # T3's build check needs the Spectre libraries folder of the latest MSVC toolset, so
+      # that folder is cached by toolset version; the installer runs only without it.
+      - name: Locate the MSVC toolset
+        id: msvc
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$installPath) { throw "Visual Studio C++ tools are unavailable" }
+          $toolset = Get-ChildItem (Join-Path $installPath 'VC\Tools\MSVC') -Directory | Sort-Object { [version]$_.Name } | Select-Object -Last 1
+          "install_path=$installPath" >> $env:GITHUB_OUTPUT
+          "spectre=$(Join-Path $toolset.FullName 'lib\spectre')" >> $env:GITHUB_OUTPUT
+          "toolset=$($toolset.Name)" >> $env:GITHUB_OUTPUT
+          "image=$env:ImageVersion" >> $env:GITHUB_OUTPUT
+      - name: Restore Spectre-mitigated MSVC libraries
+        id: spectre_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.msvc.outputs.spectre }}
+          key: msvc-spectre-v1-${{ steps.msvc.outputs.toolset }}
+      # The Visual Studio Installer takes minutes and needs nothing from the checkout, so it
+      # runs while the job checks out and installs; the compiler step waits for it.
+      - name: Start installing Spectre-mitigated MSVC libraries
+        if: ${{ steps.spectre_cache.outputs.cache-hit != 'true' }}
+        shell: pwsh
+        env:
+          INSTALL_PATH: ${{ steps.msvc.outputs.install_path }}
+        run: |
+          $installPath = $env:INSTALL_PATH
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $status = Join-Path $env:RUNNER_TEMP 'spectre-status'
+          $script = Join-Path $env:RUNNER_TEMP 'spectre-install.ps1'
+          @"
+          `$code = 1
+          try {
+            `$process = Start-Process -FilePath '$setupExe' -ArgumentList 'modify', '--installPath', '"$installPath"', '--add', 'Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre', '--quiet', '--norestart' -Wait -PassThru -NoNewWindow
+            if (`$null -ne `$process) { `$code = `$process.ExitCode }
+          } finally {
+            Set-Content -LiteralPath '$status.partial' -Value `$code
+            Move-Item -LiteralPath '$status.partial' -Destination '$status' -Force
+          }
+          "@ | Set-Content -LiteralPath $script
+          Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
@@ -57,56 +112,100 @@ jobs:
         id: package_cache_path
         shell: pwsh
         run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - name: Restore packages
+        id: package_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ steps.package_cache_path.outputs.path }}
-          key: windows-packaging-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+          # The whole-workspace store CI's Overleaf Windows job saves on main; this
+          # job's filtered install takes what it needs from it.
+          key: windows-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install dependencies
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Install Spectre-mitigated MSVC libraries
+      - name: Finish installing Spectre-mitigated MSVC libraries
+        if: ${{ steps.spectre_cache.outputs.cache-hit != 'true' }}
         shell: pwsh
+        timeout-minutes: 15
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -products * -latest -property installationPath
-          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          $process = Start-Process -FilePath $setupExe `
-            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
-            -Wait -PassThru -NoNewWindow
-          if ($null -eq $process -or $process.ExitCode -ne 0) { throw "Visual Studio Installer failed" }
+          $status = Join-Path $env:RUNNER_TEMP 'spectre-status'
+          while (!(Test-Path -LiteralPath $status)) { Start-Sleep -Seconds 2 }
+          $code = (Get-Content -LiteralPath $status -Raw).Trim()
+          if ($code -ne '0') { throw "Visual Studio Installer failed with exit code $code" }
       - name: Initialize the MSVC compiler environment
         shell: pwsh
+        env:
+          INSTALL_PATH: ${{ steps.msvc.outputs.install_path }}
+          SPECTRE: ${{ steps.msvc.outputs.spectre }}
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (!$installPath) { throw "Visual Studio C++ tools are unavailable" }
-          & "$installPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          if (!(Test-Path -LiteralPath (Join-Path $env:SPECTRE 'x64'))) { throw "Spectre-mitigated x64 libraries are missing" }
+          & "$env:INSTALL_PATH\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
           Get-Command cl.exe -ErrorAction Stop | Out-Null
           foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH')) {
             $value = [Environment]::GetEnvironmentVariable($name)
             if (!$value) { throw "Missing compiler environment variable: $name" }
             "$name=$value" >> $env:GITHUB_ENV
           }
+      # The pinned whisper.cpp and SyncTeX builds, by the scripts that pin their sources and on
+      # this runner image's compiler. The build verifies each receipt before staging it.
+      - name: Restore native runtimes
+        id: native_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native-runtimes
+          key: windows-native-runtimes-v1-${{ steps.msvc.outputs.image }}-${{ steps.msvc.outputs.toolset }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts', 'scripts/stage-synctex-runtime.ts') }}
+      # Each script runs in the shell the build gives it: whisper.cpp extracts with Git Bash's
+      # GNU tar (--force-local), SyncTeX with Windows tar, which takes C: paths.
+      - name: Build the voice runtime
+        if: ${{ steps.native_cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: node scripts/stage-whisper-runtime.ts --platform win --arch x64 --output native-runtimes/whisper-runtime --verbose
+      - name: Build the SyncTeX runtime
+        if: ${{ steps.native_cache.outputs.cache-hit != 'true' }}
+        shell: pwsh
+        run: node scripts/stage-synctex-runtime.ts --platform win --arch x64 --output native-runtimes/synctex-runtime --verbose
 
+      - name: Wait for the Linux prerequisites
+        shell: bash
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Linux prerequisites" windows-packaging-prerequisites
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-packaging-prerequisites
           path: windows-prerequisites
-      - name: Build target SyncTeX runtime
-        run: node scripts/stage-synctex-runtime.ts --platform win --arch x64 --output synctex-runtime --verbose
+      # electron-builder downloads Electron and its NSIS tools on every run without these.
+      - name: Restore Electron downloads
+        id: electron_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: windows-electron-downloads-v1-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json', 'node_modules/.pnpm/app-builder-lib@*/node_modules/app-builder-lib/package.json') }}
+      # As release.yml does: the resource monitor binary, by its sources, reused when present.
+      - name: Restore the resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/scient-resource-monitor.exe
+          key: resource-monitor-x86_64-pc-windows-msvc-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
       - name: Align qualification package versions
         run: node scripts/update-release-package-versions.ts 0.6.22
       # Fixed qualification version exercises Scient's stable packaging shape.
       # This is the release packer, with no signing secrets or publication step.
       - name: Build and validate the real NSIS installer
         shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
         run: |
           set -euo pipefail
           vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version 0.6.22 --keep-stage --verbose \
-            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime" \
+            --synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime" \
+            --voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime" \
             --wsl-prebuild "$GITHUB_WORKSPACE/windows-prerequisites/wsl-prebuild/pty.node" \
             --wsl-synctex-runtime "$GITHUB_WORKSPACE/windows-prerequisites/synctex-wsl"
       - name: Exercise packaged terminal and Cursor helpers
@@ -118,6 +217,8 @@ jobs:
       - name: Install 0.6.21 and upgrade to the candidate
         shell: pwsh
         run: |
+          # The progress display slows Invoke-WebRequest's download several times over.
+          $ProgressPreference = 'SilentlyContinue'
           $oldInstaller = Join-Path $env:RUNNER_TEMP 'Scient-0.6.21-x64.exe'
           Invoke-WebRequest 'https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.21/Scient-0.6.21-x64.exe' -OutFile $oldInstaller
           $expectedDigest = '173891f53b4d03c15fd9e551a0bb298fc9cac5ed128176cdd9f5ceb0e6a0a409'
@@ -171,17 +272,52 @@ jobs:
           path: wsl-qualification/wsl-runtime.tar.gz
           if-no-files-found: error
           retention-days: 7
+      - name: Save Spectre-mitigated MSVC libraries
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.spectre_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.msvc.outputs.spectre }}
+          key: ${{ steps.spectre_cache.outputs.cache-primary-key }}
+      - name: Save native runtimes
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.native_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native-runtimes
+          key: ${{ steps.native_cache.outputs.cache-primary-key }}
+      - name: Save the resource monitor
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.resource_monitor_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/scient-resource-monitor.exe
+          key: ${{ steps.resource_monitor_cache.outputs.cache-primary-key }}
+      - name: Save Electron downloads
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.electron_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: ${{ steps.electron_cache.outputs.cache-primary-key }}
 
+  # Sets up beside the installer job and waits only for its WSL payload.
   qualify_wsl_runtime:
     name: Windows packaging / Packaged WSL Linux runtime
-    needs: package_windows
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
+      # Longer than the installer job's own 45-minute limit, so a slow build is never cut short.
+      - name: Wait for the packaged WSL runtime
+        timeout-minutes: 50
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Windows packaging / Installer and native runtime" windows-packaging-wsl-runtime
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-packaging-wsl-runtime

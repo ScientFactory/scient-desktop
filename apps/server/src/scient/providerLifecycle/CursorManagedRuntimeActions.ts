@@ -10,7 +10,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { cursorRuntimeEnvironment } from "../../provider/CursorCli.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
@@ -122,7 +121,6 @@ export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
     enabled,
     binaryPath: managedRuntime.effectiveBinaryPath,
   } satisfies CursorSettings;
-  const effectiveProcessEnv = cursorRuntimeEnvironment(processEnv, managedRuntime.usesManagedPath);
   const connectionMethods = assistedCursorConnectionMethods(processEnv);
   // The bundled SDK has no CLI update target. Explicit CLI targets retain
   // their maintenance controls; managed installs are replaced by Scient.
@@ -141,7 +139,7 @@ export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
   return {
     managedRuntime,
     effectiveConfig,
-    effectiveProcessEnv,
+    effectiveProcessEnv: processEnv,
     connectionMethods,
     maintenanceResolver,
   };

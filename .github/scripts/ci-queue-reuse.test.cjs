@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { writeReceipt, restore, readArchive } = require("./ci-queue-reuse.cjs");
+const { writeReceipt, restore, readArchive, SHARDS } = require("./ci-queue-reuse.cjs");
 
 // HEAD is the pushed main commit or the queue commit; BASE is main before it.
 const HEAD = "a".repeat(40);
@@ -120,7 +120,7 @@ function fixture(t, event = "push") {
     add(`ci-${prefix}-qualification-attempt-${run.run_attempt}`, receipt);
     add("thread-transfer-results", structuredClone(TRANSFER));
     for (const suite of ["web", "server"])
-      for (let shard = 1; shard <= (suite === "web" ? 3 : 8); shard++)
+      for (let shard = 1; shard <= SHARDS[suite]; shard++)
         add(`vitest-${suite}-${shard}-attempt-${run.run_attempt}`, structuredClone(VITEST));
     artifacts.set(run.id, list);
     return run;
@@ -221,14 +221,14 @@ async function refused(f) {
   assert.equal(f.outputs.source_run_id, undefined);
 }
 
-test("a main push restores all twelve reports only after exact queue evidence", async (t) => {
+test("a main push restores every report only after exact queue evidence", async (t) => {
   const f = fixture(t);
   await restore(f.args);
   reused(f);
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_url, `https://github.com/${REPO}/actions/runs/10`);
   const files = fs.readdirSync(path.join(f.temp, "ci-queue-reuse"));
-  assert.equal(files.length, 12);
+  assert.equal(files.length, SHARDS.web + SHARDS.server + 1);
   assert.deepEqual(
     JSON.parse(fs.readFileSync(path.join(f.temp, "ci-queue-reuse/thread-transfer-result.json"))),
     TRANSFER,
@@ -375,7 +375,10 @@ test("a queue entry reuses its PR run when that run tested this exact content an
   reused(f);
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_event, "pull_request");
-  assert.equal(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length, 12);
+  assert.equal(
+    fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length,
+    SHARDS.web + SHARDS.server + 1,
+  );
 });
 
 const queueMismatches = [
@@ -604,8 +607,23 @@ test("workflow preserves complete evidence before reuse and a single always-runn
     path.join(__dirname, "../actions/ci-queue-reporting/action.yml"),
     "utf8",
   );
-  assert.equal((reporting.match(/uses: actions\/upload-artifact/g) ?? []).length, 12);
-  assert.equal((reporting.match(/overwrite: true/g) ?? []).length, 12);
+  // One upload per shard report, plus the transfer measurement.
+  const uploads = SHARDS.web + SHARDS.server + 1;
+  assert.equal((reporting.match(/uses: actions\/upload-artifact/g) ?? []).length, uploads);
+  assert.equal((reporting.match(/overwrite: true/g) ?? []).length, uploads);
+  for (const [suite, count] of Object.entries(SHARDS))
+    for (let shard = 1; shard <= count; shard++)
+      assert.match(reporting, new RegExp(`name: vitest-${suite}-${shard}-attempt-`));
+  for (const [job, suite] of [
+    ["test_web", "web"],
+    ["test_server", "server"],
+  ])
+    assert.match(
+      sections.get(job),
+      new RegExp(
+        `shard: \\[${Array.from({ length: SHARDS[suite] }, (_, i) => i + 1).join(", ")}\\]`,
+      ),
+    );
   for (const job of ["test_web", "test_server"]) {
     assert.match(sections.get(job), /overwrite: true/);
     const stand = sections.get(`${job}_reused`);
@@ -753,7 +771,7 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
   assert.equal(gate("0".repeat(40), base), "mobile_native=true");
 });
 
-test("a web-only receipt restores three web reports without demanding skipped server evidence", async (t) => {
+test("a web-only receipt restores the web reports without demanding skipped server evidence", async (t) => {
   const f = fixture(t, "merge_group");
   f.receipt.reports.server = false;
   const list = f.artifacts.get(10);
@@ -768,7 +786,7 @@ test("a web-only receipt restores three web reports without demanding skipped se
   reused(f);
   assert.equal(f.outputs.web_reports, "true");
   assert.equal(f.outputs.server_reports, "false");
-  assert.equal(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length, 3);
+  assert.equal(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length, SHARDS.web);
 });
 
 test("a docs-only receipt can reuse without inventing reports from skipped matrices", async (t) => {
@@ -803,11 +821,11 @@ for (const [name, mutate] of [
     },
   ],
   [
-    "missing eighth server shard",
+    "missing last server shard",
     (f) => {
       f.artifacts.set(
         10,
-        f.artifacts.get(10).filter((artifact) => artifact.name !== "vitest-server-8-attempt-1"),
+        f.artifacts.get(10).filter((artifact) => artifact.name !== "vitest-server-12-attempt-1"),
       );
     },
   ],

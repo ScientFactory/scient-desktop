@@ -320,6 +320,8 @@ interface ChatMarkdownProps {
       names exactly one; see `pickChangedFileForLink`. */
   changedFiles?: ReadonlyArray<{ readonly path: string }> | undefined;
   // SCIENT-FORK:END
+  /** The change request's repository, when it can differ from the checkout at `cwd`. */
+  sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -626,6 +628,7 @@ function useChatMarkdownState({
   // SCIENT-FORK:START — a broken file link may resolve to the one changed file it names.
   changedFiles,
   // SCIENT-FORK:END
+  sourceControlMediaRepository,
 }: ChatMarkdownProps) {
   // SCIENT-FORK:START — length-preserving delimiter normalization keeps offset-based actions correct.
   // Retain original text so refinement can recover each backslash pair's inline/display intent.
@@ -1089,6 +1092,7 @@ function useChatMarkdownState({
     expandMedia,
     fileLinkChip,
     sourceControlMedia,
+    sourceControlMediaRepository,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -1614,6 +1618,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       cwd,
       environmentId,
       sourceControlMedia,
+      sourceControlMediaRepository,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -1737,7 +1742,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: hostMediaUrl }}
+          resource={{
+            _tag: SOURCE_CONTROL_MEDIA_ASSET,
+            cwd,
+            url: hostMediaUrl,
+            ...(sourceControlMediaRepository ? { repository: sourceControlMediaRepository } : {}),
+          }}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}

@@ -10,12 +10,14 @@ import {
 import type { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makePiDriver,
   makePiAdapterV2,
   type PiAdapterV2Options,
   piContinuationRequestsIfProvided,
+  piMaintenanceResolver,
   type PiDriverEnv,
   type PiRuntimeResolution,
   type PiRuntimeResolverInput,
@@ -23,7 +25,8 @@ import {
 import type { PiSettings } from "@t3tools/provider-pi/settings";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import type * as Path from "effect/Path";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { customModelDiscoverySnapshot } from "../customModelCapabilities.ts";
 import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
@@ -150,6 +153,33 @@ const resolvePiRuntime = Effect.fn("PiDriverComposition.resolvePiRuntime")(funct
     effectiveConfig,
     effectiveEnvironment: input.processEnv,
     runtimeSummary: managedRuntime.summary,
+    // Scient's runtime actions update its private Pi; `pi update --self` would replace the
+    // qualified build in place. Where the executable really lives decides, so a pasted path
+    // or a link to the private build counts too. Other installations keep upstream's rule.
+    maintenanceResolver: {
+      resolve: Effect.fn("PiDriverComposition.resolveMaintenance")(function* (context) {
+        if (context !== null) {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem
+            .realPath(path.join(input.baseDir, "provider-runtimes", "pi"))
+            .pipe(Effect.orElseSucceed(() => null));
+          const relative = root === null ? null : path.relative(root, context.realCommandPath);
+          if (
+            relative !== null &&
+            relative !== "" &&
+            relative !== ".." &&
+            !relative.startsWith(`..${path.sep}`) &&
+            !path.isAbsolute(relative)
+          )
+            return makeManualOnlyProviderMaintenanceCapabilities({
+              provider: PI_DRIVER,
+              packageName: null,
+            });
+        }
+        return yield* piMaintenanceResolver.resolve(context);
+      }),
+    },
     makeRpcClient,
     makeConnection,
     customModelSnapshot: (settings: ServerSettingsData) =>

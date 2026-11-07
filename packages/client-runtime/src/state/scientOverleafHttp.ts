@@ -9,6 +9,7 @@ import type {
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
   ScientOverleafUndoRequest,
+  ScientOverleafSetAsideRequest,
   ScientOverleafWorkspaceRequest,
 } from "@t3tools/contracts";
 
@@ -103,6 +104,21 @@ export const listEnvironmentOverleafConnections = Effect.fn(
     timeoutMs: READ_TIMEOUT_MS,
     url: (urls) => urls.list(),
     run: ({ client, headers }) => client.list({ headers, payload: input.request }),
+  });
+});
+
+/** Moves one link record this release can't read aside; never reaches Overleaf. */
+export const setAsideEnvironmentOverleafUnreadable = Effect.fn(
+  "clientRuntime.state.setAsideEnvironmentOverleafUnreadable",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafSetAsideRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: READ_TIMEOUT_MS,
+    url: (urls) => urls.setAsideUnreadable(),
+    run: ({ client, headers }) => client.setAsideUnreadable({ headers, payload: input.request }),
   });
 });
 

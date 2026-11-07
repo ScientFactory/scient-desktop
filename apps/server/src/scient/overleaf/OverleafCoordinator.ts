@@ -2773,8 +2773,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     );
 
   // A bulk checkout change first settles a pending apply when nothing else holds
-  // that connection, otherwise it refuses. It fails closed: an unreadable record
-  // refuses every bulk change until quarantined or repaired.
+  // that connection, otherwise it refuses. It fails closed: an unreadable record that
+  // may hold an unfinished sync refuses changes to its own checkout, or to every
+  // checkout when it doesn't say which, until it is settled or set aside.
   yield* barrier.settleBeforeBulk((section) =>
     Effect.gen(function* () {
       const refuse = new CheckoutBarrier.CheckoutRecoveryRequiredError({ checkout: section.root });
@@ -2783,7 +2784,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         const read = yield* store.readConnection(connectionId).pipe(Effect.mapError(() => refuse));
         // Removed between listing and reading: nothing pending there.
         if (read._tag === "missing") continue;
-        if (read._tag !== "ready") return yield* refuse;
+        if (read._tag !== "ready") {
+          const holds = OverleafStateStore.unreadableHolds(read);
+          if (holds === "linking") continue;
+          const unreadable = new CheckoutBarrier.CheckoutRecoveryRequiredError({
+            checkout: section.root,
+            reason:
+              OverleafStateStore.unreadableSetAside(read) === "held"
+                ? "newer-unfinished-record"
+                : "unreadable-record",
+          });
+          if (holds === "every-checkout" || read.shows.folder === null) return yield* unreadable;
+          const owner = yield* barrier
+            .current(read.shows.folder)
+            .pipe(Effect.mapError(() => unreadable));
+          if (owner.keys.includes(section.key)) return yield* unreadable;
+          continue;
+        }
         if (read.document.state !== "active") continue;
         const connection = read.document;
         // The connection's checkout, or one enclosing it, is the one changing.
