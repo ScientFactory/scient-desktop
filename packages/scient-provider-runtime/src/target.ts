@@ -7,6 +7,7 @@ export interface ManagedRuntimeTarget {
   readonly libc?: "glibc" | "musl" | undefined;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class UnsupportedManagedRuntimeTargetError extends Error {
   constructor(message: string) {
     super(message);

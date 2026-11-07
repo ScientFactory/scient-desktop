@@ -45,7 +45,7 @@ const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.mergeAll(
       projectsLayer,
       Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.undefined,
       }),
     ),
   ),
@@ -233,6 +233,8 @@ it.live(
         const baseline = yield* checkpoints.materializeBaselineCheckpoint({
           scope: executionScope,
           ordinalWithinScope: 0,
+          nodeId: executionScope.nodeId,
+          capturedAt: executionScope.createdAt,
         });
         yield* fs.writeFileString(
           `${afterRoot}/README.md`,

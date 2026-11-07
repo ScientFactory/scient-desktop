@@ -130,6 +130,8 @@ it.live.each(["historical", "workspace-bound"] as const)(
             const laterBaseline = yield* checkpoints.materializeBaselineCheckpoint({
               scope: laterScope,
               ordinalWithinScope: 1,
+              nodeId: laterScope.nodeId,
+              capturedAt: laterScope.createdAt,
             });
             assert.equal(laterBaseline.status, "ready");
             yield* fs.writeFileString(`${cwd}/after-two.txt`, "Endpoint two\n");

@@ -3,6 +3,7 @@ import {
   type DesktopPreviewPdfExportArtifact,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import type { WebContents } from "electron";
 
@@ -35,13 +36,18 @@ const PAGINATION_CSS = `
   }
 `;
 
-class BrowserPdfSurfaceChangedError extends Error {
-  override readonly name = "BrowserPdfSurfaceChangedError";
-}
+class BrowserPdfSurfaceChangedError extends Schema.TaggedError<BrowserPdfSurfaceChangedError>()(
+  "BrowserPdfSurfaceChangedError",
+  { message: Schema.String },
+) {}
 
-class BrowserPdfOutputTooLargeError extends Error {
-  override readonly name = "BrowserPdfOutputTooLargeError";
-}
+class BrowserPdfOutputTooLargeError extends Schema.TaggedError<BrowserPdfOutputTooLargeError>()(
+  "BrowserPdfOutputTooLargeError",
+  { message: Schema.String },
+) {}
+
+const isBrowserPdfSurfaceChangedError = Schema.is(BrowserPdfSurfaceChangedError);
+const isBrowserPdfOutputTooLargeError = Schema.is(BrowserPdfOutputTooLargeError);
 
 export interface BrowserPdfRendererError {
   readonly _tag: "BrowserPdfRendererError";
@@ -325,9 +331,9 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
       try: async () => {
         if (webContents.isDestroyed()) throw new Error("The preview page was closed.");
         if (webContents.isLoading()) {
-          throw new BrowserPdfSurfaceChangedError(
-            "Wait for the preview page to finish navigating before exporting it.",
-          );
+          throw new BrowserPdfSurfaceChangedError({
+            message: "Wait for the preview page to finish navigating before exporting it.",
+          });
         }
         const initialUrl = webContents.getURL();
         let invalidatedReason: string | null = null;
@@ -347,16 +353,18 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
         let paginationCssKey: string | undefined;
         const assertStableSurface = (sourceUrl?: string) => {
           if (invalidatedReason !== null) {
-            throw new BrowserPdfSurfaceChangedError(invalidatedReason);
+            throw new BrowserPdfSurfaceChangedError({ message: invalidatedReason });
           }
           if (webContents.isDestroyed()) {
-            throw new BrowserPdfSurfaceChangedError("The preview page was closed during export.");
+            throw new BrowserPdfSurfaceChangedError({
+              message: "The preview page was closed during export.",
+            });
           }
           const currentUrl = webContents.getURL();
           if (currentUrl !== initialUrl || (sourceUrl !== undefined && sourceUrl !== initialUrl)) {
-            throw new BrowserPdfSurfaceChangedError(
-              "The preview page changed before the export completed.",
-            );
+            throw new BrowserPdfSurfaceChangedError({
+              message: "The preview page changed before the export completed.",
+            });
           }
         };
 
@@ -382,9 +390,9 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
           assertStableSurface(page.sourceUrl);
           if (data.byteLength === 0) throw new Error("Chromium returned an empty PDF.");
           if (data.byteLength > BROWSER_PDF_EXPORT_MAX_BYTES) {
-            throw new BrowserPdfOutputTooLargeError(
-              "The generated PDF exceeds the current 64 MiB HTML export limit.",
-            );
+            throw new BrowserPdfOutputTooLargeError({
+              message: "The generated PDF exceeds the current 64 MiB HTML export limit.",
+            });
           }
           return {
             data: new Uint8Array(data),
@@ -406,12 +414,11 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
       },
       catch: (cause) => ({
         _tag: "BrowserPdfRendererError" as const,
-        operation:
-          cause instanceof BrowserPdfSurfaceChangedError
-            ? "exportPdf.surfaceChanged"
-            : cause instanceof BrowserPdfOutputTooLargeError
-              ? "exportPdf.tooLarge"
-              : "printToPDF",
+        operation: isBrowserPdfSurfaceChangedError(cause)
+          ? "exportPdf.surfaceChanged"
+          : isBrowserPdfOutputTooLargeError(cause)
+            ? "exportPdf.tooLarge"
+            : "printToPDF",
         cause,
       }),
     });

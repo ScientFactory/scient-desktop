@@ -591,8 +591,9 @@ describe("DesktopWindow", () => {
       DesktopWindow.resolveInitialMainWindowBounds(null, [], {
         x: 0,
         y: 0,
-        width: 820,
-        height: 600,
+        // Smaller than the native minimum of 400x360.
+        width: 380,
+        height: 340,
       }),
       DesktopAppSettings.MIN_MAIN_WINDOW_SIZE,
     );

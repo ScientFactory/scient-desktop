@@ -6,6 +6,8 @@
 # Preserve wasm2c output and vendored runtime bytes, including trailing spaces.
 apps/mobile/modules/t3-highlights/Vendor/highlights/highlights.c whitespace=-blank-at-eol
 apps/mobile/modules/t3-highlights/Vendor/wasm2c/wasm-rt.h whitespace=-blank-at-eol
+# Nitrogen writes this binding code with trailing spaces; keep it as generated.
+apps/mobile/modules/t3-highlights/nitrogen/generated/** whitespace=-blank-at-eol
 # Batch files need CRLF for cmd.exe to parse them reliably.
 *.cmd text eol=crlf
 *.bat text eol=crlf

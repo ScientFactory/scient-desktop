@@ -60,6 +60,8 @@ export class OverleafGitError extends Schema.TaggedError<OverleafGitError>()("Ov
 const isOverleafGitError = Schema.is(OverleafGitError);
 const fail = (reason: OverleafGitFailureReason, detail = "", exitCode: number | null = null) =>
   new OverleafGitError({ reason, detail, exitCode });
+const runtimeFailure = (cause: unknown) =>
+  fail("runtime-failed", cause instanceof Error ? cause.message : String(cause));
 
 /**
  * Overleaf's answer to too many Git requests. It comes before anything is sent, and it
@@ -456,20 +458,19 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
     return resolved;
   });
 
-  const scratchReady = yield* Effect.tryPromise(async () => {
-    const helper = windows
-      ? (options.publicationHelper ?? (await resolveNativeFilePublicationHelperPath()))
-      : undefined;
-    return makeGitScratch(options.runtimeRoot, windows, helper);
-  }).pipe(
-    Effect.mapError((cause) =>
+  const scratchReady = yield* Effect.tryPromise({
+    try: async () => {
+      const helper = windows
+        ? (options.publicationHelper ?? (await resolveNativeFilePublicationHelperPath()))
+        : undefined;
+      return makeGitScratch(options.runtimeRoot, windows, helper);
+    },
+    catch: (cause) =>
       fail(
         "runtime-failed",
         cause instanceof Error ? cause.message : "Could not prepare private Git scratch space.",
       ),
-    ),
-    Effect.result,
-  );
+  }).pipe(Effect.result);
 
   const runIn = Effect.fnUntraced(function* (executable: string, input: OverleafGitExecuteInput) {
     const scratchRoot = yield* Effect.fromResult(scratchReady);
@@ -483,9 +484,9 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         // A token lives only in its own command's scratch, removed with it.
         const scratch =
           input.token === undefined
-            ? yield* Effect.tryPromise(() => scratchRoot.shared())
+            ? yield* Effect.tryPromise({ try: () => scratchRoot.shared(), catch: runtimeFailure })
             : yield* Effect.acquireRelease(
-                Effect.tryPromise(() => scratchRoot.create()),
+                Effect.tryPromise({ try: () => scratchRoot.create(), catch: runtimeFailure }),
                 (directory) =>
                   Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
               );
@@ -557,13 +558,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
           windows,
         });
       }),
-    ).pipe(
-      Effect.mapError((cause) =>
-        isOverleafGitError(cause)
-          ? cause
-          : fail("runtime-failed", cause instanceof Error ? cause.message : String(cause)),
-      ),
-    );
+    ).pipe(Effect.mapError((cause) => (isOverleafGitError(cause) ? cause : runtimeFailure(cause))));
   });
 
   // Only a success is remembered: installing Git later must not need a restart.

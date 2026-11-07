@@ -66,10 +66,7 @@ else if (args[0] === 'item' && args[1] === 'view' && args[3] === '--output' && a
   };
 }
 const acquire = (mode = "normal", limits: { timeout?: number; maxBuffer?: number } = {}) =>
-  Effect.acquireRelease(
-    Effect.promise(() => fixture(mode, limits)),
-    (f) => Effect.promise(() => f[Symbol.asyncDispose]()),
-  );
+  Effect.acquireDisposable(Effect.promise(() => fixture(mode, limits)));
 const command = (
   stores: ReturnType<typeof makeCliPasswordStores>,
   store: CliPasswordStore,

@@ -1,20 +1,27 @@
 import {
+  CheckpointId,
+  CheckpointRef,
   RunId,
   MessageId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveActiveWorkStartedAt,
   createMessageAttachmentPreviewProjector,
+  deriveRevertTurnCountByUserMessageId,
   deriveTimelineEntriesFromVisibleTurnItems,
+  findRevertCheckpoint,
   isLatestRunSettled,
   workEntrySignalsSevereFailure,
+  type TimelineEntry,
 } from "./session-logic";
 
 const timestamp = DateTime.makeUnsafe("2026-09-04T12:00:00.000Z");
@@ -442,5 +449,72 @@ describe("message attachment previews", () => {
     expect(handoff(ready, () => undefined)).toBe(ready);
     expect(ready.attachments?.[0]).toMatchObject({ previewUrl: "https://server.test/image" });
     expect(first.attachments?.[0]).toMatchObject({ previewUrl: "blob:handoff" });
+  });
+});
+
+describe("rewind targets without a file snapshot", () => {
+  const runId = (ordinal: number) => RunId.make(`snapshot-run-${ordinal}`);
+  const userTurn = (ordinal: number): TimelineEntry => {
+    const id = MessageId.make(`user-${ordinal}`);
+    const createdAt = `2026-11-05T00:00:0${ordinal}.000Z`;
+    return {
+      id,
+      kind: "message",
+      createdAt,
+      message: {
+        id,
+        role: "user",
+        text: "user",
+        runId: runId(ordinal),
+        inputIntent: "turn_start",
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    };
+  };
+  const summary = (ordinal: number, status: ThreadCheckpointSummary["status"]) => ({
+    runId: runId(ordinal),
+    checkpointTurnCount: ordinal,
+    checkpointRef: CheckpointRef.make(`snapshot-${ordinal}`),
+    status,
+    files: [],
+    assistantMessageId: null,
+    completedAt: "2026-11-05T00:00:09.000Z",
+  });
+
+  it("offers a conversation rewind past failed or missing snapshots, not rolled-back ones", () => {
+    const targets = (checkpoints: ReadonlyArray<ThreadCheckpointSummary>) =>
+      Object.fromEntries(
+        deriveRevertTurnCountByUserMessageId({
+          timelineEntries: [1, 2, 3].map(userTurn),
+          checkpoints,
+          threadStartCheckpointReady: true,
+        }),
+      );
+    expect(targets([summary(1, "error"), summary(2, "missing")])).toEqual({
+      "user-1": 0,
+      "user-2": 1,
+      "user-3": 2,
+    });
+    expect(targets([summary(1, "stale"), summary(2, "ready")])).toEqual({
+      "user-1": 0,
+      "user-3": 2,
+    });
+  });
+
+  it("targets a captured snapshot when one exists and the failed boundary otherwise", () => {
+    const checkpoint = (id: string, status: OrchestrationV2Checkpoint["status"]) =>
+      ({
+        id: CheckpointId.make(id),
+        status,
+        ordinalWithinScope: 0,
+        appRunOrdinal: null,
+      }) as OrchestrationV2Checkpoint;
+    expect(
+      findRevertCheckpoint([checkpoint("captured", "ready"), checkpoint("failed", "error")], 0)?.id,
+    ).toBe("captured");
+    expect(findRevertCheckpoint([checkpoint("failed", "error")], 0)?.id).toBe("failed");
+    expect(findRevertCheckpoint([checkpoint("rolled-back", "stale")], 0)).toBeUndefined();
   });
 });

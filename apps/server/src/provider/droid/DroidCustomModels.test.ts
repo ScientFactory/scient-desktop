@@ -897,11 +897,14 @@ describe("Droid custom model settings", () => {
       );
       expect(yield* fs.exists(overlayPath)).toBe(false);
       // The broker's listener ends with the runtime scope.
-      const afterClose = yield* Effect.tryPromise(() =>
+      const rejected = yield* Effect.promise(() =>
         // @effect-diagnostics-next-line globalFetchInEffect:off
-        fetch(`${brokerUrl}/responses`, { method: "POST", body: "{}" }),
-      ).pipe(Effect.exit);
-      expect(afterClose._tag).toBe("Failure");
+        fetch(`${brokerUrl}/responses`, { method: "POST", body: "{}" }).then(
+          () => false,
+          () => true,
+        ),
+      );
+      expect(rejected).toBe(true);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   });
 

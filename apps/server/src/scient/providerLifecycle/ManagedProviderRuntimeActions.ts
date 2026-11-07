@@ -36,7 +36,10 @@ import {
   parseGenericCliVersion,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
@@ -670,7 +673,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
           },
         }),
       catch: (cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
     });

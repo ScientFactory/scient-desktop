@@ -228,12 +228,46 @@ export const ScientOverleafConnectionSummary = Schema.Struct({
 });
 export type ScientOverleafConnectionSummary = typeof ScientOverleafConnectionSummary.Type;
 
+/**
+ * A link record this release can't read, with what it still shows. `setAside` says
+ * whether it can be moved aside: "confirm" for a damaged record whose staged files lose
+ * their protection, "held" for a newer release's record that release must settle.
+ */
+export const ScientOverleafUnreadableRecord = Schema.Struct({
+  recordId: ConnectionId,
+  kind: Schema.Literals(["damaged", "newer"]),
+  /** The linked folder, when the record still names it. */
+  folder: Schema.NullOr(Schema.String),
+  /** A sync it records stopped part-way; null when the record doesn't say. */
+  unfinished: Schema.NullOr(Schema.Boolean),
+  /** Besides linking: bulk changes at its own checkout, at every checkout, or nothing more. */
+  holds: Schema.Literals(["linking", "checkout", "every-checkout"]),
+  setAside: Schema.Literals(["allowed", "confirm", "held"]),
+});
+export type ScientOverleafUnreadableRecord = typeof ScientOverleafUnreadableRecord.Type;
+
 export const ScientOverleafConnectionList = Schema.Struct({
   connections: Schema.Array(
     Schema.Struct({ ...ScientOverleafConnectionSummary.fields, linkedHere: Schema.Boolean }),
   ),
+  /** Link records this release can't read; absent from servers that predate the list. */
+  unreadableRecords: Schema.optional(Schema.Array(ScientOverleafUnreadableRecord)),
 });
 export type ScientOverleafConnectionList = typeof ScientOverleafConnectionList.Type;
+
+/** Moves one unreadable link record aside; "confirm" records need `acceptUnfinished`. */
+export const ScientOverleafSetAsideRequest = Schema.Struct({
+  workspaceRoot: WorkspaceRoot,
+  recordId: ConnectionId,
+  acceptUnfinished: Schema.optional(Schema.Boolean),
+});
+export type ScientOverleafSetAsideRequest = typeof ScientOverleafSetAsideRequest.Type;
+
+/** Moved aside bytes intact, kept for its unfinished sync, or already gone or readable. */
+export const ScientOverleafSetAsideResult = Schema.Struct({
+  outcome: Schema.Literals(["set-aside", "held", "gone"]),
+});
+export type ScientOverleafSetAsideResult = typeof ScientOverleafSetAsideResult.Type;
 
 /** Connect, relink or disconnect: done, or a fixed reason it did nothing. */
 export const ScientOverleafManageResult = Schema.Union([

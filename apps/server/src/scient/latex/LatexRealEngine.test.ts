@@ -58,6 +58,7 @@ const resolvesOnPath = (command: string): boolean => {
 const ENGINE_ON_PATH = resolvesOnPath("latexmk -v") || resolvesOnPath("tectonic --version");
 
 const COMPILE_TIMEOUT_MS = 25_000;
+const SYNCTEX_NAVIGATOR_PATH = process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH;
 
 const authority = EnvironmentId.make("environment-scient-latex-real-test");
 const serverEnvironment = Layer.succeed(
@@ -125,9 +126,9 @@ const makeWorkspace = (files: Readonly<Record<string, string>>, managedRoot?: st
             ...(publicationHelper === undefined
               ? {}
               : { filePublicationHelperPath: publicationHelper }),
-            ...(process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH === undefined
+            ...(SYNCTEX_NAVIGATOR_PATH === undefined
               ? {}
-              : { syncTexNavigatorPath: process.env.SCIENT_LATEX_REAL_SYNCTEX_PATH }),
+              : { syncTexNavigatorPath: SYNCTEX_NAVIGATOR_PATH }),
           }),
         ),
         Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),

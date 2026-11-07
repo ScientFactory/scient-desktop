@@ -106,6 +106,7 @@ export function useThreadTerminalActions(
     readonly terminalId?: string;
     readonly location?: TerminalLaunchLocation | null;
     readonly extraEnv?: Record<string, string>;
+    readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
   }) => {
     if (!threadRef || !canWrite() || !project) return null;
@@ -126,6 +127,7 @@ export function useThreadTerminalActions(
           ...(input.extraEnv ? { extraEnv: input.extraEnv } : {}),
         }),
         ...input.size,
+        ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
       },
     });
     return { terminalId, result };

@@ -21,6 +21,7 @@ export type DocumentSourcePatchProblem =
   | "crlf"
   | "stale";
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/scient-document has no Effect runtime; callers branch on instanceof and problem.
 export class DocumentSourcePatchError extends Error {
   readonly problem: DocumentSourcePatchProblem;
   constructor(problem: DocumentSourcePatchProblem, message: string) {

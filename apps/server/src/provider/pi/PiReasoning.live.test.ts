@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelReasoningMetadata } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -109,7 +110,7 @@ export default function() {
               guard,
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: root + "/profile",
               PI_TELEMETRY: "0",
@@ -275,7 +276,7 @@ for (const basePath of ["/v1", "/api.x.ai/v1"]) {
               "--no-tools",
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: root + "/profile",
               PI_TELEMETRY: "0",
@@ -442,7 +443,7 @@ for (const protocol of ["openai-responses", "anthropic-messages"] as const) {
               "--no-tools",
             ],
             env: {
-              PATH: process.env.PATH,
+              PATH: (yield* HostProcess.Environment).PATH,
               HOME: root,
               PI_CODING_AGENT_DIR: root + "/profile",
               PI_TELEMETRY: "0",

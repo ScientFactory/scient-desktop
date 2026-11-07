@@ -201,13 +201,13 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                   if (input.args[0] === "worktree" && input.args[1] === "move") {
                     assert.isFalse(input.args.includes("--force"));
                     isolatedPath = input.args[3]!;
-                    yield* fs.rename(input.args[2]!, isolatedPath).pipe(Effect.orDie);
+                    yield* fs.rename(input.args[2]!, isolatedPath);
                   }
                   if (input.args.includes("remove")) {
                     assert.isFalse(input.args.includes("--force"));
                     const target = input.args.at(-1)!;
                     removals.push(target);
-                    yield* fs.remove(target, { recursive: true }).pipe(Effect.orDie);
+                    yield* fs.remove(target, { recursive: true });
                   }
                   return {
                     exitCode: ChildProcessSpawner.ExitCode(0),
@@ -227,7 +227,7 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                     stdoutTruncated: false,
                     stderrTruncated: false,
                   };
-                }),
+                }).pipe(Effect.orDie),
             }),
           ),
         ),

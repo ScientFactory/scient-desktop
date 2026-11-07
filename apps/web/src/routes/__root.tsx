@@ -43,7 +43,6 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
-import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
@@ -248,7 +247,6 @@ function RootRouteBranch() {
         {/* SCIENT-FORK:START — desktop availability stays in the update circle. */}
         {primaryEnvironmentAuthenticated ? <BrowserProviderUpdateNotification /> : null}
         {/* SCIENT-FORK:END */}
-        {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
         {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
         {appShell}
         {/* Keep the theme editor above the router so drafts survive navigation. */}

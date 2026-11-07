@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -113,7 +114,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP fork continuity", () => {
           const instanceId = ProviderInstanceId.make("omp-fork-continuity");
           const { environment } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const factory = yield* makeOmpCustomModelsClientFactory(
             ompQualifyTarget,

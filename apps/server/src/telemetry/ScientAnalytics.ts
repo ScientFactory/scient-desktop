@@ -243,7 +243,7 @@ export const make = Effect.gen(function* () {
     recordOwners,
     flush,
     status,
-    collectionEpoch: Effect.sync(() => collectionEpoch),
+    collectionEpoch: Effect.succeed(collectionEpoch),
     observeCollectionBoundary,
   } satisfies AnalyticsService["Service"];
 });

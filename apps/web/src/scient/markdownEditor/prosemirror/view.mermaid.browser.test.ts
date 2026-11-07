@@ -148,7 +148,11 @@ describe("persistent Mermaid source editing", () => {
     const parent = box.parentElement;
     const editor = nestedEditor(host);
     await clickText(editor, broken.length);
-    await userEvent.keyboard("{Backspace}{Backspace}{Backspace}{Backspace}");
+    // One deletion is one undo step. Four Backspaces are grouped only when they land
+    // within CodeMirror's 500 ms history delay, which a loaded runner can exceed.
+    await userEvent.keyboard(
+      "{Shift>}{ArrowLeft}{ArrowLeft}{ArrowLeft}{ArrowLeft}{/Shift}{Backspace}",
+    );
     expect(controller.session.session.draftSource).toBe(markdown(repaired));
     await vi.waitFor(() =>
       expect(host.querySelector('svg[aria-label="Repaired diagram"]')).not.toBeNull(),

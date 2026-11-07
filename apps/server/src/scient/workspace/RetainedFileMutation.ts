@@ -249,6 +249,7 @@ export interface RetainedMutationHooks {
 }
 /** Why a request was refused before anything changed, where a caller can say more. */
 export type RetainedRefusal = "kept-folder-not-empty" | ScientOverleafFilesystemRefusalReason;
+// @effect-diagnostics-next-line extendsNativeError:off - thrown from plain async filesystem code; apps/server/src/workspace/WorkspaceFileSystem.ts and 120+ throw sites build it positionally.
 export class RetainedMutationError extends Error {
   readonly reason: "intent" | "unavailable" | "target" | "recovery";
   readonly recoveryId: string;

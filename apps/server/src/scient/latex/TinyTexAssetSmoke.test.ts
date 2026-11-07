@@ -38,6 +38,8 @@ import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syn
 
 const RUN_ASSET_SMOKE = process.env.SCIENT_TINYTEX_ASSET_SMOKE === "1";
 const SYNCTEX_RUNTIME = process.env.SCIENT_SYNCTEX_RUNTIME;
+const SYSTEM_ROOT = process.env.SystemRoot ?? "C:\\Windows";
+const PROGRAM_DATA = process.env.ProgramData ?? "C:\\ProgramData";
 const SMOKE_TIMEOUT_MS = 15 * 60 * 1_000;
 // oxlint-disable-next-line t3code/no-global-process-runtime -- native runner selection happens at collection time, before an Effect runtime exists.
 const HOST_PLATFORM = NodeOS.platform();
@@ -104,18 +106,20 @@ function isolatedEnvironment(pathFolders: ReadonlyArray<string>, empty: string):
  * Spawning by bare name on POSIX reads this process's own PATH, so a scenario
  * holds it for exactly as long as it runs.
  */
+function replaceProcessPath(pathValue: string | undefined): string | undefined {
+  const inherited = process.env.PATH;
+  if (pathValue === undefined) delete process.env.PATH;
+  else process.env.PATH = pathValue;
+  return inherited;
+}
+
 const withProcessPath = <A, E, R>(pathValue: string, effect: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const inherited = process.env.PATH;
-      process.env.PATH = pathValue;
-      return inherited;
-    }),
+    Effect.sync(() => replaceProcessPath(pathValue)),
     () => effect,
     (inherited) =>
       Effect.sync(() => {
-        if (inherited === undefined) delete process.env.PATH;
-        else process.env.PATH = inherited;
+        replaceProcessPath(inherited);
       }),
   );
 
@@ -127,10 +131,7 @@ const withProcessPath = <A, E, R>(pathValue: string, effect: Effect.Effect<A, E,
 async function writeBrokenEngine(directory: string, name: string): Promise<string> {
   if (HOST_PLATFORM === "win32") {
     const target = NodePath.join(directory, `${name}.exe`);
-    await NodeFSP.copyFile(
-      NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "where.exe"),
-      target,
-    );
+    await NodeFSP.copyFile(NodePath.join(SYSTEM_ROOT, "System32", "where.exe"), target);
     return target;
   }
   const target = NodePath.join(directory, name);
@@ -191,9 +192,7 @@ async function verifyNativeAsset(
   const payloadPath = NodePath.join(temporaryRoot, "payload");
   await NodeFSP.mkdir(payloadPath, { recursive: true });
   const tarCommand =
-    HOST_PLATFORM === "win32"
-      ? NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
-      : "tar";
+    HOST_PLATFORM === "win32" ? NodePath.join(SYSTEM_ROOT, "System32", "tar.exe") : "tar";
   const unpacked = NodeChildProcess.spawnSync(
     tarCommand,
     ["-x", "-f", archivePath, "-C", payloadPath],
@@ -321,10 +320,7 @@ const brokenFirstOnPath = (temporaryRoot: string, native: NativeAsset) =>
     yield* Effect.promise(() => writeBrokenEngine(brokenDirectory, "pdflatex"));
     const systemFolders =
       HOST_PLATFORM === "win32"
-        ? [
-            NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
-            process.env.SystemRoot ?? "C:\\Windows",
-          ]
+        ? [NodePath.join(SYSTEM_ROOT, "System32"), SYSTEM_ROOT]
         : ["/usr/bin", "/bin"];
 
     const onlyBroken = [brokenDirectory];
@@ -411,10 +407,7 @@ const selfExtractWithoutSystemTar = (temporaryRoot: string, native: DownloadedAs
     const engine = NodePath.join(destination, native.asset.executableRelativePath);
     expect(NodeFS.existsSync(engine)).toBe(true);
     const environment = isolatedEnvironment(
-      [
-        NodePath.dirname(engine),
-        NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
-      ],
+      [NodePath.dirname(engine), NodePath.join(SYSTEM_ROOT, "System32")],
       NodePath.join(temporaryRoot, "no-default-installs"),
     );
     const started = NodeChildProcess.spawnSync(engine, ["-v"], {
@@ -446,11 +439,10 @@ const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
     yield* Effect.addFinalizer(() =>
       Effect.promise(() => NodeFSP.rm(texDirectory, { recursive: true, force: true })),
     );
-    const programData = process.env.ProgramData ?? "C:\\ProgramData";
-    expect(NodePath.dirname(texDirectory).toLowerCase()).toBe(programData.toLowerCase());
+    expect(NodePath.dirname(texDirectory).toLowerCase()).toBe(PROGRAM_DATA.toLowerCase());
     expect(isTexSafePath(texDirectory)).toBe(true);
     const acl = NodeChildProcess.spawnSync(
-      NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
+      NodePath.join(SYSTEM_ROOT, "System32", "icacls.exe"),
       [texDirectory],
       { encoding: "utf8" },
     );
@@ -498,10 +490,7 @@ const nonAsciiProfile = (temporaryRoot: string, downloaded: DownloadedAsset) =>
     });
     yield* Effect.promise(() => NodeFSP.writeFile(paths.statePath, record));
 
-    const systemFolders = [
-      NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
-      process.env.SystemRoot ?? "C:\\Windows",
-    ];
+    const systemFolders = [NodePath.join(SYSTEM_ROOT, "System32"), SYSTEM_ROOT];
     const environment = isolatedEnvironment(
       systemFolders,
       NodePath.join(temporaryRoot, "no-default-installs"),

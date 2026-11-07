@@ -71,9 +71,13 @@ import {
 import { nextInventoryReadSequence } from "./ProviderNativeInventory.ts";
 // SCIENT-FORK:END
 
-import type { ProviderConnectionOperation, ProviderRuntimeSummary } from "@t3tools/contracts";
+import {
+  ProviderInstanceId as ProviderInstanceIdSchema,
+  type ProviderConnectionOperation,
+  type ProviderRuntimeSummary,
+} from "@t3tools/contracts";
 
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
 import type {
   ProviderConnectionActions,
@@ -88,12 +92,15 @@ import type {
 
 export type ProviderMaintenanceActionKind = "update";
 
-export class ProviderRegistryRefreshError extends Data.TaggedError("ProviderRegistryRefreshError")<{
-  readonly operation: "refresh" | "reload";
-  readonly instanceId: ProviderInstanceId;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ProviderRegistryRefreshError extends Schema.TaggedError<ProviderRegistryRefreshError>()(
+  "ProviderRegistryRefreshError",
+  {
+    operation: Schema.Literals(["refresh", "reload"]),
+    instanceId: ProviderInstanceIdSchema,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export interface ProviderRegistryShape {
   readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;

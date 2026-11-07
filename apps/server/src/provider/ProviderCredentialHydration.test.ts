@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AntigravitySettings,
+  settingsSecretLiteral,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -145,7 +146,11 @@ it.effect.each(["remove", "disable"] as const)(
             defaultConfig: () => decodeAntigravitySettings({}),
             create: ({ instanceId, config: providerConfig, enabled }) =>
               Effect.sync(() => {
-                created.push({ instanceId, key: providerConfig.apiKey, enabled });
+                created.push({
+                  instanceId,
+                  key: settingsSecretLiteral(providerConfig.apiKey),
+                  enabled,
+                });
                 return {
                   instanceId,
                   driverKind,
@@ -187,12 +192,13 @@ it.effect.each(["remove", "disable"] as const)(
                 } satisfies ProviderInstance;
               }),
           };
+          const initialSettings = yield* settings.getSettings;
           const { registry, mutator } = yield* makeProviderInstanceRegistry({
             drivers: [driver],
-            configMap: deriveProviderInstanceConfigMap(yield* settings.getSettings),
+            configMap: deriveProviderInstanceConfigMap(initialSettings),
           });
           yield* Layer.build(
-            layerSettingsWatcher(changes).pipe(
+            layerSettingsWatcher(changes, initialSettings).pipe(
               Layer.provide(Layer.succeed(Mutator.ProviderInstanceRegistryMutator, mutator)),
             ),
           );

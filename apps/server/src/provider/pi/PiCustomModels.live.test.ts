@@ -150,7 +150,11 @@ it.effect.skipIf(!binary)(
             "--no-tools",
           ],
           cwd: root,
-          env: { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: root + "/profile" },
+          env: {
+            PATH: (yield* HostProcess.Environment).PATH,
+            HOME: root,
+            PI_CODING_AGENT_DIR: root + "/profile",
+          },
         };
         let client = yield* factory(spawn);
         const catalog = yield* client.getAvailableModels();
@@ -402,7 +406,7 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             null,
           ];
           const environment = {
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             HOME: root,
             PI_CODING_AGENT_DIR: root + "/profile",
             SCIENT_QA_PRESENT: "must-not-be-substituted",

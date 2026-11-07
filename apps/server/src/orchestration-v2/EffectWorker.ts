@@ -1,4 +1,9 @@
-import { DroidSteerDeferred, DroidSteerUncertain } from "./Adapters/DroidSteerSafety.ts";
+import {
+  DroidSteerDeferred,
+  DroidSteerUncertain,
+  isDroidSteerDeferred,
+  isDroidSteerUncertain,
+} from "./Adapters/DroidSteerSafety.ts";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -1056,9 +1061,9 @@ export const layerWithOptions = (
 
           const failure = Cause.findErrorOption(exit.cause);
           const deferredDroidSteer =
-            Option.isSome(failure) && failure.value.cause instanceof DroidSteerDeferred;
+            Option.isSome(failure) && isDroidSteerDeferred(failure.value.cause);
           const uncertainDroidSteer =
-            Option.isSome(failure) && failure.value.cause instanceof DroidSteerUncertain;
+            Option.isSome(failure) && isDroidSteerUncertain(failure.value.cause);
           const awaitingNativeReceipt =
             effect.request.type === "provider-run.interrupt" &&
             Option.isSome(failure) &&

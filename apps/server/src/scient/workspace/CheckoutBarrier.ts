@@ -25,13 +25,26 @@ export class CheckoutSuspendedError extends Schema.TaggedError<CheckoutSuspended
   }
 }
 
-/** A bulk mutation was refused because an unfinished Overleaf sync could not be settled first. */
+/**
+ * A bulk mutation was refused because an unfinished Overleaf sync could not be settled
+ * first, or because an unreadable link record might describe one.
+ */
 export class CheckoutRecoveryRequiredError extends Schema.TaggedError<CheckoutRecoveryRequiredError>()(
   "CheckoutRecoveryRequiredError",
-  { checkout: Schema.String },
+  {
+    checkout: Schema.String,
+    reason: Schema.optional(Schema.Literals(["unreadable-record", "newer-unfinished-record"])),
+  },
 ) {
   override get message(): string {
-    return "An Overleaf sync in this project did not finish. Recover it before changing the project's files in bulk.";
+    switch (this.reason) {
+      case "unreadable-record":
+        return "Scient can't read one of its Overleaf link records, so it won't change project files in bulk. Set it aside in Settings › Synced folders › Overleaf, then try again.";
+      case "newer-unfinished-record":
+        return "A newer version of Scient left an Overleaf sync unfinished, so this version won't change project files in bulk. Finish that sync in the newer version, then try again. The record is listed in Settings › Synced folders › Overleaf.";
+      default:
+        return "An Overleaf sync in this project did not finish. Recover it before changing the project's files in bulk.";
+    }
   }
 }
 

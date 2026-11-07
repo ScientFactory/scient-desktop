@@ -5,6 +5,7 @@
  * reported, never silently recreated.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Schema from "effect/Schema";
 import { windowsPrivateRetention, probeWindowsRetention } from "./WindowsOverleafRetention.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -70,13 +71,15 @@ const isReadOnly = (error: unknown) => {
   return result?.codeDomain === "errno" && [1, 13, 30].includes(result.code);
 };
 
-class Refused extends Error {
-  readonly reason: OverleafRetentionRefusal;
-  constructor(reason: OverleafRetentionRefusal) {
-    super(reason);
-    this.reason = reason;
+class Refused extends Schema.TaggedError<Refused>()("OverleafRetentionRefused", {
+  reason: Schema.declare((_: unknown): _ is OverleafRetentionRefusal => true),
+}) {
+  override get message(): string {
+    return this.reason;
   }
 }
+
+const isRefused = Schema.is(Refused);
 
 /** Creates (or, with `create: false`, only checks) one owner-only, non-symlink directory. */
 async function ensurePrivate(
@@ -85,9 +88,9 @@ async function ensurePrivate(
   create: boolean,
   helper: string | null,
 ) {
-  if (await overleafCloudRoot(directory)) throw new Refused("sync-managed-folder");
+  if (await overleafCloudRoot(directory)) throw new Refused({ reason: "sync-managed-folder" });
   if (HostProcess.Platform.defaultValue() === "linux") {
-    if (!helper) throw new Refused("unsupported-filesystem");
+    if (!helper) throw new Refused({ reason: "unsupported-filesystem" });
     if (!create) await statOrRefuse(directory, "vault-missing");
     try {
       await (create ? ensureNativePrivateRetentionDirectory : checkNativePrivateRetentionDirectory)(
@@ -95,8 +98,8 @@ async function ensurePrivate(
         directory,
       );
     } catch (cause) {
-      if (isReadOnly(cause)) throw new Refused("read-only-parent");
-      throw new Refused("unsafe-directory");
+      if (isReadOnly(cause)) throw new Refused({ reason: "read-only-parent" });
+      throw new Refused({ reason: "unsafe-directory" });
     }
     return;
   }
@@ -110,7 +113,7 @@ async function ensurePrivate(
       await syncDirectory(NodePath.dirname(directory));
     } catch (error) {
       if (errorCode(error) !== "EEXIST") {
-        if (isReadOnly(error)) throw new Refused("read-only-parent");
+        if (isReadOnly(error)) throw new Refused({ reason: "read-only-parent" });
         throw error;
       }
     }
@@ -118,12 +121,14 @@ async function ensurePrivate(
   try {
     stat = await NodeFSP.lstat(directory);
   } catch (error) {
-    if (errorCode(error) === "ENOENT") throw new Refused("vault-missing");
+    if (errorCode(error) === "ENOENT") throw new Refused({ reason: "vault-missing" });
     throw error;
   }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Refused("unsafe-directory");
-  if (userId !== undefined && stat.uid !== userId) throw new Refused("unsafe-directory");
-  if ((stat.mode & 0o077) !== 0) throw new Refused("unsafe-directory");
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Refused({ reason: "unsafe-directory" });
+  if (userId !== undefined && stat.uid !== userId)
+    throw new Refused({ reason: "unsafe-directory" });
+  if ((stat.mode & 0o077) !== 0) throw new Refused({ reason: "unsafe-directory" });
 }
 
 /** Folders whose disk was proven in this process, by identity; a replaced folder is proven again. */
@@ -146,7 +151,7 @@ async function probeCapability(
     await NodeFSP.writeFile(probe, "", { flag: "wx", mode: 0o600 });
     await NodeFSP.mkdir(`${probe}-folder`, { mode: 0o700 });
   } catch (error) {
-    if (isReadOnly(error)) throw new Refused("read-only-parent");
+    if (isReadOnly(error)) throw new Refused({ reason: "read-only-parent" });
     throw error;
   } finally {
     await NodeFSP.rm(probe, { force: true });
@@ -183,7 +188,7 @@ async function proveCapability(directory: string, publicationHelper: string | nu
       await NodeFSP.writeFile(path(left), "a", { flag: "wx", mode: 0o600 });
       await NodeFSP.writeFile(path(right), "b", { flag: "wx", mode: 0o600 });
     } catch (error) {
-      if (isReadOnly(error)) throw new Refused("read-only-parent");
+      if (isReadOnly(error)) throw new Refused({ reason: "read-only-parent" });
       throw error;
     }
   };
@@ -193,7 +198,7 @@ async function proveCapability(directory: string, publicationHelper: string | nu
       try {
         await NodeFSP.link(path(left), path(link));
       } catch {
-        throw new Refused("unsupported-filesystem");
+        throw new Refused({ reason: "unsupported-filesystem" });
       }
     } finally {
       await Promise.all([left, right, link].map((name) => NodeFSP.rm(path(name), { force: true })));
@@ -231,7 +236,7 @@ async function proveCapability(directory: string, publicationHelper: string | nu
             result.outcome !== "applied" ||
             Object.values(result.flush).some((value) => value > 0)
           )
-            throw new Refused("unsupported-filesystem");
+            throw new Refused({ reason: "unsupported-filesystem" });
           if (HostProcess.Platform.defaultValue() === "linux") {
             const trial = async (
               operation: "stage-create" | "staged-create",
@@ -262,10 +267,10 @@ async function proveCapability(directory: string, publicationHelper: string | nu
               refused.code !== 17 ||
               (await NodeFSP.readFile(path(link), "utf8")) !== "b"
             )
-              throw new Refused("unsupported-filesystem");
+              throw new Refused({ reason: "unsupported-filesystem" });
           }
         } catch {
-          throw new Refused("unsupported-filesystem");
+          throw new Refused({ reason: "unsupported-filesystem" });
         }
         // A driver can report success after a destructive rename instead of a swap.
         const swapped = await Promise.all([
@@ -275,7 +280,7 @@ async function proveCapability(directory: string, publicationHelper: string | nu
           ([l, r]) => l === "b" && r === "a",
           () => false,
         );
-        if (!swapped) throw new Refused("unsupported-filesystem");
+        if (!swapped) throw new Refused({ reason: "unsupported-filesystem" });
       } finally {
         for (const name of [left, right, link, stage])
           await removeNativeRetainedEntry(lease, directory, name);
@@ -293,8 +298,8 @@ async function statOrRefuse(path: string, missing: OverleafRetentionRefusal) {
     return await NodeFSP.stat(path, { bigint: true });
   } catch (error) {
     const code = errorCode(error) ?? "";
-    if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused(missing);
-    if (["EACCES", "EPERM"].includes(code)) throw new Refused("unsafe-directory");
+    if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused({ reason: missing });
+    if (["EACCES", "EPERM"].includes(code)) throw new Refused({ reason: "unsafe-directory" });
     throw error;
   }
 }
@@ -323,11 +328,11 @@ async function siblingLevels(
 ) {
   const cloud = await overleafCloudRoot(checkout);
   const parent = NodePath.dirname(cloud ?? checkout);
-  if (parent === checkout) throw new Refused("disk-root-checkout");
+  if (parent === checkout) throw new Refused({ reason: "disk-root-checkout" });
   const parentStat = await statOrRefuse(parent, "volume-unavailable");
   if (parentStat.dev !== checkoutStat.dev)
-    throw new Refused(cloud ? "sync-managed-folder" : "disk-root-checkout");
-  if (await overleafCloudRoot(parent)) throw new Refused("sync-managed-folder");
+    throw new Refused({ reason: cloud ? "sync-managed-folder" : "disk-root-checkout" });
+  if (await overleafCloudRoot(parent)) throw new Refused({ reason: "sync-managed-folder" });
   if (cloud && HostProcess.Platform.defaultValue() === "linux") {
     const checkoutIdentity = await platformFileIdentity.directory(
       checkout,
@@ -345,14 +350,15 @@ async function siblingLevels(
       checkoutIdentity.volume !== parentIdentity.volume ||
       checkoutIdentity.subvolumeId !== parentIdentity.subvolumeId
     )
-      throw new Refused("sync-managed-folder");
+      throw new Refused({ reason: "sync-managed-folder" });
   }
   // Checked on every use, not only the first: whoever owns the parent can replace its entries.
-  if (userId !== undefined && Number(parentStat.uid) !== userId) throw new Refused("shared-parent");
+  if (userId !== undefined && Number(parentStat.uid) !== userId)
+    throw new Refused({ reason: "shared-parent" });
   // A parent others can write to, without the sticky bit, lets them rename our folder away.
   // ACLs are not inspected; that remains a documented limit.
   if ((parentStat.mode & 0o022n) !== 0n && (parentStat.mode & 0o1000n) === 0n)
-    throw new Refused("shared-parent");
+    throw new Refused({ reason: "shared-parent" });
   const base = NodePath.join(parent, OVERLEAF_VAULT_DIRECTORY);
   return [
     base,
@@ -378,26 +384,26 @@ async function verifiedFolder(
   } catch (error) {
     // Denial or disappearance of one candidate must not stop the search for another.
     const code = errorCode(error) ?? "";
-    if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused("vault-missing");
-    if (["EACCES", "EPERM"].includes(code)) throw new Refused("unsafe-directory");
+    if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused({ reason: "vault-missing" });
+    if (["EACCES", "EPERM"].includes(code)) throw new Refused({ reason: "unsafe-directory" });
     throw error;
   }
   const stat = await statOrRefuse(directory, "vault-missing");
   if (stat.dev !== checkoutStat.dev || (await physicallyInside(directory, checkoutStat)))
-    throw new Refused("unsafe-directory");
+    throw new Refused({ reason: "unsafe-directory" });
   const identity = await platformFileIdentity.directory(
     directory,
     async () => volume,
     helper ?? undefined,
   );
-  if (identity === null) throw new Refused("vault-replaced");
+  if (identity === null) throw new Refused({ reason: "vault-replaced" });
   if (
     checkoutIdentity?.platform === "linux" &&
     identity.platform === "linux" &&
     (identity.volume !== checkoutIdentity.volume ||
       identity.subvolumeId !== checkoutIdentity.subvolumeId)
   )
-    throw new Refused("unsupported-filesystem");
+    throw new Refused({ reason: "unsupported-filesystem" });
   return { directory, identity };
 }
 
@@ -430,8 +436,8 @@ export async function locateOverleafRetention(input: {
       checkout = await NodeFSP.realpath(input.checkoutRoot);
     } catch (error) {
       const code = errorCode(error) ?? "";
-      if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused("volume-unavailable");
-      if (["EACCES", "EPERM"].includes(code)) throw new Refused("unsafe-directory");
+      if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused({ reason: "volume-unavailable" });
+      if (["EACCES", "EPERM"].includes(code)) throw new Refused({ reason: "unsafe-directory" });
       throw error;
     }
     const checkoutStat = await statOrRefuse(checkout, "volume-unavailable");
@@ -439,7 +445,7 @@ export async function locateOverleafRetention(input: {
       HostProcess.Platform.defaultValue() === "linux"
         ? await nativeLinuxFileIdentity(checkout, true, input.publicationHelper ?? undefined)
         : null;
-    if (linux?.reason) throw new Refused(linux.reason);
+    if (linux?.reason) throw new Refused({ reason: linux.reason });
     if (
       HostProcess.Platform.defaultValue() === "linux" &&
       (!input.publicationHelper ||
@@ -447,12 +453,12 @@ export async function locateOverleafRetention(input: {
           await nativeFilePublicationCapabilities(input.publicationHelper, checkout),
         ))
     )
-      throw new Refused("unsupported-filesystem");
+      throw new Refused({ reason: "unsupported-filesystem" });
     const checkoutIdentity = linux?.identity ?? null;
     const volume =
       checkoutIdentity?.volume ??
       (await (input.volumeUuid ?? platformFileIdentity.volume)(checkout));
-    if (volume === null) throw new Refused("no-volume-identity");
+    if (volume === null) throw new Refused({ reason: "no-volume-identity" });
 
     const stateLevels = [
       input.stateRetained,
@@ -467,7 +473,7 @@ export async function locateOverleafRetention(input: {
         stateRoot = await NodeFSP.realpath(NodePath.dirname(input.stateRetained));
       } catch (error) {
         if (["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(errorCode(error) ?? ""))
-          throw new Refused("unsafe-directory");
+          throw new Refused({ reason: "unsafe-directory" });
         throw error;
       }
       const stateUsable =
@@ -528,15 +534,15 @@ export async function locateOverleafRetention(input: {
           }
           replaced = true;
         } catch (error) {
-          if (!(error instanceof Refused)) throw error;
+          if (!isRefused(error)) throw error;
           // A location that cannot exist for this checkout is simply not a candidate.
           if (error.reason !== "vault-missing" && error.reason !== "disk-root-checkout")
             refusal ??= error;
         }
       }
       if (match === null) {
-        if (replaced) throw new Refused("vault-replaced");
-        throw refusal ?? new Refused("vault-missing");
+        if (replaced) throw new Refused({ reason: "vault-replaced" });
+        throw refusal ?? new Refused({ reason: "vault-missing" });
       }
       found = match;
     }
@@ -553,10 +559,11 @@ export async function locateOverleafRetention(input: {
       input.publicationHelper,
       checkoutIdentity,
     );
-    if (after.identity.fileId !== found.identity.fileId) throw new Refused("vault-replaced");
+    if (after.identity.fileId !== found.identity.fileId)
+      throw new Refused({ reason: "vault-replaced" });
     return { _tag: "ready", ...found };
   } catch (error) {
-    if (error instanceof Refused) return { _tag: "refused", reason: error.reason };
+    if (isRefused(error)) return { _tag: "refused", reason: error.reason };
     throw error;
   }
 }

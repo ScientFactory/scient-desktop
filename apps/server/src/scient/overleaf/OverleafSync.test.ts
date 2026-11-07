@@ -1055,37 +1055,82 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
     ),
   );
 
-  it.live("refuses to link while a connection record cannot be read", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world({
-          overleaf: { [PROJECT]: { "a.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
-        });
-        const connected = yield* w.service.connect({
-          caller: w.at(w.main),
-          folder: "paper",
-          create: true,
-          project: PROJECT,
-          requestId: "c1",
-        });
-        if (connected._tag !== "connected") return yield* Effect.die(connected);
-        yield* Effect.promise(() =>
-          NodeFSP.writeFile(
-            NodePath.join(w.stateRoot, "connections", `${connected.connection.connectionId}.json`),
-            "{ not json",
-          ),
-        );
-        expect(
-          yield* w.service.connect({
+  it.live(
+    "lists unreadable records with what they show, and links again once they're set aside",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "a.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
+          });
+          const connected = yield* w.service.connect({
             caller: w.at(w.main),
             folder: "paper",
-            create: false,
+            create: true,
             project: PROJECT,
-            requestId: "c2",
-          }),
-        ).toMatchObject({ _tag: "refused", reason: "records-unreadable" });
-      }),
-    ),
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const recordId = connected.connection.connectionId;
+          const file = NodePath.join(w.stateRoot, "connections", `${recordId}.json`);
+          const document = JSON.parse(yield* Effect.promise(() => NodeFSP.readFile(file, "utf8")));
+          const folder = NodePath.join(document.checkout.canonicalRoot, "paper");
+          const relink = (requestId: string) =>
+            w.service.connect({
+              caller: w.at(w.main),
+              folder: "paper",
+              create: false,
+              project: PROJECT,
+              requestId,
+            });
+          const setAside = (acceptUnfinished: boolean) =>
+            w.service.setAsideUnreadable({ caller: w.at(w.main), recordId, acceptUnfinished });
+
+          // A newer release's unfinished sync is listed as kept, and stays.
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              file,
+              JSON.stringify({ ...document, schemaVersion: 99, stagingPaths: ["staged"] }),
+            ),
+          );
+          expect(yield* relink("c2")).toMatchObject({
+            _tag: "refused",
+            reason: "records-unreadable",
+          });
+          expect(yield* w.service.unreadableRecords(w.at(w.main))).toEqual([
+            {
+              recordId,
+              kind: "newer",
+              folder,
+              unfinished: true,
+              holds: "checkout",
+              setAside: "held",
+            },
+          ]);
+          expect(yield* setAside(true)).toEqual({ outcome: "held" });
+
+          // An unparseable one names nothing and can go.
+          yield* Effect.promise(() => NodeFSP.writeFile(file, "{ not json"));
+          expect(yield* w.service.unreadableRecords(w.at(w.main))).toEqual([
+            {
+              recordId,
+              kind: "damaged",
+              folder: null,
+              unfinished: null,
+              holds: "every-checkout",
+              setAside: "allowed",
+            },
+          ]);
+          expect(yield* setAside(false)).toEqual({ outcome: "set-aside" });
+          expect(yield* setAside(false)).toEqual({ outcome: "gone" });
+          expect(yield* w.service.unreadableRecords(w.at(w.main))).toEqual([]);
+          expect(
+            (yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(w.stateRoot, "quarantine"))))
+              .length,
+          ).toBe(1);
+          expect(yield* relink("c3")).toMatchObject({ _tag: "connected" });
+        }),
+      ),
   );
 
   it.live("lists a link for the project at its folder, even one added again", () =>
