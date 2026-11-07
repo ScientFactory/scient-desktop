@@ -117,17 +117,7 @@ export function OfficePages(props: {
     if (!target || target.index >= mounted) return;
     pending.current = null;
     scrollRef?.current?.(target.index, target.y);
-    // A page among the last mounted cannot reach the top of the view yet: scroll again as more
-    // mount, unless a newer jump came meanwhile or the reader moves first.
-    const root = scroller.current;
-    if (
-      root &&
-      pending.current === null &&
-      mounted < props.pages.length &&
-      root.scrollTop + root.clientHeight >= root.scrollHeight - 1
-    )
-      pending.current = target;
-  }, [mounted, scrollRef, props.pages.length]);
+  }, [mounted, scrollRef]);
   const stopPending = () => {
     pending.current = null;
   };
@@ -146,10 +136,21 @@ export function OfficePages(props: {
         }
         pending.current = null;
         // SCIENT-FORK:END
-        if (row && page)
-          scroller.current?.scrollTo({
+        if (row && page) {
+          const root = scroller.current;
+          root?.scrollTo({
             top: row.offsetTop + y * scaleAt(page, width) - 24, // SCIENT-FORK
           });
+          // SCIENT-FORK:START — a page among the last mounted cannot reach the top of the view
+          // yet: scroll again as more mount, unless a newer jump comes or the reader moves first.
+          if (
+            root &&
+            rows.current.size < props.pages.length &&
+            root.scrollTop + root.clientHeight >= root.scrollHeight - 1
+          )
+            pending.current = { index, y };
+          // SCIENT-FORK:END
+        }
       },
     [props.pages, width, zoom], // SCIENT-FORK
   );

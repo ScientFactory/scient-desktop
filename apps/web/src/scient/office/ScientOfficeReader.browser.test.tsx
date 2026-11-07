@@ -321,3 +321,34 @@ it("keeps a newer jump over one still waiting for its pages", async () => {
   const third = scroller.querySelector<HTMLElement>('[aria-label="Page 3"]')!;
   expect(scroller.scrollTop).toBeLessThan(third.offsetTop);
 });
+
+// regression: a page already mounted but among the last mounted stopped short of the top, as
+// a reloaded Word file restoring its place did while the rest of its pages mounted.
+it("reaches a page among the last mounted once the rest mount", async () => {
+  const { OfficePages } = await import("~/components/files/office/OfficePages");
+  const scrollRef = createRef<(index: number, y?: number) => void>();
+  const container = document.createElement("div");
+  container.style.cssText = "display:flex;flex-direction:column;width:320px;height:600px";
+  const view = (count: number) => (
+    <OfficePages
+      pages={Array.from({ length: count }, () => ({ width: 400, height: 520 }))}
+      label="Page"
+      paint={async () => undefined}
+      scrollRef={scrollRef}
+      onError={(error) => {
+        throw error;
+      }}
+    />
+  );
+  await using screen = await render(view(6), { container, router: false });
+  const scroller = container.querySelector<HTMLElement>("[data-office-pages]")!;
+  await vi.waitFor(() => expect(scroller.clientWidth).toBeGreaterThan(0));
+  using _timers = fakeTimers();
+  await screen.rerender(view(40));
+  // Page 6 is the last mounted: nothing below it yet to scroll it to the top.
+  await act(() => scrollRef.current!(5));
+  await act(() => vi.runAllTimersAsync());
+  const sixth = scroller.querySelector<HTMLElement>('[aria-label="Page 6"]')!;
+  // Within the 16 px gap between pages: page 6 is at the top, not short of it.
+  expect(Math.abs(scroller.scrollTop - (sixth.offsetTop - 24))).toBeLessThan(16);
+});
