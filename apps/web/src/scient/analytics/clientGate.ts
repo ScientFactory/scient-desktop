@@ -104,7 +104,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     const state = stateFor(connection);
     // Discovery never buffers the triggering action or blocks product work.
     if (refreshIfNeeded(connection, state)) return null;
-    return state.status.available && state.status.consent !== "off" ? state : null;
+    return state.status?.available && state.status.consent !== "off" ? state : null;
   };
   const enqueue = (connection: Connection, state: State, event: ScientAnalyticsUiEvent) => {
     if (
