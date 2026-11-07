@@ -30,6 +30,11 @@ import {
   takeOfficeReveal,
   useOfficeReveal,
 } from "./officeQuote";
+import {
+  officeReaderPlace,
+  officeReaderPlaceKey,
+  rememberOfficeReaderPlace,
+} from "./officeReaderPlace";
 import type { OfficeFindHit } from "./wordFind";
 
 import "../pdf/scientPdfReader.css";
@@ -38,6 +43,8 @@ import "../pdf/scientPdfReader.css";
 export interface OfficeReaderDocument {
   readonly kind: "document" | "presentation";
   readonly pages: readonly PageSize[];
+  /** False while the engine is still laying out pages; unset, every page is known. */
+  readonly complete?: boolean;
   readonly paint: PaintPage;
   /** Paints a small copy of a page, leaving the pages drawn around the reader's view in place. */
   readonly thumbnail: PaintPage;
@@ -90,18 +97,24 @@ export function ScientOfficeReader(props: {
   const pageLabel = office.kind === "presentation" ? "Slide" : "Page";
   const label = office.kind;
   const rootRef = useRef<HTMLDivElement>(null);
-  const [page, setPage] = useState(0);
+  const file = use(OfficeFileContext);
+  // A quote opened from the chat: its page, and its text marked there until the reader is used.
+  const reveal = useOfficeReveal(file);
+  // Where the reader was when this file was last open, unless a quote asks for its own page.
+  const placeKey = file ? officeReaderPlaceKey(file) : null;
+  const [saved] = useState(() => (placeKey ? officeReaderPlace(placeKey) : undefined));
+  const restoring = useRef(reveal ? null : (saved ?? null));
+  const place = useRef({ page: saved?.page ?? 0, y: saved?.y ?? 0 });
+  const [page, setPage] = useState(saved?.page ?? 0);
   const [width, setWidth] = useState(0);
   // "fit" follows the view's width, as the PDF reader's fit width does; unset, a page shows at
   // its own size unless that is wider than the view.
-  const [zoom, setZoom] = useState<number | "fit" | undefined>(undefined);
+  const [zoom, setZoom] = useState<number | "fit" | undefined>(saved?.zoom);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [focusRequest, setFocusRequest] = useState(0);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
-  // A quote opened from the chat: its page, and its text marked there until the reader is used.
-  const reveal = useOfficeReveal(use(OfficeFileContext));
   const quoted = reveal && reveal.page <= office.pages.length ? reveal : null;
   const revealed = useRef<typeof reveal>(null);
   const current = office.pages[Math.min(page, office.pages.length - 1)];
@@ -121,9 +134,19 @@ export function ScientOfficeReader(props: {
       .map((keys) => labelKeys(keys))
       .join(" / ");
 
+  const stopRestoring = () => {
+    restoring.current = null;
+  };
+  const placeChanged = (index: number, y: number) => {
+    if (restoring.current) return;
+    place.current = { page: index, y };
+    if (placeKey) rememberOfficeReaderPlace(placeKey, { ...place.current, zoom });
+  };
   const goTo = (index: number) => {
+    stopRestoring();
     const target = Math.max(0, Math.min(office.pages.length - 1, index));
     setPage(target);
+    placeChanged(target, 0);
     scrollRef.current?.(target);
   };
   const zoomTo = (next: number) => setZoom(normalizePdfZoom(next));
@@ -176,8 +199,31 @@ export function ScientOfficeReader(props: {
   useEffect(() => {
     if (!quoted || revealed.current === quoted) return;
     revealed.current = quoted;
+    restoring.current = null;
     scrollRef.current?.(quoted.page - 1);
   }, [quoted, scrollRef]);
+
+  // Until the reader moves, the remembered place holds: each new width (the panel settling, a
+  // sidebar opening) and each page Word lays out rescales the pages, so it is scrolled to again.
+  // A document shorter than when it was left opens at its last page.
+  const complete = office.complete !== false;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the pages' DOM node back to where the reader was once that page is laid out, and moves the page number to the last page of a document that has fewer pages now
+  useEffect(() => {
+    let target = restoring.current;
+    if (!target || width === 0 || office.pages.length === 0) return;
+    if (office.pages.length <= target.page) {
+      if (!complete) return;
+      target = { ...target, page: office.pages.length - 1, y: 0 };
+      restoring.current = target;
+      setPage(target.page);
+    }
+    scrollRef.current?.(target.page, target.y);
+  }, [office.pages.length, complete, width, scrollRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the zoom in the place this file opens at next time
+  useEffect(() => {
+    if (placeKey && !restoring.current)
+      rememberOfficeReaderPlace(placeKey, { ...place.current, zoom });
+  }, [placeKey, zoom]);
 
   const keyboardAction = useRef<(command: string, factor?: number) => boolean>(() => false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps keyboardAction holding the latest shortcut handler
@@ -219,7 +265,15 @@ export function ScientOfficeReader(props: {
   }, []);
 
   return (
-    <div ref={rootRef} className="scient-pdf-reader" aria-label={`${pageLabel}s`}>
+    <div
+      ref={rootRef}
+      className="scient-pdf-reader"
+      aria-label={`${pageLabel}s`}
+      // Reading on before the remembered place is reached keeps where the reader went.
+      onPointerDownCapture={stopRestoring}
+      onWheelCapture={stopRestoring}
+      onKeyDownCapture={stopRestoring}
+    >
       <DocumentReaderControls
         label={label}
         ready={office.pages.length > 0}
@@ -274,6 +328,7 @@ export function ScientOfficeReader(props: {
             zoom={chosen}
             onWidth={setWidth}
             onPageChange={setPage}
+            onPlace={placeChanged}
             onError={props.onError}
             overlay={(index) => (
               <div className="absolute inset-0" {...officeQuoteSource(index)}>

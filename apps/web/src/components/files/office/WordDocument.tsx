@@ -25,8 +25,9 @@ type Opened = {
   pages: readonly WordPageSize[];
   paint: PaintPage;
   engine: ReturnType<typeof createWorkerClient<WordMethods>>;
-  // SCIENT-FORK: the reader's sidebar and find.
+  // SCIENT-FORK: the reader's sidebar and find, and whether layout has placed every page.
   reader: Pick<OfficeReaderDocument, "thumbnail" | "find">;
+  complete: boolean; // SCIENT-FORK
 };
 
 export default function WordDocument(props: {
@@ -93,7 +94,7 @@ export default function WordDocument(props: {
       .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
       .then(async (first) => {
         if (controller.signal.aborted) return;
-        setOpened({ pages: first.pages, paint, engine, reader }); // SCIENT-FORK: reader
+        setOpened({ pages: first.pages, paint, engine, reader, complete: !first.loading }); // SCIENT-FORK: reader, complete
         onDetails(`${first.pages.length}${first.loading ? "+" : ""} pages`);
         // SCIENT-FORK:START
         if (!first.loading) {
@@ -108,7 +109,7 @@ export default function WordDocument(props: {
           // SCIENT-FORK:START — keep the first 1,000 pages rather than replace them with an error.
           const pages = step.pages.slice(0, 1000);
           if (pages.length < step.pages.length) onLimited();
-          setOpened({ pages, paint, engine, reader });
+          setOpened({ pages, paint, engine, reader, complete: true });
           onDetails(`${pages.length} pages`);
           laidOut.resolve();
           // SCIENT-FORK:END
@@ -137,7 +138,13 @@ export default function WordDocument(props: {
   return (
     // SCIENT-FORK:START — Scient's reader draws the pages with its controls, sidebar and find.
     <ScientOfficeReader
-      document={{ kind: "document", pages: opened.pages, paint: opened.paint, ...opened.reader }}
+      document={{
+        kind: "document",
+        pages: opened.pages,
+        paint: opened.paint,
+        complete: opened.complete,
+        ...opened.reader,
+      }}
       scrollRef={scroll}
       onError={onError}
       // SCIENT-FORK:END

@@ -35,6 +35,8 @@ export function OfficePages(props: {
   // SCIENT-FORK:START — a zoom the reader chose replaces fitting each page to the width it is told.
   zoom?: number | undefined;
   onWidth?: ((width: number) => void) | undefined;
+  /** The page at the top of the view, and its point there, as scrollRef takes them. */
+  onPlace?: ((index: number, y: number) => void) | undefined;
   // SCIENT-FORK:END
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -69,6 +71,19 @@ export function OfficePages(props: {
       row.offsetTop + anchor.current.fraction * row.offsetHeight - root.clientHeight / 2;
     root.scrollLeft = (root.scrollWidth - root.clientWidth) / 2;
   }, [zoom]);
+  // And reports where the reader is, which a file reopens at.
+  const reportPlace = () => {
+    const root = scroller.current;
+    if (!root || !props.onPlace) return;
+    for (const [index, row] of [...rows.current].sort(([a], [b]) => a - b)) {
+      const page = props.pages[index];
+      if (page && row.offsetTop + row.offsetHeight > root.scrollTop + 24) {
+        const y = (root.scrollTop + 24 - row.offsetTop) / scaleAt(page, width);
+        props.onPlace(index, Math.max(0, y));
+        return;
+      }
+    }
+  };
   // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the scroll container width and debounce raster resizing, releasing the observer and timer on unmount.
   useEffect(() => {
@@ -102,7 +117,20 @@ export function OfficePages(props: {
     if (!target || target.index >= mounted) return;
     pending.current = null;
     scrollRef?.current?.(target.index, target.y);
-  }, [mounted, scrollRef]);
+    // A page among the last mounted cannot reach the top of the view yet: scroll again as more
+    // mount, unless a newer jump came meanwhile or the reader moves first.
+    const root = scroller.current;
+    if (
+      root &&
+      pending.current === null &&
+      mounted < props.pages.length &&
+      root.scrollTop + root.clientHeight >= root.scrollHeight - 1
+    )
+      pending.current = target;
+  }, [mounted, scrollRef, props.pages.length]);
+  const stopPending = () => {
+    pending.current = null;
+  };
   // SCIENT-FORK:END
   useImperativeHandle(
     props.scrollRef,
@@ -116,6 +144,7 @@ export function OfficePages(props: {
           setMounted((count) => Math.max(count, index + 1));
           return;
         }
+        pending.current = null;
         // SCIENT-FORK:END
         if (row && page)
           scroller.current?.scrollTo({
@@ -129,8 +158,14 @@ export function OfficePages(props: {
       ref={scroller}
       className="relative min-h-0 flex-1 overflow-auto bg-muted/60"
       data-office-pages
+      // SCIENT-FORK:START — the reader moving cancels a jump still waiting for its pages.
+      onPointerDown={stopPending}
+      onWheel={stopPending}
+      onKeyDown={stopPending}
+      // SCIENT-FORK:END
       onScroll={() => {
         keepAnchor(); // SCIENT-FORK
+        reportPlace(); // SCIENT-FORK
         const root = scroller.current;
         if (!root || !props.onPageChange) return;
         if (

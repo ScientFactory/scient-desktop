@@ -2033,17 +2033,20 @@ Word and PowerPoint files read with the PDF reader's controls: page number, zoom
 and pinch), a sidebar of pages and find. The reader is `apps/web/src/scient/office`; T3's viewer
 still draws the pages, and its files keep marked seams:
 
-| T3 file                                              | Seam                                                                                                                                                                |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `office/OfficePages.tsx`                             | `zoom` and `onWidth`; zooming keeps the middle of the view; wide pages scroll sideways; 2^25-pixel canvases                                                         |
-| `office/WordDocument.tsx`, `Presentation.tsx`        | `ScientOfficeReader` instead of `OfficePages`; thumbnail paints and find. Presentation drops T3's previous/next slide bar, which the reader's page controls replace |
-| `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                     |
-| `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                     |
+| T3 file                                              | Seam                                                                                                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `office/OfficePages.tsx`                             | `zoom` and `onWidth`; zooming keeps the middle of the view; wide pages scroll sideways; 2^25-pixel canvases; `onPlace` reports the page and point at the top                                           |
+| `office/WordDocument.tsx`, `Presentation.tsx`        | `ScientOfficeReader` instead of `OfficePages`; thumbnail paints and find; Word says when layout is complete. Presentation drops T3's previous/next slide bar, which the reader's page controls replace |
+| `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                                                        |
+| `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                                                        |
 
 Selected text on a page or slide quotes into chat as an Office quote (`OfficeCitation`, with the
 other quote kinds in `packages/contracts/src/fileCitations.ts`). `FilePreviewPanel.tsx` gives the
 reader its file and conversation (`OfficeFileContext`), and `AssistantCitationChip.tsx` names,
 links and reopens the quote in its existing Scient blocks.
+
+A file opened again returns to its page, point on it and zoom (`officeReaderPlace.ts`, kept for
+the window's session), unless a quote opens it at its own page.
 
 T3 remounts a workspace document preview whenever anything in the project may have changed: the
 key of `FilePreviewPanel.tsx`'s document branch carried the thread's workspace mutation id, which
