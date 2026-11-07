@@ -987,26 +987,48 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      removeProfile: Effect.fn("AccountsService.removeProfile")((profileId, intoMain = false) =>
+      removeProfile: Effect.fn("AccountsService.removeProfile")((profileId) =>
         locked(
           Effect.suspend(() =>
             commit({
               ...state,
-              accounts: withoutProfileSignIns(
-                intoMain ? withRowsIntoMain(state.accounts, profileId) : state.accounts,
-                profileId,
-              ),
+              accounts: withoutProfileSignIns(state.accounts, profileId),
               profiles: state.profiles.filter((profile) => profile.profileId !== profileId),
               ...(state.profileChoices
-                ? {
-                    profileChoices: (intoMain ? withProfileAsMain : withoutProfile)(
-                      state.profileChoices,
-                      profileId,
-                    ),
-                  }
+                ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
                 : {}),
             }),
           ),
+        ),
+      ),
+      retireProfile: Effect.fn("AccountsService.retireProfile")((profileId, name) =>
+        locked(
+          Effect.gen(function* () {
+            const { retired, ...record } = effectiveProfile(state.profiles, profileId);
+            const profiles = (next: BrowserProfileRecord) => [
+              ...state.profiles.filter((profile) => profile.profileId !== profileId),
+              next,
+            ];
+            if (name === undefined) {
+              if (retired) yield* commit({ ...state, profiles: profiles(record) });
+              return;
+            }
+            yield* commit({
+              ...state,
+              // Again on a retry: a row named for the profile since joins Main too.
+              accounts: withoutProfileSignIns(
+                withRowsIntoMain(state.accounts, profileId),
+                profileId,
+              ),
+              profiles: profiles({
+                ...record,
+                retired: retired ?? { at: yield* now, into: "main", name },
+              }),
+              ...(state.profileChoices
+                ? { profileChoices: withProfileAsMain(state.profileChoices, profileId) }
+                : {}),
+            });
+          }),
         ),
       ),
       mainFilled: Effect.fn("AccountsService.mainFilled")(({ accountId, profileName }) =>
@@ -1768,7 +1790,10 @@ export const layer = Layer.effect(
             const profiles = [
               ...new Set([
                 ...(yield* sources.profiles),
-                ...state.profiles.map((profile) => profile.profileId),
+                // A profile merged into Main is no agent's to pick.
+                ...state.profiles.flatMap((profile) =>
+                  profile.retired ? [] : [profile.profileId],
+                ),
                 ...(profileIds ?? []),
               ]),
             ];

@@ -465,6 +465,13 @@ export const BrowserProfileRecord = Schema.Struct({
    * takes a profile with it even when another browser has a profile of the same name.
    */
   madeInScient: Schema.optional(IsoDateTime),
+  /**
+   * Merged into Main by the one-time fold: hidden and unused, its jar kept as it was. `name` is
+   * what the client listed it as, for Undo.
+   */
+  retired: Schema.optional(
+    Schema.Struct({ at: IsoDateTime, into: Schema.Literal("main"), name: FoldedProfileName }),
+  ),
   /** Main's own record; no other profile has one. */
   main: Schema.optional(MainProfileState),
   /** On the desktop: the actions other computers follow. */
@@ -962,10 +969,15 @@ export const BrowserProfileRecordUpdateInput = Schema.Struct({
 });
 export type BrowserProfileRecordUpdateInput = typeof BrowserProfileRecordUpdateInput.Type;
 
-export const BrowserProfileRecordRemoveInput = Schema.Struct({
+export const BrowserProfileRecordRemoveInput = Schema.Struct({ profileId: BrowserProfileId });
+
+/**
+ * The fold merges a profile into Main: its rows and choices name Main and its record is marked
+ * retired, its jar untouched. Undo (`name` absent) clears the mark; rows and choices stay on Main.
+ */
+export const BrowserProfileRetireInput = Schema.Struct({
   profileId: BrowserProfileId,
-  /** Merged into Main: what named the profile names Main instead of ending with it. */
-  intoMain: Schema.optional(Schema.Literal(true)),
+  name: Schema.optional(FoldedProfileName),
 });
 
 /** A row's sign-in was copied into Main, or Main already held the same one. */
@@ -1136,14 +1148,7 @@ export const AccountSessionsWithdrawResult = Schema.Struct({ deleted: NonNegativ
 export const AccountSessionsListInput = Schema.Struct({ profileId: BrowserProfileId });
 
 export const AccountSessionsList = Schema.Struct({
-  sites: Schema.Array(
-    Schema.Struct({
-      site: SessionSite,
-      cookies: NonNegativeInt,
-      /** A live HttpOnly cookie is among them; an older server leaves it out. */
-      signedIn: Schema.optional(Schema.Boolean),
-    }),
-  ),
+  sites: Schema.Array(Schema.Struct({ site: SessionSite, cookies: NonNegativeInt })),
 });
 export type AccountSessionsList = typeof AccountSessionsList.Type;
 

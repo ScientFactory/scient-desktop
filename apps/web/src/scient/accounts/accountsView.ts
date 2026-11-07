@@ -92,12 +92,15 @@ export function mergeProfiles(
   records: ReadonlyArray<BrowserProfileRecord>,
 ) {
   const byId = new Map(records.map((record) => [record.profileId, record]));
-  return resolveBrowserProfiles(profiles)
-    .filter((profile) => profile.kind !== "incognito")
-    .map((profile) => ({
-      ...profile,
-      record: byId.get(profile.id) ?? defaultBrowserProfileRecord(profile.id),
-    }));
+  return (
+    resolveBrowserProfiles(profiles)
+      // Merged into Main: hidden while this client still lists it.
+      .filter((profile) => profile.kind !== "incognito" && !byId.get(profile.id)?.retired)
+      .map((profile) => ({
+        ...profile,
+        record: byId.get(profile.id) ?? defaultBrowserProfileRecord(profile.id),
+      }))
+  );
 }
 
 /**
@@ -113,7 +116,8 @@ export function unlistedProfiles(
       details.kind === "website" &&
       details.profileId !== undefined &&
       !isBuiltInBrowserProfileId(details.profileId) &&
-      !listed.some((profile) => profile.id === details.profileId)
+      !listed.some((profile) => profile.id === details.profileId) &&
+      !snapshot.profiles.some((record) => record.profileId === details.profileId && record.retired)
         ? [details.profileId]
         : [],
     ),
@@ -527,12 +531,16 @@ type MergedSourceProfile = MergedSource["profiles"][number];
 
 const FOLDED_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Accounts' one line after the one-time fold merged profiles into Main, for a week. */
+/** Accounts' one line, for a week, naming the profiles the fold merged into Main; Undo takes these. */
 export function foldedNotice(snapshot: Pick<AccountsSnapshot, "profiles">, now: number) {
-  const folded = snapshot.profiles.find((record) => record.profileId === DEFAULT_BROWSER_PROFILE_ID)
-    ?.main?.folded;
-  if (!folded?.profiles.length || now - Date.parse(folded.at) > FOLDED_NOTICE_MS) return undefined;
-  return `Merged into Main: ${folded.profiles.join(", ")}.`;
+  const merged = snapshot.profiles.flatMap((record) =>
+    record.retired && now - Date.parse(record.retired.at) <= FOLDED_NOTICE_MS
+      ? [{ profileId: record.profileId, name: record.retired.name }]
+      : [],
+  );
+  return merged.length
+    ? { text: `Merged into Main: ${merged.map(({ name }) => name).join(", ")}.`, merged }
+    : undefined;
 }
 
 /**

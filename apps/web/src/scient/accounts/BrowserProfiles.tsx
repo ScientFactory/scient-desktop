@@ -789,6 +789,7 @@ export function BrowserProfiles({
   const registry = useContext(RegistryContext);
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
+  const retireRecord = useAccountCommand(accountsState.retireProfile, environmentId);
   const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   // Only the local desktop can read another browser's saved passwords.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -809,6 +810,24 @@ export function BrowserProfiles({
   const sitesLabel = (profileId: string) => {
     const count = new Set(signInsOf(snapshot.accounts, profileId).map(signInSite)).size;
     return count === 0 ? undefined : count === 1 ? "1 site" : `${count} sites`;
+  };
+  /** Listed first, then unmarked: a step that fails leaves it hidden, with Undo still offered. */
+  const undoFold = async (merged: ReadonlyArray<{ profileId: string; name: string }>) => {
+    for (const { profileId, name } of merged) {
+      await persistClientSettingsUpdate((current) =>
+        current.browserProfiles.some((profile) => profile.id === profileId) ||
+        current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT
+          ? current
+          : {
+              ...current,
+              browserProfiles: [
+                ...current.browserProfiles,
+                { id: profileId, name, kind: "persistent" as const },
+              ],
+            },
+      );
+      await retireRecord({ profileId: BrowserProfileId.make(profileId) });
+    }
   };
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
     try {
@@ -1021,7 +1040,21 @@ export function BrowserProfiles({
         </span>
       }
     >
-      {folded ? <SettingsRow title={folded} /> : null}
+      {folded ? (
+        <SettingsRow
+          title={folded.text}
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={disabled}
+              onClick={() => void act(() => undoFold(folded.merged))}
+            >
+              Undo
+            </Button>
+          }
+        />
+      ) : null}
       {settings.mainDefaultNotice ? (
         <SettingsRow
           title="New tabs now open in Main, which has your sign-ins. You can change this here."

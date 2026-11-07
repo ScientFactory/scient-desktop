@@ -4,7 +4,6 @@ import {
   EnvironmentId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
-  type AccountSessionsList,
   type AccountsSnapshot,
   type AccountSummary,
   type DesktopFillMainResult,
@@ -19,9 +18,9 @@ import {
   fillMainFromProfile,
   foldCandidates,
   foldIntoMain,
-  heldElsewhere,
   mainFillTrigger,
   replaceAllowedSince,
+  retireIntoMain,
   withdrawFromMain,
   settleVia,
   withdrawnRows,
@@ -31,6 +30,8 @@ const state = vi.hoisted(() => ({
   snapshot: undefined as unknown,
   filled: [] as unknown[],
   rowCommand: (_kind: string, _input: unknown): Promise<unknown> => Promise.resolve(),
+  settings: { browserProfiles: [] as unknown[], browserDefaultProfileId: "default" as string },
+  steps: [] as string[],
 }));
 vi.mock("~/hooks/useSettings", () => ({
   getClientSettings: () => ({
@@ -39,6 +40,22 @@ vi.mock("~/hooks/useSettings", () => ({
       { id: "home", name: "Home", kind: "persistent" },
     ],
   }),
+  persistClientSettingsUpdate: async (update: (current: typeof state.settings) => unknown) => {
+    state.steps.push("list");
+    state.settings = update(state.settings) as typeof state.settings;
+  },
+}));
+vi.mock("~/scient/browser/browserShortcuts", () => ({
+  useBrowserShortcuts: {
+    getState: () => ({
+      mergeProfile: (from: string, into: string) => state.steps.push(`shortcuts ${from}>${into}`),
+    }),
+  },
+}));
+// The removal, which clears jars, must never be reached by the fold.
+vi.mock("./removeBrowserProfile", () => ({
+  removeBrowserProfile: () => state.steps.push("remove"),
+  clearProfileData: () => state.steps.push("clear"),
 }));
 vi.mock("./accountsState", () => ({
   accountsState: {
@@ -48,6 +65,9 @@ vi.mock("./accountsState", () => ({
     remove: { run: (_registry: unknown, input: unknown) => state.rowCommand("remove", input) },
     sessionEnded: {
       run: (_registry: unknown, input: unknown) => state.rowCommand("signed out", input),
+    },
+    retireProfile: {
+      run: (_registry: unknown, input: unknown) => state.rowCommand("retire", input),
     },
   },
 }));
@@ -665,7 +685,6 @@ describe("the one-time fold into Main", () => {
       readonly main?: object;
       readonly folds?: boolean;
       readonly signedIn?: ReadonlyArray<string> | null;
-      readonly elsewhere?: boolean | null;
       /** Main's record as read after the copy. */
       readonly mainAfter?: object;
       readonly inUse?: boolean;
@@ -689,8 +708,7 @@ describe("the one-time fold into Main", () => {
       },
       inUse: () => options.inUse ?? false,
       signedIn: async () => (options.signedIn === undefined ? [] : options.signedIn),
-      elsewhere: async () => (options.elsewhere === undefined ? false : options.elsewhere),
-      fold: async (id) => {
+      fold: async ({ id }) => {
         calls.push(`fold ${id}`);
         return options.folds ?? true;
       },
@@ -768,17 +786,6 @@ describe("the one-time fold into Main", () => {
     });
   });
 
-  it("keeps a profile that holds something on another computer, and asks again when unsure", async () => {
-    expect(await run([], units(["github.com", "copied"]), { elsewhere: true })).toEqual({
-      calls: ["fill made"],
-      done: [[]],
-    });
-    expect(await run([], units(["github.com", "copied"]), { elsewhere: null })).toEqual({
-      calls: ["fill made"],
-      done: [],
-    });
-  });
-
   it("judges the profile as it is after the copy: a new sign-in, a sign-out or an open tab waits", async () => {
     const waits = { calls: ["fill made"], done: [] };
     // Signed in to a site the copy didn't hold, since it ran.
@@ -791,6 +798,33 @@ describe("the one-time fold into Main", () => {
       }),
     ).toEqual(waits);
     expect(await run([], units(["github.com", "copied"]), { inUse: true })).toEqual(waits);
+  });
+
+  it("first finishes a profile an earlier run retired but couldn't unlist", async () => {
+    const calls: string[] = [];
+    const done: Array<ReadonlyArray<string>> = [];
+    const at = snapshot(
+      [],
+      [main(), record("made", { retired: { at: AT, into: "main", name: "Made" } })],
+    );
+    await foldIntoMain(at, {
+      profiles: [persistent("made", "Made")],
+      importedName: () => false,
+      read: async () => at,
+      fill: async () => {
+        calls.push("fill");
+        return null;
+      },
+      inUse: () => false,
+      signedIn: async () => [],
+      fold: async ({ id }) => {
+        calls.push(`fold ${id}`);
+        return true;
+      },
+      done: async (names) => done.push(names) > 0,
+    });
+    expect(calls).toEqual(["fold made"]);
+    expect(done).toEqual([["Made"]]);
   });
 
   it("leaves the fold unrecorded when a jar was unreadable or a merge failed, to try next launch", async () => {
@@ -806,55 +840,32 @@ describe("the one-time fold into Main", () => {
   });
 });
 
-describe("heldElsewhere", () => {
-  const desktop = EnvironmentId.make("environment-desktop");
-  const lab = EnvironmentId.make("environment-lab");
-  const session = (domain: string) => ({ domain, httpOnly: true });
-  const listed = (...sites: Array<[string, boolean]>): AccountSessionsList => ({
-    sites: sites.map(([site, signedIn]) => ({ site, cookies: 1, signedIn })),
-  });
-  const held = (
-    servers: Partial<Record<string, AccountSessionsList | null>>,
-    jars: Partial<Record<string, ReadonlyArray<{ domain: string; httpOnly: boolean }> | null>> = {},
-  ) =>
-    heldElsewhere("made", {
-      primaryId: desktop,
-      environments: [
-        { environmentId: desktop, serverBrowser: true },
-        { environmentId: lab, serverBrowser: true },
-      ],
-      desktopJar: async (_profileId, environmentId) =>
-        environmentId in jars
-          ? jars[environmentId]!
-          : environmentId === desktop
-            ? [session(".github.com")]
-            : [],
-      serverJar: async (environmentId) =>
-        environmentId in servers ? servers[environmentId]! : listed(),
-      nowSeconds: Date.parse(AT) / 1000,
-    });
-
-  it("keeps a profile signed in on a server's own browser where the desktop isn't", async () => {
-    expect(await held({ [lab]: listed(["orcid.org", true]) })).toBe(true);
-    expect(await held({ [desktop]: listed(["orcid.org", true]) })).toBe(true);
-    expect(await held({}, { [lab]: [session(".orcid.org")] })).toBe(true);
-  });
-
-  it("lets the profile go where a server holds only the desktop's copies or script cookies", async () => {
-    expect(
-      await held(
-        { [lab]: listed(["github.com", true], ["consent.example", false]) },
-        {
-          [lab]: [{ domain: ".consent.example", httpOnly: false }],
-        },
-      ),
-    ).toBe(false);
-  });
-
-  it("can't tell while a server is offline or a jar unreadable", async () => {
-    expect(await held({ [lab]: null })).toBeNull();
-    expect(await held({}, { [desktop]: null })).toBeNull();
-    expect(await held({}, { [lab]: null })).toBeNull();
+describe("retireIntoMain", () => {
+  it("hides the profile with its jar untouched, finishing on a later launch if a step failed", async () => {
+    // Bob's session swapped in after the copy, or Bob on a server while Alice is here: nothing
+    // is cleared anywhere, so neither is lost.
+    const profile = { id: "made", name: "Made", kind: "persistent" as const };
+    state.settings = { browserProfiles: [profile], browserDefaultProfileId: "made" };
+    state.steps = [];
+    let retired: unknown;
+    state.rowCommand = async (kind, input) => {
+      state.steps.push(kind);
+      retired = input;
+      return { _tag: "Success", value: {} };
+    };
+    expect(await retireIntoMain(AtomRegistry.make(), environmentId, profile)).toBe(true);
+    expect(retired).toEqual({ environmentId, input: { profileId: "made", name: "Made" } });
+    // Listed until the last step, so a failure before it leaves the profile for the next launch.
+    expect(state.steps).toEqual(["retire", "shortcuts made>default", "list"]);
+    expect(state.settings).toEqual({ browserProfiles: [], browserDefaultProfileId: "default" });
+    state.steps = [];
+    state.rowCommand = async (kind) => {
+      state.steps.push(kind);
+      return { _tag: "Failure" };
+    };
+    expect(await retireIntoMain(AtomRegistry.make(), environmentId, profile)).toBe(false);
+    expect(state.steps).toEqual(["retire"]);
+    state.rowCommand = () => Promise.resolve();
   });
 });
 

@@ -179,6 +179,41 @@ it("says once that new tabs now open in Main, until dismissed", async () => {
   }
 });
 
+it("names the profiles merged into Main, and Undo lists them again", async () => {
+  using _fixture = fixture();
+  state.settings = {};
+  state.calls = [];
+  const merged = {
+    ...defaultBrowserProfileRecord("personal"),
+    color: "#2563eb",
+    // Ahead of any clock this runs on, so always within the week the line is shown.
+    retired: { at: "2100-01-01T00:00:00.000Z", into: "main" as const, name: "Personal" },
+  };
+  try {
+    await using _screen = await render(
+      <BrowserProfiles
+        environmentId={EnvironmentId.make("synthetic")}
+        snapshot={{ profiles: [merged], accounts: [] } as unknown as AccountsSnapshot}
+        canWrite
+        onImport={() => undefined}
+        renderSignIn={() => null}
+      />,
+    );
+    await expect.element(page.getByText("Merged into Main: Personal.")).toBeVisible();
+    // Hidden while merged, though its record and jar are kept.
+    await expect
+      .element(page.getByRole("button", { name: "Signed-in sites for Personal" }))
+      .not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Undo" }).click();
+    await vi.waitFor(() => expect(state.calls).toEqual([["record", { profileId: "personal" }]]));
+    expect(state.settings.browserProfiles).toEqual([
+      { id: "personal", name: "Personal", kind: "persistent" },
+    ]);
+  } finally {
+    state.settings = {};
+  }
+});
+
 it("says a held sign-in needs the person, with its Sign in on the row", async () => {
   using _fixture = fixture();
   state.calls = [];

@@ -22,7 +22,6 @@ import {
   shareable,
   unitCookies,
   travels,
-  holdsSignIn,
   isLive,
   unitFingerprint,
   withdrawCopies,
@@ -649,20 +648,15 @@ export const makeRemoteSessions = Effect.gen(function* () {
 
   const list = Effect.fn("RemoteSessions.list")(function* (profileId: BrowserProfileId) {
     const cookies = yield* exclusive(withJar(profileId, (jar) => jar.readAll()));
-    const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;
-    const counts = new Map<string, { cookies: number; signedIn: boolean }>();
+    const counts = new Map<string, number>();
     for (const cookie of cookies) {
       const site = siteOf(cookie.domain);
-      const count = counts.get(site) ?? { cookies: 0, signedIn: false };
-      counts.set(site, {
-        cookies: count.cookies + 1,
-        signedIn: count.signedIn || holdsSignIn(cookie, nowSeconds),
-      });
+      counts.set(site, (counts.get(site) ?? 0) + 1);
     }
     return {
       sites: [...counts]
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([site, count]) => ({ site, ...count })),
+        .map(([site, count]) => ({ site, cookies: count })),
     };
   });
 

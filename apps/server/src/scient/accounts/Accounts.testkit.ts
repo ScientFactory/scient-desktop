@@ -261,6 +261,7 @@ export function fakeAccounts(
     updateReceived: () => unsupported,
     mainBackfilled: () => unsupported,
     mainFolded: () => unsupported,
+    retireProfile: () => unsupported,
     googleSessionsSeen: () => unsupported,
     sessionsSeen: () => unsupported,
     keepTyped: () => unsupported,

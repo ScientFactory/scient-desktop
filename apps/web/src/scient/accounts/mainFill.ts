@@ -3,7 +3,6 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
-  type AccountSessionsList,
   type AccountsSnapshot,
   type AccountSummary,
   type BrowserProfile,
@@ -24,8 +23,8 @@ import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readActivePreviewSessions } from "~/previewStateStore";
+import { useBrowserShortcuts } from "~/scient/browser/browserShortcuts";
 import { readPrimaryEnvironmentId } from "~/state/environments";
-import { environmentPresentations } from "~/state/presentation";
 
 import { accountsState } from "./accountsState";
 import { loadSourceProfiles, matchExistingProfile } from "./accountsView";
@@ -434,46 +433,11 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
           const cookies = await readCookies(profileId, environmentId);
           return cookies && signedInSites(cookies, Date.now() / 1000);
         },
-        elsewhere: (profileId) => {
-          const configs = registry.get(environmentPresentations.serverConfigsAtom);
-          return heldElsewhere(profileId, {
-            primaryId: environmentId,
-            environments: [...registry.get(environmentPresentations.presentationsAtom).keys()].map(
-              (id) => ({
-                environmentId: id,
-                serverBrowser: configs.has(id)
-                  ? configs.get(id)?.environment.capabilities.serverBrowser === true
-                  : undefined,
-              }),
-            ),
-            desktopJar: readCookies,
-            serverJar: async (id, profileId) => {
-              const listed = await accountsState.sessionsList
-                .run(registry, {
-                  environmentId: id,
-                  input: { profileId: BrowserProfileId.make(profileId) },
-                })
-                .catch(() => null);
-              return listed?._tag === "Success" ? listed.value : null;
-            },
-            nowSeconds: Date.now() / 1000,
-          });
-        },
-        // Nothing else runs between the last check and the removal's clear. A removal failing
-        // after its clear loses nothing: the fresh copy put every sign-in in Main, other jars held
-        // none Main lacks, and the profile's record stays, so the next launch folds it again.
-        fold: async (profileId) =>
-          // Loaded here: the removal imports the settings page, which imports this module.
-          (
-            await import("./removeBrowserProfile")
-              .then(({ removeBrowserProfile }) =>
-                removeBrowserProfile(registry, environmentId, profileId, { intoMain: true }),
-              )
-              .catch((cause: unknown) => {
-                warn("Couldn't merge a profile into Main", cause);
-                return null;
-              })
-          )?._tag === "Success",
+        fold: (profile) =>
+          retireIntoMain(registry, environmentId, profile).catch((cause: unknown) => {
+            warn("Couldn't merge a profile into Main", cause);
+            return false;
+          }),
         done: async (profiles) =>
           (
             await accountsState.mainFolded.run(registry, {
@@ -616,55 +580,6 @@ const signedInSites = (cookies: ReadonlyArray<CookieMetadata>, nowSeconds: numbe
   ),
 ];
 
-/**
- * Whether the profile is signed in somewhere the fold can't copy from but its removal clears: a
- * server's own browser (this desktop's server too) or this desktop's jar for another environment.
- * A site the desktop's own jar also holds doesn't count: those are copies it sent, and Main now
- * has them. Null when any of them can't be read; `serverBrowser` is undefined for an unknown config.
- */
-export async function heldElsewhere(
-  profileId: string,
-  deps: {
-    readonly primaryId: EnvironmentId;
-    readonly environments: ReadonlyArray<{
-      readonly environmentId: EnvironmentId;
-      readonly serverBrowser: boolean | undefined;
-    }>;
-    readonly desktopJar: (
-      profileId: string,
-      environmentId: EnvironmentId,
-    ) => Promise<ReadonlyArray<CookieMetadata> | null>;
-    readonly serverJar: (
-      environmentId: EnvironmentId,
-      profileId: string,
-    ) => Promise<AccountSessionsList | null>;
-    readonly nowSeconds: number;
-  },
-): Promise<boolean | null> {
-  const own = await deps.desktopJar(profileId, deps.primaryId);
-  if (!own) return null;
-  const copied = new Set(signedInSites(own, deps.nowSeconds));
-  const unique = (sites: ReadonlyArray<string>) => sites.some((site) => !copied.has(site));
-  let unknown = false;
-  for (const { environmentId, serverBrowser } of deps.environments) {
-    if (serverBrowser === undefined) unknown = true;
-    else if (serverBrowser) {
-      const listed = await deps.serverJar(environmentId, profileId);
-      // An older server doesn't say which sites hold a sign-in: each one may.
-      if (!listed) unknown = true;
-      else if (
-        unique(listed.sites.filter((site) => site.signedIn !== false).map(({ site }) => site))
-      )
-        return true;
-    }
-    if (environmentId === deps.primaryId) continue;
-    const cookies = await deps.desktopJar(profileId, environmentId);
-    if (!cookies) unknown = true;
-    else if (unique(signedInSites(cookies, deps.nowSeconds))) return true;
-  }
-  return unknown ? null : false;
-}
-
 /** Imported profiles first, by when they were imported, then the rest in list order. */
 export function backfillOrder(
   snapshot: Pick<AccountsSnapshot, "profiles">,
@@ -729,6 +644,7 @@ export function foldCandidates(
       !isBuiltInBrowserProfileId(id) &&
       !record.source &&
       !record.received &&
+      !record.retired &&
       isUnrestricted(record) &&
       backfilled.has(id) &&
       (record.madeInScient !== undefined || !importedName(name))
@@ -788,9 +704,9 @@ function foldsWhole(
 
 /**
  * Once per environment, after the back-fill: each profile made in Scient whose sessions Main holds
- * whole, and that holds nothing elsewhere its removal would clear, merges into Main and is removed;
- * any other stays as it is. Recorded even when none merged; anything unread or a failed merge
- * leaves it unrecorded, so the next launch tries the rest.
+ * whole merges into Main, hidden and kept, its jar untouched; any other stays as it is. Recorded
+ * even when none merged; anything unread or a failed merge leaves it unrecorded, so the next
+ * launch tries again.
  */
 export async function foldIntoMain(
   snapshot: AccountsSnapshot,
@@ -806,22 +722,25 @@ export async function foldIntoMain(
     ) => Promise<DesktopFillMainResult | null>;
     /** The profile's sites holding a session cookie in this desktop's jar; null if unreadable. */
     readonly signedIn: (profileId: string) => Promise<ReadonlyArray<string> | null>;
-    /**
-     * Whether the profile holds anything the fold doesn't copy but its removal clears: another
-     * environment's jar or a server's browser. Null when that can't be told.
-     */
-    readonly elsewhere: (profileId: string) => Promise<boolean | null>;
     /** Whether an open tab uses the profile. */
     readonly inUse: (profileId: string) => boolean;
-    /** Repoints what names the profile to Main and removes it; true once done. */
-    readonly fold: (profileId: string) => Promise<boolean>;
+    /** Merges the profile into Main without touching its jar; true once done. */
+    readonly fold: (profile: BrowserProfile) => Promise<boolean>;
     readonly done: (names: ReadonlyArray<string>) => Promise<boolean>;
   },
 ) {
   if (recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
   const merged: string[] = [];
   let complete = true;
-  for (const { id, name } of foldCandidates(snapshot, deps.profiles, deps.importedName)) {
+  const fold = async (profile: BrowserProfile) => {
+    if (await deps.fold(profile)) merged.push(profile.name);
+    else complete = false;
+  };
+  // Retired by an earlier run whose later steps failed: those are finished first.
+  for (const profile of deps.profiles)
+    if (recordOf(snapshot, profile.id).retired) await fold(profile);
+  for (const profile of foldCandidates(snapshot, deps.profiles, deps.importedName)) {
+    const { id } = profile;
     const at = await deps.read();
     if (at && recordOf(at, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
     const result = at && (await deps.fill(id, at));
@@ -830,13 +749,8 @@ export async function foldIntoMain(
       complete = false;
       continue;
     }
-    // Cookies the copy can't carry, such as partitioned ones, would go with the profile.
+    // Cookies the copy can't carry, such as partitioned ones, stay out of Main.
     if (result.unsupported > 0) continue;
-    const elsewhere = await deps.elsewhere(id).catch(() => null);
-    if (elsewhere !== false) {
-      if (elsewhere === null) complete = false;
-      continue;
-    }
     // Read last: a sign-in, a sign-out or a limit since the copy is judged on what is now.
     const now = await deps.read();
     const signedIn = now && (await deps.signedIn(id).catch(() => null));
@@ -854,10 +768,35 @@ export async function foldIntoMain(
       complete = false;
       continue;
     }
-    if (await deps.fold(id)) merged.push(name);
-    else complete = false;
+    await fold(profile);
   }
   if (complete) await deps.done(merged);
+}
+
+/**
+ * One profile's merge into Main, never touching its jar: the server repoints its rows and choices
+ * and marks it retired, its shortcuts join Main's, then this client stops listing it. Each step
+ * repeats harmlessly, and the profile stays listed until the last, so a later launch finishes it.
+ */
+export async function retireIntoMain(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  profile: BrowserProfile,
+) {
+  const retired = await accountsState.retireProfile.run(registry, {
+    environmentId,
+    input: { profileId: BrowserProfileId.make(profile.id), name: profile.name },
+  });
+  if (retired._tag !== "Success") return false;
+  useBrowserShortcuts.getState().mergeProfile(profile.id, DEFAULT_BROWSER_PROFILE_ID);
+  await persistClientSettingsUpdate((current) => ({
+    ...current,
+    browserProfiles: current.browserProfiles.filter((item) => item.id !== profile.id),
+    ...(current.browserDefaultProfileId === profile.id
+      ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
+      : {}),
+  }));
+  return true;
 }
 
 /** Main's sign-outs or the profile's limits changed since the copy was made. */

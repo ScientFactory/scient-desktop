@@ -76,6 +76,7 @@ import {
   AccountStoresStatus,
   BrowserProfileChoiceInput,
   BrowserProfileRecordRemoveInput,
+  BrowserProfileRetireInput,
   BrowserProfileRecordUpdateInput,
   KeychainCandidatesInput,
   KeychainCandidatesResult,
@@ -118,6 +119,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSetAgentAccess: "accounts.setAgentAccess",
   accountsProfileUpdate: "accounts.profiles.update",
   accountsProfileRemove: "accounts.profiles.remove",
+  accountsProfileRetire: "accounts.profiles.retire",
   accountsProfileChoose: "accounts.profiles.choose",
   accountsMainFilled: "accounts.main.filled",
   accountsMainBackfilled: "accounts.main.backfilled",
@@ -332,6 +334,11 @@ export const WsAccountsProfileUpdateRpc = Rpc.make(
 export const WsAccountsProfileRemoveRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsProfileRemove,
   { payload: BrowserProfileRecordRemoveInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsProfileRetireRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileRetire,
+  { payload: BrowserProfileRetireInput, success: Empty, error: AccountsRpcError },
 );
 
 export const WsAccountsApprovalRespondRpc = Rpc.make(

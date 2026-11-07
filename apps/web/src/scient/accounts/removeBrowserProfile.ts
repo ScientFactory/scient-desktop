@@ -10,7 +10,6 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { clearBrowserProfileData } from "~/components/settings/IntegrationsSettings";
 import { environmentCatalog } from "~/connection/catalog";
 import { persistClientSettingsUpdate } from "~/hooks/useSettings";
-import { useBrowserShortcuts } from "~/scient/browser/browserShortcuts";
 import { forgetBrowserProfile } from "~/scient/browser/useForgetBrowserProfile";
 import { environmentPresentations } from "~/state/presentation";
 import { previewEnvironment } from "~/state/preview";
@@ -43,22 +42,17 @@ export async function clearProfileData(registry: AtomRegistry.AtomRegistry, prof
 
 /**
  * Remove and sign out: the profile's cookies everywhere, its record, its place in the list and as
- * the new-tab default, its shortcuts and history. `intoMain` is the fold: what named the profile
- * names Main instead, and its shortcuts join Main's. Throws when the cookies can't be cleared.
+ * the new-tab default, its shortcuts and history. Throws when the cookies can't be cleared.
  */
 export async function removeBrowserProfile(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
   profileId: string,
-  options: { readonly intoMain?: true } = {},
 ): Promise<AtomCommandResult<unknown, unknown>> {
   await clearProfileData(registry, profileId);
   const result = await accountsState.removeProfile.run(registry, {
     environmentId,
-    input: {
-      profileId: BrowserProfileId.make(profileId),
-      ...(options.intoMain ? { intoMain: true as const } : {}),
-    },
+    input: { profileId: BrowserProfileId.make(profileId) },
   });
   if (result._tag !== "Success") return result;
   await persistClientSettingsUpdate((current) => ({
@@ -68,8 +62,6 @@ export async function removeBrowserProfile(
       ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
       : {}),
   }));
-  if (options.intoMain)
-    useBrowserShortcuts.getState().mergeProfile(profileId, DEFAULT_BROWSER_PROFILE_ID);
   forgetBrowserProfile(registry, environmentIdsOf(registry), profileId);
   return result;
 }

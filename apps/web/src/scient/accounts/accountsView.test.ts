@@ -46,6 +46,7 @@ import {
   secretFields,
   matchExistingProfile,
   foldedNotice,
+  unlistedProfiles,
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
@@ -352,22 +353,28 @@ it("offers connected vaults until a write rejection marks one read-only", () => 
   expect(writableOnePasswordVaults({ state: "not-connected" })).toEqual([]);
 });
 
-describe("foldedNotice", () => {
-  it("names the profiles merged into Main for a week, and says nothing when none were", () => {
-    const at = Date.parse("2026-11-07T10:00:00.000Z");
-    const main = (profiles: string[]) => ({
-      profiles: [
-        {
-          ...defaultBrowserProfileRecord(BrowserProfileId.make("default")),
-          main: { folded: { at: "2026-11-07T10:00:00.000Z", profiles } },
-        },
-      ],
+describe("a profile merged into Main", () => {
+  it("is named for a week for Undo, and listed nowhere, its rows' entry included", () => {
+    const at = "2026-11-07T10:00:00.000Z";
+    const retired = (id: string, name: string) => ({
+      ...defaultBrowserProfileRecord(BrowserProfileId.make(id)),
+      retired: { at, into: "main" as const, name },
     });
-    expect(foldedNotice(main(["Personal", "Research"]), at)).toBe(
-      "Merged into Main: Personal, Research.",
+    const snapshot = {
+      profiles: [retired("personal", "Personal"), retired("research", "Research")],
+      accounts: [website("research")],
+    };
+    const now = Date.parse(at);
+    expect(foldedNotice(snapshot, now)?.text).toBe("Merged into Main: Personal, Research.");
+    expect(foldedNotice(snapshot, now + 8 * 24 * 60 * 60 * 1000)).toBeUndefined();
+    expect(foldedNotice({ profiles: [] }, now)).toBeUndefined();
+    // Still in this client's list while the merge finishes: hidden all the same.
+    const listed = mergeProfiles(
+      [{ id: "personal", name: "Personal", kind: "persistent" }],
+      snapshot.profiles,
     );
-    expect(foldedNotice(main(["Personal"]), at + 8 * 24 * 60 * 60 * 1000)).toBeUndefined();
-    expect(foldedNotice(main([]), at)).toBeUndefined();
+    expect(listed.map(({ id }) => id)).toEqual(["default"]);
+    expect(unlistedProfiles(snapshot, listed)).toEqual([]);
   });
 });
 

@@ -34,7 +34,7 @@ export function mainRowFor<A extends Row>(accounts: ReadonlyArray<A>, source: Ac
 
 /**
  * A profile merged into Main: its rows name Main, except one Main already has for the same
- * sign-in, which the removal then ends, so Main never holds two.
+ * sign-in, which the merge then ends, so Main never holds two.
  */
 export function withRowsIntoMain<A extends Row>(accounts: ReadonlyArray<A>, profileId: string) {
   return accounts.map((account) => {

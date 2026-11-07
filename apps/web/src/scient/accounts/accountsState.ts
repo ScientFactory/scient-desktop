@@ -273,6 +273,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsMainBackfilled,
     ...lane,
   }),
+  retireProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:retireProfile",
+    tag: WS_METHODS.accountsProfileRetire,
+    ...lane,
+  }),
   mainFolded: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:mainFolded",
     tag: WS_METHODS.accountsMainFolded,
