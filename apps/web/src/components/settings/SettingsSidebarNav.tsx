@@ -74,6 +74,7 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+// SCIENT-FORK: Scient Accounts reads the settings machine scope.
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
@@ -186,10 +187,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
-  const currentSearch = useLocation({ select: (location) => location.search });
-  const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   // SCIENT-FORK:START — Scient Accounts: hide account navigation on older servers.
+  const currentSearch = useLocation({ select: (location) => location.search });
+  const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const accountsAvailable = useAtomValue(
     accountsAvailability(
@@ -208,7 +209,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const searchableItems = useAvailableSettingsSearchItems();
   const renderPageSections = useScientSettingsNavigation(pathname, SETTINGS_NAV_ITEMS);
   // SCIENT-FORK:START — Scient Accounts: search follows server availability.
   const results = searchSettings(query, searchableItems).filter(
