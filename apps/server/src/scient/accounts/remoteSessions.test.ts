@@ -623,7 +623,11 @@ describe("receiving a desktop's sign-ins", () => {
   it.effect("returns names and numbers only", () =>
     Effect.gen(function* () {
       const { remote, applied, accounts } = yield* setup();
-      const result = yield* remote.receive(desktop, batch([copy(1)]));
+      const consent = cookie({ name: "consent", domain: ".consent.example", httpOnly: false });
+      const result = yield* remote.receive(
+        desktop,
+        batch([copy(1), copy(2, [consent], ["consent.example"])]),
+      );
       const recorded = yield* applied();
       const listed = yield* remote.list(WORK);
       const snapshot = yield* accounts.snapshot;
@@ -631,7 +635,13 @@ describe("receiving a desktop's sign-ins", () => {
         expect(JSON.stringify(value)).not.toContain("synthetic-desktop");
         expect(JSON.stringify(value)).not.toContain("fingerprint");
       }
-      expect(listed).toEqual({ sites: [{ site: "github.com", cookies: 1 }] });
+      // Only a live HttpOnly cookie says signed in; a page's own script cookie doesn't.
+      expect(listed).toEqual({
+        sites: [
+          { site: "consent.example", cookies: 1, signedIn: false },
+          { site: "github.com", cookies: 1, signedIn: true },
+        ],
+      });
     }),
   );
 

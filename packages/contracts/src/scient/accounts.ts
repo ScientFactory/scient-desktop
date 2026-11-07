@@ -1136,7 +1136,14 @@ export const AccountSessionsWithdrawResult = Schema.Struct({ deleted: NonNegativ
 export const AccountSessionsListInput = Schema.Struct({ profileId: BrowserProfileId });
 
 export const AccountSessionsList = Schema.Struct({
-  sites: Schema.Array(Schema.Struct({ site: SessionSite, cookies: NonNegativeInt })),
+  sites: Schema.Array(
+    Schema.Struct({
+      site: SessionSite,
+      cookies: NonNegativeInt,
+      /** A live HttpOnly cookie is among them; an older server leaves it out. */
+      signedIn: Schema.optional(Schema.Boolean),
+    }),
+  ),
 });
 export type AccountSessionsList = typeof AccountSessionsList.Type;
 

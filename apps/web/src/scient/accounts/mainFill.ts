@@ -3,6 +3,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
+  type AccountSessionsList,
   type AccountsSnapshot,
   type AccountSummary,
   type BrowserProfile,
@@ -15,6 +16,7 @@ import {
   isBuiltInBrowserProfileId,
 } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
+import { holdsSignIn } from "@t3tools/shared/scientSessionCookies";
 import { siteOf, siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 
@@ -430,10 +432,34 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
         fill: (profileId) =>
           filled.has(profileId) ? Promise.resolve(filled.get(profileId)!) : fill(after, profileId),
         signedIn: async (profileId) => {
-          const cookies = await readCookies(profileId);
-          return cookies && sessionSites(cookies);
+          const cookies = await readCookies(profileId, environmentId);
+          return cookies && signedInSites(cookies, Date.now() / 1000);
         },
-        elsewhere: (profileId) => heldElsewhere(registry, environmentId, profileId),
+        elsewhere: (profileId) => {
+          const configs = registry.get(environmentPresentations.serverConfigsAtom);
+          return heldElsewhere(profileId, {
+            primaryId: environmentId,
+            environments: [...registry.get(environmentPresentations.presentationsAtom).keys()].map(
+              (id) => ({
+                environmentId: id,
+                serverBrowser: configs.has(id)
+                  ? configs.get(id)?.environment.capabilities.serverBrowser === true
+                  : undefined,
+              }),
+            ),
+            desktopJar: readCookies,
+            serverJar: async (id, profileId) => {
+              const listed = await accountsState.sessionsList
+                .run(registry, {
+                  environmentId: id,
+                  input: { profileId: BrowserProfileId.make(profileId) },
+                })
+                .catch(() => null);
+              return listed?._tag === "Success" ? listed.value : null;
+            },
+            nowSeconds: Date.now() / 1000,
+          });
+        },
         fold: async (profileId) =>
           // Loaded here: the removal imports the settings page, which imports this module.
           (
@@ -581,41 +607,58 @@ const readCookies = async (profileId: string, environmentId?: EnvironmentId) =>
     ?.cookieMetadata?.(profileId, environmentId)
     .catch(() => null)) ?? null;
 
-/** Sites where a jar holds a live HttpOnly cookie, as a session cookie is; scripts' cookies aren't. */
-function sessionSites(cookies: ReadonlyArray<CookieMetadata>, now = Date.now()) {
-  return [
-    ...new Set(
-      cookies
-        .filter(
-          (cookie) =>
-            cookie.httpOnly === true &&
-            (cookie.expires === undefined || cookie.expires <= 0 || cookie.expires * 1000 > now),
-        )
-        .map((cookie) => siteOf(cookie.domain)),
-    ),
-  ];
-}
+/** Sites where a jar holds a sign-in cookie. */
+const signedInSites = (cookies: ReadonlyArray<CookieMetadata>, nowSeconds: number) => [
+  ...new Set(
+    cookies.filter((cookie) => holdsSignIn(cookie, nowSeconds)).map(({ domain }) => siteOf(domain)),
+  ),
+];
 
 /**
- * Whether the profile's removal would clear sign-ins the fold never copied: any server's browser
- * keeps its own jar per profile, and this desktop keeps one per other environment. Null when an
- * environment's config or jar can't be read.
+ * Whether the profile is signed in somewhere the fold can't copy from but its removal clears: a
+ * server's own browser (this desktop's server too) or this desktop's jar for another environment.
+ * A site the desktop's own jar also holds doesn't count: those are copies it sent, and Main now
+ * has them. Null when any of them can't be read; `serverBrowser` is undefined for an unknown config.
  */
-async function heldElsewhere(
-  registry: AtomRegistry.AtomRegistry,
-  primaryId: EnvironmentId,
+export async function heldElsewhere(
   profileId: string,
-) {
-  const configs = registry.get(environmentPresentations.serverConfigsAtom);
+  deps: {
+    readonly primaryId: EnvironmentId;
+    readonly environments: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly serverBrowser: boolean | undefined;
+    }>;
+    readonly desktopJar: (
+      profileId: string,
+      environmentId: EnvironmentId,
+    ) => Promise<ReadonlyArray<CookieMetadata> | null>;
+    readonly serverJar: (
+      environmentId: EnvironmentId,
+      profileId: string,
+    ) => Promise<AccountSessionsList | null>;
+    readonly nowSeconds: number;
+  },
+): Promise<boolean | null> {
+  const own = await deps.desktopJar(profileId, deps.primaryId);
+  if (!own) return null;
+  const copied = new Set(signedInSites(own, deps.nowSeconds));
+  const unique = (sites: ReadonlyArray<string>) => sites.some((site) => !copied.has(site));
   let unknown = false;
-  for (const environmentId of registry.get(environmentPresentations.presentationsAtom).keys()) {
-    const config = configs.get(environmentId);
-    if (!config) unknown = true;
-    else if (config.environment.capabilities.serverBrowser) return true;
-    if (environmentId === primaryId) continue;
-    const cookies = await readCookies(profileId, environmentId);
-    if (cookies === null) unknown = true;
-    else if (cookies.length > 0) return true;
+  for (const { environmentId, serverBrowser } of deps.environments) {
+    if (serverBrowser === undefined) unknown = true;
+    else if (serverBrowser) {
+      const listed = await deps.serverJar(environmentId, profileId);
+      // An older server doesn't say which sites hold a sign-in: each one may.
+      if (!listed) unknown = true;
+      else if (
+        unique(listed.sites.filter((site) => site.signedIn !== false).map(({ site }) => site))
+      )
+        return true;
+    }
+    if (environmentId === deps.primaryId) continue;
+    const cookies = await deps.desktopJar(profileId, environmentId);
+    if (!cookies) unknown = true;
+    else if (unique(signedInSites(cookies, deps.nowSeconds))) return true;
   }
   return unknown ? null : false;
 }

@@ -181,6 +181,12 @@ export const unitCookies = (unit: ReadonlyArray<string>, jar: ReadonlyArray<Sess
 export const isLive = (cookie: SessionCookie, nowSeconds: number) =>
   cookie.expires === undefined || cookie.expires > nowSeconds;
 
+/** A live HttpOnly cookie, as a site keeps its sign-in; a page's own scripts can't set one. */
+export const holdsSignIn = (
+  cookie: { readonly httpOnly?: boolean | undefined; readonly expires?: number | undefined },
+  nowSeconds: number,
+) => cookie.httpOnly === true && (cookie.expires === undefined || cookie.expires > nowSeconds);
+
 /** A unit with no live cookie is empty, whatever expired ones it still holds. */
 function unitState(
   unit: ReadonlyArray<string>,

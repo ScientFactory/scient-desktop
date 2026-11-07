@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
+  type AccountSessionsList,
   type AccountsSnapshot,
   type AccountSummary,
   type DesktopFillMainResult,
@@ -18,6 +19,7 @@ import {
   fillMainFromProfile,
   foldCandidates,
   foldIntoMain,
+  heldElsewhere,
   mainFillTrigger,
   replaceAllowedSince,
   withdrawFromMain,
@@ -774,6 +776,58 @@ describe("the one-time fold into Main", () => {
       calls: ["fill made", "fold made"],
       done: [],
     });
+  });
+});
+
+describe("heldElsewhere", () => {
+  const desktop = EnvironmentId.make("environment-desktop");
+  const lab = EnvironmentId.make("environment-lab");
+  const session = (domain: string) => ({ domain, httpOnly: true });
+  const listed = (...sites: Array<[string, boolean]>): AccountSessionsList => ({
+    sites: sites.map(([site, signedIn]) => ({ site, cookies: 1, signedIn })),
+  });
+  const held = (
+    servers: Partial<Record<string, AccountSessionsList | null>>,
+    jars: Partial<Record<string, ReadonlyArray<{ domain: string; httpOnly: boolean }> | null>> = {},
+  ) =>
+    heldElsewhere("made", {
+      primaryId: desktop,
+      environments: [
+        { environmentId: desktop, serverBrowser: true },
+        { environmentId: lab, serverBrowser: true },
+      ],
+      desktopJar: async (_profileId, environmentId) =>
+        environmentId in jars
+          ? jars[environmentId]!
+          : environmentId === desktop
+            ? [session(".github.com")]
+            : [],
+      serverJar: async (environmentId) =>
+        environmentId in servers ? servers[environmentId]! : listed(),
+      nowSeconds: Date.parse(AT) / 1000,
+    });
+
+  it("keeps a profile signed in on a server's own browser where the desktop isn't", async () => {
+    expect(await held({ [lab]: listed(["orcid.org", true]) })).toBe(true);
+    expect(await held({ [desktop]: listed(["orcid.org", true]) })).toBe(true);
+    expect(await held({}, { [lab]: [session(".orcid.org")] })).toBe(true);
+  });
+
+  it("lets the profile go where a server holds only the desktop's copies or script cookies", async () => {
+    expect(
+      await held(
+        { [lab]: listed(["github.com", true], ["consent.example", false]) },
+        {
+          [lab]: [{ domain: ".consent.example", httpOnly: false }],
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("can't tell while a server is offline or a jar unreadable", async () => {
+    expect(await held({ [lab]: null })).toBeNull();
+    expect(await held({}, { [desktop]: null })).toBeNull();
+    expect(await held({}, { [lab]: null })).toBeNull();
   });
 });
 
