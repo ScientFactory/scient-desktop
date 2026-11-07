@@ -10,21 +10,59 @@ const JULIA_LANGUAGE_ID = ComputeLanguageId.make("julia");
 
 const JULIA_FLAGS = ["--startup-file=no", "--history-file=no"];
 
+// Read from IJulia's Project.toml with the reader Julia's code loading uses: `pkgversion` needs
+// Julia 1.9, and `Base.TOML.parsefile` exists on no current version, so a probe that found the
+// person's own IJulia failed.
+const packageVersion = (path: string) =>
+  `get(Base.parsed_toml(joinpath(dirname(dirname(${path})), "Project.toml")), "version", "unknown")`;
+
 const PROBE = [
   'let p = Base.find_package("IJulia")',
-  '  kernel = p === nothing ? "" : get(Base.TOML.parsefile(joinpath(dirname(dirname(p)), "Project.toml")), "version", "unknown")',
+  `  kernel = p === nothing ? "" : ${packageVersion("p")}`,
   `  println(join(["${KERNEL_PROBE_MARKER}", VERSION, Sys.ARCH, Sys.BINDIR, kernel], '\\t'))`,
   "end",
 ].join("\n");
 
+const PATH_SEPARATOR = 'Sys.iswindows() ? ";" : ":"';
+
+// Julia keeps its standard library compiled in its installation's depots. Setup names Scient's
+// depot alone, because an empty entry also brings in the person's ~/.julia before Julia 1.11, so
+// these are added here, as Julia adds them itself, and passed on to the processes Pkg starts.
+// Without them every first setup compiled the standard library again: one to four minutes.
+const BUNDLED_DEPOTS = [
+  'for depot in (abspath(Sys.BINDIR, "..", "local", "share", "julia"), abspath(Sys.BINDIR, Base.DATAROOTDIR, "julia"))',
+  "  depot in DEPOT_PATH || push!(DEPOT_PATH, depot)",
+  "end",
+  `ENV["JULIA_DEPOT_PATH"] = join(DEPOT_PATH, ${PATH_SEPARATOR})`,
+].join("; ");
+
 const SETUP = [
+  BUNDLED_DEPOTS,
   "using Pkg",
   'Pkg.add("IJulia")',
   "Pkg.precompile()",
   "import IJulia",
   "println()",
-  "println(pkgversion(IJulia))",
+  `println(${packageVersion('Base.find_package("IJulia")')})`,
 ].join("; ");
+
+// Scient's depot and environment go after the person's, which stay first and keep receiving their
+// package changes. Julia adds them itself, from the two arguments ahead of the connection file:
+// an empty JULIA_DEPOT_PATH entry stands for the person's ~/.julia on most versions, but 1.11.0
+// and 1.11.1 expand it to the installation's depots alone.
+const WITH_SCIENT_KERNEL = [
+  "let depot = popfirst!(ARGS), environment = popfirst!(ARGS)",
+  "  depot in DEPOT_PATH || push!(DEPOT_PATH, depot)",
+  "  environment in LOAD_PATH || push!(LOAD_PATH, environment)",
+  `  ENV["JULIA_DEPOT_PATH"] = join(DEPOT_PATH, ${PATH_SEPARATOR})`,
+  `  ENV["JULIA_LOAD_PATH"] = join(LOAD_PATH, ${PATH_SEPARATOR})`,
+  "end",
+].join("\n");
+
+// The IJulia an older Julia installs (1.26 on Julia 1.8) has no `run_kernel`; its kernel is the
+// script its kernelspec starts.
+const RUN_KERNEL =
+  'import IJulia; isdefined(IJulia, :run_kernel) ? IJulia.run_kernel() : include(joinpath(dirname(pathof(IJulia)), "kernel.jl"))';
 
 // Summarizes Main without calling user-defined show methods: only built-in scalars get a preview.
 const VARIABLES = String.raw`let j(s) = "\"" * join(c == '"' ? "\\\"" : c == '\\' ? "\\\\" : c < ' ' ? "\\u" * string(UInt16(c), base = 16, pad = 4) : string(c) for c in s) * "\"",
@@ -116,30 +154,22 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
       IJULIA_NODEFAULTKERNEL: "1",
     },
   }),
-  launch: ({ executable, privateDirectory, environment, platform }) => {
-    const separator = platform === "win32" ? ";" : ":";
+  launch: ({ executable, privateDirectory, environment }) => ({
+    argv:
+      privateDirectory === null
+        ? [executable, "-i", "--color=yes", "-e", RUN_KERNEL, "{connection_file}"]
+        : [
+            executable,
+            "-i",
+            "--color=yes",
+            "-e",
+            `${WITH_SCIENT_KERNEL}\n${RUN_KERNEL}`,
+            NodePath.join(privateDirectory, "depot"),
+            NodePath.join(privateDirectory, "environment"),
+            "{connection_file}",
+          ],
     // The project folder's Project.toml, unless the person already named an environment.
-    const project = environment.JULIA_PROJECT ? {} : { JULIA_PROJECT: "@." };
-    return {
-      argv: [
-        executable,
-        "-i",
-        "--color=yes",
-        "-e",
-        "import IJulia; IJulia.run_kernel()",
-        "{connection_file}",
-      ],
-      // An empty entry stands for Julia's defaults, so the user's own depot and environment stay
-      // first and keep receiving their package changes.
-      environment:
-        privateDirectory === null
-          ? project
-          : {
-              ...project,
-              JULIA_DEPOT_PATH: `${environment.JULIA_DEPOT_PATH ?? ""}${separator}${NodePath.join(privateDirectory, "depot")}`,
-              JULIA_LOAD_PATH: `${environment.JULIA_LOAD_PATH ?? ""}${separator}${NodePath.join(privateDirectory, "environment")}`,
-            },
-    };
-  },
+    environment: environment.JULIA_PROJECT ? {} : { JULIA_PROJECT: "@." },
+  }),
   interruptMode: (platform) => (platform === "win32" ? "message" : "signal"),
 };
