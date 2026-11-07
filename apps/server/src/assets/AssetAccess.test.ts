@@ -1634,6 +1634,36 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // SCIENT-FORK:START — a preview keeps a loaded document while its file's revision holds.
+  it.effect("reports the revision of a workspace document", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-document-workspace-",
+      });
+      const documentPath = path.join(root, "report.docx");
+      yield* fileSystem.writeFileString(documentPath, "PK first");
+      const issue = () =>
+        issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: documentPath,
+          },
+          workspaceRoot: root,
+        });
+      const first = yield* issue();
+      const renewed = yield* issue();
+      expect(first.fileRevision).toEqual(expect.any(String));
+      expect(renewed.fileRevision).toBe(first.fileRevision);
+
+      yield* fileSystem.writeFileString(documentPath, "PK second, longer");
+      expect((yield* issue()).fileRevision).not.toBe(first.fileRevision);
+    }).pipe(Effect.provide(layerTest)),
+  );
+  // SCIENT-FORK:END
+
   it.effect("issues exact renewable URLs for immutable generated PDF revisions", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

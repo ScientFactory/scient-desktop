@@ -550,7 +550,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
-    const pdfInfo = isWorkspacePdfPreviewPath(resolved.relativePath)
+    // SCIENT-FORK:START — every exact file reports its revision, so a preview keeps a loaded
+    // document while a check finds the file unchanged.
+    const fileInfo = !/\.html?$/i.test(resolved.relativePath)
       ? yield* fileSystem.stat(canonicalFile).pipe(
           Effect.mapError(
             (cause) =>
@@ -561,6 +563,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           ),
         )
       : null;
+    const pdfInfo = isWorkspacePdfPreviewPath(resolved.relativePath) ? fileInfo : null;
+    // SCIENT-FORK:END
     return {
       claims: !/\.html?$/i.test(resolved.relativePath)
         ? {
@@ -589,8 +593,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       fileName: path.basename(resolved.relativePath),
       sourcePath: resolved.relativePath,
       imageDimensions,
-      // SCIENT-FORK:START — the revision a PDF reader keeps its document by; see fileInfoRevision.
-      fileRevision: pdfInfo ? fileInfoRevision(pdfInfo) : undefined,
+      // SCIENT-FORK:START — the revision a reader keeps its document by; see fileInfoRevision.
+      fileRevision: fileInfo ? fileInfoRevision(fileInfo) : undefined,
       // SCIENT-FORK:END
     };
   },

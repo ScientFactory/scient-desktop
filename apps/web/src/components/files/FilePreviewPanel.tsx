@@ -187,6 +187,7 @@ import {
   ScientFileFreshnessStatus,
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
+import { ScientFileRevisionBoundary } from "~/scient/fileSurfaces/ScientFileRevisionBoundary"; // SCIENT-FORK
 import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersionHistory";
 // SCIENT-FORK:START — Overleaf sync state beside "Saved"
 import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
@@ -2084,6 +2085,25 @@ export default function FilePreviewPanel({
     threadId: threadRef.threadId,
     workspaceRoot: cwd,
   });
+  // SCIENT-FORK:START — what a document or binary preview loads; ScientFileRevisionBoundary checks it.
+  const documentAsset =
+    relativePath && absolutePath
+      ? {
+          environmentId,
+          resource: isDocument
+            ? workspaceViewerAssetResource(
+                { draft, threadRef, workspaceRoot: cwd, absolutePath, relativePath },
+                "workspace-file",
+              )
+            : {
+                _tag: "media-file" as const,
+                threadId: threadRef.threadId,
+                path: absolutePath,
+                disposition: "attachment" as const,
+              },
+        }
+      : null;
+  // SCIENT-FORK:END
   const handlePendingChange = (path: string, pending: boolean) => {
     setPendingPaths((current) => {
       const next = new Set(current);
@@ -2690,38 +2710,27 @@ export default function FilePreviewPanel({
             />
           ) : relativePath &&
             absolutePath &&
+            documentAsset &&
             (isDocument || file.readError?.failure === "binary_file") ? (
             // SCIENT-FORK: an Office reader quotes this file into the panel's conversation.
             <OfficeFileContext value={{ citeThread: threadRef, cwd, path: relativePath }}>
-              <AttachmentFilePreview
-                key={`${environmentId}:${absolutePath}:${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
-                name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-                mimeType="application/octet-stream"
-                sizeBytes={0}
-                asset={{
-                  environmentId,
-                  resource: isDocument
-                    ? workspaceViewerAssetResource(
-                        {
-                          draft,
-                          threadRef,
-                          workspaceRoot: cwd,
-                          absolutePath,
-                          relativePath,
-                        },
-                        "workspace-file",
-                      )
-                    : {
-                        _tag: "media-file",
-                        threadId: threadRef.threadId,
-                        path: absolutePath,
-                        disposition: "attachment",
-                      },
-                }}
-                origin="File"
-                embedded
-                onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
-              />
+              {/* SCIENT-FORK: a possible change remounts the preview only when the file changed. */}
+              <ScientFileRevisionBoundary
+                key={`${environmentId}:${absolutePath}`}
+                environmentId={environmentId}
+                resource={documentAsset.resource}
+                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+              >
+                <AttachmentFilePreview
+                  name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+                  mimeType="application/octet-stream"
+                  sizeBytes={0}
+                  asset={documentAsset}
+                  origin="File"
+                  embedded
+                  onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
+                />
+              </ScientFileRevisionBoundary>
               {/* SCIENT-FORK: the end of the Office file context. */}
             </OfficeFileContext>
           ) : relativePath && file.error && file.data === null ? (

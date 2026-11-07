@@ -2045,6 +2045,14 @@ other quote kinds in `packages/contracts/src/fileCitations.ts`). `FilePreviewPan
 reader its file and conversation (`OfficeFileContext`), and `AssistantCitationChip.tsx` names,
 links and reopens the quote in its existing Scient blocks.
 
+T3 remounts a workspace document preview whenever anything in the project may have changed: the
+key of `FilePreviewPanel.tsx`'s document branch carried the thread's workspace mutation id, which
+moves after every command, edit or tool call. An open Word file loaded again and went back to its
+first page while an agent worked. Scient keys that branch by the file alone and wraps it in
+`ScientFileRevisionBoundary` (`scient/fileSurfaces`), which checks the file's revision on each
+possible change and remounts only for a new one; `AssetAccess.ts` reports the revision for every
+exact workspace file, not only PDFs.
+
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
 replace Scient's rather than run beside it.
