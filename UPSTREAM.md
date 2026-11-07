@@ -2009,7 +2009,9 @@ the whole document. Scient replaces the numbers with `WORD_LIMITS`, measured aga
   (16K 0.7 s, 32K 1.5 s, 128K 11.6 s on an M-series Mac). This replaces the 128 KB element limit,
   which mostly measured picture markup.
 - One body element, 100,000 tags: a table is laid out in one go, and a 4,000-row table takes 2.2 s.
-- A header or footer, 128 KB: its cost grows with its own length, not the page count.
+- A header or footer, 128 KB: its cost grows with its own length, not the page count. A longer
+  one alone is left out, as an unused one is, and the preview says it is limited only when the
+  document uses it. Text in CDATA counts toward a paragraph's limit.
 - The body's 4 MB read limit stays (about 700 pages of prose, opened in under 1 s). Styles, lists,
   notes and the expansion totals rose to where they no longer bind real documents; the engine opened
   4,000 chained styles, 2,000 lists or 5,000 footnotes in under 0.75 s.
