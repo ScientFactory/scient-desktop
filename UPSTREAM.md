@@ -2074,7 +2074,9 @@ moves after every command, edit or tool call. An open Word file loaded again and
 first page while an agent worked. Scient keys that branch by the file alone and wraps it in
 `ScientFileRevisionBoundary` (`scient/fileSurfaces`), which checks the file's revision on each
 possible change and remounts only for a new one; `AssetAccess.ts` reports the revision for every
-exact workspace file, not only PDFs.
+exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/t3code#32670 (issue #32669,
+`FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
+marked key in `FilePreviewPanel.tsx`.
 
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
