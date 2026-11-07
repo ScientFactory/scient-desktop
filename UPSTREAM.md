@@ -2073,7 +2073,8 @@ key of `FilePreviewPanel.tsx`'s document branch carried the thread's workspace m
 moves after every command, edit or tool call. An open Word file loaded again and went back to its
 first page while an agent worked. Scient keys that branch by the file alone and wraps it in
 `ScientFileRevisionBoundary` (`scient/fileSurfaces`), which checks the file's revision on each
-possible change and remounts only for a new one; `AssetAccess.ts` reports the revision for every
+possible change and remounts only for a new one (a reload the reader asks for, from the header
+or the Files pane, still always remounts it); `AssetAccess.ts` reports the revision for every
 exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/t3code#32670 (issue #32669,
 `FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
 marked key in `FilePreviewPanel.tsx`.

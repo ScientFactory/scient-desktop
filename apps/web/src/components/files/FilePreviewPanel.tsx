@@ -1654,6 +1654,7 @@ export default function FilePreviewPanel({
     saveResolution,
     saveRetryReady,
     viewerRefreshKey,
+    manualReloadKey,
   } = useWorkspaceFileRefresh({
     environmentId,
     cwd,
@@ -2727,12 +2728,13 @@ export default function FilePreviewPanel({
             (isDocument || file.readError?.failure === "binary_file") ? (
             // SCIENT-FORK: an Office reader quotes this file into the panel's conversation.
             <OfficeFileContext value={{ citeThread: threadRef, cwd, path: relativePath }}>
-              {/* SCIENT-FORK: a possible change remounts the preview only when the file changed. */}
+              {/* SCIENT-FORK: a possible change remounts the preview only when the file changed;
+                  a reload the reader asks for always does, so a failed preview can retry. */}
               <ScientFileRevisionBoundary
-                key={`${environmentId}:${absolutePath}`}
+                key={`${environmentId}:${absolutePath}:${manualReloadKey}:${fileRefreshRevision}`}
                 environmentId={environmentId}
                 resource={documentAsset.resource}
-                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
               >
                 <AttachmentFilePreview
                   name={relativePath.split(/[\\/]/).at(-1) || relativePath}
