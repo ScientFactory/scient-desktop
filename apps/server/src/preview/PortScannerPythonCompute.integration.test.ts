@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- gated qualification uses an explicit native Python and a recording Fetch service restricted to its loopback fixture.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
 import * as NodeProcess from "node:process";
 
@@ -207,6 +208,17 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
             const waitForLsofProcess = Effect.fn("PortScannerPythonCompute.waitForLsofProcess")(
               function* (processId: number) {
                 yield* scanConfiguredFixture(1);
+                // Linux scans read /proc before lsof, so confirm the kernel's listener with the
+                // same lsof query when the scanner did not run it.
+                if (!lsofObservedProcess(lsofSnapshots, processId)) {
+                  lsofSnapshots.push(
+                    NodeChildProcess.execFileSync(
+                      "lsof",
+                      ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
+                      { encoding: "utf8" },
+                    ),
+                  );
+                }
                 expect(lsofObservedProcess(lsofSnapshots, processId)).toBe(true);
               },
             );

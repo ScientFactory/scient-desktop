@@ -292,10 +292,11 @@ export const make = Effect.gen(function* () {
       scheduledTaskThreadModes: true,
       npmReleaseLookup: true,
       // SCIENT-FORK:START — Scient's own voice stays the only dictation until the voice decision;
-      // with this off, every client hides T3's environment microphone controls.
+      // with these off, every client hides T3's environment and cloud microphone controls.
       voiceTranscription:
         SCIENT_T3_VOICE_TRANSCRIPTION &&
         isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),
+      cloudVoiceTranscription: SCIENT_T3_VOICE_TRANSCRIPTION,
       // SCIENT-FORK:END
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),

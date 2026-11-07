@@ -142,9 +142,10 @@ it.layer(layer, { excludeTestServices: true })("Droid native persisted interacti
                 header: "Scope",
                 question: "Which scope should Droid use?",
                 options: [
-                  { label: "workspace", description: "Workspace" },
-                  { label: "session", description: "Session" },
+                  { label: "Workspace", description: "Workspace", value: "workspace" },
+                  { label: "Session", description: "Session", value: "session" },
                 ],
+                allowCustomAnswer: false,
               },
             ]);
             assert.isFalse(pending.runs.some((run) => run.status === "completed"));

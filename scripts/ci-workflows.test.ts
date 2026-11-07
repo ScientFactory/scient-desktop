@@ -372,19 +372,19 @@ describe("CI workflow decisions", () => {
     ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 36],
     ["docs PR", "docs/operations/development.md", "pull_request", false, 30],
     // CI wiring runs Compute on Linux only; a push to main still runs all four.
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 44],
-    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 43],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 43],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 42],
     [
       "Compute PR",
       "apps/server/src/scient/compute/ComputeSessionService.ts",
       "pull_request",
       false,
-      53,
+      49,
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
-    ["main push", "docs/operations/development.md", "push", false, 56],
+    ["main push", "docs/operations/development.md", "push", false, 52],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

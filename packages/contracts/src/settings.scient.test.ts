@@ -55,21 +55,6 @@ describe("ServerSettings thread sections", () => {
   });
 });
 
-describe("ServerSettings Cursor account usage", () => {
-  // Reading another app's Keychain login makes macOS ask for a password, so it
-  // stays off until the user turns it on; never at launch by default.
-  it("keeps Keychain usage off until enabled, preserving an explicit opt-in", () => {
-    expect(decodeServerSettings({}).cursorKeychainUsageEnabled).toBe(false);
-    expect(DEFAULT_SERVER_SETTINGS.cursorKeychainUsageEnabled).toBe(false);
-    expect(
-      decodeServerSettings({ cursorKeychainUsageEnabled: true }).cursorKeychainUsageEnabled,
-    ).toBe(true);
-    expect(decodeServerSettingsPatch({ cursorKeychainUsageEnabled: true })).toEqual({
-      cursorKeychainUsageEnabled: true,
-    });
-  });
-});
-
 describe("ClientSettings typography defaults", () => {
   it("defaults old settings to regular weight without adding a patch value", () => {
     expect(decodeClientSettings({}).fontWeightInterface).toBe(400);

@@ -233,6 +233,7 @@ interface BuildCliInput {
   readonly wslPrebuild: Option.Option<string>;
   readonly syncTexRuntime: Option.Option<string>;
   readonly wslSyncTexRuntime: Option.Option<string>;
+  readonly voiceRuntime: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -1066,6 +1067,7 @@ interface ResolvedBuildOptions {
   readonly wslPrebuild: string | undefined;
   readonly syncTexRuntime: string | undefined;
   readonly wslSyncTexRuntime: string | undefined;
+  readonly voiceRuntime: string | undefined;
 }
 
 interface StagePackageJson {
@@ -2031,6 +2033,7 @@ const BuildEnvConfig = Config.all({
   wslPrebuild: Config.String("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
   syncTexRuntime: Config.String("SCIENT_SYNCTEX_RUNTIME").pipe(Config.option),
   wslSyncTexRuntime: Config.String("SCIENT_WSL_SYNCTEX_RUNTIME").pipe(Config.option),
+  voiceRuntime: Config.String("SCIENT_VOICE_RUNTIME").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -2127,6 +2130,8 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     Option.getOrUndefined(input.syncTexRuntime) ?? Option.getOrUndefined(env.syncTexRuntime);
   const wslSyncTexRuntime =
     Option.getOrUndefined(input.wslSyncTexRuntime) ?? Option.getOrUndefined(env.wslSyncTexRuntime);
+  const voiceRuntime =
+    Option.getOrUndefined(input.voiceRuntime) ?? Option.getOrUndefined(env.voiceRuntime);
 
   return {
     platform,
@@ -2143,6 +2148,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     wslPrebuild,
     syncTexRuntime,
     wslSyncTexRuntime,
+    voiceRuntime,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -4553,6 +4559,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
           stageResourcesDir,
           platform: options.platform,
           arch: options.arch,
+          sourceDirectory: options.voiceRuntime,
           verbose: options.verbose,
         }),
       catch: (cause) =>
@@ -5231,6 +5238,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslSyncTexRuntime: Flag.String("wsl-synctex-runtime").pipe(
     Flag.withDescription(
       "Path to the verified Linux x64 SyncTeX runtime directory staged into the WSL sidecar (env: SCIENT_WSL_SYNCTEX_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  voiceRuntime: Flag.String("voice-runtime").pipe(
+    Flag.withDescription(
+      "Path to a verified whisper.cpp runtime directory staged for the desktop target (env: SCIENT_VOICE_RUNTIME).",
     ),
     Flag.optional,
   ),

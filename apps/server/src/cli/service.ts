@@ -95,6 +95,13 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
+  // Before the downgrade check, which reads this home's state, not the service's.
+  if (status.otherBaseDir !== undefined) {
+    return yield* new BootService.BootServiceOtherBaseDirError({
+      installedBaseDir: status.otherBaseDir,
+      baseDir,
+    });
+  }
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
   }
@@ -155,6 +162,14 @@ export function formatServiceStatus(
   }
   if (!status.installed) {
     return "Scient service\n  Status: not installed\n  Next: Use this installation's service install command.";
+  }
+  if (status.otherBaseDir !== undefined) {
+    return [
+      "Scient service",
+      "  Status: installed for another Scient home",
+      `  Base dir: ${status.otherBaseDir}`,
+      `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
+    ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;
   const problems = (status.problems ?? []).map(
@@ -274,7 +289,9 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
             ? `Restarted the Scient service${onVersion}.`
             : outcome === "queued"
               ? `Queued a restart of the Scient service${onVersion}. This session runs inside the service and disconnects when it goes down.\nLogs: ${status.logPath}`
-              : "Scient service is not installed.",
+              : status.otherBaseDir !== undefined
+                ? `The Scient service serves ${status.otherBaseDir}, so it was not restarted. Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to restart it.`
+                : "Scient service is not installed.",
         );
       }),
     ),
@@ -300,7 +317,7 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
           path.resolve(installedBaseDir) !== path.resolve(baseDir)
         ) {
           yield* Console.log(
-            "The installed service runs another Scient home, so it was not removed. Pass its --base-dir.",
+            `The Scient service serves ${installedBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(installedBaseDir)}\` to remove it.`,
           );
           return;
         }
