@@ -819,6 +819,8 @@ export async function foldIntoMain(
       continue;
     }
     const result = await deps.fill(id);
+    // Cookies the copy can't carry, such as partitioned ones, would go with the profile.
+    if (result && result.unsupported > 0) continue;
     const signedIn = result && (await deps.signedIn(id).catch(() => null));
     if (!result || !signedIn) {
       complete = false;

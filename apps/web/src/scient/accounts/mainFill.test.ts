@@ -724,6 +724,8 @@ describe("the one-time fold into Main", () => {
     const kept = { calls: ["fill made"], done: [[]] };
     expect(await run([theirs, mains], units(["github.com", "conflict"]))).toEqual(kept);
     expect(await run([], units(["github.com", "failed"]))).toEqual(kept);
+    // A jar holding only cookies the copy can't carry: nothing reaches Main.
+    expect(await run([], { units: [], unsupported: 1 })).toEqual(kept);
     expect(
       await run([theirs], units(["github.com", "blocked"]), {
         main: { signedOutSites: ["github.com"] },
