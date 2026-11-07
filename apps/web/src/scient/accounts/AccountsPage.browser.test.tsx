@@ -404,18 +404,20 @@ it("lists Main beside imported profiles, each showing where it came from", async
   ).not.toContain("Safari");
 });
 
-it("records a sign-out on Main before its cookies go", async () => {
+it("records a sign-out on Main before its cookies go, and counts what Main holds", async () => {
   state.settings = {};
   state.calls = [];
   using _desktop = fixture();
+  let held = [{ domain: "github.com", cookies: 3 }];
   Object.defineProperty(window, "desktopBridge", {
     configurable: true,
     value: {
       accounts: {
-        signedInSites: async () => [{ domain: "github.com", cookies: 3 }],
+        signedInSites: async () => held,
         signOutSite: async () => true,
         signOutMainSite: async (site: string) => {
           state.calls.push(["remove", site]);
+          held = [];
           return true;
         },
       },
@@ -430,13 +432,17 @@ it("records a sign-out on Main before its cookies go", async () => {
       renderSignIn={() => null}
     />,
   );
-  await page.getByRole("button", { name: "Signed-in sites for Main" }).click();
+  // Main has no sign-in rows here; its row still counts the site its cookies hold.
+  const main = page.getByRole("button", { name: "Signed-in sites for Main" });
+  await expect.element(main.getByText("1 site ›")).toBeVisible();
+  await main.click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await vi.waitFor(() => expect(state.calls).toHaveLength(2));
   expect(state.calls).toEqual([
     ["record", { profileId: "default", site: "github.com" }],
     ["remove", "github.com"],
   ]);
+  await expect.element(main.getByText("1 site ›")).not.toBeInTheDocument();
 });
 
 it("says on Main's row which profile a site uses when Main's copy doesn't work, and copies Google into Main", async () => {

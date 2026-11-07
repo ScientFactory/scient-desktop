@@ -149,8 +149,64 @@ const signInsOf = (accounts: ReadonlyArray<AccountSummary>, profileId: string) =
       (account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId,
   );
 
-const signInSite = (account: AccountSummary) =>
-  "sites" in account.details ? (account.details.sites[0] ?? "") : "";
+const rowSites = (row: AccountSummary) => ("sites" in row.details ? row.details.sites : []);
+
+/** The sites a profile's jar holds cookies for that none of its sign-in rows names. */
+const unlistedSites = (
+  rows: ReadonlyArray<AccountSummary>,
+  sites: ReadonlyArray<{ domain: string }>,
+) => sites.filter((site) => !rows.some((row) => sitesNest([site.domain], rowSites(row))));
+
+/** How many sites a profile's list shows: its sign-ins' sites, then its other cookie sites. */
+const siteCount = (rows: ReadonlyArray<AccountSummary>, sites: ReadonlyArray<{ domain: string }>) =>
+  new Set(rows.map((row) => rowSites(row)[0] ?? row.accountId)).size +
+  unlistedSites(rows, sites).length;
+
+/** A profile's cookie sites, read from the computer that holds them, again on each sign-in change. */
+function useProfileSites(profileId: string, environmentId: EnvironmentId) {
+  const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
+  // Another computer's sign-ins live in its own browser, not in this desktop's partitions.
+  const remote = environmentId !== usePrimaryEnvironmentId();
+  const listRemote = useAccountCommand(accountsState.sessionsList, environmentId);
+  const load = useEffectEvent(() =>
+    (remote
+      ? listRemote({ profileId: BrowserProfileId.make(profileId) }).then((listed) =>
+          listed.ok ? listed.value.sites.map(({ site }) => ({ domain: site })) : [],
+        )
+      : window.desktopBridge?.accounts?.signedInSites(profileId, environmentId)
+    )
+      ?.then(setSites)
+      .catch(() => setSites([])),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the computer that holds them, and again when a sign-in changes.
+  useEffect(() => {
+    void load();
+    const reload = () => void load();
+    window.addEventListener("scient-accounts-session-changed", reload);
+    return () => window.removeEventListener("scient-accounts-session-changed", reload);
+  }, []);
+  return { sites, remote, reload: () => load() };
+}
+
+/** What a profile row says it holds: the same sites its list shows. */
+function SitesCount({
+  profileId,
+  environmentId,
+  rows,
+}: {
+  profileId: string;
+  environmentId: EnvironmentId;
+  rows: ReadonlyArray<AccountSummary>;
+}) {
+  const { sites } = useProfileSites(profileId, environmentId);
+  const count = siteCount(rows, sites ?? []);
+  if (count === 0) return null;
+  return (
+    <span className="text-xs text-muted-foreground">
+      {count === 1 ? "1 site" : `${count} sites`} ›
+    </span>
+  );
+}
 
 /**
  * A profile's sites: its sign-ins as rows, each with its access and status, then the other sites
@@ -171,31 +227,13 @@ function SignedInSitesDialog({
   renderSignIn: RenderSignIn;
   onClose: () => void;
 }) {
-  const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
+  const { sites, remote, reload } = useProfileSites(profile.id, environmentId);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  // Another computer's sign-ins live in its own browser, not in this desktop's partitions.
-  const remote = environmentId !== usePrimaryEnvironmentId();
   const remoteLabel = useEnvironment(environmentId)?.label ?? "this computer";
   const sender = profile.record.received?.[0]?.label;
-  const listRemote = useAccountCommand(accountsState.sessionsList, environmentId);
   const signOutRemote = useAccountCommand(accountsState.sessionsSignOutLocal, environmentId);
   const recordSignOut = useAccountCommand(accountsState.profileSignedOut, environmentId);
-  const read = () =>
-    remote
-      ? listRemote({ profileId: BrowserProfileId.make(profile.id) }).then((listed) =>
-          listed.ok ? listed.value.sites.map(({ site }) => ({ domain: site })) : [],
-        )
-      : window.desktopBridge?.accounts?.signedInSites(profile.id, environmentId);
-  const load = useEffectEvent(() =>
-    read()
-      ?.then(setSites)
-      .catch(() => setSites([])),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the computer that holds them when the view opens.
-  useEffect(() => {
-    void load();
-  }, []);
   const signOut = async (site: string) => {
     setBusy(site);
     const accounts = window.desktopBridge?.accounts;
@@ -208,13 +246,13 @@ function SignedInSitesDialog({
           ? await accounts?.signOutMainSite?.(site, environmentId).catch(() => false)
           : await accounts?.signOutSite?.(profile.id, site, environmentId).catch(() => false));
     if (!done) profileError();
+    // Every count and list of this profile reads again, this one too.
     else window.dispatchEvent(new Event("scient-accounts-session-changed"));
-    await load();
+    if (!done) await reload();
     setBusy(null);
   };
   const canSignOut = remote || window.desktopBridge?.accounts?.signOutSite !== undefined;
   const find = query.trim().toLowerCase();
-  const rowSites = (row: AccountSummary) => ("sites" in row.details ? row.details.sites : []);
   const cookieSiteOf = (row: AccountSummary) =>
     sites?.find((site) => sitesNest([site.domain], rowSites(row)))?.domain;
   const shownRows = rows.filter(
@@ -222,9 +260,7 @@ function SignedInSitesDialog({
       row.name.toLowerCase().includes(find) ||
       rowSites(row).some((site) => site.toLowerCase().includes(find)),
   );
-  const others = (sites ?? []).filter(
-    (site) => !rows.some((row) => sitesNest([site.domain], rowSites(row))),
-  );
+  const others = unlistedSites(rows, sites ?? []);
   const shown = others.filter((site) => site.domain.includes(find));
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -251,9 +287,7 @@ function SignedInSitesDialog({
             <Input
               type="search"
               aria-label="Find a site"
-              placeholder={
-                sites ? `${rows.length + others.length} signed-in sites` : "Signed-in sites"
-              }
+              placeholder={sites ? `${siteCount(rows, sites)} signed-in sites` : "Signed-in sites"}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -813,10 +847,6 @@ export function BrowserProfiles({
   const disabled = !canWrite || !hydrated || busy;
   const linkedProfiles = listed.filter((profile) => profile.record.source);
   const folded = foldedNotice(snapshot, DateTime.nowUnsafe().epochMilliseconds);
-  const sitesLabel = (profileId: string) => {
-    const count = new Set(signInsOf(snapshot.accounts, profileId).map(signInSite)).size;
-    return count === 0 ? undefined : count === 1 ? "1 site" : `${count} sites`;
-  };
   /** Each profile back in use; it was never off this client's list. Stops at the first failure. */
   const undoFold = async (merged: ReadonlyArray<{ profileId: string }>) => {
     for (const { profileId } of merged)
@@ -1145,9 +1175,11 @@ export function BrowserProfiles({
           }
           control={
             <div className="flex items-center gap-2">
-              {sitesLabel(profile.id) ? (
-                <span className="text-xs text-muted-foreground">{sitesLabel(profile.id)} ›</span>
-              ) : null}
+              <SitesCount
+                profileId={profile.id}
+                environmentId={environmentId}
+                rows={signInsOf(snapshot.accounts, profile.id)}
+              />
               {profile.record.received?.[0] ? (
                 <span className="text-xs text-muted-foreground">
                   Set on {profile.record.received[0].label}
