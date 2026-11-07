@@ -10,6 +10,7 @@ import {
   ProfileColor,
   ACCOUNT_SECRET_FIELDS,
   defaultBrowserProfileRecord,
+  isBuiltInBrowserProfileId,
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   type AccountActivityEntry,
@@ -97,6 +98,37 @@ export function mergeProfiles(
       ...profile,
       record: byId.get(profile.id) ?? defaultBrowserProfileRecord(profile.id),
     }));
+}
+
+/**
+ * Profiles that rows name but this client doesn't list, such as another device's: each from the
+ * server's record, so its sign-ins stay reachable.
+ */
+export function unlistedProfiles(
+  snapshot: Pick<AccountsSnapshot, "accounts" | "profiles">,
+  listed: ReadonlyArray<{ readonly id: string }>,
+) {
+  const ids = new Set(
+    snapshot.accounts.flatMap(({ details }) =>
+      details.kind === "website" &&
+      details.profileId !== undefined &&
+      !isBuiltInBrowserProfileId(details.profileId) &&
+      !listed.some((profile) => profile.id === details.profileId)
+        ? [details.profileId]
+        : [],
+    ),
+  );
+  return [...ids].map((id) => {
+    const record =
+      snapshot.profiles.find((profile) => profile.profileId === id) ??
+      defaultBrowserProfileRecord(id);
+    return {
+      id,
+      name: record.source?.profileName ?? "Profile from another device",
+      kind: "persistent" as const,
+      record,
+    };
+  });
 }
 
 export function mergeSourceProfiles(

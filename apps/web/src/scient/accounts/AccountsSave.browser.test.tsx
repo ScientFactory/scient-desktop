@@ -214,7 +214,7 @@ it("lets the next snapshot decide the count after a refresh fails", async () => 
   await expect.element(page.getByText("1 site", { exact: true })).toBeVisible();
 });
 
-it("lists a profile's session rows in its sites once named, and says what each is", async () => {
+it("lists session rows under their profile, one this client doesn't list too, and says what each is", async () => {
   const session = (
     id: string,
     site: string,
@@ -225,7 +225,7 @@ it("lists a profile's session rows in its sites once named, and says what each i
       ...summary(AccountId.make(id), site, {
         kind: "website",
         sites: [site],
-        profileId: "default",
+        profileId: "work",
         origin: "browser-session",
         ...(username ? { username } : {}),
       }),
@@ -257,7 +257,10 @@ it("lists a profile's session rows in its sites once named, and says what each i
   );
   await expect.element(page.getByText("2 sites ›", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Saved passwords")).not.toBeInTheDocument();
-  await page.getByRole("button", { name: "Signed-in sites for Main" }).click();
+  // "work" is in no profile list here, as for a profile made on another device.
+  await page
+    .getByRole("button", { name: "Signed-in sites for Profile from another device" })
+    .click();
   await expect.element(page.getByText("Imported", { exact: true })).toBeVisible();
   // The named row is still listed here, not moved out once it has a username.
   expect(page.getByRole("dialog").element().textContent).toContain("Signed in as");

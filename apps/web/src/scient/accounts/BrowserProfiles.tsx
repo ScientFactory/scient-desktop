@@ -84,6 +84,7 @@ import {
   renamedSourceLabel,
   signedOutOfGoogle,
   isBrowserSignIn,
+  unlistedProfiles,
   sitesToKeep,
 } from "./accountsView";
 
@@ -798,9 +799,12 @@ export function BrowserProfiles({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
+  const listed = mergeProfiles(settings.browserProfiles, snapshot.profiles);
+  const unlisted = unlistedProfiles(snapshot, listed);
+  const isUnlisted = (profileId: string) => unlisted.some((profile) => profile.id === profileId);
+  const profiles = [...listed, ...unlisted];
   const disabled = !canWrite || !hydrated || busy;
-  const linkedProfiles = profiles.filter((profile) => profile.record.source);
+  const linkedProfiles = listed.filter((profile) => profile.record.source);
   const folded = foldedNotice(snapshot, DateTime.nowUnsafe().epochMilliseconds);
   const sitesLabel = (profileId: string) => {
     const count = new Set(signInsOf(snapshot.accounts, profileId).map(signInSite)).size;
@@ -922,12 +926,12 @@ export function BrowserProfiles({
   };
   const [linking, setLinking] = useState<string | null>(null);
   const [sources, setSources] = useState<Awaited<ReturnType<typeof loadSourceProfiles>>>([]);
-  const profileIds = profiles.map((profile) => profile.id).join("\u0001");
+  const profileIds = listed.map((profile) => profile.id).join("\u0001");
   // Linked profiles follow their source's picture, colour and name; older imports get linked once.
   const syncSources = useEffectEvent((loaded: Awaited<ReturnType<typeof loadSourceProfiles>>) => {
     setSources(loaded);
     const renames: Array<{ id: string; from: string; to: string }> = [];
-    for (const profile of profiles) {
+    for (const profile of listed) {
       if (isBuiltInBrowserProfileId(profile.id)) continue;
       const linked = profile.record.source;
       if (linked) {
@@ -1129,10 +1133,11 @@ export function BrowserProfiles({
                 {window.desktopBridge?.accounts ? (
                   <MenuItem onClick={() => setViewingSites(profile.id)}>Signed-in sites</MenuItem>
                 ) : null}
-                {isBuiltInBrowserProfileId(profile.id) ? null : (
+                {isBuiltInBrowserProfileId(profile.id) || isUnlisted(profile.id) ? null : (
                   <MenuItem onClick={() => setRenaming(profile.id)}>Rename</MenuItem>
                 )}
                 {isBuiltInBrowserProfileId(profile.id) ||
+                isUnlisted(profile.id) ||
                 profile.record.source ||
                 !previewBridge ? null : (
                   <MenuItem
@@ -1153,18 +1158,20 @@ export function BrowserProfiles({
                     scope={profile.record.scope}
                   />
                 )}
-                <MenuItem
-                  disabled={settings.browserDefaultProfileId === profile.id}
-                  onClick={() =>
-                    void changeSettings((current) => ({
-                      ...current,
-                      browserDefaultProfileId: profile.id,
-                    }))
-                  }
-                >
-                  Use for new tabs
-                </MenuItem>
-                {previewBridge && profile.record.source ? (
+                {isUnlisted(profile.id) ? null : (
+                  <MenuItem
+                    disabled={settings.browserDefaultProfileId === profile.id}
+                    onClick={() =>
+                      void changeSettings((current) => ({
+                        ...current,
+                        browserDefaultProfileId: profile.id,
+                      }))
+                    }
+                  >
+                    Use for new tabs
+                  </MenuItem>
+                )}
+                {previewBridge && profile.record.source && !isUnlisted(profile.id) ? (
                   <MenuItem onClick={() => void act(() => refresh([profile]))}>
                     Refresh from {browserName(profile.record.source.browser)}
                   </MenuItem>
