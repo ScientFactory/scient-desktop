@@ -214,7 +214,7 @@ it("lets the next snapshot decide the count after a refresh fails", async () => 
   await expect.element(page.getByText("1 site", { exact: true })).toBeVisible();
 });
 
-it("keeps a session row in Browser sign-ins once it is named, and says what it is", async () => {
+it("lists a profile's session rows in its sites once named, and says what each is", async () => {
   const session = (
     id: string,
     site: string,
@@ -225,7 +225,7 @@ it("keeps a session row in Browser sign-ins once it is named, and says what it i
       ...summary(AccountId.make(id), site, {
         kind: "website",
         sites: [site],
-        profileId: "work",
+        profileId: "default",
         origin: "browser-session",
         ...(username ? { username } : {}),
       }),
@@ -255,12 +255,9 @@ it("keeps a session row in Browser sign-ins once it is named, and says what it i
       <AccountsPage />
     </RegistryContext.Provider>,
   );
-  await expect
-    .element(page.getByText("Passwords work in every profile.", { exact: false }))
-    .toBeVisible();
-  await expect.element(page.getByText("2 sites", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("2 sites ›", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Saved passwords")).not.toBeInTheDocument();
-  await page.getByText("Browser sign-ins").click();
+  await page.getByRole("button", { name: "Signed-in sites for Main" }).click();
   await expect.element(page.getByText("Imported", { exact: true })).toBeVisible();
   // The named row is still listed here, not moved out once it has a username.
   expect(page.getByRole("dialog").element().textContent).toContain("Signed in as");

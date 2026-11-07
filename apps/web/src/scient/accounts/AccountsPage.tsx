@@ -23,7 +23,6 @@ import {
   ChevronRightIcon,
   EllipsisIcon,
   FileKeyIcon,
-  GlobeIcon,
   KeyRoundIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -86,7 +85,6 @@ import { accountsState } from "./accountsState";
 import {
   KIND_LABELS,
   accountIconUrl,
-  accountListRows,
   accountManagePage,
   accountStatusLabel,
   activityLine,
@@ -113,16 +111,15 @@ import { copySignInIntoMain } from "./mainFill";
 import { RemoteComputers } from "./RemoteComputers";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
-import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
 import { useWebsiteSessions } from "./useWebsiteSessions";
 
-/** Provider rows last read per environment, so a refresh doesn't empty "Other sign-ins". */
+/** Provider rows last read per environment, so a refresh doesn't empty "Apps and connectors". */
 const providerRowsCache: ProviderRowsCache = new Map();
 
-/** Where each kind of sign-in is managed, for the "Other sign-ins" links. */
+/** Where each kind of sign-in is managed, for the "Apps and connectors" links. */
 const MANAGED_IN = {
   "custom-model": "Custom models",
   claude: "Claude",
@@ -136,12 +133,18 @@ export function AccountRow({
   canWrite,
   onEdit,
   onActivity,
+  aside,
+  menu,
 }: {
   account: AccountSummary;
   environmentId: EnvironmentId;
   canWrite: boolean;
   onEdit: () => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
+  /** Beside the access chip, such as which profile Main uses for the site. */
+  aside?: ReactNode;
+  /** More items for the row's menu. */
+  menu?: ReactNode;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
   const profiles = resolveBrowserProfiles(
@@ -260,6 +263,7 @@ export function AccountRow({
               Sign in
             </Button>
           ) : null}
+          {aside}
           <AccessChip
             environmentId={environmentId}
             target={target}
@@ -291,6 +295,7 @@ export function AccountRow({
             {site && !university ? (
               <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem>
             ) : null}
+            {menu}
             <AccountStoreMenuItems account={account} />
             <MenuItem onClick={onEdit}>Edit</MenuItem>
             <MenuItem
@@ -533,48 +538,45 @@ function SavedPasswordsDialog({
   );
 }
 
+const siteKey = (account: AccountSummary) =>
+  "sites" in account.details
+    ? (account.details.sites[0]?.replace(/^https:\/\//, "").toLowerCase() ?? "")
+    : "";
+
 /**
- * One site signed in from several browser profiles: the profiles' pictures, opening to each.
- * When Main has the site but it doesn't work there, the row says which profile is used instead.
- * Google refuses signing in from Scient's browser, so Main gets Google only as a copy.
+ * On Main's row for a site: the profile Main uses there when Main's own sign-in doesn't work and
+ * another profile's does. Google refuses signing in from Scient's browser, so Main gets Google
+ * only as a copy, or through importing a browser profile that has it.
  */
-export function SignInGroupRow({
+export function MainSiteChoice({
   environmentId,
+  account,
   accounts,
   profiles,
-  onOpen,
   onImport,
 }: {
   environmentId: EnvironmentId;
+  /** Main's row for the site. */
+  account: AccountSummary;
   accounts: ReadonlyArray<AccountSummary>;
   profiles: ReturnType<typeof mergeProfiles>;
-  onOpen: () => void;
   onImport?: () => void;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
-  const first = accounts[0]!;
-  const site = "sites" in first.details ? first.details.sites[0] : undefined;
-  const iconUrl = accountIconUrl(site ? [site] : [], first.name);
-  const profileIds = new Set(
-    accounts.map(({ details }) => (details.kind === "website" ? details.profileId : undefined)),
-  );
-  const signedIn = profiles.filter((profile) => profileIds.has(profile.id));
+  const site = "sites" in account.details ? account.details.sites[0] : undefined;
+  const key = siteKey(account);
+  const group = accounts.filter((row) => isBrowserSignIn(row) && siteKey(row) === key);
   const pageUrl = site ? (site.startsWith("https://") ? site : `https://${site}`) : undefined;
-  const identities = siteIdentities(accounts, pageUrl).map((identity) => identity.profileId);
-  const using =
-    profileIds.has(DEFAULT_BROWSER_PROFILE_ID) && !identities.includes(DEFAULT_BROWSER_PROFILE_ID)
-      ? profiles.find((profile) => profile.id === identities[0])
-      : undefined;
+  const identities = siteIdentities(group, pageUrl).map((identity) => identity.profileId);
+  const mainWorks = identities.includes(DEFAULT_BROWSER_PROFILE_ID);
+  const using = mainWorks ? undefined : profiles.find((profile) => profile.id === identities[0]);
   const google = site === GOOGLE_SITE;
-  const usingRow = accounts.find(
+  const usingRow = group.find(
     ({ details }) => details.kind === "website" && details.profileId === using?.id,
   );
   // Main's Google doesn't work and no profile here holds one that does.
-  const googleMissing =
-    google &&
-    !using &&
-    profileIds.has(DEFAULT_BROWSER_PROFILE_ID) &&
-    !identities.includes(DEFAULT_BROWSER_PROFILE_ID);
+  const googleMissing = google && !using && !mainWorks;
+  if (!(using && pageUrl) && !(googleMissing && onImport)) return null;
   const copyIntoMain = async (row: AccountSummary, from: string) => {
     const outcome = await copySignInIntoMain(environmentId, row);
     if (outcome === "copied" || outcome === "same")
@@ -588,81 +590,41 @@ export function SignInGroupRow({
     else toastManager.add({ type: "error", title: "Couldn't copy the sign-in into Main" });
   };
   return (
-    <SettingsRow
-      {...clickableAccountRow(onOpen)}
-      aria-label={`Show ${first.name} sign-ins`}
-      title={
-        <span className="flex min-w-0 items-center gap-3">
-          {iconUrl ? (
-            <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
-          ) : site ? (
-            <SiteFavicon site={site} />
+    <span className="flex items-center gap-1">
+      {using ? <span className="text-xs text-muted-foreground">Using {using.name}</span> : null}
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={`Who Main uses on ${account.name}`}
+              onClick={(event) => event.stopPropagation()}
+            />
+          }
+        >
+          <EllipsisIcon />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {googleMissing && onImport ? (
+            <MenuGroup>
+              <MenuGroupLabel className="max-w-64">
+                {GOOGLE_BLOCKED} Sign in in your browser, then import that profile
+              </MenuGroupLabel>
+              <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
+            </MenuGroup>
+          ) : google && using && usingRow ? (
+            <MenuItem onClick={() => void copyIntoMain(usingRow, using.name)}>
+              Copy from {using.name}
+            </MenuItem>
+          ) : using && pageUrl ? (
+            <MenuItem onClick={() => void openBrowser(pageUrl, using.id)}>
+              Open in {using.name}
+            </MenuItem>
           ) : null}
-          <span className="grid min-w-0 gap-1">
-            <span className="truncate text-left">{first.name}</span>
-            <span className="truncate text-xs text-muted-foreground">
-              Browser sign-in ·{" "}
-              {using
-                ? `Using ${using.name}`
-                : signedIn.length > 2
-                  ? `${signedIn.length} profiles`
-                  : signedIn.map((profile) => profile.name).join(", ")}
-            </span>
-          </span>
-        </span>
-      }
-      control={
-        <span className="flex items-center gap-2">
-          {(using && pageUrl) || (googleMissing && onImport) ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`More for ${first.name} sign-ins`}
-                  />
-                }
-              >
-                <EllipsisIcon />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {googleMissing && onImport ? (
-                  <MenuGroup>
-                    <MenuGroupLabel className="max-w-64">
-                      {GOOGLE_BLOCKED} Sign in in your browser, then import that profile
-                    </MenuGroupLabel>
-                    <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
-                  </MenuGroup>
-                ) : google && using && usingRow ? (
-                  <MenuItem onClick={() => void copyIntoMain(usingRow, using.name)}>
-                    Copy from {using.name}
-                  </MenuItem>
-                ) : using && pageUrl ? (
-                  <MenuItem onClick={() => void openBrowser(pageUrl, using.id)}>
-                    Open in {using.name}
-                  </MenuItem>
-                ) : null}
-              </MenuPopup>
-            </Menu>
-          ) : null}
-          <span className="flex -space-x-1.5">
-            {signedIn.map((profile) => (
-              <ProfilePicture
-                key={profile.id}
-                size="sm"
-                name={profile.name}
-                picture={profile.record.picture}
-                color={profile.record.color}
-                id={profile.id}
-                browser={profile.record.source?.browser}
-              />
-            ))}
-          </span>
-          <ChevronRightIcon className="size-4 text-muted-foreground" />
-        </span>
-      }
-    />
+        </MenuPopup>
+      </Menu>
+    </span>
   );
 }
 
@@ -908,15 +870,13 @@ function AccountsContent({
     | "import"
     | "1password"
     | "passwords"
-    | "browser-sign-ins"
-    | "other-sign-ins"
+    | "apps"
     | "sign-in-codes"
     | "keys"
     | "plain-keys"
     | null
   >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
-  const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
   const [checking, setChecking] = useState(false);
   const [plainKeys, setPlainKeys] = useState<ReadonlyArray<AccountPlainKey>>([]);
   const projectRoots = useProjects()
@@ -966,11 +926,10 @@ function AccountsContent({
     inventory: providerInventory.providers,
   });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
-  // Lists that grow on their own (saved passwords, sign-ins recorded while browsing, sign-ins
-  // managed elsewhere) are one row each, so the page shows what was added on purpose.
+  // Lists that grow on their own (saved passwords, sign-ins managed elsewhere) are one row each,
+  // and browser sign-ins are under their profiles, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const importingPasswords = useImportingPasswords();
-  const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
   const githubRows = githubIdentities(snapshot.managedElsewhere, inventory.data?.connectors ?? []);
   const managedRows = [
     ...providerRows,
@@ -1095,15 +1054,6 @@ function AccountsContent({
             onOpen={() => setDialog("passwords")}
           />
         ) : null}
-        {browserSignIns.length ? (
-          <ListRow
-            icon={<GlobeIcon />}
-            title="Browser sign-ins"
-            detail={browserSignIns.length === 1 ? "1 site" : `${browserSignIns.length} sites`}
-            description="Passwords work in every profile. A sign-in stays in the profile it was made in and is copied into Main, unless Main already has someone else on that site. Then the site's row lets you pick who."
-            onOpen={() => setDialog("browser-sign-ins")}
-          />
-        ) : null}
         {keys.length ? (
           <ListRow
             icon={<KeyRoundIcon />}
@@ -1133,12 +1083,12 @@ function AccountsContent({
         {managedRows.length || githubRows.length ? (
           <ListRow
             icon={<LinkIcon />}
-            title="Other sign-ins"
+            title="Apps and connectors"
             detail={[
               ...githubRows.map((row) => row.login),
               ...managedRows.map((row) => row.name),
             ].join(", ")}
-            onOpen={() => setDialog("other-sign-ins")}
+            onOpen={() => setDialog("apps")}
           />
         ) : null}
       </SettingsSection>
@@ -1147,6 +1097,29 @@ function AccountsContent({
         snapshot={snapshot}
         canWrite={canWrite}
         onImport={() => setDialog("import")}
+        renderSignIn={(account, menu) => (
+          <AccountRow
+            key={account.accountId}
+            account={account}
+            environmentId={environmentId}
+            canWrite={canWrite}
+            onEdit={() => setEditing(account)}
+            onActivity={setActivity}
+            menu={menu}
+            aside={
+              account.details.kind === "website" &&
+              account.details.profileId === DEFAULT_BROWSER_PROFILE_ID ? (
+                <MainSiteChoice
+                  environmentId={environmentId}
+                  account={account}
+                  accounts={snapshot.accounts}
+                  profiles={profiles}
+                  onImport={() => setDialog("import")}
+                />
+              ) : null
+            }
+          />
+        )}
       />
       <RemoteComputers environmentId={environmentId} snapshot={snapshot} canWrite={canWrite} />
       <PasswordStores
@@ -1169,7 +1142,7 @@ function AccountsContent({
           onClose={() => {
             setEditing(null);
             // Editing from a list returns to it.
-            if (dialog !== "passwords" && dialog !== "browser-sign-ins") setDialog(null);
+            if (dialog !== "passwords") setDialog(null);
           }}
         />
       ) : null}
@@ -1190,31 +1163,6 @@ function AccountsContent({
           onActivity={setActivity}
           onClose={() => setDialog(null)}
         />
-      ) : null}
-      {dialog === "browser-sign-ins" ? (
-        <ListDialog title="Browser sign-ins" onClose={() => setDialog(null)}>
-          {browserSignIns.map((row) =>
-            "accountId" in row ? (
-              <AccountRow
-                key={row.accountId}
-                account={row}
-                environmentId={environmentId}
-                canWrite={canWrite}
-                onEdit={() => setEditing(row)}
-                onActivity={setActivity}
-              />
-            ) : (
-              <SignInGroupRow
-                key={row[0]!.accountId}
-                environmentId={environmentId}
-                accounts={row}
-                profiles={profiles}
-                onOpen={() => setSignIns(row)}
-                onImport={() => setDialog("import")}
-              />
-            ),
-          )}
-        </ListDialog>
       ) : null}
       {dialog === "plain-keys" ? (
         <PlainKeysDialog
@@ -1247,8 +1195,8 @@ function AccountsContent({
           onClose={() => setDialog(null)}
         />
       ) : null}
-      {dialog === "other-sign-ins" ? (
-        <ListDialog title="Other sign-ins" onClose={() => setDialog(null)}>
+      {dialog === "apps" ? (
+        <ListDialog title="Apps and connectors" onClose={() => setDialog(null)}>
           {githubRows.map((identity) => (
             <GitHubIdentityRow key={identity.id} identity={identity} />
           ))}
@@ -1260,34 +1208,6 @@ function AccountsContent({
             />
           ))}
         </ListDialog>
-      ) : null}
-      {signIns ? (
-        <Dialog open onOpenChange={(open) => !open && setSignIns(null)}>
-          <DialogPopup data-accounts-dialog className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{signIns[0]!.name}</DialogTitle>
-            </DialogHeader>
-            <DialogPanel>
-              <div className="rounded-lg border">
-                {signIns.map((account) => {
-                  const current = snapshot.accounts.find(
-                    (item) => item.accountId === account.accountId,
-                  );
-                  return current ? (
-                    <AccountRow
-                      key={current.accountId}
-                      account={current}
-                      environmentId={environmentId}
-                      canWrite={canWrite}
-                      onEdit={() => setEditing(current)}
-                      onActivity={setActivity}
-                    />
-                  ) : null;
-                })}
-              </div>
-            </DialogPanel>
-          </DialogPopup>
-        </Dialog>
       ) : null}
       {dialog === "1password" ? (
         <OnePasswordDialog

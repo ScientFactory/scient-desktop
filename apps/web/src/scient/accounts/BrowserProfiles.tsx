@@ -2,7 +2,14 @@ import { clickableAccountRow } from "./clickableAccountRow";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
 import { RegistryContext } from "@effect/atom-react";
-import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
+import {
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import {
   BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
@@ -12,9 +19,11 @@ import {
   BrowserProfileId,
   isBuiltInBrowserProfileId,
   type AccountsSnapshot,
+  type AccountSummary,
   type EnvironmentId,
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
+import { sitesNest } from "@t3tools/shared/scientSiteMatch";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
@@ -74,6 +83,7 @@ import {
   importedLabel,
   renamedSourceLabel,
   signedOutOfGoogle,
+  isBrowserSignIn,
   sitesToKeep,
 } from "./accountsView";
 
@@ -128,15 +138,37 @@ function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
 }
 
+type RenderSignIn = (account: AccountSummary, menu: ReactNode) => ReactNode;
+
+/** A profile's browser sign-ins: the rows naming it, Main's also those naming no profile. */
+const signInsOf = (accounts: ReadonlyArray<AccountSummary>, profileId: string) =>
+  accounts.filter(
+    (account) =>
+      isBrowserSignIn(account) &&
+      account.details.kind === "website" &&
+      (account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId,
+  );
+
+const signInSite = (account: AccountSummary) =>
+  "sites" in account.details ? (account.details.sites[0] ?? "") : "";
+
+/**
+ * A profile's sites: its sign-ins as rows, each with its access and status, then the other sites
+ * its jar holds cookies for. Either can be signed out of here.
+ */
 function SignedInSitesDialog({
   profile,
   environmentId,
   canWrite,
+  rows,
+  renderSignIn,
   onClose,
 }: {
   profile: { id: string; name: string; record: BrowserProfileRecord };
   environmentId: EnvironmentId;
   canWrite: boolean;
+  rows: ReadonlyArray<AccountSummary>;
+  renderSignIn: RenderSignIn;
   onClose: () => void;
 }) {
   const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
@@ -181,7 +213,19 @@ function SignedInSitesDialog({
     setBusy(null);
   };
   const canSignOut = remote || window.desktopBridge?.accounts?.signOutSite !== undefined;
-  const shown = (sites ?? []).filter((site) => site.domain.includes(query.trim().toLowerCase()));
+  const find = query.trim().toLowerCase();
+  const rowSites = (row: AccountSummary) => ("sites" in row.details ? row.details.sites : []);
+  const cookieSiteOf = (row: AccountSummary) =>
+    sites?.find((site) => sitesNest([site.domain], rowSites(row)))?.domain;
+  const shownRows = rows.filter(
+    (row) =>
+      row.name.toLowerCase().includes(find) ||
+      rowSites(row).some((site) => site.toLowerCase().includes(find)),
+  );
+  const others = (sites ?? []).filter(
+    (site) => !rows.some((row) => sitesNest([site.domain], rowSites(row))),
+  );
+  const shown = others.filter((site) => site.domain.includes(find));
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogPopup data-accounts-dialog>
@@ -207,11 +251,27 @@ function SignedInSitesDialog({
             <Input
               type="search"
               aria-label="Find a site"
-              placeholder={sites ? `${sites.length} signed-in sites` : "Signed-in sites"}
+              placeholder={
+                sites ? `${rows.length + others.length} signed-in sites` : "Signed-in sites"
+              }
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
             <div className="max-h-96 overflow-y-auto rounded-lg border">
+              {shownRows.map((row) => {
+                const cookieSite = cookieSiteOf(row);
+                return renderSignIn(
+                  row,
+                  canSignOut && cookieSite ? (
+                    <MenuItem
+                      disabled={!canWrite || busy !== null}
+                      onClick={() => void signOut(cookieSite)}
+                    >
+                      Sign out of {cookieSite}
+                    </MenuItem>
+                  ) : null,
+                );
+              })}
               {shown.map((site) => (
                 <div
                   key={site.domain}
@@ -232,7 +292,7 @@ function SignedInSitesDialog({
                   ) : null}
                 </div>
               ))}
-              {sites && shown.length === 0 ? (
+              {sites && shown.length === 0 && shownRows.length === 0 ? (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                   No sign-ins
                 </div>
@@ -714,10 +774,13 @@ export function BrowserProfiles({
   snapshot,
   canWrite,
   onImport,
+  renderSignIn,
 }: {
   environmentId: EnvironmentId;
   snapshot: AccountsSnapshot;
   canWrite: boolean;
+  /** A sign-in's row in its profile's sites, with `menu` added to the row's own. */
+  renderSignIn: RenderSignIn;
   onImport: () => void;
 }) {
   const settings = useClientSettings();
@@ -739,6 +802,10 @@ export function BrowserProfiles({
   const disabled = !canWrite || !hydrated || busy;
   const linkedProfiles = profiles.filter((profile) => profile.record.source);
   const folded = foldedNotice(snapshot, DateTime.nowUnsafe().epochMilliseconds);
+  const sitesLabel = (profileId: string) => {
+    const count = new Set(signInsOf(snapshot.accounts, profileId).map(signInSite)).size;
+    return count === 0 ? undefined : count === 1 ? "1 site" : `${count} sites`;
+  };
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
     try {
       await persistClientSettingsUpdate(update);
@@ -1031,6 +1098,9 @@ export function BrowserProfiles({
           }
           control={
             <div className="flex items-center gap-2">
+              {sitesLabel(profile.id) ? (
+                <span className="text-xs text-muted-foreground">{sitesLabel(profile.id)} ›</span>
+              ) : null}
               {profile.record.received?.[0] ? (
                 <span className="text-xs text-muted-foreground">
                   Set on {profile.record.received[0].label}
@@ -1139,6 +1209,8 @@ export function BrowserProfiles({
           profile={profiles.find((profile) => profile.id === viewingSites)!}
           environmentId={environmentId}
           canWrite={canWrite}
+          rows={signInsOf(snapshot.accounts, viewingSites)}
+          renderSignIn={renderSignIn}
           onClose={() => setViewingSites(null)}
         />
       ) : null}

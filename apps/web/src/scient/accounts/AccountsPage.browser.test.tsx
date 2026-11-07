@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { render } from "../../../test/render";
-import { AccountRow, SignInGroupRow } from "./AccountsPage";
+import { AccountRow, MainSiteChoice } from "./AccountsPage";
 import { browserIconUrl, mergeProfiles } from "./accountsView";
 import { BrowserProfiles, googleRecovery, ProfileDetail } from "./BrowserProfiles";
 import { RemoteComputers } from "./RemoteComputers";
@@ -164,6 +164,7 @@ it("says once that new tabs now open in Main, until dismissed", async () => {
       snapshot={{ profiles: [], accounts: [] } as unknown as AccountsSnapshot}
       canWrite
       onImport={() => undefined}
+      renderSignIn={() => null}
     />
   );
   try {
@@ -343,6 +344,7 @@ it("lists Main beside imported profiles, each showing where it came from", async
       snapshot={snapshot}
       canWrite
       onImport={() => undefined}
+      renderSignIn={() => null}
     />,
   );
   const picture = (name: string) =>
@@ -388,6 +390,7 @@ it("records a sign-out on Main before its cookies go", async () => {
       snapshot={{ profiles: [], accounts: [] } as unknown as AccountsSnapshot}
       canWrite
       onImport={() => undefined}
+      renderSignIn={() => null}
     />,
   );
   await page.getByRole("button", { name: "Signed-in sites for Main" }).click();
@@ -399,37 +402,43 @@ it("records a sign-out on Main before its cookies go", async () => {
   ]);
 });
 
-it("says which profile a site uses when Main's copy doesn't work, and copies Google into Main", async () => {
+it("says on Main's row which profile a site uses when Main's copy doesn't work, and copies Google into Main", async () => {
   using _fixture = fixture();
   const signIn = (profileId: string, sites: string[], patch: Partial<AccountSummary> = {}) => ({
     ...account,
     accountId: AccountId.make(`acc_group${profileId}${sites[0]!.length}`),
     name: sites[0]!,
-    details: { kind: "website" as const, sites, profileId, username: "person@example.com" },
+    details: {
+      kind: "website" as const,
+      sites,
+      profileId,
+      username: "person@example.com",
+      origin: "browser-session" as const,
+    },
     secrets: {},
     ...patch,
   });
   const profiles = mergeProfiles([{ id: "work", name: "Work", kind: "persistent" }], []);
   const work = (sites: string[]) =>
     signIn("work", sites, { signIn: { state: "signed-in", at: "2026-11-03T00:00:00.000Z" } });
-  const group = (sites: string[]) => (
-    <SignInGroupRow
-      environmentId={EnvironmentId.make("synthetic")}
-      accounts={[
-        signIn("default", sites, {
-          signIn: { state: "unknown", at: "2026-11-04T00:00:00.000Z", from: "copy" },
-        }),
-        work(sites),
-      ]}
-      profiles={profiles}
-      onOpen={() => undefined}
-    />
-  );
+  const group = (sites: string[]) => {
+    const main = signIn("default", sites, {
+      signIn: { state: "unknown", at: "2026-11-04T00:00:00.000Z", from: "copy" },
+    });
+    return (
+      <MainSiteChoice
+        environmentId={EnvironmentId.make("synthetic")}
+        account={main}
+        accounts={[main, work(sites)]}
+        profiles={profiles}
+      />
+    );
+  };
   state.copy.mockReset().mockResolvedValue("copied");
   state.open.mockClear();
   await using screen = await render(group(["github.com"]));
-  await expect.element(page.getByText("Browser sign-in · Using Work")).toBeVisible();
-  await page.getByRole("button", { name: "More for github.com sign-ins" }).click();
+  await expect.element(page.getByText("Using Work")).toBeVisible();
+  await page.getByRole("button", { name: "Who Main uses on github.com" }).click();
   await page.getByRole("menuitem", { name: "Open in Work" }).click();
   await vi.waitFor(() =>
     expect(state.open).toHaveBeenCalledWith(
@@ -437,7 +446,7 @@ it("says which profile a site uses when Main's copy doesn't work, and copies Goo
     ),
   );
   await screen.rerender(group(["google.com"]));
-  await page.getByRole("button", { name: "More for google.com sign-ins" }).click();
+  await page.getByRole("button", { name: "Who Main uses on google.com" }).click();
   // Google refuses a sign-in here: Main gets Work's session through the copy, never a sign-in page.
   await page.getByRole("menuitem", { name: "Copy from Work" }).click();
   await vi.waitFor(() =>
@@ -448,24 +457,23 @@ it("says which profile a site uses when Main's copy doesn't work, and copies Goo
 
 it("offers importing a browser profile when no profile here holds a working Google sign-in", async () => {
   const onImport = vi.fn();
+  const google: AccountSummary = {
+    ...account,
+    name: "google.com",
+    details: { kind: "website", sites: ["google.com"], profileId: "default" },
+    secrets: {},
+    signIn: { state: "signed-out", at: "2026-11-04T00:00:00.000Z" },
+  };
   await using _screen = await render(
-    <SignInGroupRow
+    <MainSiteChoice
       environmentId={EnvironmentId.make("synthetic")}
-      accounts={[
-        {
-          ...account,
-          name: "google.com",
-          details: { kind: "website", sites: ["google.com"], profileId: "default" },
-          secrets: {},
-          signIn: { state: "signed-out", at: "2026-11-04T00:00:00.000Z" },
-        },
-      ]}
+      account={google}
+      accounts={[google]}
       profiles={mergeProfiles([], [])}
-      onOpen={() => undefined}
       onImport={onImport}
     />,
   );
-  await page.getByRole("button", { name: "More for google.com sign-ins" }).click();
+  await page.getByRole("button", { name: "Who Main uses on google.com" }).click();
   await expect
     .element(
       page.getByText(
@@ -506,6 +514,7 @@ it("on another computer, shows received controls as set on the desktop and signs
         snapshot={{ profiles: [received], accounts: [] } as unknown as AccountsSnapshot}
         canWrite
         onImport={() => undefined}
+        renderSignIn={() => null}
       />,
     );
     await expect.element(page.getByText("Set on MacBook")).toBeVisible();

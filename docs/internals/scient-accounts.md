@@ -513,9 +513,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 ## The user's side
 
 - **Settings → Accounts & secrets**: the global switch and the accounts added on purpose, then one row
-  each for lists that grow on their own (Saved passwords, Browser sign-ins recorded while browsing,
-  Other sign-ins managed in Claude, Codex, Source Control or Extensions), each opening a dialog;
-  then browser profiles and password stores. The route stays `/settings/accounts`.
+  each for lists that grow on their own (Saved passwords, Apps and connectors managed in Claude,
+  Codex, Source Control or Extensions), each opening a dialog; then browser profiles, each opening
+  its sites (its sign-in rows with access and status, then other cookie sites), and password stores. The route stays `/settings/accounts`.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
   the Browser page, which links to Accounts; the rest of the browser settings stay there.

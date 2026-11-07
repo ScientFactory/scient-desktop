@@ -41,8 +41,9 @@ Agents never see a hidden value: Scient types it, sends it or writes it to a pri
 
 A browser profile is one set of sign-ins, like a profile in Chrome. **Import from a browser** brings
 in a browser's profiles with their sign-ins, passwords and pictures (quit that browser first); the
-refresh button brings in new ones later. Their sites show as **Imported** under **Browser sign-ins**
-until Scient sees them working.
+refresh button brings in new ones later. Each profile's row says how many sites it is signed in to;
+open it to see them, each with its agent access and status, **Imported** until Scient sees it
+working.
 
 **Main**, Scient's own profile, gets a copy of every sign-in from your other profiles, so it can open
 everything. On first start Scient fills Main once and opens new tabs in it; Browser profiles says so
@@ -99,10 +100,10 @@ out, needs you or rejected. It counts as your own press, so it tries a saved pas
 A Google sign-in copied from Chrome can stop working while you use Chrome. Google doesn't allow
 signing in from inside Scient, so sign in to Google in Chrome, then choose **Refresh from Chrome**
 on the profile's row. A profile that didn't come from a browser offers **Import from a browser…**
-instead. When Google doesn't work in Main, its row under Browser sign-ins offers **Copy from** the
-profile that has it.
+instead. When a site's sign-in doesn't work in Main but works in another profile, the site's row in
+Main says which profile is used; for Google it offers **Copy from** that profile.
 
-**Other sign-ins** lists those managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
+**Apps and connectors** lists sign-ins managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
 GitHub login is one row, with its own chip for Source Control and for the GitHub connector.
 
 ## Other computers
