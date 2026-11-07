@@ -23,6 +23,7 @@ import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readActivePreviewSessions } from "~/previewStateStore";
 import { readPrimaryEnvironmentId } from "~/state/environments";
 import { environmentPresentations } from "~/state/presentation";
 
@@ -397,16 +398,10 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
     },
     backfill: async (snapshot) => {
       const profiles = resolveBrowserProfiles((await resolveBrowserDefaults()).profiles);
-      // This launch's fill of each profile, so the fold reads what the back-fill just did.
-      const filled = new Map<string, DesktopFillMainResult | null>();
-      const fill = async (at: AccountsSnapshot, profileId: string) => {
-        const result = await fillFromProfile(registry, environmentId, at, profileId);
-        filled.set(profileId, result);
-        return result;
-      };
       await backfillMain(snapshot, {
         profiles,
-        fill: async (profileId) => (await fill(snapshot, profileId)) !== null,
+        fill: async (profileId) =>
+          (await fillFromProfile(registry, environmentId, snapshot, profileId)) !== null,
         done: async (profileIds) =>
           (
             await accountsState.mainBackfilled.run(registry, {
@@ -429,8 +424,12 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
       await foldIntoMain(after, {
         profiles,
         importedName: (name) => matchExistingProfile(name, sources) !== undefined,
-        fill: (profileId) =>
-          filled.has(profileId) ? Promise.resolve(filled.get(profileId)!) : fill(after, profileId),
+        read: async () => (await readSnapshot(environmentId)) ?? null,
+        fill: (profileId, at) => fillFromProfile(registry, environmentId, at, profileId),
+        inUse: (profileId) =>
+          Object.values(readActivePreviewSessions()).some((thread) =>
+            Object.values(thread.sessions).some((tab) => tab.profileId === profileId),
+          ),
         signedIn: async (profileId) => {
           const cookies = await readCookies(profileId, environmentId);
           return cookies && signedInSites(cookies, Date.now() / 1000);
@@ -460,6 +459,9 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
             nowSeconds: Date.now() / 1000,
           });
         },
+        // Nothing else runs between the last check and the removal's clear. A removal failing
+        // after its clear loses nothing: the fresh copy put every sign-in in Main, other jars held
+        // none Main lacks, and the profile's record stays, so the next launch folds it again.
         fold: async (profileId) =>
           // Loaded here: the removal imports the settings page, which imports this module.
           (
@@ -795,7 +797,13 @@ export async function foldIntoMain(
   deps: {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly importedName: (name: string) => boolean;
-    readonly fill: (profileId: string) => Promise<DesktopFillMainResult | null>;
+    /** The accounts as they are now; null when unreadable. */
+    readonly read: () => Promise<AccountsSnapshot | null>;
+    /** A fresh copy of the profile's jar into Main, under `at`'s sign-outs. */
+    readonly fill: (
+      profileId: string,
+      at: AccountsSnapshot,
+    ) => Promise<DesktopFillMainResult | null>;
     /** The profile's sites holding a session cookie in this desktop's jar; null if unreadable. */
     readonly signedIn: (profileId: string) => Promise<ReadonlyArray<string> | null>;
     /**
@@ -803,6 +811,8 @@ export async function foldIntoMain(
      * environment's jar or a server's browser. Null when that can't be told.
      */
     readonly elsewhere: (profileId: string) => Promise<boolean | null>;
+    /** Whether an open tab uses the profile. */
+    readonly inUse: (profileId: string) => boolean;
     /** Repoints what names the profile to Main and removes it; true once done. */
     readonly fold: (profileId: string) => Promise<boolean>;
     readonly done: (names: ReadonlyArray<string>) => Promise<boolean>;
@@ -812,26 +822,60 @@ export async function foldIntoMain(
   const merged: string[] = [];
   let complete = true;
   for (const { id, name } of foldCandidates(snapshot, deps.profiles, deps.importedName)) {
+    const at = await deps.read();
+    if (at && recordOf(at, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
+    const result = at && (await deps.fill(id, at));
+    // Anything unread or changed decided nothing about the profile: the next launch looks again.
+    if (!at || !result) {
+      complete = false;
+      continue;
+    }
+    // Cookies the copy can't carry, such as partitioned ones, would go with the profile.
+    if (result.unsupported > 0) continue;
     const elsewhere = await deps.elsewhere(id).catch(() => null);
-    // Anything unread decided nothing about the profile: the next launch looks again.
     if (elsewhere !== false) {
       if (elsewhere === null) complete = false;
       continue;
     }
-    const result = await deps.fill(id);
-    // Cookies the copy can't carry, such as partitioned ones, would go with the profile.
-    if (result && result.unsupported > 0) continue;
-    const signedIn = result && (await deps.signedIn(id).catch(() => null));
-    if (!result || !signedIn) {
+    // Read last: a sign-in, a sign-out or a limit since the copy is judged on what is now.
+    const now = await deps.read();
+    const signedIn = now && (await deps.signedIn(id).catch(() => null));
+    if (!now || !signedIn) {
       complete = false;
       continue;
     }
-    if (!foldsWhole(snapshot.accounts, id, result, mainSignOuts(snapshot), signedIn)) continue;
+    if (recordOf(now, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
+    if (changedSince(at, now, id)) {
+      complete = false;
+      continue;
+    }
+    if (!foldsWhole(now.accounts, id, result, mainSignOuts(now), signedIn)) continue;
+    if (signedIn.some((site) => !copiedOrDecided(result, site)) || deps.inUse(id)) {
+      complete = false;
+      continue;
+    }
     if (await deps.fold(id)) merged.push(name);
     else complete = false;
   }
   if (complete) await deps.done(merged);
 }
+
+/** Main's sign-outs or the profile's limits changed since the copy was made. */
+const changedSince = (at: AccountsSnapshot, now: AccountsSnapshot, profileId: string) => {
+  const state = (snapshot: AccountsSnapshot) => {
+    const { access, scope, allowedProjects } = recordOf(snapshot, profileId);
+    return JSON.stringify([access, scope, allowedProjects, [...mainSignOuts(snapshot)].sort()]);
+  };
+  return state(at) !== state(now);
+};
+
+/** A unit of the copy holds the site: copied, the same, or held differently and judged. */
+const copiedOrDecided = (result: DesktopFillMainResult, site: string) =>
+  result.units.some(
+    ({ sites, outcome }) =>
+      (outcome === "copied" || outcome === "same" || outcome === "conflict") &&
+      sitesNest([site], sites),
+  );
 
 /** Trigger 1, an import whose target is Main: through the coordinator, never the upstream writer. */
 export async function importIntoMain(

@@ -666,17 +666,28 @@ describe("the one-time fold into Main", () => {
       readonly folds?: boolean;
       readonly signedIn?: ReadonlyArray<string> | null;
       readonly elsewhere?: boolean | null;
+      /** Main's record as read after the copy. */
+      readonly mainAfter?: object;
+      readonly inUse?: boolean;
     } = {},
   ) => {
     const calls: string[] = [];
     const done: Array<ReadonlyArray<string>> = [];
-    await foldIntoMain(snapshot(accounts, [main(options.main), ...records]), {
+    const before = snapshot(accounts, [main(options.main), ...records]);
+    let copied = false;
+    await foldIntoMain(before, {
       profiles: profiles.filter(({ id }) => id === "made"),
       importedName: () => false,
+      read: async () =>
+        copied && options.mainAfter
+          ? snapshot(accounts, [main(options.mainAfter), ...records])
+          : before,
       fill: async (id) => {
         calls.push(`fill ${id}`);
+        copied = true;
         return result;
       },
+      inUse: () => options.inUse ?? false,
       signedIn: async () => (options.signedIn === undefined ? [] : options.signedIn),
       elsewhere: async () => (options.elsewhere === undefined ? false : options.elsewhere),
       fold: async (id) => {
@@ -759,13 +770,27 @@ describe("the one-time fold into Main", () => {
 
   it("keeps a profile that holds something on another computer, and asks again when unsure", async () => {
     expect(await run([], units(["github.com", "copied"]), { elsewhere: true })).toEqual({
-      calls: [],
+      calls: ["fill made"],
       done: [[]],
     });
     expect(await run([], units(["github.com", "copied"]), { elsewhere: null })).toEqual({
-      calls: [],
+      calls: ["fill made"],
       done: [],
     });
+  });
+
+  it("judges the profile as it is after the copy: a new sign-in, a sign-out or an open tab waits", async () => {
+    const waits = { calls: ["fill made"], done: [] };
+    // Signed in to a site the copy didn't hold, since it ran.
+    expect(
+      await run([], units(["github.com", "copied"]), { signedIn: ["github.com", "orcid.org"] }),
+    ).toEqual(waits);
+    expect(
+      await run([], units(["github.com", "copied"]), {
+        mainAfter: { signedOutSites: ["arxiv.org"] },
+      }),
+    ).toEqual(waits);
+    expect(await run([], units(["github.com", "copied"]), { inUse: true })).toEqual(waits);
   });
 
   it("leaves the fold unrecorded when a jar was unreadable or a merge failed, to try next launch", async () => {
