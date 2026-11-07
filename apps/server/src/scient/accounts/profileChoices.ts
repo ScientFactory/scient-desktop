@@ -1,4 +1,9 @@
-import type { BrowserProfileChoiceInput, BrowserProfileChoices } from "@t3tools/contracts";
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  type BrowserProfileChoiceInput,
+  type BrowserProfileChoices,
+  type BrowserProfileId,
+} from "@t3tools/contracts";
 import { pageSite } from "@t3tools/shared/scientBrowserProfileChoice";
 
 const MAX_THREADS = 500;
@@ -67,6 +72,32 @@ export function withoutProfile(choices: BrowserProfileChoices, profileId: string
               ],
             ],
       ),
+    ),
+  } as BrowserProfileChoices;
+}
+
+/** A profile merged into Main: wherever it was chosen, Main is. */
+export function withProfileAsMain(choices: BrowserProfileChoices, profileId: string) {
+  const main = (chosen: BrowserProfileId) =>
+    chosen === profileId ? DEFAULT_BROWSER_PROFILE_ID : chosen;
+  return {
+    projects: Object.fromEntries(
+      Object.entries(choices.projects).map(([projectId, chosen]) => [projectId, main(chosen)]),
+    ),
+    threads: Object.fromEntries(
+      Object.entries(choices.threads).map(([threadId, thread]) => [
+        threadId,
+        {
+          ...thread,
+          ...(thread.profileId === undefined ? {} : { profileId: main(thread.profileId) }),
+          sites: Object.fromEntries(
+            Object.entries(thread.sites).map(([site, chosen]) => [
+              site,
+              { ...chosen, profileId: main(chosen.profileId) },
+            ]),
+          ),
+        },
+      ]),
     ),
   } as BrowserProfileChoices;
 }

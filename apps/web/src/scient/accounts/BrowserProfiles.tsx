@@ -1,7 +1,8 @@
 import { clickableAccountRow } from "./clickableAccountRow";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import {
   BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
@@ -42,21 +43,13 @@ import {
   DialogFooter,
 } from "~/components/ui/dialog";
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
-import {
-  clearBrowserProfileData,
-  importBrowserCookiesIntoTarget,
-} from "~/components/settings/IntegrationsSettings";
+import { importBrowserCookiesIntoTarget } from "~/components/settings/IntegrationsSettings";
 import { previewBridge } from "~/components/preview/previewBridge";
 import {
   persistClientSettingsUpdate,
   useClientSettings,
   useClientSettingsHydrated,
 } from "~/hooks/useSettings";
-import { useForgetBrowserProfile } from "~/scient/browser/useForgetBrowserProfile";
-import { useEnvironments } from "~/state/environments";
-import { useServerConfigs } from "~/state/entities";
-import { previewEnvironment } from "~/state/preview";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
@@ -65,7 +58,8 @@ import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
 import { recordImportedSessions } from "./importedSessions";
 import { ProfilePicture } from "./ProfilePicture";
-import { useAccountCommand } from "./useAccounts";
+import { clearProfileData, removeBrowserProfile } from "./removeBrowserProfile";
+import { toastAccountFailure, useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
   browserName,
@@ -74,6 +68,8 @@ import {
   matchExistingProfile,
   mergeSourceProfiles,
   changedSourceProfile,
+  foldedNotice,
+  loadSourceProfiles,
   cookiesLabel,
   importedLabel,
   renamedSourceLabel,
@@ -726,16 +722,9 @@ export function BrowserProfiles({
 }) {
   const settings = useClientSettings();
   const hydrated = useClientSettingsHydrated();
-  const { environments, isReady } = useEnvironments();
-  const configs = useServerConfigs();
-  const runClear = useAtomCommand(previewEnvironment.clearProfile, {
-    reportFailure: false,
-    reportDefect: false,
-  });
+  const registry = useContext(RegistryContext);
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
-  const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
-  const forgetBrowsing = useForgetBrowserProfile();
   const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   // Only the local desktop can read another browser's saved passwords.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -749,6 +738,7 @@ export function BrowserProfiles({
   const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
   const disabled = !canWrite || !hydrated || busy;
   const linkedProfiles = profiles.filter((profile) => profile.record.source);
+  const folded = foldedNotice(snapshot, DateTime.nowUnsafe().epochMilliseconds);
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
     try {
       await persistClientSettingsUpdate(update);
@@ -756,23 +746,7 @@ export function BrowserProfiles({
       profileError();
     }
   };
-  const clear = async (profileId: string) => {
-    if (!isReady || environments.length === 0) throw new Error("Browser data unavailable");
-    await clearBrowserProfileData(
-      previewBridge,
-      environments.map((env) => env.environmentId),
-      profileId,
-      {
-        environmentIds: environments
-          .filter((env) => configs.get(env.environmentId)?.environment.capabilities.serverBrowser)
-          .map((env) => env.environmentId),
-        clear: async (environmentId, profileId) => {
-          const result = await runClear({ environmentId, input: { profileId } });
-          if (result._tag !== "Success") throw new Error("Browser data unavailable");
-        },
-      },
-    );
-  };
+  const clear = (profileId: string) => clearProfileData(registry, profileId);
   const act = async (operation: () => Promise<void>) => {
     if (disabled) return;
     setBusy(true);
@@ -783,13 +757,6 @@ export function BrowserProfiles({
     }
     setBusy(false);
   };
-  const loadSources = async () =>
-    previewBridge
-      ? mergeSourceProfiles(
-          await previewBridge.listBrowserImportSources(),
-          (await window.desktopBridge?.accounts?.sourceProfiles().catch(() => [])) ?? [],
-        )
-      : [];
   // A profile still named after its source follows a rename there; a name chosen in Scient stays.
   const followSourceNames = (renames: ReadonlyArray<{ id: string; from: string; to: string }>) =>
     renames.length
@@ -820,7 +787,7 @@ export function BrowserProfiles({
       toastManager.add({ type: "info", title: "A browser import is already running" });
       return;
     }
-    const sources = await loadSources();
+    const sources = await loadSourceProfiles();
     const running = new Set<string>();
     const renames: Array<{ id: string; from: string; to: string }> = [];
     let failed = false;
@@ -887,10 +854,10 @@ export function BrowserProfiles({
     if (Option.isSome(metadata)) await updateRecord(metadata.value);
   };
   const [linking, setLinking] = useState<string | null>(null);
-  const [sources, setSources] = useState<Awaited<ReturnType<typeof loadSources>>>([]);
+  const [sources, setSources] = useState<Awaited<ReturnType<typeof loadSourceProfiles>>>([]);
   const profileIds = profiles.map((profile) => profile.id).join("\u0001");
   // Linked profiles follow their source's picture, colour and name; older imports get linked once.
-  const syncSources = useEffectEvent((loaded: Awaited<ReturnType<typeof loadSources>>) => {
+  const syncSources = useEffectEvent((loaded: Awaited<ReturnType<typeof loadSourceProfiles>>) => {
     setSources(loaded);
     const renames: Array<{ id: string; from: string; to: string }> = [];
     for (const profile of profiles) {
@@ -910,7 +877,7 @@ export function BrowserProfiles({
     }
     void followSourceNames(renames);
   });
-  const fetchSources = useEffectEvent(loadSources);
+  const fetchSources = useEffectEvent(loadSourceProfiles);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Each time Accounts opens, read what the source browsers show without quitting them: names, emails, pictures and colours.
   useEffect(() => {
     if (!canWrite || !hydrated || profileIds === "") return;
@@ -983,6 +950,7 @@ export function BrowserProfiles({
         </span>
       }
     >
+      {folded ? <SettingsRow title={folded} /> : null}
       {settings.mainDefaultNotice ? (
         <SettingsRow
           title="New tabs now open in Main, which has your sign-ins. You can change this here."
@@ -1100,7 +1068,7 @@ export function BrowserProfiles({
                   <MenuItem
                     onClick={() => {
                       setLinking(profile.id);
-                      void loadSources()
+                      void loadSourceProfiles()
                         .then(setSources)
                         .catch(() => undefined);
                     }}
@@ -1149,19 +1117,12 @@ export function BrowserProfiles({
                   <MenuItem
                     onClick={() =>
                       void act(async () => {
-                        await clear(profile.id);
-                        const result = await removeRecord({ profileId: profile.id });
-                        if (!result.ok) return;
-                        await persistClientSettingsUpdate((current) => ({
-                          ...current,
-                          browserProfiles: current.browserProfiles.filter(
-                            (item) => item.id !== profile.id,
-                          ),
-                          ...(current.browserDefaultProfileId === profile.id
-                            ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
-                            : {}),
-                        }));
-                        forgetBrowsing(profile.id);
+                        const result = await removeBrowserProfile(
+                          registry,
+                          environmentId,
+                          profile.id,
+                        );
+                        if (result._tag !== "Success") toastAccountFailure(result.cause);
                       })
                     }
                   >

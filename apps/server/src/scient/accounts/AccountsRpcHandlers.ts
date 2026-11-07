@@ -295,7 +295,7 @@ export const makeAccountsRpcHandlers = ({
     [WS_METHODS.accountsProfileRemove]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsProfileRemove,
-        accounts.removeProfile(input.profileId).pipe(Effect.as({})),
+        accounts.removeProfile(input.profileId, input.intoMain === true).pipe(Effect.as({})),
         attributes,
       ),
     [WS_METHODS.accountsMainFilled]: (input) =>
@@ -404,6 +404,12 @@ export const makeAccountsRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.accountsMainBackfilled,
         accounts.mainBackfilled(input.profileIds).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsMainFolded]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsMainFolded,
+        accounts.mainFolded(input.profiles).pipe(Effect.as({})),
         attributes,
       ),
     [WS_METHODS.accountsSessionsQualify]: () =>
@@ -598,6 +604,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         keepSenderKey: unavailable,
         updateReceived: unavailable,
         mainBackfilled: unavailable,
+        mainFolded: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
         attempts: Effect.succeed([]),

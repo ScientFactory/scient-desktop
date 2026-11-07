@@ -424,6 +424,8 @@ export const ProfileReceived = Schema.Struct({
 });
 export type ProfileReceived = typeof ProfileReceived.Type;
 
+const FoldedProfileName = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
+
 /** What only Main keeps. */
 export const MainProfileState = Schema.Struct({
   /**
@@ -433,6 +435,13 @@ export const MainProfileState = Schema.Struct({
   signedOutSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** The profiles whose sessions have been copied into Main once, in this environment. */
   backfilled: Schema.optional(Schema.Array(BrowserProfileId)),
+  /** When profiles made in Scient were merged into Main, once, and the names of those merged. */
+  folded: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
+      profiles: Schema.Array(FoldedProfileName).check(Schema.isMaxLength(64)),
+    }),
+  ),
 });
 export type MainProfileState = typeof MainProfileState.Type;
 
@@ -452,9 +461,8 @@ export const BrowserProfileRecord = Schema.Struct({
   color: Schema.optional(ProfileColor),
   source: Schema.optional(BrowserProfileSource),
   /**
-   * When Scient made the profile; one imported or made elsewhere has none. Nothing reads it yet:
-   * it is written from now on so that folding Scient-made profiles into Main, if the owner
-   * approves that, can tell which profiles Scient made.
+   * When Scient made the profile; one imported or made elsewhere has none. The fold into Main
+   * takes a profile with it even when another browser has a profile of the same name.
    */
   madeInScient: Schema.optional(IsoDateTime),
   /** Main's own record; no other profile has one. */
@@ -954,7 +962,11 @@ export const BrowserProfileRecordUpdateInput = Schema.Struct({
 });
 export type BrowserProfileRecordUpdateInput = typeof BrowserProfileRecordUpdateInput.Type;
 
-export const BrowserProfileRecordRemoveInput = Schema.Struct({ profileId: BrowserProfileId });
+export const BrowserProfileRecordRemoveInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  /** Merged into Main: what named the profile names Main instead of ending with it. */
+  intoMain: Schema.optional(Schema.Literal(true)),
+});
 
 /** A row's sign-in was copied into Main, or Main already held the same one. */
 export const AccountMainFilledInput = Schema.Struct({
@@ -975,6 +987,11 @@ export type AccountsQualifyCase = typeof AccountsQualifyCase.Type;
 /** Profiles whose sessions the one-time back-fill has copied into Main; empty when there were none. */
 export const AccountMainBackfilledInput = Schema.Struct({
   profileIds: Schema.Array(BrowserProfileId).check(Schema.isMaxLength(64)),
+});
+
+/** The one-time fold of profiles made in Scient into Main ran; the names of those merged. */
+export const AccountMainFoldedInput = Schema.Struct({
+  profiles: Schema.Array(FoldedProfileName).check(Schema.isMaxLength(64)),
 });
 
 const SessionSite = TrimmedNonEmptyString.check(Schema.isMaxLength(253));

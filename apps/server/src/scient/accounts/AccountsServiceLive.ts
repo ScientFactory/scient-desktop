@@ -51,8 +51,13 @@ import {
   type AccountSessionScope,
   type AccountAuthorization,
 } from "./AccountsService.ts";
-import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
-import { mainRowFor, withMainSignOutsCleared, withSignedOutSite } from "./mainRecord.ts";
+import { withoutProfile, withProfileAsMain, withThreadChoice } from "./profileChoices.ts";
+import {
+  mainRowFor,
+  withMainSignOutsCleared,
+  withRowsIntoMain,
+  withSignedOutSite,
+} from "./mainRecord.ts";
 import { SignInAttempts } from "./agent/signInAttempts.ts";
 import { clientProfile, issueJar, issueUnit, withSendLog, withShared } from "./sendLog.ts";
 import { AccountVault } from "./AccountVault.ts";
@@ -982,15 +987,23 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      removeProfile: Effect.fn("AccountsService.removeProfile")((profileId) =>
+      removeProfile: Effect.fn("AccountsService.removeProfile")((profileId, intoMain = false) =>
         locked(
           Effect.suspend(() =>
             commit({
               ...state,
-              accounts: withoutProfileSignIns(state.accounts, profileId),
+              accounts: withoutProfileSignIns(
+                intoMain ? withRowsIntoMain(state.accounts, profileId) : state.accounts,
+                profileId,
+              ),
               profiles: state.profiles.filter((profile) => profile.profileId !== profileId),
               ...(state.profileChoices
-                ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
+                ? {
+                    profileChoices: (intoMain ? withProfileAsMain : withoutProfile)(
+                      state.profileChoices,
+                      profileId,
+                    ),
+                  }
                 : {}),
             }),
           ),
@@ -1078,6 +1091,24 @@ export const layer = Layer.effect(
                       backfilled: [...new Set([...(main.main?.backfilled ?? []), ...profileIds])],
                     },
                   },
+                ],
+              },
+              true,
+            );
+          }),
+        ),
+      ),
+      mainFolded: Effect.fn("AccountsService.mainFolded")((profiles) =>
+        locked(
+          Effect.gen(function* () {
+            const main = effectiveProfile(state.profiles, DEFAULT_BROWSER_PROFILE_ID);
+            if (main.main?.folded) return;
+            yield* commit(
+              {
+                ...state,
+                profiles: [
+                  ...state.profiles.filter((profile) => profile.profileId !== main.profileId),
+                  { ...main, main: { ...main.main, folded: { at: yield* now, profiles } } },
                 ],
               },
               true,

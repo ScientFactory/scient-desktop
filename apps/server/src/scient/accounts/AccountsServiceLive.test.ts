@@ -322,6 +322,43 @@ describe("AccountsService profiles and evidence", () => {
       );
     }),
   );
+
+  it.effect("merges a profile into Main: its rows and choices name Main, never twice", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const profileId = BrowserProfileId.make("profile-made");
+      const main = BrowserProfileId.make("default");
+      const row = (owner: BrowserProfileId, site: string, username: string) => ({
+        name: site,
+        details: { kind: "website" as const, sites: [site], profileId: owner, username },
+        secrets: {},
+      });
+      yield* service.save(row(profileId, "github.com", "person"));
+      yield* service.save(row(main, "github.com", "person"));
+      yield* service.save(row(profileId, "arxiv.org", "person"));
+      yield* service.chooseProfile({ projectId: scope.projectId, profileId });
+      yield* service.chooseProfile({
+        threadId: scope.threadId,
+        profileId,
+        url: "https://github.com/",
+      });
+      yield* service.removeProfile(profileId, true);
+      const { accounts, profileChoices } = yield* service.snapshot;
+      expect(
+        accounts.map(({ details }) =>
+          details.kind === "website" ? [details.sites[0], details.profileId] : [],
+        ),
+      ).toEqual([
+        ["github.com", "default"],
+        ["arxiv.org", "default"],
+      ]);
+      expect(profileChoices?.projects).toEqual({ [scope.projectId]: "default" });
+      expect(profileChoices?.threads[scope.threadId]).toMatchObject({
+        profileId: "default",
+        sites: { "github.com": { profileId: "default" } },
+      });
+    }),
+  );
 });
 
 describe("AccountsService and Main", () => {

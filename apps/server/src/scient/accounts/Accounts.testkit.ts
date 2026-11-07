@@ -260,6 +260,7 @@ export function fakeAccounts(
     keepSenderKey: () => unsupported,
     updateReceived: () => unsupported,
     mainBackfilled: () => unsupported,
+    mainFolded: () => unsupported,
     googleSessionsSeen: () => unsupported,
     sessionsSeen: () => unsupported,
     keepTyped: () => unsupported,

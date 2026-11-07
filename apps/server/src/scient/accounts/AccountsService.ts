@@ -124,7 +124,11 @@ export interface AccountsServiceShape {
   readonly updateProfile: (
     input: BrowserProfileRecordUpdateInput,
   ) => Effect.Effect<void, AccountsError>;
-  readonly removeProfile: (profileId: BrowserProfileId) => Effect.Effect<void, AccountsError>;
+  /** `intoMain`: rows and choices naming the profile name Main instead; Main's own duplicate wins. */
+  readonly removeProfile: (
+    profileId: BrowserProfileId,
+    intoMain?: boolean,
+  ) => Effect.Effect<void, AccountsError>;
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
   readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
@@ -198,6 +202,8 @@ export interface AccountsServiceShape {
   readonly mainBackfilled: (
     profileIds: ReadonlyArray<BrowserProfileId>,
   ) => Effect.Effect<void, AccountsError>;
+  /** Records the one-time fold of Scient-made profiles into Main; kept as first recorded. */
+  readonly mainFolded: (profiles: ReadonlyArray<string>) => Effect.Effect<void, AccountsError>;
   /**
    * Sessions in a profile, each on that profile's passwordless session row for its site: an import
    * makes one only where there is none, saying "Imported from …"; a sign-in seen there is an action

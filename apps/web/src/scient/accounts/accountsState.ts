@@ -273,6 +273,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsMainBackfilled,
     ...lane,
   }),
+  mainFolded: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:mainFolded",
+    tag: WS_METHODS.accountsMainFolded,
+    ...lane,
+  }),
   sessionsQualify: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:sessionsQualify",
     tag: WS_METHODS.accountsSessionsQualify,

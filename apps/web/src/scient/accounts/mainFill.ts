@@ -12,6 +12,7 @@ import {
   type DesktopFillMainInput,
   type DesktopFillMainResult,
   type EnvironmentId,
+  isBuiltInBrowserProfileId,
 } from "@t3tools/contracts";
 import { profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import { siteUnder, sitesNest } from "@t3tools/shared/scientSiteMatch";
@@ -23,6 +24,8 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readPrimaryEnvironmentId } from "~/state/environments";
 
 import { accountsState } from "./accountsState";
+import { loadSourceProfiles, matchExistingProfile } from "./accountsView";
+import { removeBrowserProfile } from "./removeBrowserProfile";
 
 type FillMain = NonNullable<DesktopAccountsBridge["fillMain"]>;
 
@@ -389,10 +392,18 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
       const timer = setTimeout(() => void run(), ms);
       return () => clearTimeout(timer);
     },
-    backfill: async (snapshot) =>
-      backfillMain(snapshot, {
-        profiles: resolveBrowserProfiles((await resolveBrowserDefaults()).profiles),
-        fill: (profileId) => fillFromProfile(registry, environmentId, snapshot, profileId),
+    backfill: async (snapshot) => {
+      const profiles = resolveBrowserProfiles((await resolveBrowserDefaults()).profiles);
+      // This launch's fill of each profile, so the fold reads what the back-fill just did.
+      const filled = new Map<string, DesktopFillMainResult | null>();
+      const fill = async (at: AccountsSnapshot, profileId: string) => {
+        const result = await fillFromProfile(registry, environmentId, at, profileId);
+        filled.set(profileId, result);
+        return result;
+      };
+      await backfillMain(snapshot, {
+        profiles,
+        fill: async (profileId) => (await fill(snapshot, profileId)) !== null,
         done: async (profileIds) =>
           (
             await accountsState.mainBackfilled.run(registry, {
@@ -407,7 +418,34 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
             // Browser profiles says so once, until dismissed.
             mainDefaultNotice: true,
           })).then(() => undefined),
-      }),
+      });
+      const after = await readSnapshot(environmentId);
+      if (!after || recordOf(after, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
+      // Unreadable, the fold waits for the next launch rather than take an import for Scient's.
+      const sources = await loadSourceProfiles();
+      await foldIntoMain(after, {
+        profiles,
+        importedName: (name) => matchExistingProfile(name, sources) !== undefined,
+        fill: (profileId) =>
+          filled.has(profileId) ? Promise.resolve(filled.get(profileId)!) : fill(after, profileId),
+        fold: async (profileId) =>
+          (
+            await removeBrowserProfile(registry, environmentId, profileId, {
+              intoMain: true,
+            }).catch((cause: unknown) => {
+              warn("Couldn't merge a profile into Main", cause);
+              return null;
+            })
+          )?._tag === "Success",
+        done: async (profiles) =>
+          (
+            await accountsState.mainFolded.run(registry, {
+              environmentId,
+              input: { profiles },
+            })
+          )._tag === "Success",
+      });
+    },
     withdraw: (profileId, live) =>
       withdrawFromMain(profileId, {
         live,
@@ -451,10 +489,10 @@ async function fillFromProfile(
   environmentId: EnvironmentId,
   snapshot: AccountsSnapshot,
   profileId: string,
-) {
+): Promise<DesktopFillMainResult | null> {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
   const record = recordOf(snapshot, profileId);
-  if (!fillMain || !otherPersistentProfile(profileId) || !isUnrestricted(record)) return false;
+  if (!fillMain || !otherPersistentProfile(profileId) || !isUnrestricted(record)) return null;
   // Sign-ins with evidence, and the profile's session rows (an import's): each unit copied gives
   // Main a "Copied from …" row, so a look at Main has a row to mark.
   const rows = snapshot.accounts.filter(
@@ -478,9 +516,9 @@ async function fillFromProfile(
     warn("Couldn't fill Main from a profile", cause);
     return null;
   });
-  if (!result) return false;
+  if (!result) return null;
   await recordCopies(registry, environmentId, result, rows, profileId);
-  return true;
+  return result;
 }
 
 /** An import into a profile of this desktop: its whole jar goes to other computers again. */
@@ -573,6 +611,105 @@ export async function backfillMain(
   }
   if (first && !recorded) recorded = await deps.done([]);
   if (first && recorded) await deps.makeMainDefault?.();
+}
+
+/**
+ * Profiles the one-time fold merges into Main: persistent ones made here, with no limits, whose
+ * sessions the back-fill gave Main. One with a source, or named like another browser's profile
+ * (an older import Accounts hasn't linked yet) unless Scient marked it its own, stays.
+ */
+export function foldCandidates(
+  snapshot: Pick<AccountsSnapshot, "profiles">,
+  profiles: ReadonlyArray<BrowserProfile>,
+  importedName: (name: string) => boolean,
+) {
+  const backfilled = new Set(recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.backfilled);
+  return profiles.filter(({ id, kind, name }) => {
+    const record = recordOf(snapshot, id);
+    return (
+      kind === "persistent" &&
+      !isBuiltInBrowserProfileId(id) &&
+      !record.source &&
+      !record.received &&
+      isUnrestricted(record) &&
+      backfilled.has(id) &&
+      (record.madeInScient !== undefined || !importedName(name))
+    );
+  });
+}
+
+const sameUser = (a: string | undefined, b: string | undefined) =>
+  a !== undefined && b !== undefined && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * Whether Main now holds what the profile does: each unit copied or already the same. A unit Main
+ * holds differently matters where one of the profile's rows names its site, unless Main has a row
+ * for the same person there; one kept out by Main's sign-out matters wherever a row names it.
+ */
+function foldsWhole(
+  accounts: ReadonlyArray<AccountSummary>,
+  profileId: string,
+  result: DesktopFillMainResult,
+  skipSites: ReadonlyArray<string>,
+) {
+  const rows = accounts.filter((row) => website(row)?.profileId === profileId);
+  const named = (sites: ReadonlyArray<string>) =>
+    rows.filter((row) => sitesNest(website(row)!.sites, sites));
+  return result.units.every(({ sites, outcome }) => {
+    switch (outcome) {
+      case "copied":
+      case "same":
+        return true;
+      case "conflict":
+        return named(sites).every((row) =>
+          accounts.some((main) => {
+            const details = website(main);
+            return (
+              details?.profileId === DEFAULT_BROWSER_PROFILE_ID &&
+              sitesNest(details.sites, website(row)!.sites) &&
+              sameUser(details.username, website(row)!.username)
+            );
+          }),
+        );
+      // Not kept out by Main's sign-out, a blocked unit had nothing live to copy.
+      case "blocked":
+        return !sitesNest(sites, skipSites) || named(sites).length === 0;
+      default:
+        return false;
+    }
+  });
+}
+
+/**
+ * Once per environment, after the back-fill: each profile made in Scient whose sessions Main holds
+ * whole merges into Main and is removed; any other stays as it is. Recorded even when none merged;
+ * an unreadable jar or a failed merge leaves it unrecorded, so the next launch tries the rest.
+ */
+export async function foldIntoMain(
+  snapshot: AccountsSnapshot,
+  deps: {
+    readonly profiles: ReadonlyArray<BrowserProfile>;
+    readonly importedName: (name: string) => boolean;
+    readonly fill: (profileId: string) => Promise<DesktopFillMainResult | null>;
+    /** Repoints what names the profile to Main and removes it; true once done. */
+    readonly fold: (profileId: string) => Promise<boolean>;
+    readonly done: (names: ReadonlyArray<string>) => Promise<boolean>;
+  },
+) {
+  if (recordOf(snapshot, DEFAULT_BROWSER_PROFILE_ID).main?.folded) return;
+  const merged: string[] = [];
+  let complete = true;
+  for (const { id, name } of foldCandidates(snapshot, deps.profiles, deps.importedName)) {
+    const result = await deps.fill(id);
+    if (!result || !foldsWhole(snapshot.accounts, id, result, mainSignOuts(snapshot))) {
+      // A jar that couldn't be read decided nothing about the profile.
+      if (!result) complete = false;
+      continue;
+    }
+    if (await deps.fold(id)) merged.push(name);
+    else complete = false;
+  }
+  if (complete) await deps.done(merged);
 }
 
 /** Trigger 1, an import whose target is Main: through the coordinator, never the upstream writer. */

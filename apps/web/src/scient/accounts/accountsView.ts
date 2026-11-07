@@ -31,6 +31,7 @@ import {
   type BrowserImportSourceProfile,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import { previewBridge } from "~/components/preview/previewBridge";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
 import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
@@ -480,7 +481,27 @@ export function writableOnePasswordVaults(status: AccountStoresStatus["onePasswo
 }
 
 type MergedSource = ReturnType<typeof mergeSourceProfiles>[number];
+
+/** Other browsers' profiles as Accounts shows them, read without quitting those browsers. */
+export async function loadSourceProfiles() {
+  return previewBridge
+    ? mergeSourceProfiles(
+        await previewBridge.listBrowserImportSources(),
+        (await window.desktopBridge?.accounts?.sourceProfiles().catch(() => [])) ?? [],
+      )
+    : [];
+}
 type MergedSourceProfile = MergedSource["profiles"][number];
+
+const FOLDED_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Accounts' one line after the one-time fold merged profiles into Main, for a week. */
+export function foldedNotice(snapshot: Pick<AccountsSnapshot, "profiles">, now: number) {
+  const folded = snapshot.profiles.find((record) => record.profileId === DEFAULT_BROWSER_PROFILE_ID)
+    ?.main?.folded;
+  if (!folded?.profiles.length || now - Date.parse(folded.at) > FOLDED_NOTICE_MS) return undefined;
+  return `Merged into Main: ${folded.profiles.join(", ")}.`;
+}
 
 /**
  * The source profile an existing Scient profile came from, for profiles imported before Scient

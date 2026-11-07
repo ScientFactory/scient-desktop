@@ -37,6 +37,7 @@ import {
   UniversityBrowseInput,
   AccountKeyUnlinkInput,
   AccountMainBackfilledInput,
+  AccountMainFoldedInput,
   AccountsQualifyCase,
   AccountMainFilledInput,
   AccountProfileResendInput,
@@ -120,6 +121,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsProfileChoose: "accounts.profiles.choose",
   accountsMainFilled: "accounts.main.filled",
   accountsMainBackfilled: "accounts.main.backfilled",
+  accountsMainFolded: "accounts.main.folded",
   accountsSessionsQualify: "accounts.sessions.qualify",
   accountsSessionsReceive: "accounts.sessions.receive",
   accountsSessionsApplied: "accounts.sessions.applied",
@@ -401,6 +403,12 @@ export const WsAccountsMainBackfilledRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsMainBackfilled,
   { payload: AccountMainBackfilledInput, success: Empty, error: AccountsRpcError },
 );
+
+export const WsAccountsMainFoldedRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsMainFolded, {
+  payload: AccountMainFoldedInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
 
 export const WsAccountsSessionsSeenRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSessionsSeen, {
   payload: AccountSessionsSeenInput,

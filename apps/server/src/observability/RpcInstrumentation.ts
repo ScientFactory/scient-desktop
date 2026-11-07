@@ -327,6 +327,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsProfileChoose]: "accounts",
   [WS_METHODS.accountsMainFilled]: "accounts",
   [WS_METHODS.accountsMainBackfilled]: "accounts",
+  [WS_METHODS.accountsMainFolded]: "accounts",
   [WS_METHODS.accountsSessionsSeen]: "accounts",
   [WS_METHODS.accountsKeepTyped]: "accounts",
   [WS_METHODS.accountsSessionsQualify]: "accounts",

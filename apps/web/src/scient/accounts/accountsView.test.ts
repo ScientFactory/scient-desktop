@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   AccountId,
+  BrowserProfileId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
@@ -45,6 +46,7 @@ import {
   mergeSourceProfiles,
   secretFields,
   matchExistingProfile,
+  foldedNotice,
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
@@ -349,6 +351,25 @@ it("offers connected vaults until a write rejection marks one read-only", () => 
     }).map((vault) => vault.id),
   ).toEqual(["available"]);
   expect(writableOnePasswordVaults({ state: "not-connected" })).toEqual([]);
+});
+
+describe("foldedNotice", () => {
+  it("names the profiles merged into Main for a week, and says nothing when none were", () => {
+    const at = Date.parse("2026-11-07T10:00:00.000Z");
+    const main = (profiles: string[]) => ({
+      profiles: [
+        {
+          ...defaultBrowserProfileRecord(BrowserProfileId.make("default")),
+          main: { folded: { at: "2026-11-07T10:00:00.000Z", profiles } },
+        },
+      ],
+    });
+    expect(foldedNotice(main(["Personal", "Research"]), at)).toBe(
+      "Merged into Main: Personal, Research.",
+    );
+    expect(foldedNotice(main(["Personal"]), at + 8 * 24 * 60 * 60 * 1000)).toBeUndefined();
+    expect(foldedNotice(main([]), at)).toBeUndefined();
+  });
 });
 
 describe("matchExistingProfile", () => {

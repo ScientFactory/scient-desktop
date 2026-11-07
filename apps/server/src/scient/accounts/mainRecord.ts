@@ -32,6 +32,25 @@ export function mainRowFor<A extends Row>(accounts: ReadonlyArray<A>, source: Ac
   });
 }
 
+/**
+ * A profile merged into Main: its rows name Main, except one Main already has for the same
+ * sign-in, which the removal then ends, so Main never holds two.
+ */
+export function withRowsIntoMain<A extends Row>(accounts: ReadonlyArray<A>, profileId: string) {
+  return accounts.map((account) => {
+    const { details } = account.summary;
+    if (details.kind !== "website" || details.profileId !== profileId) return account;
+    if (mainRowFor(accounts, account.summary)) return account;
+    return {
+      ...account,
+      summary: {
+        ...account.summary,
+        details: { ...details, profileId: DEFAULT_BROWSER_PROFILE_ID },
+      },
+    };
+  });
+}
+
 /** Main's record with one more site the user signed out of. */
 export function withSignedOutSite(profiles: ReadonlyArray<BrowserProfileRecord>, site: string) {
   const main =

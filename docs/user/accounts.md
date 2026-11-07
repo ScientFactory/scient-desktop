@@ -56,6 +56,14 @@ Only a profile agents may use in every project gives Main its sign-ins. Turn a p
 wrote there. A sign-in Main already had, or one that changed in Main since, stays. Allow the
 profile again and its next sign-in is copied again.
 
+**Profiles made in Scient merge into Main, once.** After Main is filled, each profile you made in
+Scient that agents may use in every project is merged into Main and removed: its rows, its
+project and conversation choices, the new-tab default and its shortcuts move to Main. Its
+history does not. Imported profiles, Incognito and limited profiles stay. So does a profile Main
+can't take whole: another person signed in on one of its sites, a copy that failed, or a site you
+signed out of in Main. Browser profiles names what was merged, for a week. A site that keeps its
+sign-in only in page storage asks you to sign in once in Main.
+
 **Which profile a tab opens in.** A site you switched to another profile in this conversation stays
 there. Otherwise the conversation's profile, then the project's (**Use … in this project** in the
 tab's profile menu), as long as it has a sign-in for the site; if it has none, Main. With neither,

@@ -58,6 +58,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsProfileChoose]: AuthSettingsWriteScope,
   [WS_METHODS.accountsMainFilled]: AuthSettingsWriteScope,
   [WS_METHODS.accountsMainBackfilled]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMainFolded]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSessionsSeen]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepTyped]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSessionsQualify]: AuthSettingsWriteScope,

@@ -110,6 +110,20 @@ describe("Main's record", () => {
     }),
   );
 
+  it.effect("records the fold into Main once, as first recorded", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const folded = Effect.map(
+        service.snapshot,
+        ({ profiles }) => profiles.find((profile) => profile.profileId === MAIN)?.main?.folded,
+      );
+      expect(yield* folded).toBeUndefined();
+      yield* service.mainFolded(["Personal"]);
+      yield* service.mainFolded(["Research"]);
+      expect((yield* folded)?.profiles).toEqual(["Personal"]);
+    }),
+  );
+
   it.effect("keeps Accounts' sign-outs on Main until a sign-in action there", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();

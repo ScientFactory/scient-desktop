@@ -49,6 +49,8 @@ interface BrowserShortcutsState extends ShortcutsByProfile {
   save: (profileId: string, previous: Shortcut | null, link: string, name: string) => void;
   remove: (profileId: string, shortcut: Shortcut) => void;
   forgetProfile: (profileId: string) => void;
+  /** A profile merged into another: its shortcuts and visits join the other's, after its own. */
+  mergeProfile: (from: string, into: string) => void;
   claimUnclaimed: (profileId: string) => void;
 }
 
@@ -362,6 +364,14 @@ export const useBrowserShortcuts = create<BrowserShortcutsState>()(
             Object.entries(state.profiles).filter(([id]) => id !== profileId),
           ),
         })),
+      mergeProfile: (from, into) =>
+        set((state) => {
+          const { [from]: merging, ...profiles } = state.profiles;
+          if (!merging) return state;
+          return {
+            profiles: { ...profiles, [into]: combined(profiles[into] ?? NO_SHORTCUTS, merging) },
+          };
+        }),
       claimUnclaimed: (profileId) =>
         set((state) =>
           state.unclaimed

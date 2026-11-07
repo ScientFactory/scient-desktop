@@ -16,6 +16,8 @@ import {
   backfillOrder,
   copySignInIntoMain,
   fillMainFromProfile,
+  foldCandidates,
+  foldIntoMain,
   mainFillTrigger,
   replaceAllowedSince,
   withdrawFromMain,
@@ -36,6 +38,8 @@ vi.mock("~/hooks/useSettings", () => ({
     ],
   }),
 }));
+// The fold's removal is a dependency here; the real one clears jars through the desktop.
+vi.mock("./removeBrowserProfile", () => ({ removeBrowserProfile: async () => undefined }));
 vi.mock("./accountsState", () => ({
   accountsState: {
     snapshot: () => ({}),
@@ -613,6 +617,130 @@ describe("trigger 3: the one-time back-fill", () => {
     trigger.reset();
     await trigger.seen(snapshot([]));
     expect(runs).toBe(1);
+  });
+});
+
+describe("the one-time fold into Main", () => {
+  const record = (profileId: string, patch: object = {}) => ({
+    profileId: BrowserProfileId.make(profileId),
+    access: "allowed" as const,
+    scope: { type: "all-projects" as const },
+    scriptSignIn: true,
+    ...patch,
+  });
+  const persistent = (id: string, name = id) => ({ id, name, kind: "persistent" as const });
+  const profiles = [
+    persistent("default", "Main"),
+    { id: "incognito", name: "Incognito", kind: "incognito" as const },
+    ...["made", "imported", "limited", "waiting", "chrome", "marked", "received"].map((id) =>
+      persistent(id),
+    ),
+  ];
+  const main = (patch: object = {}) =>
+    record("default", {
+      main: {
+        backfilled: ["made", "imported", "limited", "chrome", "marked", "received"],
+        ...patch,
+      },
+    });
+  const records = [
+    record("imported", { source: { browser: "chrome", profileName: "Imported", importedAt: AT } }),
+    record("limited", { scope: { type: "projects", projectIds: [] } }),
+    record("marked", { madeInScient: AT }),
+    record("received", { received: [] }),
+  ];
+
+  it("takes persistent profiles made here, unlimited and back-filled, never an import", () => {
+    // "chrome" is named like another browser's profile: an older import, unless Scient marked it.
+    const named = (name: string) => name === "chrome" || name === "marked";
+    expect(
+      foldCandidates(snapshot([], [main(), ...records]), profiles, named).map(({ id }) => id),
+    ).toEqual(["made", "marked"]);
+  });
+
+  const run = async (
+    accounts: ReadonlyArray<AccountSummary>,
+    result: DesktopFillMainResult | null,
+    options: { readonly main?: object; readonly folds?: boolean } = {},
+  ) => {
+    const calls: string[] = [];
+    const done: Array<ReadonlyArray<string>> = [];
+    await foldIntoMain(snapshot(accounts, [main(options.main), ...records]), {
+      profiles: profiles.filter(({ id }) => id === "made"),
+      importedName: () => false,
+      fill: async (id) => {
+        calls.push(`fill ${id}`);
+        return result;
+      },
+      fold: async (id) => {
+        calls.push(`fold ${id}`);
+        return options.folds ?? true;
+      },
+      done: async (names) => {
+        done.push(names);
+        return true;
+      },
+    });
+    return { calls, done };
+  };
+  const github = (profileId: string, username: string) =>
+    row(profileId, ["github.com"], {
+      details: {
+        kind: "website",
+        sites: ["github.com"],
+        profileId: BrowserProfileId.make(profileId),
+        username,
+      },
+    });
+  const units = (
+    ...entries: Array<[string, DesktopFillMainResult["units"][number]["outcome"]]>
+  ) => ({
+    units: entries.map(([site, outcome]) => ({ sites: [site], outcome })),
+    unsupported: 0,
+  });
+
+  it("merges a profile only after Main took all of it, and records the names once", async () => {
+    expect(await run([], units(["github.com", "copied"], ["arxiv.org", "same"]))).toEqual({
+      calls: ["fill made", "fold made"],
+      done: [["made"]],
+    });
+    expect(
+      await run([], units(["github.com", "copied"]), {
+        main: { folded: { at: AT, profiles: [] } },
+      }),
+    ).toEqual({ calls: [], done: [] });
+  });
+
+  it("keeps a profile with another person on a site, a failed copy, or a site Main signed out of", async () => {
+    const theirs = github("made", "other");
+    const mains = github("default", "person");
+    const kept = { calls: ["fill made"], done: [[]] };
+    expect(await run([theirs, mains], units(["github.com", "conflict"]))).toEqual(kept);
+    expect(await run([], units(["github.com", "failed"]))).toEqual(kept);
+    expect(
+      await run([theirs], units(["github.com", "blocked"]), {
+        main: { signedOutSites: ["github.com"] },
+      }),
+    ).toEqual(kept);
+  });
+
+  it("merges where Main differs only on sites without a sign-in, or holds the same person", async () => {
+    const theirs = github("made", "Person");
+    const mains = github("default", "person");
+    const merged = { calls: ["fill made", "fold made"], done: [["made"]] };
+    expect(
+      await run([theirs, mains], units(["github.com", "conflict"], ["ads.example", "conflict"])),
+    ).toEqual(merged);
+    // Only expired cookies: nothing to lose.
+    expect(await run([theirs], units(["github.com", "blocked"]))).toEqual(merged);
+  });
+
+  it("leaves the fold unrecorded when a jar was unreadable or a merge failed, to try next launch", async () => {
+    expect(await run([], null)).toEqual({ calls: ["fill made"], done: [] });
+    expect(await run([], units(["github.com", "copied"]), { folds: false })).toEqual({
+      calls: ["fill made", "fold made"],
+      done: [],
+    });
   });
 });
 
