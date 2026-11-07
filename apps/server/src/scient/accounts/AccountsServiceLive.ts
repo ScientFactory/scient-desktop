@@ -1389,7 +1389,8 @@ export const layer = Layer.effect(
         locked(
           Effect.gen(function* () {
             const before = effectiveProfile(state.profiles, profileId);
-            // Merged into Main here: its jar is kept as it was, so nothing more arrives in it.
+            // Merged into Main here: nothing more arrives in its jar. A receive already writing when
+            // the merge commits may still land there; that jar is kept, hidden, and back with Undo.
             if (before.retired)
               return yield* fail("denied", "This profile was merged into Main on this computer.");
             const { received, controls } = change(before);

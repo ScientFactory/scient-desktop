@@ -494,7 +494,8 @@ async function fillFromProfile(
 ): Promise<DesktopFillMainResult | null> {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
   const record = recordOf(snapshot, profileId);
-  if (!fillMain || !otherPersistentProfile(profileId) || !isUnrestricted(record)) return null;
+  if (!fillMain || !otherPersistentProfile(profileId) || !isUnrestricted(record) || record.retired)
+    return null;
   // Sign-ins with evidence, and the profile's session rows (an import's): each unit copied gives
   // Main a "Copied from …" row, so a look at Main has a row to mark.
   const rows = snapshot.accounts.filter(

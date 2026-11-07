@@ -48,7 +48,7 @@ export async function openPreviewSession<E>(
   const profileId =
     input.profileId === undefined
       ? await openProfileId(input.threadRef, input.url, defaults)
-      : activeProfileId(input.profileId);
+      : await activeProfileId(input.profileId);
   input.assertCurrent?.();
   // SCIENT-FORK:END
   const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);

@@ -63,8 +63,8 @@ its project and conversation choices, the new-tab default and its shortcuts move
 own sign-ins stay where they were. Imported profiles, Incognito and limited profiles stay. So does
 a profile Main can't take whole: another person signed in on one of its sites, a copy that failed,
 or a site you signed out of in Main. For a week, Browser profiles names what was merged, with
-**Undo** to bring those profiles back. A site that keeps its sign-in only in page storage asks you
-to sign in once in Main.
+**Undo** to bring those profiles back. Merged profiles still count toward the 24-profile limit. A
+site that keeps its sign-in only in page storage asks you to sign in once in Main.
 
 **Which profile a tab opens in.** A site you switched to another profile in this conversation stays
 there. Otherwise the conversation's profile, then the project's (**Use … in this project** in the

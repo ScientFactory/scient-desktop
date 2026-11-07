@@ -4,7 +4,6 @@
  */
 
 import {
-  defaultBrowserProfileRecord,
   type AccountSessionsApplied,
   type AccountSessionsReceiveInput,
   type AccountSessionsReceiveResult,
@@ -130,19 +129,22 @@ export async function deliverOnce(deps: DeliveryDeps): Promise<{ readonly waitin
     if (!read) throw new JarUnreadable();
     return read.units;
   };
-  const recordOf = (profileId: string) =>
-    deps.profiles().find((profile) => profile.profileId === profileId)?.record ??
-    defaultBrowserProfileRecord(profileId);
+  /** Gone from the list or merged into Main: nothing more of it goes, and nothing is taken back. */
+  const recordOf = (profileId: string) => {
+    const record = deps.profiles().find((profile) => profile.profileId === profileId)?.record;
+    return record?.retired ? undefined : record;
+  };
   const deliverProfile = async (profileId: string): Promise<number> => {
     check();
     // A fresh desktop record each time: a profile restricted meanwhile switches to the withdrawal.
     const record = recordOf(profileId);
-    // Merged into Main: its copies on the remote stay, neither updated nor taken back.
-    if (record.retired) return 0;
+    if (!record) return 0;
     /** The controls this plan was made under still hold: checked before every read and send. */
     const hold = () => {
       check();
-      if (!sameProfileControls(recordOf(profileId), record)) throw new ControlsChanged();
+      const now = recordOf(profileId);
+      if (!now) throw new DeliveryStopped({ message: "profile gone" });
+      if (!sameProfileControls(now, record)) throw new ControlsChanged();
     };
     const isShareable = shareable(profileId, record);
     const applied = await deps.applied(profileId, key);
