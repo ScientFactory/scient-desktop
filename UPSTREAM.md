@@ -2096,6 +2096,8 @@ are not kept. Seams:
   `session` slot keeps it with the cached document. Without a slot the viewer owns it, as in T3.
 - `pdfRuntime.ts`: `destroy()` leaves the document open; `useScientPdfReader.ts` leases it through
   `acquirePdfDocument` and shows a kept PDF at once, without waiting for its pages to paint.
+- `DataFileTable` checks the file's revision before reading its rows again, instead of on every
+  workspace mutation.
 
 When T3 changes those viewers' open or layout code, carry it into the session functions.
 

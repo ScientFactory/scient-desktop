@@ -2690,7 +2690,9 @@ export default function FilePreviewPanel({
                 environmentId={environmentId}
                 absolutePath={absolutePath}
                 name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-                revision={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+                threadId={threadRef.threadId}
+                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
+                reloadKey={`${manualReloadKey}:${fileRefreshRevision}`}
               />
             </ScientSurfaceSuspense>
           ) : // SCIENT-FORK:END
