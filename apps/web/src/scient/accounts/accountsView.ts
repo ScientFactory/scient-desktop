@@ -57,8 +57,13 @@ export function profileAccounts(
  * works here, so a copy never replaces the session and remembered device this profile has. Once
  * Google has signed this profile out, the browser's sign-in is the way back.
  */
-export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
-  const keepGoogle = !signedOutOfGoogle(accounts, profileId);
+export function sitesToKeep(
+  accounts: ReadonlyArray<AccountSummary>,
+  profileId: string,
+  /** What Google says now; without it, what Accounts last saw. */
+  googleWorks = !signedOutOfGoogle(accounts, profileId),
+) {
+  const keepGoogle = googleWorks;
   return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&

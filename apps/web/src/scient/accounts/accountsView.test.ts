@@ -163,6 +163,11 @@ describe("Accounts decisions", () => {
         "work",
       ),
     ).toEqual(["github.com"]);
+    // What Google says now wins over what Accounts last saw.
+    expect(sitesToKeep([row("google.com", "work")], "work", false)).toEqual([]);
+    expect(sitesToKeep([row("google.com", "work", "signed-out")], "work", true)).toEqual([
+      "google.com",
+    ]);
   });
 
   it("offers a site's accounts in any profile, the tab's own profile first", () => {

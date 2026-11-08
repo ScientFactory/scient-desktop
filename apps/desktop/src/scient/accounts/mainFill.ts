@@ -63,6 +63,7 @@ export const FillMainInput = Schema.Struct({
   join: Schema.optional(Units),
   mode: Schema.Literals(["fill", "fill-or-replace"]),
   replaceAllowedSince: Schema.optional(Schema.Record(Site, IsoDateTime)),
+  replaceGoogle: Schema.optional(Schema.Boolean),
   skipSites: Schema.Array(Site).check(Schema.isMaxLength(20_000)),
 });
 export type FillMainInput = typeof FillMainInput.Type;
@@ -162,6 +163,7 @@ export async function copyIntoMain(
                 since.length > 0 &&
                 tracker !== undefined &&
                 !tracker.touchedSince(sites, Math.min(...since)),
+              ...(input.replaceGoogle ? { replaceGoogle: true } : {}),
               nowSeconds: Date.now() / 1000,
               foreign: () => foreign.cookies,
             });

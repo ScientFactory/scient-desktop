@@ -938,10 +938,18 @@ export function BrowserProfiles({
       if (source.unavailable === "browserRunning") running.add(source.name);
       else if (source.unavailable) failed = true;
       else {
+        // Asked now: Accounts may not have seen yet that Google signed this profile out.
+        const google = await window.desktopBridge?.accounts
+          ?.googleSessions?.(id, environmentId)
+          .catch(() => null);
         const result = await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
           sourceProfileDirectory: profile.directory,
           target: { kind: "existing", profileId: id, name: linked.profileName },
-          keepSites: sitesToKeep(snapshot.accounts, id),
+          keepSites: sitesToKeep(
+            snapshot.accounts,
+            id,
+            google ? google.some((session) => session.valid) : undefined,
+          ),
           fillMain: false,
         });
         if (result.kind === "blocked") failed = true;
