@@ -29,5 +29,5 @@ export interface ComputeCaptureSummary {
   readonly captureCoverage: ComputeProjectCaptureStatus["coverage"];
   readonly captureReason: ComputeCaptureReason | "none";
   readonly retainedOutputCount: number;
-  readonly rejectedOutputCount: number;
+  readonly rejectedOutputCount?: number;
 }

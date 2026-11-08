@@ -5,6 +5,57 @@ import { eventContractViolation } from "./wireContract.ts";
 const context = { appVersion: "0.6.27", buildChannel: "stable" } as const;
 
 describe("capture and voice outcome metadata", () => {
+  it("keeps capture starts free of premature outcomes", () => {
+    const event = normalizeInheritedEvent(
+      "scient.operation.started",
+      {
+        operationKind: "compute-artifact",
+        captureSchemaVersion: 2,
+        captureSource: "interactive",
+        captureOutcome: "failed",
+        captureCoverage: "partial",
+        captureReason: "image-limit",
+        retainedOutputCount: 2,
+        rejectedOutputCount: 3,
+      },
+      context,
+    )!;
+    expect(event.properties).toEqual({
+      ...context,
+      contractRevision: "10",
+      operationKind: "compute-artifact",
+      trigger: "other",
+      durationBucket: "unknown",
+      failureClass: "unknown",
+      reviewRequired: false,
+      captureSchemaVersion: 2,
+      captureSource: "interactive",
+    });
+  });
+
+  it("keeps an unenumerated Run File rejection count unknown", () => {
+    const event = normalizeInheritedEvent(
+      "scient.operation.failed",
+      {
+        operationKind: "compute-artifact",
+        captureSchemaVersion: 2,
+        captureSource: "run-file",
+        captureOutcome: "partial",
+        captureCoverage: "unavailable",
+        captureReason: "artifact-collection-failed",
+        retainedOutputCount: 1,
+      },
+      context,
+    )!;
+    expect(event.properties).toMatchObject({
+      captureOutcome: "partial",
+      captureReason: "artifact-collection-failed",
+      retainedOutputCountBucket: "1",
+      rejectedOutputCountBucket: "unknown",
+    });
+    expect(event.properties).not.toHaveProperty("rejectedOutputCount");
+  });
+
   it("buckets retained/rejected counts and keeps coverage separate from known loss", () => {
     const event = normalizeInheritedEvent(
       "scient.operation.completed",

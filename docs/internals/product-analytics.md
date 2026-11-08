@@ -400,6 +400,8 @@ and `unobserved`, alongside `complete`, `partial`, or `unavailable` project-scan
 coverage and a closed reason category. Empty output with incomplete coverage is
 `unobserved`, not evidence that no figures existed. Counts are bounded and bucketed;
 interactive counts include retained display updates, not unique files or figures.
+Starts identify the schema and capture source; outcome, coverage, reason and counts
+are terminal observations. Capture reasons stay separate from operation failure classes.
 Run File uses its saved receipt and identifies its separate publication owner;
 when that receipt does not enumerate rejected candidates, their count is unknown.
 Historical events without the version marker retain their older, coarser meaning.

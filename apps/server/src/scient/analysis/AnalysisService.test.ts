@@ -558,6 +558,11 @@ describe("analysis artifact analytics", () => {
             captureSchemaVersion: 2,
             captureSource: "run-file",
           });
+          if (scenario.outcome === "failed") {
+            expect(captureEvents[1]?.properties).not.toHaveProperty("rejectedOutputCount");
+          } else {
+            expect(captureEvents[1]?.properties).toHaveProperty("rejectedOutputCount", 0);
+          }
           const payload = yield* encodeUnknownJson(analytics.events);
           for (const privateValue of [
             harness.projectRoot,

@@ -91,7 +91,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
         trigger: "other",
         durationMs:
           input.finishedAt === undefined ? undefined : input.finishedAt - observation.startedAt,
-        failureClass: observation.rejectionReason ?? "unknown",
+        failureClass: "unknown",
         captureSchemaVersion: 2,
         captureSource: "interactive",
         captureOutcome:

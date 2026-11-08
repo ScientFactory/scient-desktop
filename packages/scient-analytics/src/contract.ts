@@ -288,11 +288,14 @@ function closedCategory(value: unknown, allowed: ReadonlyArray<string>): string 
   return typeof value === "string" && allowed.includes(value) ? value : "unknown";
 }
 
-function captureProperties(input: Readonly<Record<string, unknown>>) {
+function captureProperties(input: Readonly<Record<string, unknown>>, terminal: boolean) {
   if (property(input, "captureSchemaVersion") !== 2) return {};
-  return {
+  const identity = {
     captureSchemaVersion: 2,
     captureSource: closedCategory(property(input, "captureSource"), ["interactive", "run-file"]),
+  };
+  // Read terminal inputs on starts too, so inherited passthrough cannot send raw counts.
+  const outcome = {
     captureOutcome: closedCategory(property(input, "captureOutcome"), [
       "retained",
       "partial",
@@ -325,6 +328,7 @@ function captureProperties(input: Readonly<Record<string, unknown>>) {
     retainedOutputCountBucket: countBucket(property(input, "retainedOutputCount")),
     rejectedOutputCountBucket: countBucket(property(input, "rejectedOutputCount")),
   };
+  return terminal ? { ...identity, ...outcome } : identity;
 }
 
 function voiceProperties(input: Readonly<Record<string, unknown>>) {
@@ -773,7 +777,7 @@ function normalizeEvent(
           durationBucket: durationBucket(property(input, "durationMs")),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           reviewRequired: normalizedBoolean(property(input, "reviewRequired")),
-          ...captureProperties(input),
+          ...captureProperties(input, name !== "scient.operation.started"),
         },
       };
     case "app.session.started":

@@ -1742,6 +1742,65 @@
       }
     },
     {
+      "case": "scient.operation.started:capture-v2-interactive-started",
+      "name": "scient.operation.started",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "interactive",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.started:capture-v2-run-file-started",
+      "name": "scient.operation.started",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "run-file",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
+      "case": "scient.operation.failed:capture-v2-run-file-unenumerated",
+      "name": "scient.operation.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "operationKind": "compute-artifact",
+        "trigger": "other",
+        "durationBucket": "unknown",
+        "failureClass": "unknown",
+        "reviewRequired": false,
+        "captureSchemaVersion": 2,
+        "captureSource": "run-file",
+        "captureOutcome": "partial",
+        "captureCoverage": "unavailable",
+        "captureReason": "artifact-collection-failed",
+        "retainedOutputCountBucket": "1",
+        "rejectedOutputCountBucket": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "10"
+      }
+    },
+    {
       "case": "scient.operation.completed:capture-v2-retained",
       "name": "scient.operation.completed",
       "privacyLevel": "product",

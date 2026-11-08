@@ -346,8 +346,9 @@ const make = Effect.gen(function* () {
                     ? ("observation-unavailable" as const)
                     : ("artifact-collection-failed" as const),
               retainedOutputCount: run.artifacts.length,
-              // A failed receipt does not enumerate candidates; do not invent a rejection count.
-              rejectedOutputCount: capture === "succeeded" || status === "cancelled" ? 0 : -1,
+              ...(capture === "succeeded" || status === "cancelled"
+                ? { rejectedOutputCount: 0 }
+                : {}),
             },
           }),
     });

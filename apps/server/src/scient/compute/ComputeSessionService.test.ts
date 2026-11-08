@@ -1667,26 +1667,29 @@ describe("interactive capture analytics", () => {
   it.effect.each(
     (
       [
-        ["figure", "succeeded", "completed"],
-        ["rich-figure", "succeeded", "completed"],
-        ["chart", "succeeded", "completed"],
-        ["chart-updates", "succeeded", "completed"],
-        ["chart-then-failure", "failed", "completed"],
-        ["chart-then-missing", "succeeded", "failed"],
-        ["phantom-figure", "succeeded", "failed"],
-        ["phantom-rich-figure", "succeeded", "failed"],
-        ["print(1)", "succeeded", "skipped"],
-        ["empty-display-flood", "succeeded", "skipped"],
-        ["boom", "failed", "skipped"],
-        ["die", "lost", "skipped"],
+        ["figure", "succeeded", "completed", 1, 0, "observation-unavailable"],
+        ["rich-figure", "succeeded", "completed", 1, 0, "observation-unavailable"],
+        ["chart", "succeeded", "completed", 1, 0, "observation-unavailable"],
+        ["chart-updates", "succeeded", "completed", 50, 0, "observation-unavailable"],
+        ["chart-then-failure", "failed", "completed", 1, 0, "observation-unavailable"],
+        ["chart-then-missing", "succeeded", "failed", 1, 1, "missing-resource"],
+        ["phantom-figure", "succeeded", "failed", 0, 1, "missing-resource"],
+        ["phantom-rich-figure", "succeeded", "failed", 0, 1, "resource-mismatch"],
+        ["print(1)", "succeeded", "skipped", 0, 0, "observation-unavailable"],
+        ["empty-display-flood", "succeeded", "skipped", 0, 0, "observation-unavailable"],
+        ["boom", "failed", "skipped", 0, 0, "observation-unavailable"],
+        ["die", "lost", "skipped", 0, 0, "observation-unavailable"],
       ] as const
-    ).map(([code, outcome, expected]) => ({
+    ).map(([code, outcome, expected, retained, rejected, reason]) => ({
       caseTitle: `captures ${code} as ${expected} independently of ${outcome} execution`,
       code,
       outcome,
       expected,
+      retained,
+      rejected,
+      reason,
     })),
-  )("$caseTitle", ({ code, outcome, expected }) =>
+  )("$caseTitle", ({ code, outcome, expected, retained, rejected, reason }) =>
     Effect.gen(function* () {
       const f = analyticsFixture();
       const test = yield* harness({ analytics: f.service });
@@ -1704,11 +1707,25 @@ describe("interactive capture analytics", () => {
         "scient.operation.started",
         `scient.operation.${expected}`,
       ]);
-      expect(captures[1]?.properties).toMatchObject({
+      expect(captures[1]?.properties).toEqual({
         operationKind: "compute-artifact",
         trigger: "other",
         durationMs: expect.any(Number),
+        failureClass: "unknown",
         captureSchemaVersion: 2,
+        captureSource: "interactive",
+        captureOutcome:
+          rejected > 0
+            ? retained > 0
+              ? "partial"
+              : "failed"
+            : retained > 0
+              ? "retained"
+              : "unobserved",
+        captureCoverage: "unavailable",
+        captureReason: reason,
+        retainedOutputCount: retained,
+        rejectedOutputCount: rejected,
       });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(
         /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,

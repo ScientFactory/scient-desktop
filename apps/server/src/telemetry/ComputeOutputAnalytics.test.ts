@@ -76,7 +76,7 @@ describe("interactive output analytics", () => {
             operationKind: "compute-artifact",
             trigger: "other",
             durationMs: 300,
-            failureClass: values.includes(false) ? "persistence-failed" : "unknown",
+            failureClass: "unknown",
             captureSchemaVersion: 2,
             captureSource: "interactive",
             captureCoverage: "complete",

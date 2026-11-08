@@ -233,6 +233,26 @@ export function buildAnalyticsConformanceFixture() {
     ...(name === "install.owner_observed" ? [] : [fixtureCase("fallbacks", name, undefined)]),
     fixtureCase("representative", name, representativeInput(name)),
   ]);
+  for (const captureSource of ["interactive", "run-file"]) {
+    cases.push(
+      fixtureCase(`capture-v2-${captureSource}-started`, "scient.operation.started", {
+        operationKind: "compute-artifact",
+        captureSchemaVersion: 2,
+        captureSource,
+      }),
+    );
+  }
+  cases.push(
+    fixtureCase("capture-v2-run-file-unenumerated", "scient.operation.failed", {
+      operationKind: "compute-artifact",
+      captureSchemaVersion: 2,
+      captureSource: "run-file",
+      captureOutcome: "partial",
+      captureCoverage: "unavailable",
+      captureReason: "artifact-collection-failed",
+      retainedOutputCount: 1,
+    }),
+  );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {
     const rejected = captureOutcome === "partial" || captureOutcome === "failed";
     const retained = captureOutcome === "partial" || captureOutcome === "retained";
