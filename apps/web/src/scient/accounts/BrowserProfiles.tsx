@@ -822,7 +822,9 @@ export function ProfileDetail({
           >
             <InfoIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup className="max-w-64">{recover.hint}</TooltipPopup>
+          <TooltipPopup side="bottom" className="max-w-64">
+            {recover.hint}
+          </TooltipPopup>
         </Tooltip>
         <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={recover.onAction}>
           <span className="text-xs text-foreground">{recover.action}</span>
