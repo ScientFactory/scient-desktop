@@ -9,6 +9,7 @@ import {
   BrowserProfileRecordUpdateInput,
   DEFAULT_BROWSER_PROFILE_ID,
   BrowserProfileId,
+  GOOGLE_SITE,
   isBuiltInBrowserProfileId,
   type AccountsSnapshot,
   type AccountSummary,
@@ -66,6 +67,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
 import { recordImportedSessions } from "./importedSessions";
+import { copySignInIntoMain } from "./mainFill";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
@@ -755,17 +757,30 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
 /** Google signed this profile out; Google refuses signing in from Scient's browser, so the way back is a browser's sign-in. */
 export const GOOGLE_SIGNED_OUT = "Signed out of Google.";
 
-/** What a signed-out profile does: bring the browser's Google sign-in in again. */
+/**
+ * What a signed-out profile does: bring the browser's Google sign-in in again. A profile with no
+ * browser behind it, Main, copies another profile's working Google, or else imports one.
+ */
 export function googleRecovery(
   source: BrowserProfileRecord["source"],
-  actions: { readonly refresh: () => void; readonly importProfile: () => void },
+  actions: {
+    readonly refresh: () => void;
+    readonly importProfile: () => void;
+    readonly copyFrom?: { readonly name: string; readonly run: () => void } | undefined;
+  },
 ) {
   if (!source)
-    return {
-      message: `${GOOGLE_SIGNED_OUT} Import it from your browser`,
-      action: "Import from a browser…",
-      onAction: actions.importProfile,
-    };
+    return actions.copyFrom
+      ? {
+          message: GOOGLE_SIGNED_OUT,
+          action: `Copy from ${actions.copyFrom.name}`,
+          onAction: actions.copyFrom.run,
+        }
+      : {
+          message: GOOGLE_SIGNED_OUT,
+          action: "Import from a browser…",
+          onAction: actions.importProfile,
+        };
   const browser = browserName(source.browser);
   return {
     message: GOOGLE_SIGNED_OUT,
@@ -877,6 +892,36 @@ export function BrowserProfiles({
       },
     );
   };
+  /** For Main signed out of Google: another listed profile whose Google works, to copy from. */
+  const googleToCopy = (profileId: string) => {
+    if (profileId !== DEFAULT_BROWSER_PROFILE_ID) return undefined;
+    const row = snapshot.accounts.find(
+      ({ details, signIn }) =>
+        details.kind === "website" &&
+        details.profileId !== undefined &&
+        details.profileId !== DEFAULT_BROWSER_PROFILE_ID &&
+        details.sites.includes(GOOGLE_SITE) &&
+        signIn?.state === "signed-in",
+    );
+    const from = listed.find(
+      (profile) => row?.details.kind === "website" && profile.id === row.details.profileId,
+    );
+    if (!row || !from) return undefined;
+    return {
+      name: from.name,
+      run: () =>
+        void act(async () => {
+          const outcome = await copySignInIntoMain(environmentId, row);
+          if (outcome === "copied" || outcome === "same") {
+            toastManager.add({
+              type: "success",
+              title: `Copied ${from.name}'s Google sign-in into Main`,
+            });
+            window.dispatchEvent(new Event("scient-accounts-session-changed"));
+          } else profileError();
+        }),
+    };
+  };
   const act = async (operation: () => Promise<void>) => {
     if (disabled) return;
     setBusy(true);
@@ -919,6 +964,8 @@ export function BrowserProfiles({
     }
     const sources = await loadSourceProfiles();
     const running = new Set<string>();
+    /** Profiles whose browser was signed out of Google too: the refresh had nothing to bring. */
+    const stillOut: string[] = [];
     const renames: Array<{ id: string; from: string; to: string }> = [];
     let failed = false;
     for (const { id, record } of targets) {
@@ -954,6 +1001,12 @@ export function BrowserProfiles({
         });
         if (result.kind === "blocked") failed = true;
         else refreshed = true;
+        if (refreshed && google && !google.some((session) => session.valid)) {
+          const after = await window.desktopBridge?.accounts
+            ?.googleSessions?.(id, environmentId)
+            .catch(() => null);
+          if (after?.length && !after.some((session) => session.valid)) stillOut.push(profile.name);
+        }
       }
       const metadata = sourceRecord(id, source.id, profile, linked.importedAt);
       if (Option.isSome(metadata)) await updateRecord(metadata.value);
@@ -981,6 +1034,12 @@ export function BrowserProfiles({
     // Google and every row look again at what the refresh brought.
     window.dispatchEvent(new Event("scient-accounts-session-changed"));
     if (failed) profileError();
+    else if (stillOut.length)
+      toastManager.add({
+        type: "info",
+        title: `${stillOut.join(" and ")} ${stillOut.length === 1 ? "is" : "are"} signed out of Google in ${[...new Set(targets.map(({ record }) => browserName(record.source?.browser ?? "chrome")))].join(" and ")} too`,
+        description: "Sign in to Google there, then refresh again.",
+      });
     else if (running.size)
       toastManager.add({
         type: "info",
@@ -1175,6 +1234,7 @@ export function BrowserProfiles({
                         ? googleRecovery(profile.record.source, {
                             refresh: () => void act(() => refresh([profile])),
                             importProfile: onImport,
+                            copyFrom: googleToCopy(profile.id),
                           })
                         : undefined
                     }

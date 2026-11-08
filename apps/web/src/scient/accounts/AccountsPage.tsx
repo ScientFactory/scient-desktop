@@ -608,9 +608,7 @@ export function MainSiteChoice({
         <MenuPopup align="end">
           {googleMissing && onImport ? (
             <MenuGroup>
-              <MenuGroupLabel className="max-w-64">
-                {GOOGLE_SIGNED_OUT} Import it from your browser
-              </MenuGroupLabel>
+              <MenuGroupLabel className="max-w-64">{GOOGLE_SIGNED_OUT}</MenuGroupLabel>
               <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
             </MenuGroup>
           ) : google && using && usingRow ? (
