@@ -18,7 +18,10 @@ const recorder = vi.hoisted(() => ({
 }));
 const recordAnalytics = vi.hoisted(() => vi.fn());
 vi.mock("./useVoiceRecorder.ts", () => ({ useVoiceRecorder: () => recorder }));
-vi.mock("../analytics/client.ts", () => ({ useRecordScientAnalytics: () => recordAnalytics }));
+vi.mock("../analytics/client.ts", () => ({
+  useRecordScientAnalytics: () => recordAnalytics,
+  useBeginVoiceAnalytics: () => () => recordAnalytics,
+}));
 
 import {
   useScientVoiceController,
