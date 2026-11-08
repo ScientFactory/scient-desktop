@@ -578,7 +578,7 @@ it.effect("saves the uncapped screenshot while the agent sees the capped one", (
         data: new Uint8Array(Buffer.from(capped, "base64")),
       });
     }),
-  ).pipe(Effect.provide(layerTest)),
+  ).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("refuses preview tools to a client outside a thread before they run", () =>

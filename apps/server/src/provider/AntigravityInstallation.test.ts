@@ -425,7 +425,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(result.phase).toBe("failed");
       expect(result.message).toContain("Stop Antigravity sessions");
       yield* Deferred.await(h.stagingReleased);
-      expect(yield* h.fs.readFileString(leased.harnessPath)).toBe(harnessContents);
+      // An installed release always has its harness; only a custom `agy` CLI has none.
+      expect(leased.harnessPath).not.toBeNull();
+      expect(yield* h.fs.readFileString(leased.harnessPath ?? "")).toBe(harnessContents);
       yield* Scope.close(leaseScope, Exit.void);
     }),
   );
