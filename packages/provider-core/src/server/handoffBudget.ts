@@ -239,7 +239,7 @@ export function selectHistory(input: {
     historyCost([], contextFor(messages.length, (input.omittedItems ?? 0) + messages.length));
   const tryAdd = (index: number) => {
     const message = messages[index];
-    if (message === undefined || selected.has(index)) return;
+    if (message === undefined || selected.has(index) || message.text.length > remaining) return;
     const cost = historyMessageCost(message);
     if (cost > remaining) return;
     selected.add(index);
