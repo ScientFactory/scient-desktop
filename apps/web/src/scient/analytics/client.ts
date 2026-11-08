@@ -81,3 +81,18 @@ export function useRecordScientAnalytics() {
     );
   };
 }
+
+/** Bind a committed dictation to its original connection and consent context. */
+export function useBeginVoiceAnalytics(explicitEnvironmentId?: EnvironmentId) {
+  const primary = usePrimaryEnvironmentId();
+  const environmentId = explicitEnvironmentId ?? primary;
+  const prepared = usePreparedConnection(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes the imperative analytics consent cache when the bound connection changes
+  useEffect(() => {
+    if (Option.isSome(prepared)) gate.prime(prepared.value);
+  }, [prepared]);
+  return () => {
+    const connection = environmentId === null ? null : readPreparedConnection(environmentId);
+    return connection === null ? () => {} : gate.beginVoiceOperation(connection);
+  };
+}
