@@ -27,6 +27,7 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ChevronRightIcon,
+  InfoIcon,
   PlusIcon,
   RefreshCwIcon,
   XIcon,
@@ -756,6 +757,7 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
 
 /** Google signed this profile out; Google refuses signing in from Scient's browser, so the way back is a browser's sign-in. */
 export const GOOGLE_SIGNED_OUT = "Signed out of Google.";
+const GOOGLE_REFUSES = "Google doesn't allow signing in inside Scient.";
 
 /**
  * What a signed-out profile does: bring the browser's Google sign-in in again. A profile with no
@@ -773,17 +775,20 @@ export function googleRecovery(
     return actions.copyFrom
       ? {
           message: GOOGLE_SIGNED_OUT,
+          hint: `${GOOGLE_REFUSES} Main can use ${actions.copyFrom.name}'s Google, which works.`,
           action: `Copy from ${actions.copyFrom.name}`,
           onAction: actions.copyFrom.run,
         }
       : {
           message: GOOGLE_SIGNED_OUT,
+          hint: `${GOOGLE_REFUSES} Import a browser profile that's signed in to Google.`,
           action: "Import from a browser…",
           onAction: actions.importProfile,
         };
   const browser = browserName(source.browser);
   return {
     message: GOOGLE_SIGNED_OUT,
+    hint: `${GOOGLE_REFUSES} Refresh brings ${browser}'s sign-in. If ${browser} is signed out too, sign in to Google there first.`,
     action: `Refresh from ${browser}`,
     onAction: actions.refresh,
   };
@@ -805,6 +810,21 @@ export function ProfileDetail({
       <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
         {email ? <span className="max-w-full truncate">{email} ·</span> : null}
         <span>{recover.message}</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Why signed out of Google"
+                onClick={(event) => event.stopPropagation()}
+                className="inline-flex shrink-0 text-muted-foreground hover:text-foreground"
+              />
+            }
+          >
+            <InfoIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup className="max-w-64">{recover.hint}</TooltipPopup>
+        </Tooltip>
         <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={recover.onAction}>
           <span className="text-xs text-foreground">{recover.action}</span>
         </Button>
@@ -1037,8 +1057,8 @@ export function BrowserProfiles({
     else if (stillOut.length)
       toastManager.add({
         type: "info",
-        title: `${stillOut.join(" and ")} ${stillOut.length === 1 ? "is" : "are"} signed out of Google in ${[...new Set(targets.map(({ record }) => browserName(record.source?.browser ?? "chrome")))].join(" and ")} too`,
-        description: "Sign in to Google there, then refresh again.",
+        title: `Signed out of Google in ${[...new Set(targets.map(({ record }) => browserName(record.source?.browser ?? "chrome")))].join(" and ")} too`,
+        description: stillOut.join(", "),
       });
     else if (running.size)
       toastManager.add({
