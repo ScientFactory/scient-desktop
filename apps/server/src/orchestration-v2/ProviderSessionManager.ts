@@ -351,6 +351,9 @@ interface ReleaseEntryInput {
   readonly onlyIfIdleGeneration?: number;
   readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
   readonly keepIf?: Effect.Effect<boolean>;
+  // SCIENT-FORK:START — the start that holds the startup reservation releases the session itself.
+  readonly releasedByReservingStart?: boolean;
+  // SCIENT-FORK:END
   readonly gracefulSubscribers?: boolean;
   readonly expectedRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly onFirstRecordsAttempt?: (exit: Exit.Exit<void, unknown>) => Effect.Effect<void>;
@@ -1583,6 +1586,7 @@ export const layerWithOptions = (
               // SCIENT-FORK:START — a pending canonical start declines idle retirement.
               if (
                 input.onlyIfIdleGeneration !== undefined &&
+                input.releasedByReservingStart !== true &&
                 startupReservations.declinesIdleRetirement(input.providerSessionId, existing)
               )
                 return [false, current] as const;
@@ -2415,6 +2419,9 @@ export const layerWithOptions = (
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
           keepIf: hasUnfinishedRecords,
+          // SCIENT-FORK: this runs inside the reserving start's own open, which then opens the
+          // replacement; the startup reservation guards against the idle timer, not this start.
+          releasedByReservingStart: true,
         }).pipe(logReleaseFailure(providerSessionId));
       });
 

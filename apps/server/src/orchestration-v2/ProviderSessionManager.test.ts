@@ -54,6 +54,8 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+// SCIENT-FORK: a turn start's session reservation.
+import { reserveSessionForStartup } from "./scient-provider/StartupSessionHold.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -4981,6 +4983,63 @@ it.effect(
       );
     }),
 );
+
+// SCIENT-FORK:START — a turn start reserves its session before opening it; that start's own
+// open still reopens an exclusive runtime when Linked environments changed.
+it.effect(
+  "ProviderSessionManagerV2 reopens an exclusive runtime for Linked environments while its start holds the reservation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-reserved-links",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-reserved-links-thread",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        yield* Effect.scoped(
+          reserveSessionForStartup(manager, providerSessionId).pipe(Effect.andThen(open)),
+        );
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* Effect.scoped(
+          reserveSessionForStartup(manager, providerSessionId).pipe(Effect.andThen(open)),
+        );
+
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            capabilities: ExclusiveCapabilities,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
+        ),
+      );
+    }),
+);
+// SCIENT-FORK:END
 
 it.effect.each(["missing", "file"] as const)(
   "rejects a %s workspace before opening a provider session",
