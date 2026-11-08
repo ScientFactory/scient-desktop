@@ -63,11 +63,10 @@ export function sitesToKeep(
   /** What Google says now; without it, what Accounts last saw. */
   googleWorks = !signedOutOfGoogle(accounts, profileId),
 ) {
-  const keepGoogle = googleWorks;
   return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&
-    (signIn?.state === "signed-in" || (keepGoogle && details.sites.includes(GOOGLE_SITE)))
+    (signIn?.state === "signed-in" || (googleWorks && details.sites.includes(GOOGLE_SITE)))
       ? details.sites
       : [],
   );

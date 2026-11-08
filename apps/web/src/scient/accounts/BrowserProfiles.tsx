@@ -757,7 +757,6 @@ function RenamedSource({ name, source }: { name: string; source: BrowserProfileR
 
 /** Google signed this profile out; Google refuses signing in from Scient's browser, so the way back is a browser's sign-in. */
 export const GOOGLE_SIGNED_OUT = "Signed out of Google.";
-const GOOGLE_REFUSES = "Google doesn't allow signing in inside Scient.";
 
 /**
  * What a signed-out profile does: bring the browser's Google sign-in in again. A profile with no
@@ -775,20 +774,20 @@ export function googleRecovery(
     return actions.copyFrom
       ? {
           message: GOOGLE_SIGNED_OUT,
-          hint: `${GOOGLE_REFUSES} Main can use ${actions.copyFrom.name}'s Google, which works.`,
+          hint: `Copy ${actions.copyFrom.name}'s Google sign-in into Main.`,
           action: `Copy from ${actions.copyFrom.name}`,
           onAction: actions.copyFrom.run,
         }
       : {
           message: GOOGLE_SIGNED_OUT,
-          hint: `${GOOGLE_REFUSES} Import a browser profile that's signed in to Google.`,
+          hint: "Sign in to Google in your browser, then import that profile.",
           action: "Import from a browser…",
           onAction: actions.importProfile,
         };
   const browser = browserName(source.browser);
   return {
     message: GOOGLE_SIGNED_OUT,
-    hint: `${GOOGLE_REFUSES} Refresh brings ${browser}'s sign-in. If ${browser} is signed out too, sign in to Google there first.`,
+    hint: `Sign in to Google in ${browser}, then Refresh.`,
     action: `Refresh from ${browser}`,
     onAction: actions.refresh,
   };
@@ -985,7 +984,7 @@ export function BrowserProfiles({
     const sources = await loadSourceProfiles();
     const running = new Set<string>();
     /** Profiles whose browser was signed out of Google too: the refresh had nothing to bring. */
-    const stillOut: string[] = [];
+    const stillOut: Array<{ readonly name: string; readonly browser: string }> = [];
     const renames: Array<{ id: string; from: string; to: string }> = [];
     let failed = false;
     for (const { id, record } of targets) {
@@ -1025,7 +1024,8 @@ export function BrowserProfiles({
           const after = await window.desktopBridge?.accounts
             ?.googleSessions?.(id, environmentId)
             .catch(() => null);
-          if (after?.length && !after.some((session) => session.valid)) stillOut.push(profile.name);
+          if (after?.length && !after.some((session) => session.valid))
+            stillOut.push({ name: profile.name, browser: source.name });
         }
       }
       const metadata = sourceRecord(id, source.id, profile, linked.importedAt);
@@ -1057,8 +1057,8 @@ export function BrowserProfiles({
     else if (stillOut.length)
       toastManager.add({
         type: "info",
-        title: `Signed out of Google in ${[...new Set(targets.map(({ record }) => browserName(record.source?.browser ?? "chrome")))].join(" and ")} too`,
-        description: stillOut.join(", "),
+        title: `Sign in to Google in ${[...new Set(stillOut.map(({ browser }) => browser))].join(" and ")}, then Refresh`,
+        description: stillOut.map(({ name }) => name).join(", "),
       });
     else if (running.size)
       toastManager.add({
