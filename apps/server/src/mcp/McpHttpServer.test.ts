@@ -638,7 +638,8 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       const snapshot = yield* callSnapshot({ save: true, includeImage: true });
 
       expect(snapshot.isError).toBe(false);
-      expect(inputs).toEqual([{}]);
+      // Saving asks the page for the uncapped screenshot.
+      expect(inputs).toEqual([{ fullScreenshot: true }]);
       expect(snapshot.content.map((content) => content.type)).toContain("image");
       const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
       const screenshotPath = structured.screenshotPath;
