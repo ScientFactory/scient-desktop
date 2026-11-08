@@ -1501,15 +1501,6 @@ export const layerWithOptions = (
               (input.expectedRuntime !== undefined && candidate.runtime !== input.expectedRuntime)
             )
               return;
-            // SCIENT-FORK:START — T3 checks keepIf under the request permit while removing the
-            // entry. Scient reserves the closing owner before removal, so the check runs under
-            // the permit just before that reservation; the idle-generation guard still applies.
-            if (
-              input.keepIf !== undefined &&
-              (yield* restore(candidate.requestEventPermit.withPermits(1)(input.keepIf)))
-            )
-              return;
-            // SCIENT-FORK:END
             const begin = yield* Deferred.make<void>();
             const firstRecordsAttempt = yield* Deferred.make<Exit.Exit<void, unknown>>();
             let captured = candidate;
@@ -1606,11 +1597,41 @@ export const layerWithOptions = (
               { retires: (reserved) => reserved },
             );
             // SCIENT-FORK:END
-            const invalidation = yield* (
+            const reservation =
               candidate.runtime.invalidateInitiatedWork === undefined
                 ? reserve
-                : candidate.runtime.invalidateInitiatedWork(reserve)
+                : candidate.runtime.invalidateInitiatedWork(reserve);
+            const removeReserved = Effect.gen(function* () {
+              yield* Ref.update(sessions, (current) => {
+                const existing = current.get(key);
+                if (existing?.runtime !== captured.runtime || existing.scope !== captured.scope)
+                  return current;
+                captured = existing;
+                owner.entry = existing;
+                const updated = new Map(current);
+                updated.delete(key);
+                return updated;
+              });
+              releasedAt = yield* DateTime.now;
+            });
+            // SCIENT-FORK:START — like T3, keepIf and the removal share one request permit, so a
+            // request the event pump persists meanwhile is either seen or never written for this
+            // runtime. The closing owner is reserved in that same hold; no adapter takes the
+            // request permit while holding its own reservation fence.
+            const keepIf = input.keepIf;
+            const invalidation = yield* (
+              keepIf === undefined
+                ? reservation
+                : candidate.requestEventPermit.withPermits(1)(
+                    Effect.gen(function* () {
+                      if (yield* keepIf) return false;
+                      const reserved = yield* reservation;
+                      if (reserved && closingSessions.get(key) === owner) yield* removeReserved;
+                      return reserved;
+                    }),
+                  )
             ).pipe(Effect.exit);
+            // SCIENT-FORK:END
             if (closingSessions.get(key) !== owner) {
               operation.interruptUnsafe();
               const concurrent = closingSessions.get(key);
@@ -1627,21 +1648,8 @@ export const layerWithOptions = (
                 });
               return;
             }
-            yield* candidate.requestEventPermit.withPermits(1)(
-              Effect.gen(function* () {
-                yield* Ref.update(sessions, (current) => {
-                  const existing = current.get(key);
-                  if (existing?.runtime !== captured.runtime || existing.scope !== captured.scope)
-                    return current;
-                  captured = existing;
-                  owner.entry = existing;
-                  const updated = new Map(current);
-                  updated.delete(key);
-                  return updated;
-                });
-                releasedAt = yield* DateTime.now;
-              }),
-            );
+            if (keepIf === undefined)
+              yield* candidate.requestEventPermit.withPermits(1)(removeReserved);
             // Physical cleanup starts only after the generation permit is released.
             yield* Deferred.succeed(begin, undefined);
             if (Exit.isFailure(invalidation))
