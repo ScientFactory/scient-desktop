@@ -1,8 +1,12 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, use, useEffect, useRef, useState } from "react";
 import { FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
+// SCIENT-FORK:START
+import { DocumentIdentityContext } from "~/scient/documentCache/documentIdentity";
+import { acquireOfficeDocument, type OfficeDocument } from "~/scient/office/officeDocuments";
+// SCIENT-FORK:END
 const WordDocument = lazy(() => import("./office/WordDocument"));
 const Spreadsheet = lazy(() => import("./office/Spreadsheet"));
 const Presentation = lazy(() => import("./office/Presentation"));
@@ -29,6 +33,55 @@ async function readOfficeFile(src: string, signal: AbortSignal) {
   return new Blob(chunks).arrayBuffer();
 }
 
+// SCIENT-FORK:START — preparation resolves to the bounded bytes, so a kept document can skip it.
+function prepareOfficeFile(
+  src: string,
+  kind: Extract<OfficePreviewKind, "docx" | "xlsx" | "pptx">,
+  signal: AbortSignal,
+) {
+  return new Promise<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>((resolve, reject) => {
+    const controller = new AbortController();
+    const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    const finish = () => {
+      clearTimeout(timer);
+      controller.abort();
+      worker.terminate();
+    };
+    const failure = (cause: unknown) => {
+      if (controller.signal.aborted) return;
+      finish();
+      reject(cause);
+    };
+    const timer = setTimeout(
+      () => failure(new Error("This document took too long to preview. Open it in another app.")),
+      30000,
+    );
+    signal.addEventListener("abort", () => failure(new DOMException("Aborted", "AbortError")), {
+      once: true,
+    });
+    worker.addEventListener("error", () => failure(new Error("Could not load the Office viewer.")));
+    worker.addEventListener("messageerror", () =>
+      failure(new Error("Could not read the Office viewer response.")),
+    );
+    worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
+      if (controller.signal.aborted) return;
+      if (event.data.type === "error") failure(new Error(event.data.message));
+      else if ("bytes" in event.data) {
+        finish();
+        resolve(event.data);
+      }
+    });
+    void readOfficeFile(src, controller.signal)
+      .then((bytes) => {
+        if (!controller.signal.aborted) worker.postMessage({ type: "open", kind, bytes }, [bytes]);
+      })
+      .catch(failure);
+  });
+}
+// SCIENT-FORK:END
+
 export default function OfficeViewer(props: {
   readonly src: string;
   readonly name: string;
@@ -36,14 +89,24 @@ export default function OfficeViewer(props: {
   readonly sizeBytes?: number;
 }) {
   const [error, setError] = useState<string | null>(null);
-  const [prepared, setPrepared] = useState<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>();
+  // SCIENT-FORK:START — the prepared document, with its engine session, comes from the window's
+  // document cache when this file was open recently (scient/office/officeDocuments.ts).
+  const [opened, setOpened] = useState<OfficeDocument>();
+  const identity = use(DocumentIdentityContext);
+  const cacheKey = identity === null ? null : JSON.stringify(["office", props.kind, identity]);
+  const failed = useRef(false);
+  const lease = useRef<{ release: (options?: { discard?: boolean }) => void } | null>(null);
+  // SCIENT-FORK:END
   const [details, setDetails] = useState("");
   // SCIENT-FORK: the viewer left out pages past its limit.
   const [limited, setLimited] = useState(false);
   const showLimited = useStableCallback(() => setLimited(true));
-  const fail = useStableCallback((cause: unknown) =>
-    setError(cause instanceof Error ? cause.message : "Could not render this Office document."),
-  );
+  const fail = useStableCallback((cause: unknown) => {
+    // SCIENT-FORK: a failed document goes at once, its engine with it, and is not kept.
+    failed.current = true;
+    lease.current?.release({ discard: true });
+    setError(cause instanceof Error ? cause.message : "Could not render this Office document.");
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Open XML fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
     if ((props.sizeBytes ?? 0) > OFFICE_PREVIEW_MAX_BYTES) {
@@ -52,44 +115,28 @@ export default function OfficeViewer(props: {
       setError("Preview limited to files under 50 MB.");
       return;
     }
-    const controller = new AbortController();
-    const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
-      type: "module",
-    });
-    const failure = (cause: unknown) => {
-      if (!controller.signal.aborted) fail(cause);
-      controller.abort();
-      worker.terminate();
-    };
-    const timer = setTimeout(
-      () => failure(new Error("This document took too long to preview. Open it in another app.")),
-      30000,
+    // SCIENT-FORK:START
+    let current = true;
+    failed.current = false;
+    const acquired = acquireOfficeDocument(cacheKey, (signal) =>
+      prepareOfficeFile(props.src, props.kind, signal),
     );
-    worker.addEventListener("error", () => failure(new Error("Could not load the Office viewer.")));
-    worker.addEventListener("messageerror", () =>
-      failure(new Error("Could not read the Office viewer response.")),
+    lease.current = acquired;
+    acquired.value.then(
+      (document) => {
+        if (current) setOpened(document);
+      },
+      (cause: unknown) => {
+        if (current) fail(cause);
+      },
     );
-    worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
-      if (controller.signal.aborted) return;
-      clearTimeout(timer);
-      if (event.data.type === "error") failure(new Error(event.data.message));
-      else if ("bytes" in event.data) {
-        setPrepared(event.data);
-        worker.terminate();
-      }
-    });
-    void readOfficeFile(props.src, controller.signal)
-      .then((bytes) => {
-        if (!controller.signal.aborted)
-          worker.postMessage({ type: "open", kind: props.kind, bytes }, [bytes]);
-      })
-      .catch(failure);
     return () => {
-      controller.abort();
-      worker.terminate();
-      clearTimeout(timer);
+      current = false;
+      acquired.release({ discard: failed.current });
+      if (lease.current === acquired) lease.current = null;
     };
-  }, [props.src, props.kind, props.sizeBytes, fail]);
+    // SCIENT-FORK:END
+  }, [props.src, props.kind, props.sizeBytes, cacheKey, fail]);
   if (error)
     return (
       <div
@@ -102,9 +149,8 @@ export default function OfficeViewer(props: {
         </p>
       </div>
     );
-  if (!prepared) return <FileSurfaceLoading />;
-  const Viewer =
-    props.kind === "docx" ? WordDocument : props.kind === "xlsx" ? Spreadsheet : Presentation;
+  if (!opened) return <FileSurfaceLoading />;
+  const prepared = opened.prepared; // SCIENT-FORK
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* SCIENT-FORK:START — no details row; the page count stays announced for assistive tech. */}
@@ -120,13 +166,27 @@ export default function OfficeViewer(props: {
         </FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>
-        <Viewer
-          bytes={prepared.bytes}
-          onDetails={setDetails}
-          onError={fail}
-          // SCIENT-FORK: a stable callback, as the viewer's effect depends on it.
-          onLimited={showLimited}
-        />
+        {/* SCIENT-FORK:START — Word and PowerPoint keep their engine session with the document. */}
+        {props.kind === "xlsx" ? (
+          <Spreadsheet bytes={prepared.bytes} onDetails={setDetails} onError={fail} />
+        ) : props.kind === "docx" ? (
+          <WordDocument
+            bytes={prepared.bytes}
+            session={opened.session}
+            onDetails={setDetails}
+            onError={fail}
+            // A stable callback, as the viewer's effect depends on it.
+            onLimited={showLimited}
+          />
+        ) : (
+          <Presentation
+            bytes={prepared.bytes}
+            session={opened.session}
+            onDetails={setDetails}
+            onError={fail}
+          />
+        )}
+        {/* SCIENT-FORK:END */}
       </Suspense>
     </div>
   );

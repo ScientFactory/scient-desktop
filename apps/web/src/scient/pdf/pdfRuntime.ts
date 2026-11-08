@@ -71,7 +71,6 @@ export interface ScientPdfRuntime {
   readonly eventBus: EventBus;
   readonly findController: PDFFindController;
   readonly linkService: PDFLinkService;
-  readonly loadingTask: PDFDocumentLoadingTask;
   readonly viewer: PDFViewer;
   cancelContainerSizeRefresh: () => void;
   destroy: () => Promise<void>;
@@ -119,7 +118,6 @@ export function startPdfDocumentLoad(
 export function createPdfRuntime(input: {
   readonly container: HTMLDivElement;
   readonly document: PDFDocumentProxy;
-  readonly loadingTask: PDFDocumentLoadingTask;
   readonly onContainerResize?: ((viewer: PDFViewer) => void) | undefined;
   readonly sourceUrl: string;
   readonly viewerElement: HTMLDivElement;
@@ -201,7 +199,6 @@ export function createPdfRuntime(input: {
     eventBus,
     findController,
     linkService,
-    loadingTask: input.loadingTask,
     viewer,
     cancelContainerSizeRefresh: resizeSettlement.cancel,
     refreshForContainerSize,
@@ -216,7 +213,7 @@ export function createPdfRuntime(input: {
       // currently omits that runtime-supported branch.
       (viewer.setDocument as (document: PDFDocumentProxy | null) => void)(null);
       input.viewerElement.replaceChildren();
-      await input.loadingTask.destroy();
+      // The document stays open: its owner (see pdfDocuments.ts) keeps or closes it.
     },
   };
 }
