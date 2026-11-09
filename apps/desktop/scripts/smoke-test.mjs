@@ -23,6 +23,8 @@ export function runDesktopSmoke({
   // SCIENT-FORK:START — observe the existing native shutdown policy, not just its first grace period.
   // Pool stop permits 5s; allow 3s more for native process exit and finalizer drainage.
   shutdownGraceMs = 8_000,
+  // Called once, before undrained output is refused, while whatever holds it is still running.
+  onUndrained,
   // SCIENT-FORK:END
 }) {
   if (![survivalMs, shutdownGraceMs].every((value) => Number.isFinite(value) && value > 0)) {
@@ -45,6 +47,11 @@ export function runDesktopSmoke({
     let exited = false;
     let forceKillTimeout;
     const refuseIncompleteDrainage = () => {
+      if (!drainageTimedOut) {
+        try {
+          onUndrained?.({ pid: child.pid, exited });
+        } catch {}
+      }
       drainageTimedOut = true;
       child.stdout.destroy();
       child.stderr.destroy();

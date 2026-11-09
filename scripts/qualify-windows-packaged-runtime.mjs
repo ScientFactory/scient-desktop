@@ -68,27 +68,67 @@ if (process.argv.includes("--launch-smoke")) {
     ),
     helper: NodePath.join(packageRoot, "resources/file-exchange/scient-file-publication.exe"),
   });
-  const profileRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-packaged-smoke-"));
-  const smokeEnv = {
-    ...process.env,
-    SCIENT_NEXT_HOME: NodePath.join(profileRoot, "state"),
-    APPDATA: NodePath.join(profileRoot, "appdata"),
-    ELECTRON_ENABLE_LOGGING: "1",
-  };
-  delete smokeEnv.ELECTRON_RUN_AS_NODE;
-  delete smokeEnv.ELECTRON_NO_ASAR;
-  delete smokeEnv.NODE_OPTIONS;
-  const result = await runDesktopSmoke({
-    executable: NodePath.join(packageRoot, "Scient.exe"),
-    cwd: packageRoot,
-    env: smokeEnv,
-  });
-  process.stdout.write(result.output);
-  NodeAssert.ok(
-    result.passed,
-    "Installed desktop must survive the smoke interval and drain on shutdown",
-  );
-  // Windows can hold the profile's database files briefly after the app exits.
-  NodeFS.rmSync(profileRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  // A fresh profile each time, as on a first launch. Diagnostic runs repeat it to catch rare stalls.
+  const repeat = Math.max(1, Number(process.env.SCIENT_WINDOWS_SMOKE_REPEAT ?? "1") || 1);
+  for (let attempt = 1; attempt <= repeat; attempt++) {
+    const profileRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "scient-packaged-smoke-"),
+    );
+    const smokeEnv = {
+      ...process.env,
+      SCIENT_NEXT_HOME: NodePath.join(profileRoot, "state"),
+      APPDATA: NodePath.join(profileRoot, "appdata"),
+      ELECTRON_ENABLE_LOGGING: "1",
+    };
+    delete smokeEnv.ELECTRON_RUN_AS_NODE;
+    delete smokeEnv.ELECTRON_NO_ASAR;
+    delete smokeEnv.NODE_OPTIONS;
+    let survivors = "";
+    const result = await runDesktopSmoke({
+      executable: NodePath.join(packageRoot, "Scient.exe"),
+      cwd: packageRoot,
+      env: smokeEnv,
+      // Name what still holds the app's output: anything running from the install or the profile.
+      onUndrained: ({ pid, exited }) => {
+        const listing = NodeChildProcess.spawnSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like ($env:SMOKE_ROOT + '*') -or $_.CommandLine -like ('*' + $env:SMOKE_ROOT + '*') -or $_.CommandLine -like ('*' + $env:SMOKE_PROFILE + '*') } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 400",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 15000,
+            env: { ...process.env, SMOKE_ROOT: packageRoot, SMOKE_PROFILE: profileRoot },
+          },
+        );
+        survivors = `app pid ${pid}, app exited: ${exited}\n${listing.stdout ?? ""}${listing.stderr ?? ""}`;
+      },
+    });
+    process.stdout.write(result.output);
+    if (!result.passed) {
+      console.error(
+        `Smoke attempt ${attempt}/${repeat} failed:`,
+        JSON.stringify({
+          code: result.code,
+          signal: result.signal,
+          shutdownRequested: result.shutdownRequested,
+          forcedKill: result.forcedKill,
+          drainageTimedOut: result.drainageTimedOut,
+          error: result.error,
+          failures: result.failures,
+        }),
+      );
+      if (survivors) console.error("Processes still running:\n" + survivors);
+    }
+    NodeAssert.ok(
+      result.passed,
+      "Installed desktop must survive the smoke interval and drain on shutdown",
+    );
+    // Windows can hold the profile's database files briefly after the app exits.
+    NodeFS.rmSync(profileRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+    if (repeat > 1) console.log(`Smoke attempt ${attempt}/${repeat} passed.`);
+  }
   console.log("Installed Windows desktop launch smoke passed.");
 }

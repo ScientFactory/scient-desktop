@@ -239,6 +239,8 @@ jobs:
             Write-Host "Installed Windows product version: $installedVersion"
             if ($installedVersion -ne "$version.0") { throw "Installed version $installedVersion is not $version.0" }
           }
+          # DIAGNOSTIC (remove before merge): repeat the first-launch smoke to catch the rare stall.
+          $env:SCIENT_WINDOWS_SMOKE_REPEAT = '15'
           node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
       # The voice helper must need nothing Windows lacks (no Visual C++
       # Redistributable) and must transcribe through the app's runtime owner.
