@@ -140,8 +140,9 @@ Chat typing must not pay for an open document. Two Chromium costs reached every 
   `selectionchange` or `keyup` read the range instead. PDF.js's own handlers needed a patch for
   this; see `UPSTREAM.md`.
 - React copies a controlled textarea's value into `defaultValue` after each change, replacing its
-  text node. Chromium then rechecks `:has()` on the textarea's ancestors and restyles the whole
-  subtree of any ancestor that anchors a `:has()` before a combinator (`X:has(…) Y`). Keep
+  text node. In Chromium we observed it then recheck `:has()` on the textarea's ancestors and
+  restyle the whole subtree of an ancestor that anchors a `:has()` before a combinator
+  (`X:has(…) Y`). Keep
   `:has()` off `body`, `html` and `:root`, or each keystroke restyles the whole document; key
   such styles off an attribute on a small element. `universalSiblingSelectors.test.ts` enforces
   this.
