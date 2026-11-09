@@ -82,12 +82,12 @@ describe("product insight contract", () => {
     expect(consentAllows("essential", event.privacyLevel)).toBe(false);
     expect(JSON.stringify(event)).not.toContain("PRIVATE");
   });
-  it("does not fabricate zero usage or attribute mixed/private model totals", () => {
+  it("rejects invalid usage and private model labels while naming the mixed-turn primary model", () => {
     for (const value of [-1, 0.5, Infinity, NaN, 1_000_000_001, "500"]) {
       const event = normalizeInheritedEvent(
         "provider.turn.usage",
         {
-          model: "not a model id",
+          model: "/private/hidden-model",
           usageStatus: "complete",
           inputTokens: value,
           outputTokens: 20,
@@ -104,10 +104,10 @@ describe("product insight contract", () => {
     expect(
       normalizeInheritedEvent(
         "provider.turn.usage",
-        { model: "gpt-5.6-sol", mixedModels: true },
+        { model: "gpt-5.6-sol", mainModel: "gpt-5.6-sol", modelCount: 2, mixedModels: true },
         context,
-      )?.properties.modelKey,
-    ).toBe("other");
+      )?.properties,
+    ).toMatchObject({ modelKey: "gpt-5.6-sol", modelCount: 2 });
   });
   it("keeps UI categories but strips paths and free text", () => {
     for (const [name, key] of [
