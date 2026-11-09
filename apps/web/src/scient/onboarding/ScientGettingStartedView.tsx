@@ -7,6 +7,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { SidebarInset } from "../../components/ui/sidebar";
 import { ScientSymbol } from "../../components/ScientSymbol";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { ProviderSetupFailureLine } from "../providerConnection/ProviderFailureInfo";
 import { ProviderSettingsLifecycleAction } from "../providerConnection/ProviderSettingsLifecycleAction";
 import { ProviderConnectionDialog } from "../providerConnection/ProviderConnectionDialog";
 import { ProviderLifecycleSetupSurface } from "../providerConnection/ProviderOnboardingPicker";
@@ -180,7 +181,18 @@ export function GettingStartedAgentStep(props: {
             key={choice.driverKind}
             className="flex min-h-16 w-full items-center gap-3 px-1 py-3"
           >
-            <GettingStartedProviderIdentity choice={choice} />
+            <GettingStartedProviderIdentity
+              choice={choice}
+              failure={
+                choice.entry && choice.actionable ? (
+                  <ProviderSetupFailureLine
+                    environmentId={props.environmentId}
+                    provider={choice.entry.snapshot}
+                    displayName={choice.label}
+                  />
+                ) : null
+              }
+            />
             {choice.entry && choice.actionable ? (
               <ProviderSettingsLifecycleAction
                 environmentId={props.environmentId}
@@ -224,7 +236,10 @@ export function GettingStartedAgentStep(props: {
   );
 }
 
-function GettingStartedProviderIdentity(props: { readonly choice: GettingStartedProviderChoice }) {
+function GettingStartedProviderIdentity(props: {
+  readonly choice: GettingStartedProviderChoice;
+  readonly failure?: ReactNode;
+}) {
   const Icon = props.choice.icon;
   return (
     <>
@@ -236,6 +251,7 @@ function GettingStartedProviderIdentity(props: { readonly choice: GettingStarted
         {props.choice.detail ? (
           <span className="mt-0.5 block text-xs text-muted-foreground">{props.choice.detail}</span>
         ) : null}
+        {props.failure}
       </span>
     </>
   );

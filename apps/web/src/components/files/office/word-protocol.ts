@@ -1,5 +1,6 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
 import type { Method } from "./worker-rpc";
+import type { OfficeFindHit } from "~/scient/office/wordFind"; // SCIENT-FORK
 
 // What the Word preview's window and its document worker say to each other. The window keeps only the page column, the
 // text layer's DOM and the painted bitmaps; the engine, its fonts, the layout and the painting live in the worker.
@@ -32,6 +33,8 @@ export type WordSpan = {
    * tab across a gap with no painted space, such as a tab stop or after a list number.
    */
   readonly after: "br" | "tab" | undefined;
+  // SCIENT-FORK: a header's, footer's or note's text, which the body's find does not count.
+  readonly aside?: true;
 };
 
 /** What the page column needs to lay a page out before its content is built. */
@@ -72,7 +75,13 @@ export type WordMethods = {
   readonly layout: Method<undefined, WordLayoutStep>;
   /** Paints a page at `scale` page pixels per CSS pixel times `ratio` device pixels per CSS pixel. */
   readonly paint: Method<
-    { readonly index: number; readonly scale: number; readonly ratio: number },
+    {
+      readonly index: number;
+      readonly scale: number;
+      readonly ratio: number;
+      // SCIENT-FORK: a thumbnail leaves the pages built around the reader's view in place.
+      readonly thumbnail?: boolean;
+    },
     ImageBitmap | undefined
   >;
   /** Builds a page's content ahead of its paint. */
@@ -84,4 +93,7 @@ export type WordMethods = {
     { readonly name: string },
     { readonly index: number; readonly y: number } | undefined
   >;
+  // SCIENT-FORK:START — the reader's find: pages whose body matches, in reading order.
+  readonly find: Method<{ readonly query: string }, readonly OfficeFindHit[]>;
+  // SCIENT-FORK:END
 };

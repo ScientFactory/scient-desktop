@@ -40,11 +40,12 @@ import { useRetainedPdfSource } from "./useRetainedPdfSource";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { observePdfCopy } from "./pdfCopyAnalytics";
 import { PdfThumbnail } from "./PdfThumbnail";
-import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
+import { pdfContentKey, webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
 import { parseSafePdfExternalUrl, stepPdfZoom, type PdfSidebarMode } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
 import { useScientPdfReader } from "./useScientPdfReader";
+import type { ScientPdfRuntime } from "./pdfRuntime";
 import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
 import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealRequests";
 import { pdfEditSession } from "./pdfEditSession";
@@ -362,6 +363,8 @@ function LoadedScientPdfReader(props: {
     onSourceInvalidated: props.refreshSource,
     revisionId: requestedRevisionId,
     sourceUrl: props.sourceAsset.url,
+    // An edited copy's blob URL is its only identity.
+    contentKey: edit.url ? null : pdfContentKey(props.source, props.sourceAsset),
     candidateReady: props.interactionReady,
     loadAttempt: props.loadAttempt,
     container,
@@ -416,7 +419,13 @@ function LoadedScientPdfReader(props: {
       return result;
     });
     setEditingPresentation(reader.presentation);
-    await editSession.start(() => runtime.document.getData(), state.page);
+    // Edits start from the bytes as shown, with anything typed into form fields.
+    const filled = runtime.document.annotationStorage.size > 0;
+    await editSession.start(
+      () => (filled ? runtime.document.saveDocument() : runtime.document.getData()),
+      state.page,
+      filled ? () => runtime.document.getData() : null,
+    );
     return editSession.getSnapshot().active;
   };
   const togglePage = (page: number, shiftKey: boolean) => {
@@ -577,6 +586,8 @@ function LoadedScientPdfReader(props: {
       setSavingCopy,
       editedCopy:
         edit.url && edit.bytes ? { bytes: edit.bytes, fileName: props.source.fileName } : null,
+      fileName: props.source.fileName,
+      runtime: reader.runtimeRef.current,
     })();
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -991,12 +1002,16 @@ function createReaderSaveCopy({
   saveCopyPendingRef,
   setSavingCopy,
   editedCopy,
+  fileName,
+  runtime,
 }: {
   presentedSource: ReturnType<typeof usePresentedPdfSourceBundle>;
   props: { readonly actions: PdfSourceActions };
   saveCopyPendingRef: RefObject<boolean>;
   setSavingCopy: Dispatch<SetStateAction<boolean>>;
   editedCopy: { readonly bytes: Uint8Array; readonly fileName: string } | null;
+  fileName: string;
+  runtime: ScientPdfRuntime | null;
 }) {
   return async () => {
     if (saveCopyPendingRef.current || (presentedSource === null && editedCopy === null)) return;
@@ -1004,7 +1019,12 @@ function createReaderSaveCopy({
     saveCopyPendingRef.current = true;
     setSavingCopy(true);
     try {
-      if (editedCopy) {
+      // The served file lacks what was typed into its form fields.
+      if (runtime && runtime.document.annotationStorage.size > 0) {
+        announcePdfSaveCopyResult(
+          await saveEditedPdfCopy(await runtime.document.saveDocument(), fileName),
+        );
+      } else if (editedCopy) {
         announcePdfSaveCopyResult(await saveEditedPdfCopy(editedCopy.bytes, editedCopy.fileName));
       } else if (bundle) {
         const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>

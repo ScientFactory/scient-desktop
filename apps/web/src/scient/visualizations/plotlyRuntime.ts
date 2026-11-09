@@ -1,5 +1,6 @@
 import type { Config, Data, Frame, Layout, PlotlyHTMLElement } from "plotly.js";
 
+import { SCIENT_CHART_SERIES_COLORS } from "./chartPalette";
 import type { ParsedPlotlySource, PlotlyFigureDocument } from "./plotlySpec";
 import { ensurePlotlyMathRuntime } from "./plotlyMathRuntime";
 import { releasePlotlyWebGlContexts } from "./plotlyWebGlContext";
@@ -142,7 +143,9 @@ function scientPlotlyTemplate(theme: PlotlyTheme): Record<string, unknown> {
     gridcolor: grid,
     linecolor: boundary,
     tickcolor: boundary,
-    title: { font: { color: foreground, family: font } },
+    tickfont: { size: 11 },
+    title: { font: { color: foreground, family: font, size: 11, weight: 500 } },
+    zerolinecolor: boundary,
   });
 
   return {
@@ -151,6 +154,7 @@ function scientPlotlyTemplate(theme: PlotlyTheme): Record<string, unknown> {
       coloraxis: {
         colorbar: { tickfont: { color: secondary }, title: { font: { color: foreground } } },
       },
+      colorway: [...SCIENT_CHART_SERIES_COLORS],
       font: { color: foreground, family: font },
       geo: { bgcolor: background, lakecolor: background, landcolor: background },
       hoverlabel: {
@@ -163,7 +167,13 @@ function scientPlotlyTemplate(theme: PlotlyTheme): Record<string, unknown> {
       polar: { bgcolor: background, angularaxis: axis(), radialaxis: axis() },
       scene: { bgcolor: background, xaxis: axis(), yaxis: axis(), zaxis: axis() },
       ternary: { bgcolor: background, aaxis: axis(), baxis: axis(), caxis: axis() },
-      title: { font: { color: foreground, family: font } },
+      title: {
+        font: { color: foreground, family: font, size: 13, weight: 600 },
+        pad: { l: 6 },
+        x: 0,
+        xanchor: "left",
+        xref: "container",
+      },
       xaxis: axis(),
       yaxis: axis(),
     },

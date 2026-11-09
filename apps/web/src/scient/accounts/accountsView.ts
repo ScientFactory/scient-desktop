@@ -53,14 +53,21 @@ export function profileAccounts(
 }
 
 /**
- * Sites a browser refresh must leave alone in a profile: sign-ins that work, and Google, where a
- * copy stops working and would replace the session and remembered device this profile has.
+ * Sites a browser refresh must leave alone in a profile: sign-ins that work, and Google while it
+ * works here, so a copy never replaces the session and remembered device this profile has. Once
+ * Google has signed this profile out, the browser's sign-in is the way back.
  */
-export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
+export function sitesToKeep(
+  accounts: ReadonlyArray<AccountSummary>,
+  profileId: string,
+  /** What Google says now; without it, what Accounts last saw. */
+  googleWorks = !signedOutOfGoogle(accounts, profileId),
+) {
   return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&
-    (signIn?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
+    // Google's own answer decides Google, even over a row last seen signed in.
+    (details.sites.includes(GOOGLE_SITE) ? googleWorks : signIn?.state === "signed-in")
       ? details.sites
       : [],
   );

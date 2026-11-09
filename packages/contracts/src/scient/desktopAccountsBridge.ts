@@ -108,6 +108,8 @@ export interface DesktopFillMainInput {
   readonly mode: "fill" | "fill-or-replace";
   /** Site → when Main's row for it was seen signed out. */
   readonly replaceAllowedSince?: Readonly<Record<string, string>>;
+  /** Google may be replaced too: Google has signed Main out, so Main has no session to keep. */
+  readonly replaceGoogle?: boolean;
   /** Sites the user signed out of in Main; never copied. */
   readonly skipSites: ReadonlyArray<string>;
 }
