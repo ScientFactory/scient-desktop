@@ -524,7 +524,11 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         expect(hasMake()).toBe(true);
         const first = program()!;
         expect(NodePath.basename(NodePath.dirname(first))).toBe("build");
-        const published = NodePath.join(NodePath.dirname(NodePath.dirname(first)), "m");
+        // The published program keeps the build's name, `m.exe` on Windows.
+        const published = NodePath.join(
+          NodePath.dirname(NodePath.dirname(first)),
+          NodePath.basename(first),
+        );
         // The same C++ again: the program the run published is sampled, and nothing is compiled.
         expect(yield* sample()).toBe(linked ? 105 : 6);
         expect(hasMake()).toBe(false);
