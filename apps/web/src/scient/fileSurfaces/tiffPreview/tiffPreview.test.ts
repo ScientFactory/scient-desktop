@@ -8,7 +8,10 @@ import { tiffFixture, type TiffFixturePage } from "../../../../test/tiffFixture"
 import {
   decodeLzw,
   inflateBounded,
+  JPEG_TILE_BYTES,
   jpegFrameSize,
+  jpegTileWorkingBytes,
+  jpegWorkingBytes,
   registerBoundedTiffDecoders,
   zstdContentSize,
 } from "./tiffBlockDecoders";
@@ -403,7 +406,7 @@ describe("bounded TIFF block decoders", () => {
   it("refuses a JPEG block whose frame is larger than the block", async () => {
     const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0xea, 0x60, 0xea, 0x60, 1, 1, 0x11, 0];
     const jpeg = new Uint8Array([...frame, 0xff, 0xd9]);
-    expect(jpegFrameSize(jpeg)).toEqual({ width: 60_000, height: 60_000 });
+    expect(jpegFrameSize(jpeg)).toMatchObject({ width: 60_000, height: 60_000 });
     await expect(onePixel(7, jpeg)).rejects.toThrow("oversized");
   });
 
@@ -431,7 +434,11 @@ describe("bounded TIFF block decoders", () => {
   });
 
   it("refuses JPEG frames with out-of-range components or sampling", () => {
-    expect(jpegFrameSize(jpeg(sof(1, 1)))).toEqual({ width: 1, height: 1 });
+    expect(jpegFrameSize(jpeg(sof(1, 1)))).toEqual({
+      width: 1,
+      height: 1,
+      sampling: [{ horizontal: 1, vertical: 1 }],
+    });
     expect(jpegFrameSize(jpeg(sof(1, 1, [[1, 0x51, 0]])))).toBeNull();
     expect(
       jpegFrameSize(
@@ -480,6 +487,91 @@ describe("bounded TIFF block decoders", () => {
     expect(Array.from({ length: data.length }, (_, pixel) => result.rgba[pixel * 4])).toEqual(data);
   });
 
+  const TOO_LARGE = "This TIFF's JPEG tiles are too large to preview.";
+  const rgbFrame = (width: number, height: number) =>
+    jpeg(
+      sof(
+        width,
+        height,
+        [1, 2, 3].map((id) => [id, 0x11, 0]),
+      ),
+    );
+
+  it("refuses one JPEG frame whose decoding memory far exceeds its tile", async () => {
+    // Codex's 26-byte case scaled up: four 2048×2048 components inside a one-sample 4 MiB strip.
+    const block = jpeg(
+      sof(
+        2_048,
+        2_048,
+        [1, 2, 3, 4].map((id) => [id, 0x11, 0]),
+      ),
+    );
+    expect(block.length).toBe(26);
+    expect(jpegWorkingBytes(jpegFrameSize(block)!)).toBeGreaterThan(JPEG_TILE_BYTES);
+    const result = plane([
+      {
+        width: 2_048,
+        height: 2_048,
+        bits: 8,
+        data: [],
+        rawBlocks: { compression: 7, blocks: [block] },
+      },
+    ]);
+    await expect(result).rejects.toThrow(TOO_LARGE);
+  });
+
+  it("refuses JPEG tiles just over the one-tile limit before reading them", async () => {
+    expect(jpegTileWorkingBytes(2_048, 1_264, 3)).toBeLessThanOrEqual(JPEG_TILE_BYTES);
+    expect(jpegTileWorkingBytes(2_048, 1_280, 3)).toBeGreaterThan(JPEG_TILE_BYTES);
+    const result = plane([
+      {
+        width: 2_048,
+        height: 1_280,
+        bits: 8,
+        samples: 3,
+        data: [],
+        rawBlocks: { compression: 7, blocks: [rgbFrame(1, 1)] },
+      },
+    ]);
+    await expect(result).rejects.toThrow(TOO_LARGE);
+  });
+
+  it("lets 1024×1024 RGB JPEG tiles through and reads each one alone", async () => {
+    using readRasters = vi.spyOn(GeoTIFFImage.prototype, "readRasters");
+    // Frames without scan data: the decoder fails after the memory checks, which is enough here.
+    const result = plane([
+      {
+        width: 2_048,
+        height: 1_024,
+        bits: 8,
+        samples: 3,
+        tile: 1_024,
+        data: [],
+        rawBlocks: { compression: 7, blocks: [rgbFrame(1_024, 1_024), rgbFrame(1_024, 1_024)] },
+      },
+    ]);
+    await expect(result).rejects.not.toThrow(TOO_LARGE);
+    await expect(result).rejects.toThrow();
+    expect(readRasters.mock.calls[0]?.[0]?.window).toEqual([0, 0, 1_024, 1_024]);
+  });
+
+  it("decodes a normal 256×256 JPEG tile", async () => {
+    // Grey 77 above row 128 and 200 below, baseline JPEG from imagecodecs.
+    const tile = Uint8Array.from(atob(JPEG_256), (char) => char.charCodeAt(0));
+    const result = await plane([
+      {
+        width: 256,
+        height: 256,
+        bits: 8,
+        tile: 256,
+        data: [],
+        rawBlocks: { compression: 7, blocks: [tile] },
+      },
+    ]);
+    expect(red(result.rgba, 0)).toBe(77);
+    expect(red(result.rgba, 256 * 256 - 1)).toBe(200);
+  });
+
   it("refuses tiles far larger than a thin image", async () => {
     const result = plane([
       {
@@ -494,6 +586,9 @@ describe("bounded TIFF block decoders", () => {
     ]);
     await expect(result).rejects.toThrow("tiles are far larger than its image");
   });
+
+  const JPEG_256 =
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/wAALCAEAAQABAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/APneiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiv1Iooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooor//2Q==";
 
   // 16×16 bytes (x * 7 + y * 3) % 16, LZW-encoded by imagecodecs.
   const LZW =

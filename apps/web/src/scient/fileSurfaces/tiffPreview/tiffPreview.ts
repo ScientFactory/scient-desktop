@@ -3,6 +3,9 @@ import type { GeoTIFF, GeoTIFFImage } from "geotiff";
 import {
   compressionName,
   guardTiffDecoder,
+  JPEG_TILE_BYTES,
+  JPEG_TOO_LARGE,
+  jpegTileWorkingBytes,
   maxCompressedBytes,
   PREVIEW_COMPRESSIONS,
   registerBoundedTiffDecoders,
@@ -13,6 +16,7 @@ const MAX_OUTPUT_SIDE = 16_384;
 const MAX_SOURCE_SIDE = 1 << 20;
 const MAX_SOURCE_PIXELS = 256_000_000;
 const MAX_BLOCK_BYTES = 128 * 1024 * 1024;
+// Decoded bytes read at once; a window always holds at least one block, so a larger block is read alone.
 const BAND_BYTES = 16 * 1024 * 1024;
 const MAX_WALKED_PAGES = 10_000;
 // Fiji's Enhance Contrast default, split between both ends of the histogram.
@@ -391,7 +395,14 @@ export async function readTiffPlane(
   const counts = factor > 1 && !palette ? new Uint16Array(outWidth * outHeight) : null;
   // geotiff decodes every block of a window at once, so windows hold a bounded number of blocks.
   const bandBytes = request.bandBytes ?? BAND_BYTES;
-  const blockInFlight = blockDecoded * (image.planarConfiguration === 2 ? channels : 1);
+  // geotiff's JPEG decoder needs several times a tile's pixels while it works.
+  const jpegWorking =
+    compression === 7
+      ? jpegTileWorkingBytes(tileWidth, tileHeight, image.planarConfiguration === 2 ? 1 : samples)
+      : 0;
+  if (jpegWorking > JPEG_TILE_BYTES) throw tiffPreviewError(JPEG_TOO_LARGE);
+  const blockWorking = Math.max(blockDecoded, jpegWorking);
+  const blockInFlight = blockWorking * (image.planarConfiguration === 2 ? channels : 1);
   const blocksPerBand = Math.max(1, Math.floor(bandBytes / blockInFlight));
   let bandRows = tileHeight;
   let bandColumns = width;

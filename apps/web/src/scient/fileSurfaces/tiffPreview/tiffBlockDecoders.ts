@@ -182,15 +182,59 @@ export function jpegFrameSize(input: Uint8Array) {
   if (input[at + 4] !== 8 || components < 1 || components > 4 || length !== 8 + 3 * components)
     return null;
   if (at + 10 + 3 * components > input.length) return null;
+  const sampling: JpegSampling[] = [];
   for (let index = 0; index < components; index++) {
-    const sampling = input[at + 11 + index * 3]!;
-    const horizontal = sampling >> 4;
-    const vertical = sampling & 15;
+    const factors = input[at + 11 + index * 3]!;
+    const horizontal = factors >> 4;
+    const vertical = factors & 15;
     if (horizontal < 1 || horizontal > 4 || vertical < 1 || vertical > 4) return null;
+    sampling.push({ horizontal, vertical });
   }
   const height = (input[at + 5]! << 8) | input[at + 6]!;
   const width = (input[at + 7]! << 8) | input[at + 8]!;
-  return width && height ? { width, height } : null;
+  return width && height ? { width, height, sampling } : null;
+}
+
+interface JpegSampling {
+  readonly horizontal: number;
+  readonly vertical: number;
+}
+
+/** Working memory one JPEG tile may use while geotiff decodes it; 1024×1024 RGB needs about 26 MiB. */
+export const JPEG_TILE_BYTES = 64 * 1024 * 1024;
+export const JPEG_TOO_LARGE = "This TIFF's JPEG tiles are too large to preview.";
+// geotiff keeps every 8×8 block as its own Int32Array(64) and every output line as a Uint8Array;
+// each typed array also costs an object, a backing store and an array slot.
+const TYPED_ARRAY_OVERHEAD = 160;
+
+/** Memory geotiff's JPEG decoder allocates for one frame: coefficients, component lines and output. */
+export function jpegWorkingBytes(frame: {
+  readonly width: number;
+  readonly height: number;
+  readonly sampling: readonly JpegSampling[];
+}) {
+  const maxH = Math.max(...frame.sampling.map((factors) => factors.horizontal));
+  const maxV = Math.max(...frame.sampling.map((factors) => factors.vertical));
+  const mcusPerLine = Math.ceil(frame.width / 8 / maxH);
+  const mcusPerColumn = Math.ceil(frame.height / 8 / maxV);
+  let total = frame.width * frame.height * frame.sampling.length;
+  for (const { horizontal, vertical } of frame.sampling) {
+    const blocks = mcusPerLine * horizontal * mcusPerColumn * vertical;
+    total += blocks * (64 * 4 + TYPED_ARRAY_OVERHEAD);
+    const blocksPerLine = Math.ceil((Math.ceil(frame.width / 8) * horizontal) / maxH);
+    const lines = Math.ceil((Math.ceil(frame.height / 8) * vertical) / maxV) * 8;
+    total += lines * (blocksPerLine * 8 + TYPED_ARRAY_OVERHEAD);
+  }
+  return total;
+}
+
+/** Working memory for a block-sized JPEG frame with one component per sample, before any block is read. */
+export function jpegTileWorkingBytes(tileWidth: number, tileHeight: number, samples: number) {
+  return jpegWorkingBytes({
+    width: Math.ceil(tileWidth / 16) * 16,
+    height: Math.ceil(tileHeight / 16) * 16,
+    sampling: Array.from({ length: samples }, () => ({ horizontal: 1, vertical: 1 })),
+  });
 }
 
 /** Shared JPEG tables may hold quantization and Huffman tables but never a frame. */
@@ -261,6 +305,8 @@ const guardJpeg: Guard = (bytes, parameters) => {
     frame.height > Math.ceil(parameters.tileHeight / 16) * 16
   )
     throw new Error(OVERSIZED_BLOCK);
+  // One frame that fits its tile can still need far more memory than the tile's pixels.
+  if (jpegWorkingBytes(frame) > JPEG_TILE_BYTES) throw new Error(JPEG_TOO_LARGE);
 };
 
 // geotiff allocates these from sizes inside the block, so each block is checked before decoding.
