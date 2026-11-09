@@ -182,6 +182,25 @@ export function workspacePdfSourceForPreview(input: {
   });
 }
 
+/**
+ * What a PDF's bytes are known by apart from the signed URL that serves them, so a renewed
+ * URL does not reload the document. Null when the environment reports no revision.
+ */
+export function pdfContentKey(
+  source: PdfSourceDescriptorType,
+  asset: Pick<ResolvedPdfSource, "fileRevision">,
+): string | null {
+  switch (source._tag) {
+    case "generated-pdf":
+      return `generated:${source.revisionId}`;
+    case "attachment-pdf":
+      return "attachment";
+    case "workspace-pdf":
+    case "environment-pdf":
+      return asset.fileRevision === undefined ? null : `file:${asset.fileRevision}`;
+  }
+}
+
 export function usePdfSourceState(source: PdfSourceDescriptorType): AssetUrlState {
   return useAssetUrlState(EnvironmentId.make(source.authority), pdfSourceAssetResource(source));
 }

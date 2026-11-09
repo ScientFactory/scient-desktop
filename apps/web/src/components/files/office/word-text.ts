@@ -33,7 +33,11 @@ export function pageText(page: DisplayPage, measure: TextMeasure): WordSpan[] {
   const notes = (page.noteAreas ?? []).map((area) => area.primitives ?? []);
 
   return [page.header?.primitives ?? [], body, ...notes, page.footer?.primitives ?? []].flatMap(
-    (region) => regionText(region, page, measure),
+    (region) =>
+      // SCIENT-FORK: find counts the body's matches; the reader steps past the rest.
+      region === body
+        ? regionText(region, page, measure)
+        : regionText(region, page, measure).map((span) => ({ ...span, aside: true })),
   );
 }
 

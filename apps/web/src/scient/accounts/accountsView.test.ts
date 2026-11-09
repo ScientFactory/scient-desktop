@@ -138,7 +138,7 @@ describe("Accounts decisions", () => {
     expect(signedOutOfGoogle([], "work")).toBe(false);
   });
 
-  it("keeps working sign-ins and any Google session out of a refresh, per profile", () => {
+  it("keeps working sign-ins and a working Google session out of a refresh, per profile", () => {
     const row = (site: string, profileId: string, state?: "signed-in" | "signed-out") => ({
       ...website(profileId),
       details: { kind: "website" as const, sites: [site], profileId },
@@ -150,12 +150,25 @@ describe("Accounts decisions", () => {
           row("github.com", "work", "signed-in"),
           row("overleaf.com", "work", "signed-out"),
           row("nature.com", "work"),
-          row("google.com", "work", "signed-out"),
+          row("google.com", "work"),
           row("arxiv.org", "home", "signed-in"),
         ],
         "work",
       ),
     ).toEqual(["github.com", "google.com"]);
+    // Google signed this profile out: the browser's sign-in replaces it.
+    expect(
+      sitesToKeep(
+        [row("github.com", "work", "signed-in"), row("google.com", "work", "signed-out")],
+        "work",
+      ),
+    ).toEqual(["github.com"]);
+    // What Google says now wins over what Accounts last saw.
+    expect(sitesToKeep([row("google.com", "work")], "work", false)).toEqual([]);
+    expect(sitesToKeep([row("google.com", "work", "signed-in")], "work", false)).toEqual([]);
+    expect(sitesToKeep([row("google.com", "work", "signed-out")], "work", true)).toEqual([
+      "google.com",
+    ]);
   });
 
   it("offers a site's accounts in any profile, the tab's own profile first", () => {

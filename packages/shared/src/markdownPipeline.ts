@@ -20,6 +20,7 @@ import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 // SCIENT-FORK:START — shared quote protocol owner.
 import { FILE_CITATION_PROTOCOL } from "./composerCitations.ts";
 import { COMPUTE_CITATION_PROTOCOL } from "./computeCitations.ts";
+import { OFFICE_CITATION_PROTOCOL } from "./officeCitations.ts";
 import { PDF_CITATION_PROTOCOL } from "./pdfCitations.ts";
 // SCIENT-FORK:END
 
@@ -224,6 +225,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       FILE_CITATION_PROTOCOL,
       PDF_CITATION_PROTOCOL,
       COMPUTE_CITATION_PROTOCOL,
+      OFFICE_CITATION_PROTOCOL,
       // SCIENT-FORK:END
       "t3-context",
       THREAD_LINK_PROTOCOL,

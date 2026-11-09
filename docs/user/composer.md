@@ -58,6 +58,17 @@ at the end, leave the block. **Backspace** at the start of a code block turns it
 back into plain lines. Choose the language in a code block's corner to change
 it. Very large code blocks are shown without syntax highlighting.
 
+## Spelling
+
+Right-click an underlined word to replace it with a suggestion. On Windows and
+Linux, Scient checks spelling in your system languages. It also checks in the
+language of any alphabet you write that none of them uses: Latin letters add
+English, and Hebrew, Greek, Armenian, Korean or Tamil letters add that
+language. To add or remove a language, right-click in the composer and use
+**Spelling Languages**; your choice stays until you change it. Windows
+suggestions use dictionaries Scient downloads the first time a language is on.
+On macOS, the system spellchecker detects each paragraph's language itself.
+
 ## Attach files
 
 On web and desktop, attach files with the file picker, drag and drop, or paste.
@@ -243,6 +254,13 @@ Select text in a PDF and choose **Ask in chat**. The quote keeps the PDF, the
 page and the exact text, and its chip reopens the PDF at the passage. See
 [PDF reader](pdf-reader.md#ask-in-chat-about-a-passage) for what can be quoted
 and what happens when the PDF has changed.
+
+## Quote a Word page or slide
+
+Select text on a Word page or a PowerPoint slide in the file viewer and choose **Ask in
+chat**. The quote keeps the file, the page or slide number and the text; its chip reopens the
+file at that page with the quote marked. The page number is the one Scient's viewer shows,
+which can differ from Word's own pagination. Text in a slide's pictures cannot be selected.
 
 ## Quote an assistant response
 

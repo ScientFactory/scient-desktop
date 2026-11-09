@@ -54,6 +54,17 @@ export interface RequestedPdfPresentation {
   readonly documentKey: string;
   readonly revisionId: string | null;
   readonly sourceUrl: string;
+  /** What the bytes are known by apart from the URL (`pdfContentKey`); null when unknown. */
+  readonly contentKey: string | null;
+}
+
+/** A URL renewed for unchanged bytes serves the same PDF, so the loaded one stays. */
+type SourceIdentity = Pick<RequestedPdfPresentation, "sourceUrl" | "contentKey">;
+function sameSource(presented: SourceIdentity, requested: SourceIdentity) {
+  return (
+    presented.sourceUrl === requested.sourceUrl ||
+    (requested.contentKey !== null && presented.contentKey === requested.contentKey)
+  );
 }
 
 export interface PresentedPdfSource extends RequestedPdfPresentation {
@@ -119,6 +130,7 @@ export function useScientPdfReader(input: {
   readonly onSourceInvalidated: () => void;
   readonly revisionId: string | null;
   readonly sourceUrl: string;
+  readonly contentKey: string | null;
   /** Authorization must settle before admitting a candidate, including retries. */
   readonly candidateReady: boolean;
   readonly loadAttempt: number;
@@ -135,6 +147,7 @@ export function useScientPdfReader(input: {
     readonly documentKey: string;
     readonly revisionId: string | null;
     readonly sourceUrl: string;
+    readonly contentKey: string | null;
     readonly loadAttempt: number;
   } | null>(null);
   const presentsRequest =
@@ -143,7 +156,7 @@ export function useScientPdfReader(input: {
     presentedRequest.viewerElement === input.viewerElement &&
     presentedRequest.documentKey === input.documentKey &&
     presentedRequest.revisionId === input.revisionId &&
-    presentedRequest.sourceUrl === input.sourceUrl &&
+    sameSource(presentedRequest, input) &&
     presentedRequest.loadAttempt === input.loadAttempt;
   const loadInputs = [
     input.container,
@@ -151,6 +164,7 @@ export function useScientPdfReader(input: {
     input.documentKey,
     input.revisionId,
     input.sourceUrl,
+    input.contentKey,
     input.candidateReady,
     input.loadAttempt,
   ] as const;
@@ -275,13 +289,22 @@ export function useScientPdfReader(input: {
     if (!input.container || !input.viewerElement) return;
     // Render already moved the reader state: cleared, settled or updating.
     if (!input.candidateReady) return;
+    const presented = presentationRef.current;
     if (
-      presentationRef.current?.documentKey === input.documentKey &&
-      presentationRef.current.revisionId === input.revisionId &&
-      presentationRef.current.sourceUrl === input.sourceUrl &&
-      presentationRef.current.loadAttempt === input.loadAttempt
-    )
+      presented?.documentKey === input.documentKey &&
+      presented.revisionId === input.revisionId &&
+      sameSource(presented, { sourceUrl: input.sourceUrl, contentKey: input.contentKey }) &&
+      presented.loadAttempt === input.loadAttempt
+    ) {
+      if (presented.sourceUrl !== input.sourceUrl) {
+        // Actions such as Save a copy use the renewed URL; pdf.js keeps the bytes it has.
+        const renewed = { ...presented, sourceUrl: input.sourceUrl };
+        presentationRef.current = renewed;
+        setPresentation(renewed);
+        setPresentedRequest((request) => request && { ...request, sourceUrl: input.sourceUrl });
+      }
       return;
+    }
     const { container, viewerElement } = createPdfPresentationLayer(input.viewerElement);
     const abortController = new AbortController();
     let current = true;
@@ -295,8 +318,6 @@ export function useScientPdfReader(input: {
       requestedSourceRef.current.revisionId === input.revisionId &&
       requestedSourceRef.current.url === input.sourceUrl;
     let candidate: ScientPdfRuntime | null = null;
-    let searchWarmupHandle: number | null = null;
-    let searchWarmupKind: "idle" | "timeout" | null = null;
     let pinchFrame: number | null = null;
     let pendingPinchFactor = 1;
     let pendingPinchOrigin: [number, number] = [0, 0];
@@ -360,6 +381,7 @@ export function useScientPdfReader(input: {
               revisionId: input.revisionId,
               runtime,
               sourceUrl: input.sourceUrl,
+              contentKey: input.contentKey,
               loadAttempt: input.loadAttempt,
             } satisfies PresentedPdfSource & {
               readonly runtime: ScientPdfRuntime;
@@ -383,6 +405,7 @@ export function useScientPdfReader(input: {
                 documentKey: input.documentKey,
                 revisionId: input.revisionId,
                 sourceUrl: input.sourceUrl,
+                contentKey: input.contentKey,
                 loadAttempt: input.loadAttempt,
               });
               setState((previous) => ({
@@ -416,31 +439,6 @@ export function useScientPdfReader(input: {
                 matchDiacritics: true,
               });
               setState((previous) => ({ ...previous, findPhase: "pending" }));
-              return;
-            }
-
-            const warmSearch = () => {
-              searchWarmupHandle = null;
-              searchWarmupKind = null;
-              if (!current || activeSearchQueryRef.current.length > 0) return;
-              runtime.eventBus.dispatch("find", {
-                source: runtime,
-                type: "",
-                query: "",
-                phraseSearch: true,
-                caseSensitive: false,
-                entireWord: false,
-                highlightAll: false,
-                findPrevious: false,
-                matchDiacritics: true,
-              });
-            };
-            if (typeof window.requestIdleCallback === "function") {
-              searchWarmupKind = "idle";
-              searchWarmupHandle = window.requestIdleCallback(warmSearch, { timeout: 1_500 });
-            } else {
-              searchWarmupKind = "timeout";
-              searchWarmupHandle = window.setTimeout(warmSearch, 750);
             }
           };
           void preparePdfPresentation({
@@ -592,10 +590,6 @@ export function useScientPdfReader(input: {
       current = false;
       abortController.abort();
       passwordRef.current = null;
-      if (searchWarmupHandle !== null) {
-        if (searchWarmupKind === "idle") window.cancelIdleCallback(searchWarmupHandle);
-        else window.clearTimeout(searchWarmupHandle);
-      }
       if (pinchFrame !== null) cancelAnimationFrame(pinchFrame);
       if (onPinchWheel) container.removeEventListener("wheel", onPinchWheel);
       const runtime = candidate;
@@ -625,6 +619,7 @@ export function useScientPdfReader(input: {
     input.documentKey,
     input.revisionId,
     input.sourceUrl,
+    input.contentKey,
     input.viewerElement,
     input.candidateReady,
     input.loadAttempt,
