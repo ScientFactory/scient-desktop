@@ -1,7 +1,9 @@
 import type { BrowserImportSourceId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as FileSystem from "effect/FileSystem";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { snapshotCookieDatabase } from "../../preview/BrowserImport/CookieDatabase.ts";
@@ -33,17 +35,33 @@ const LoginRow = Schema.Struct({
   username_value: Schema.String,
   password_value: Schema.Uint8Array,
   blacklisted_by_user: Schema.Number,
+  date_password_modified: Schema.optional(Schema.NullOr(Schema.Number)),
+  date_last_used: Schema.optional(Schema.NullOr(Schema.Number)),
+  date_created: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 const isChromiumKeyError = Schema.is(ChromiumKeyError);
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(LoginRow));
 const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+/** Chromium stores times as microseconds since 1601; 0 means never. */
+const chromiumDate = (micros: number | null | undefined) =>
+  micros && micros > 0
+    ? Option.getOrUndefined(
+        Option.map(DateTime.make(micros / 1000 - 11_644_473_600_000), DateTime.formatIso),
+      )
+    : undefined;
+/** When the password was last changed, as Chrome knows it: changed, else last used, else saved. */
+const passwordChanged = (row: typeof LoginRow.Type) =>
+  chromiumDate(row.date_password_modified) ??
+  chromiumDate(row.date_last_used) ??
+  chromiumDate(row.date_created) ??
+  "";
 
 export const passwordsToCsv = (
   rows: ReadonlyArray<typeof LoginRow.Type>,
   keys: ChromiumKeyMaterial,
   platform: NodeJS.Platform,
 ) => {
-  const lines = ["name,url,username,password"];
+  const lines = ["name,url,username,password,password_changed"];
   let skipped = 0;
   for (const row of rows) {
     const address = row.origin_url || row.signon_realm;
@@ -76,7 +94,11 @@ export const passwordsToCsv = (
       skipped++;
       continue;
     }
-    lines.push([url.hostname, url.href, row.username_value, password].map(csvCell).join(","));
+    lines.push(
+      [url.hostname, url.href, row.username_value, password, passwordChanged(row)]
+        .map(csvCell)
+        .join(","),
+    );
   }
   return { content: lines.join("\n"), skipped };
 };
@@ -86,9 +108,7 @@ export const readPasswordDatabase = Effect.fn("DesktopAccounts.readPasswordDatab
     const snapshot = yield* snapshotCookieDatabase(database, "scient-password-import-");
     const rows = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      return yield* sql`select origin_url, signon_realm, username_value, password_value, blacklisted_by_user from logins`.pipe(
-        Effect.flatMap(decodeRows),
-      );
+      return yield* sql`select * from logins`.pipe(Effect.flatMap(decodeRows));
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
     return passwordsToCsv(rows, keys, platform);
   },
@@ -121,7 +141,8 @@ export const readBrowserPasswords = Effect.fn("DesktopAccounts.readBrowserPasswo
       directory,
     );
     const fs = yield* FileSystem.FileSystem;
-    if (!(yield* fs.exists(database))) return { content: "name,url,username,password", skipped: 0 };
+    if (!(yield* fs.exists(database)))
+      return { content: "name,url,username,password,password_changed", skipped: 0 };
     const keys: ChromiumKeyMaterial = yield* context.platform === "win32"
       ? readWindowsKey(context.path.join(root, "Local State")).pipe(
           Effect.map((gcmV10) => ({ gcmV10 })),

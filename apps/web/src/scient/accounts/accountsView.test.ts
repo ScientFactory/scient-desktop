@@ -356,6 +356,7 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
 it("fills each login box with a saved username that fits it", () => {
   const signIn = (username: string) => ({
     details: { kind: "website" as const, sites: ["idp.example.edu"], username },
+    secrets: {},
   });
   const id = signIn("123456789");
   const email = signIn("person@example.edu");
@@ -372,6 +373,28 @@ it("fills each login box with a saved username that fits it", () => {
   // A box for a 9-digit ID takes the ID row even when an email row comes first.
   expect(fillChoice([email, id], [{ ...textBox, pattern: "[0-9]{9}" }]).account).toBe(id);
   expect(fillChoice([email, id], [textBox]).account).toBe(email);
+});
+
+it("fills the newest saved password of the username, and never one the site refused", () => {
+  const row = (changedAt?: string, signIn?: AccountSummary["signIn"]) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username: "a@example.edu" },
+    secrets: {
+      password: {
+        source: { type: "scient" as const },
+        ...(changedAt ? { changedAt } : {}),
+      },
+    },
+    ...(signIn ? { signIn } : {}),
+  });
+  const box = [{ email: true, minLength: -1, maxLength: -1, pattern: "" }];
+  const older = row("2023-01-01T00:00:00.000Z");
+  const newer = row("2025-01-01T00:00:00.000Z");
+  expect(fillChoice([older, newer], box).account).toBe(newer);
+  // Imported before dates were kept: the one that last worked, never a refused one.
+  const worked = row(undefined, { state: "signed-in", at: "2025-02-01T00:00:00.000Z" });
+  const refused = row(undefined, { state: "password-rejected", at: "2025-03-01T00:00:00.000Z" });
+  expect(fillChoice([row(), refused, worked], box).account).toBe(worked);
+  expect(fillChoice([refused], box).account).toBeUndefined();
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {

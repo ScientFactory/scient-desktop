@@ -214,6 +214,21 @@ it("puts an ID and an email each in its own box, and fills a login tab when it s
   expect(reports).toHaveLength(3);
 });
 
+it("never fills a password for another username than the one in the username box", () => {
+  using f = fixture();
+  const [username, password] = f.inputs as [HTMLInputElement, HTMLInputElement];
+  username.value = "someone@example.test";
+  const secret = NodeCrypto.randomUUID();
+  expect(window.eval(loginFillScript({ password: secret }, location.origin))).toBe(false);
+  expect(password.value).toBe("");
+  expect(
+    window.eval(
+      loginFillScript({ username: "someone@example.test", password: secret }, location.origin),
+    ),
+  ).toBe(true);
+  expect(password.value).toBe(secret);
+});
+
 it("submits only a complete sign-in, and only when asked", () => {
   using f = fixture();
   const form = document.querySelector("form")!;

@@ -151,6 +151,8 @@ export const AccountSecretSummary = Schema.Struct({
   hint: Schema.optional(Schema.String.check(Schema.isMaxLength(4))),
   /** Passwords only: when a sign-in with this value last worked. A new value starts without it. */
   verifiedAt: Schema.optional(IsoDateTime),
+  /** Passwords only: when the browser it was imported from last changed it. */
+  changedAt: Schema.optional(IsoDateTime),
 });
 export type AccountSecretSummary = typeof AccountSecretSummary.Type;
 
@@ -918,6 +920,8 @@ export const AccountSecretInput = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("scient"),
     value: SecretValue,
+    /** An import's own date for this password, kept on the saved row as `changedAt`. */
+    changedAt: Schema.optional(IsoDateTime),
     saveTo: Schema.optional(
       Schema.Array(AccountWriteStore).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
     ),

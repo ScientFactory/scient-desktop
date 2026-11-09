@@ -65,6 +65,15 @@ function fillLoginForm(
       const input = boxes.find(fits(true)) ?? boxes.find(fits(false));
       if (input) targets.push([input, value]);
     }
+    const usernameBox = detected.inputs[detected.username];
+    // Never a password for another username than the one left in the username box.
+    if (
+      values.password !== undefined &&
+      usernameBox?.value &&
+      usernameBox.value !== values.username &&
+      !targets.some(([input]) => input === usernameBox)
+    )
+      return false;
     for (const key of ["password", "otp"] as const) {
       const input = detected.inputs[detected[key]];
       const value = values[key];

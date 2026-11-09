@@ -285,6 +285,25 @@ describe("AccountsService persistence", () => {
   );
 });
 
+describe("AccountsService imported password dates", () => {
+  it.effect("keeps the newest password of a sign-in and its date, whatever the order", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const [newer, older] = [syntheticValue(), syntheticValue()];
+      const content = `name,url,username,password,password_changed\nSynthetic,https://login.example.com/,user,${newer},2025-01-01T00:00:00.000Z\nSynthetic,https://login.example.com/old,user,${older},2023-01-01T00:00:00.000Z`;
+      yield* service.importPasswords({ format: "auto", content });
+      const account = (yield* service.snapshot).accounts[0]!;
+      expect(account.secrets["password"]?.changedAt).toBe("2025-01-01T00:00:00.000Z");
+      expect(
+        secretEquals(
+          (yield* service.resolveSecrets(account.accountId, ["password"])).password,
+          newer,
+        ),
+      ).toBe(true);
+    }),
+  );
+});
+
 describe("AccountsService profiles and evidence", () => {
   it.effect("keeps the same login imported into two profiles as two rows", () =>
     Effect.gen(function* () {
