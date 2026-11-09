@@ -1,7 +1,7 @@
 import "../../index.css";
 
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
 import { render } from "../../../test/render";
 import { SignInKey } from "./SignInKey";
@@ -39,4 +39,31 @@ it("shows the filled sign-in, reveals its password on request, and fills another
 
   await page.getByRole("button", { name: "Fill a@example.edu · Main" }).click();
   expect(onFill).toHaveBeenCalledWith("old");
+});
+
+it("drops a reveal that answers after the popover closed", async () => {
+  const answer = Promise.withResolvers<string>();
+  await using _screen = await render(
+    <SignInKey
+      site="idp.example.edu"
+      rows={[{ accountId: "new", username: "a@example.edu" }]}
+      filledId="new"
+      busy={false}
+      onFill={() => undefined}
+      onReveal={() => answer.promise}
+      onEdit={() => undefined}
+    />,
+    { router: false },
+  );
+  const key = page.getByRole("button", { name: "Filled with a@example.edu" });
+  await key.click();
+  await page.getByRole("button", { name: "Show password" }).click();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByText("Filled with", { exact: true })).not.toBeInTheDocument();
+  answer.resolve("synthetic-late-pass");
+  await answer.promise;
+
+  await key.click();
+  await expect.element(page.getByText("••••••••")).toBeVisible();
+  expect(document.body.textContent).not.toContain("synthetic-late-pass");
 });

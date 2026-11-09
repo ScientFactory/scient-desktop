@@ -1,5 +1,5 @@
 import { EyeIcon, EyeOffIcon, KeyRoundIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
@@ -36,11 +36,17 @@ export function SignInKey({
   onEdit: () => void;
 }) {
   const [revealed, setRevealed] = useState<{ accountId: string; password: string } | null>(null);
+  // Opening, closing or hiding starts a new generation; a reveal answers only its own.
+  const generation = useRef(0);
+  const hide = () => {
+    generation.current++;
+    setRevealed(null);
+  };
   const filled = rows.find((row) => row.accountId === filledId);
   const others = rows.filter((row) => row !== filled);
   const shown = filled && revealed?.accountId === filled.accountId ? revealed.password : null;
   return (
-    <Popover onOpenChange={(open) => !open && setRevealed(null)}>
+    <Popover onOpenChange={hide}>
       <PopoverTrigger
         render={
           <Button
@@ -69,9 +75,11 @@ export function SignInKey({
                   variant="ghost"
                   aria-label={shown === null ? "Show password" : "Hide password"}
                   onClick={async () => {
-                    if (shown !== null) return setRevealed(null);
+                    if (shown !== null) return hide();
+                    const asked = generation.current;
                     const password = await onReveal(filled.accountId);
-                    if (password !== undefined)
+                    // The shown value is matched to the filled account when it renders.
+                    if (password !== undefined && asked === generation.current)
                       setRevealed({ accountId: filled.accountId, password });
                   }}
                 >
