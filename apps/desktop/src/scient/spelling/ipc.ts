@@ -56,24 +56,29 @@ export const configureSpelling = Effect.fn("scient.spelling.configure")(function
   if (environment.platform === "darwin") return;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   logWarning = (message, cause) => runFork(Effect.logWarning(message, cause));
-  const directory = NodePath.join(environment.stateDir, "scient", "spelling");
-  const choicesFile = NodePath.join(directory, "languages.json");
+  yield* orLogged("Could not enable the system spelling languages", undefined, () =>
+    startSpelling(environment.platform, NodePath.join(environment.stateDir, "scient", "spelling")),
+  );
+});
 
-  documentSpelling = yield* orLogged("Could not enable the system spelling languages", null, () => {
-    // A dictionary used for the first time is downloaded and can arrive after the user's next
-    // keystroke, so the window rechecks once more when it is ready.
-    session.defaultSession.on("spellcheck-dictionary-initialized", recheckWindows);
-    const saved = Option.getOrElse(
-      decodeChoices(NodeFS.existsSync(choicesFile) ? NodeFS.readFileSync(choicesFile, "utf8") : ""),
-      () => ({}),
-    );
-    return makeDocumentSpelling(session.defaultSession, app.getPreferredSystemLanguages(), saved);
-  });
-  if (documentSpelling === null) return;
+function startSpelling(platform: NodeJS.Platform, directory: string): void {
+  const choicesFile = NodePath.join(directory, "languages.json");
+  // A dictionary used for the first time is downloaded and can arrive after the user's next
+  // keystroke, so the window rechecks once more when it is ready.
+  session.defaultSession.on("spellcheck-dictionary-initialized", recheckWindows);
+  const saved = Option.getOrElse(
+    decodeChoices(NodeFS.existsSync(choicesFile) ? NodeFS.readFileSync(choicesFile, "utf8") : ""),
+    () => ({}),
+  );
+  const spelling = makeDocumentSpelling(
+    session.defaultSession,
+    app.getPreferredSystemLanguages(),
+    saved,
+  );
 
   let saving = Promise.resolve();
   saveChoices = () => {
-    const text = JSON.stringify(documentSpelling?.choices() ?? {});
+    const text = JSON.stringify(spelling.choices());
     saving = saving
       .then(async () => {
         await NodeFSP.mkdir(directory, { recursive: true });
@@ -82,8 +87,7 @@ export const configureSpelling = Effect.fn("scient.spelling.configure")(function
       })
       .catch((cause: unknown) => logWarning("Could not save the spelling languages", cause));
   };
-
-  if (environment.platform === "win32") {
+  if (platform === "win32") {
     suggester = makeSuggester({
       directory: NodePath.join(directory, "dictionaries"),
       fetchText: async (url) => {
@@ -93,9 +97,10 @@ export const configureSpelling = Effect.fn("scient.spelling.configure")(function
       },
       onError: logWarning,
     });
-    suggester.prepare(enabledCodes(documentSpelling));
+    suggester.prepare(enabledCodes(spelling));
   }
-});
+  documentSpelling = spelling;
+}
 
 function languagesChanged(spelling: DocumentSpelling): void {
   suggester?.prepare(enabledCodes(spelling));
