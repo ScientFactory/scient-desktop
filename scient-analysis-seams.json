@@ -321,7 +321,12 @@
     {
       "path": "apps/web/src/components/files/PreviewImageContent.tsx",
       "anchor": "MEDIA_FAILURE_COPY.image",
-      "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner."
+      "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner. A TIFF draws the plane Scient's TIFF preview decoded and shows its value range and plane stepper."
+    },
+    {
+      "path": "apps/web/src/components/files/decodeImagePreview.ts",
+      "anchor": "decodeScientTiffPreview",
+      "purpose": "TIFF previews decode in Scient's range-reading TIFF worker (bounded codecs and memory, automatic contrast); HEIF keeps the inherited worker. scientFileAuxiliarySeam.test.ts guards the routing."
     },
     {
       "path": "apps/web/src/components/files/filePreviewMode.ts",
