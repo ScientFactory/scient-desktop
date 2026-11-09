@@ -57,11 +57,6 @@
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
     },
     {
-      "path": "apps/web/src/proposedPlan.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Collect explicit Scient skill selections in plan feedback submissions."
-    },
-    {
       "path": "packages/contracts/src/provider.ts",
       "anchor": "SelectedScientSkillNames",
       "purpose": "Carry optional explicit Scient skill selection to the provider boundary."
@@ -155,11 +150,6 @@
       "path": "apps/web/src/components/chat/useMultipleModelSend.ts",
       "anchor": "selectedScientSkillNames,",
       "purpose": "Carry the captured explicit skill selection into each native multiple-model turn."
-    },
-    {
-      "path": "apps/web/src/components/chat/useProposedPlanSend.ts",
-      "anchor": "selectedScientSkillNames,",
-      "purpose": "Carry explicit plan-feedback skill selections into native turn admission; implementing an assistant plan in a new thread selects no skills."
     },
     {
       "path": "apps/web/src/components/chat/ChatComposer.tsx",

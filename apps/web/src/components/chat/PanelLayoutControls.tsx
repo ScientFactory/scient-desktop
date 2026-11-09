@@ -192,6 +192,9 @@ export function WorkspaceTitlebarControls(props: {
     <div
       className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
+      // SCIENT-FORK:START — the open panel's tab strip sits under these controls
+      data-right-panel-open={props.rightPanelOpen || undefined}
+      // SCIENT-FORK:END
     >
       {props.showMaximizeControl ? (
         <span

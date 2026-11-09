@@ -48,10 +48,7 @@ import {
 import type { PiRpcClient, PiRpcError as PiClientError, PiRpcSpawnOptions } from "./rpcClient.ts";
 import { encodePiModelSlug } from "./model.ts";
 import { PI_DISCOVERY_LAUNCH_POLICY } from "./discoveryPolicy.ts";
-import {
-  EMPTY_PI_MODEL_CAPABILITIES,
-  thinkingCapabilitiesForPiModel,
-} from "./thinkingCapabilities.ts";
+import { EMPTY_PI_MODEL_CAPABILITIES, piModelCapabilities } from "./modelCapabilities.ts";
 import {
   parsePiDiscoveredCommands,
   withPiBuiltinSlashCommands,
@@ -153,7 +150,7 @@ function parseDiscoveredModels(
       subProvider: provider,
       isCustom: false,
       ...(providerLabel === undefined ? {} : { subProvider: providerLabel(provider) ?? provider }),
-      capabilities: thinkingCapabilitiesForPiModel(
+      capabilities: piModelCapabilities(
         model,
         provider === activeProvider && id === activeModelId
           ? recordString(state, "thinkingLevel")

@@ -140,11 +140,12 @@ Chat typing must not pay for an open document. Two Chromium costs reached every 
   `selectionchange` or `keyup` read the range instead. PDF.js's own handlers needed a patch for
   this; see `UPSTREAM.md`.
 - React copies a controlled textarea's value into `defaultValue` after each change, replacing its
-  text node, and the app's `:has()` rules then restyle the whole document. Textareas whose owners
-  never use their native default or form reset spread `SKIP_MIRRORED_DEFAULT`
-  (`scient/writing/textareaDefaultValue.ts`); a default equal to their shown text is then
-  skipped. Ask in chat and the Visual LaTeX fields are marked. Other textareas keep the native
-  behaviour.
+  text node. In Chromium we observed it then recheck `:has()` on the textarea's ancestors and
+  restyle the whole subtree of an ancestor that anchors a `:has()` before a combinator
+  (`X:has(…) Y`). Keep
+  `:has()` off `body`, `html` and `:root`, or each keystroke restyles the whole document; key
+  such styles off an attribute on a small element. `universalSiblingSelectors.test.ts` enforces
+  this.
 
 Check with a production build, a long PDF, a source file and a Visual LaTeX document open,
 typing into the composer and into Ask in chat under CPU throttling. Event Timing and Long

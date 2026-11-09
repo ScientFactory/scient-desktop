@@ -74,12 +74,11 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
 
 export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
   if (rowIndex < 0) return;
-  const element = list?.getState?.().elementAtIndex(rowIndex);
-  if (element instanceof HTMLElement) {
-    element.scrollIntoView({ block: "nearest" });
-    return;
-  }
-  void list?.scrollIndexIntoView?.({ index: rowIndex, animated: false });
+  void list?.scrollIndexIntoView({
+    index: rowIndex,
+    animated: false,
+    viewportMargin: { start: 24, end: 24 },
+  });
 }
 
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
@@ -93,11 +92,10 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
-    const scrollElement = listRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const top = scrollElement.scrollTop > 1;
-    const bottom =
-      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    const top = !metrics.isAtStart;
+    const bottom = !metrics.isAtEnd;
     setScrollFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );

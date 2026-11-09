@@ -45,6 +45,8 @@ it.effect("discovers only source metadata without opening a source cookie databa
       platform: "darwin",
       appData: undefined,
       localAppData: undefined,
+      linuxConfigHome: path.join(home, ".config"),
+      linuxChromeConfigHome: path.join(home, ".config"),
     });
     expect(result).toEqual([
       { sourceId: "chrome", directory: "Default", name: "Work", email: "person@example.test" },

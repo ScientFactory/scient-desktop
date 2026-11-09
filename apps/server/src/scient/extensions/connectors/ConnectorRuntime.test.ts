@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests run a real local MCP server and authorization server.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -26,6 +28,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { HttpRouter } from "effect/http";
+import * as yazl from "yazl";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -38,6 +41,7 @@ import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import { noKeychain } from "../../accounts/Accounts.testkit.ts";
 import * as AccountsConnectorCredentials from "../../accounts/AccountsConnectorCredentials.ts";
 import { AccountVault, makeAccountVault } from "../../accounts/AccountVault.ts";
+import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
 import { ConnectorRuntime } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
@@ -511,6 +515,7 @@ const testLayer = AccountsConnectorCredentials.layer.pipe(
   Layer.provideMerge(PluginConnectorEligibility.layer),
   Layer.provideMerge(
     Layer.mock(ProjectStoreV2)({
+      get: () => Effect.succeedNone,
       list: (options) =>
         Effect.succeed(
           EXISTING_PROJECTS.filter(
@@ -522,6 +527,7 @@ const testLayer = AccountsConnectorCredentials.layer.pipe(
   ),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-connectors-" })),
+  Layer.provideMerge(LocalDuplexProcess.layer),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
 );
 
@@ -2146,7 +2152,12 @@ describe("bound connector credentials", () => {
         const bindings = Layer.mock(AccountsService)({
           resolveBound: (candidate, consumer) =>
             Effect.suspend(() => {
-              if (candidate !== ref || consumer.origin !== vendor.base || token === undefined)
+              if (
+                candidate !== ref ||
+                consumer.kind !== "connector" ||
+                consumer.origin !== vendor.base ||
+                token === undefined
+              )
                 return Effect.fail(
                   new AccountsError({
                     reason: "not-found",
@@ -2406,6 +2417,493 @@ describe("GitHub with Source Control's account", () => {
       vendor.validTokens.add(OCTO_TOKEN);
       yield* connectGitHub(harness);
       expect((yield* (yield* restart).list()).connectors).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+/** A stdio MCP server: echoes its key, argument and folder; `MODE=crash` fails on first input. */
+const LOCAL_SERVER = `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (process.env.MODE === "crash") {
+    process.stderr.write("boom: missing config\\n");
+    process.exit(3);
+  }
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: {
+      protocolVersion: "2025-11-25", capabilities: { tools: {} },
+      serverInfo: { name: "local-echo", version: "1.0.0" } } });
+  } else if (message.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "whoami", inputSchema: { type: "object" } }] } });
+  } else if (message.method === "tools/call") {
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [
+      { type: "text", text: JSON.stringify({ greeting: process.argv[2], cwd: process.cwd() }) },
+      { type: "text", text: process.env.TOKEN }] } });
+  }
+});
+`;
+
+const LOCAL_KEY = "sk-local-0123456789abcdef";
+
+const writeBundle = (file: string) =>
+  Effect.promise(async () => {
+    const zip = new yazl.ZipFile();
+    zip.addBuffer(
+      Buffer.from(
+        JSON.stringify({
+          manifest_version: "0.3",
+          name: "local-echo",
+          display_name: "Local Echo",
+          version: "1.2.0",
+          description: "Echoes what it was started with.",
+          author: { name: "Scient tests" },
+          server: {
+            type: "node",
+            entry_point: "server/index.mjs",
+            mcp_config: {
+              command: "node",
+              args: ["${__dirname}/server/index.mjs", "${user_config.greeting}"],
+              env: { TOKEN: "${user_config.api_key}" },
+            },
+          },
+          user_config: {
+            api_key: { type: "string", title: "API key", sensitive: true, required: true },
+            greeting: { type: "string", title: "Greeting", default: "hi" },
+          },
+        }),
+      ),
+      "manifest.json",
+    );
+    zip.addBuffer(Buffer.from(LOCAL_SERVER), "server/index.mjs");
+    zip.end();
+    await NodeStreamPromises.pipeline(zip.outputStream, NodeFS.createWriteStream(file));
+  });
+
+const readEvents = (response: Response) =>
+  Effect.promise(async () => {
+    const text = await response.text();
+    return text
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as Record<string, unknown>);
+  });
+
+/** Accounts with API-key accounts kept in memory, as local connectors use them. */
+const fakeKeyAccounts = () => {
+  const keys = new Map<string, { name: string; value: string; envName?: string }>();
+  let next = 0;
+  let revision = 0;
+  const summaries = () =>
+    [...keys].map(([accountId, key]) => ({
+      accountId,
+      name: key.name,
+      details: {
+        kind: "api-key",
+        sites: [],
+        auth: { type: "bearer" },
+        ...(key.envName === undefined ? {} : { envName: key.envName }),
+      },
+      secrets: { token: { source: { type: "scient" } } },
+      controls: { access: "allowed" },
+    }));
+  const layer = Layer.mock(AccountsService)({
+    snapshot: Effect.sync(() => ({ accounts: summaries() }) as never),
+    bindingRevision: Effect.sync(() => revision),
+    save: (input) =>
+      Effect.sync(() => {
+        const accountId =
+          input.accountId ?? AccountId.make(`acc_localkey${String(++next).padStart(4, "0")}`);
+        const token = input.secrets.token;
+        revision += 1;
+        keys.set(accountId, {
+          name: input.name,
+          value: token?.type === "scient" ? token.value : "",
+          ...(input.details.kind === "api-key" && input.details.envName !== undefined
+            ? { envName: input.details.envName }
+            : {}),
+        });
+        return { accountId };
+      }),
+    remove: (accountId) => Effect.sync(() => void keys.delete(accountId)),
+    resolveBound: (ref, consumer) =>
+      Effect.suspend(() => {
+        const accountId = ref.replace(/^account:/, "").replace(/:token$/, "");
+        const key = keys.get(accountId);
+        return key === undefined || consumer.kind !== "local-connector"
+          ? Effect.fail(
+              new AccountsError({ reason: "not-found", message: "Synthetic key unavailable." }),
+            )
+          : Effect.succeed(Redacted.make(key.value));
+      }),
+  });
+  return { keys, layer };
+};
+
+describe("local connectors", () => {
+  it.live(
+    "runs a bundle per agent session through the proxy, with its key only in its environment",
+    () =>
+      Effect.gen(function* () {
+        const accounts = fakeKeyAccounts();
+        const harness = yield* makeHarness().pipe(Effect.provide(accounts.layer));
+        const archive = NodePath.join(harness.config.stateDir, "..", "local-echo.mcpb");
+        yield* writeBundle(archive);
+        const inspected = yield* harness.runtime.inspectLocal({ path: archive });
+        expect(inspected).toMatchObject({
+          kind: "bundle",
+          displayName: "Local Echo",
+          runtime: "node",
+          fields: [
+            { key: "api_key", sensitive: true, required: true, envName: "TOKEN" },
+            { key: "greeting", sensitive: false, default: "hi" },
+          ],
+        });
+
+        const added = yield* harness.runtime.add({
+          target: {
+            type: "local-bundle",
+            path: archive,
+            settings: { greeting: "hello" },
+            keys: { api_key: { type: "value", value: LOCAL_KEY } },
+          },
+        });
+        const connectorId = added.connector.connectorId;
+        harness.delivered.add(connectorId);
+        expect(added.connector.local).toMatchObject({
+          kind: "bundle",
+          version: "1.2.0",
+          running: 0,
+          missing: [],
+          setup: [{ field: { key: "api_key" }, account: "Local Echo API key" }, { value: "hello" }],
+        });
+        // The key is an Accounts key; nothing of it is on the connector.
+        expect([...accounts.keys.values()]).toMatchObject([{ value: LOCAL_KEY }]);
+        expect(
+          yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8")),
+        ).not.toContain(LOCAL_KEY);
+
+        const opened = yield* harness.proxy(connectorId, initialize(1));
+        expect(opened.headers.get("content-type")).toBe("text/event-stream");
+        const session = opened.headers.get("mcp-session-id")!;
+        expect(yield* readEvents(opened)).toMatchObject([
+          { id: 1, result: { serverInfo: { name: "local-echo" } } },
+        ]);
+        const called = yield* readEvents(
+          yield* harness.proxy(connectorId, toolCall(2), { session }),
+        );
+        // The program got its key and argument and runs in its own folder; an echoed key is redacted.
+        const [first, second] = (called[0] as { result: { content: Array<{ text: string }> } })
+          .result.content;
+        expect(JSON.parse(first!.text)).toMatchObject({ greeting: "hello" });
+        expect(JSON.parse(first!.text).cwd).toContain(NodePath.join("connectors", "local-echo-"));
+        expect(second!.text).toBe("[redacted by Scient]");
+
+        // A second agent session gets its own process.
+        const other = yield* harness.proxy(connectorId, initialize(1), {
+          token: OTHER_AGENT_TOKEN,
+        });
+        expect(other.headers.get("mcp-session-id")).not.toBe(session);
+        yield* readEvents(other);
+        const running = (yield* harness.runtime.list()).connectors.find(
+          (connector) => connector.connectorId === connectorId,
+        );
+        expect(running?.local?.running).toBe(2);
+
+        const closed = yield* harness.request(connectorId, { method: "DELETE", session });
+        expect(closed.status).toBe(204);
+        const test = yield* harness.runtime.test({ connectorId });
+        expect(test).toMatchObject({
+          outcome: "ok",
+          serverName: "local-echo",
+          tools: [{ name: "whoami" }],
+        });
+
+        const folder = added.connector.local!.directory;
+        yield* harness.runtime.remove({ connectorId });
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.stat(folder).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        ).toBe(false);
+        // Its key stays in Accounts for the user.
+        expect(accounts.keys.size).toBe(1);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("is added without its key, says what it needs, and runs once the key is linked", () =>
+    Effect.gen(function* () {
+      const accounts = fakeKeyAccounts();
+      const harness = yield* makeHarness().pipe(Effect.provide(accounts.layer));
+      const archive = NodePath.join(harness.config.stateDir, "..", "local-echo.mcpb");
+      yield* writeBundle(archive);
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: archive, settings: {}, keys: {} },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      expect(added.connector.local?.missing).toEqual(["API key"]);
+      expect(yield* harness.runtime.test({ connectorId })).toMatchObject({
+        outcome: "needs-setup",
+        message: "Needs API key.",
+      });
+
+      // Until it is set up, Scient answers for it and says how to fix it.
+      const opened = yield* harness.proxy(connectorId, initialize(1));
+      const session = opened.headers.get("mcp-session-id")!;
+      yield* readEvents(opened);
+      const asked = yield* readEvents(yield* harness.proxy(connectorId, toolCall(2), { session }));
+      expect(asked).toMatchObject([{ id: 2, result: { isError: true } }]);
+      expect(JSON.stringify(asked)).toContain("scient_connector_setup");
+
+      yield* harness.runtime.update({
+        connectorId,
+        localSetup: { settings: {}, keys: { api_key: { type: "value", value: LOCAL_KEY } } },
+      });
+      // The stand-in stopped; the agent's next session reaches the program.
+      expect((yield* harness.proxy(connectorId, toolCall(3), { session })).status).toBe(404);
+      const reopened = yield* harness.proxy(connectorId, initialize(4));
+      const live = reopened.headers.get("mcp-session-id")!;
+      expect(yield* readEvents(reopened)).toMatchObject([
+        { id: 4, result: { serverInfo: { name: "local-echo" } } },
+      ]);
+
+      // A key changed in Accounts restarts copies holding the old one.
+      const [accountId] = [...accounts.keys.keys()];
+      yield* AccountsService.pipe(
+        Effect.flatMap((service) =>
+          service.save({
+            accountId: AccountId.make(accountId!),
+            name: "Local Echo API key",
+            details: { kind: "api-key", sites: [], auth: { type: "bearer" } },
+            secrets: { token: { type: "scient", value: `${LOCAL_KEY}-rotated` } },
+          }),
+        ),
+        Effect.provide(accounts.layer),
+      );
+      // Even when a copy with the new key started first.
+      yield* readEvents(
+        yield* harness.proxy(connectorId, initialize(6), { token: OTHER_AGENT_TOKEN }),
+      );
+      expect((yield* harness.proxy(connectorId, toolCall(5), { session: live })).status).toBe(404);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "imports a folder's .mcp.json server, running it there with its key moved to Accounts",
+    () =>
+      Effect.gen(function* () {
+        const accounts = fakeKeyAccounts();
+        const harness = yield* makeHarness().pipe(Effect.provide(accounts.layer));
+        const folder = yield* Effect.promise(() =>
+          NodeFSP.realpath(NodePath.join(harness.config.stateDir, "..")),
+        );
+        const script = NodePath.join(folder, "echo.mjs");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(script, LOCAL_SERVER);
+          await NodeFSP.writeFile(
+            NodePath.join(folder, ".mcp.json"),
+            JSON.stringify({
+              mcpServers: {
+                echo: {
+                  command: process.execPath,
+                  args: [script, "from .mcp.json"],
+                  env: { TOKEN: LOCAL_KEY, REGION: "eu" },
+                },
+                remote: { type: "http", url: "https://example.com/mcp" },
+                // Neither could start here, so neither is offered.
+                off: { command: process.execPath, args: [script], disabled: true },
+                elsewhere: { command: "./Other.app/Contents/MacOS/helper", args: ["mcp"] },
+                // A pass-through variable its own `env` supplies is not app-only.
+                given: {
+                  command: process.execPath,
+                  args: [script],
+                  env: { SCIENT_TEST_REGION: "eu" },
+                  env_vars: ["SCIENT_TEST_REGION"],
+                },
+              },
+            }),
+          );
+        });
+        const inspected = yield* harness.runtime.inspectLocal({ path: folder });
+        expect(inspected).toMatchObject({
+          kind: "servers",
+          servers: [{ name: "echo", keys: ["TOKEN"] }, { name: "given" }],
+        });
+        const added = yield* harness.runtime.add({
+          target: { type: "local-import", source: { type: "file", path: folder }, name: "echo" },
+        });
+        const local = added.connector.local!;
+        expect(local).toMatchObject({ kind: "import", missing: [] });
+        const manifest = yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(local.directory, "manifest.json"), "utf8"),
+        );
+        expect(manifest).not.toContain(LOCAL_KEY);
+        expect(JSON.parse(manifest)._meta).toEqual({
+          "com.scientfactory.scient": { workingDirectory: folder },
+        });
+        expect([...accounts.keys.values()]).toMatchObject([{ value: LOCAL_KEY, envName: "TOKEN" }]);
+
+        harness.delivered.add(added.connector.connectorId);
+        const opened = yield* harness.proxy(added.connector.connectorId, initialize(1));
+        const session = opened.headers.get("mcp-session-id")!;
+        yield* readEvents(opened);
+        const called = yield* readEvents(
+          yield* harness.proxy(added.connector.connectorId, toolCall(2), { session }),
+        );
+        const [first, second] = (called[0] as { result: { content: Array<{ text: string }> } })
+          .result.content;
+        expect(JSON.parse(first!.text)).toMatchObject({ greeting: "from .mcp.json", cwd: folder });
+        expect(second!.text).toBe("[redacted by Scient]");
+
+        // A key on the command line is never shown or added.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            NodePath.join(folder, ".mcp.json"),
+            JSON.stringify({
+              mcpServers: {
+                argv: { command: process.execPath, args: [script, "--api-key", LOCAL_KEY] },
+                equals: { command: process.execPath, args: [script, "--password==hunter2"] },
+              },
+            }),
+          ),
+        );
+        const listed = yield* harness.runtime.inspectLocal({ path: folder });
+        expect(JSON.stringify(listed)).not.toContain(LOCAL_KEY);
+
+        // A folder with nothing that could start here says why.
+        const appOnly = NodePath.join(folder, "app-only");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(appOnly);
+          await NodeFSP.writeFile(
+            NodePath.join(appOnly, ".mcp.json"),
+            JSON.stringify({ mcpServers: { helper: { command: "./Helper.app/helper" } } }),
+          );
+        });
+        const nothing = yield* harness.runtime.inspectLocal({ path: appOnly }).pipe(Effect.flip);
+        expect(nothing.message).toContain(NodePath.join(appOnly, "Helper.app/helper"));
+
+        // A Scient plugin folder is recognized, to be installed as a plugin.
+        const plugin = NodePath.join(folder, "plugin");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(plugin);
+          await NodeFSP.writeFile(
+            NodePath.join(plugin, "scient.plugin.json"),
+            JSON.stringify({
+              apiVersion: "scient.plugins/v1alpha1",
+              id: "acme.lab",
+              version: "1.0.0",
+              displayName: "Acme Lab",
+              description: "Lab notebook guidance.",
+              publisher: "Acme",
+              contributes: { skills: ["skills/lab-notes"] },
+            }),
+          );
+        });
+        expect(yield* harness.runtime.inspectLocal({ path: plugin })).toEqual({
+          kind: "plugin",
+          displayName: "Acme Lab",
+        });
+        const refused = yield* harness.runtime
+          .add({
+            target: { type: "local-import", source: { type: "file", path: folder }, name: "argv" },
+          })
+          .pipe(Effect.flip);
+        expect(refused.message).toContain("--api-key");
+        const refusedEquals = yield* harness.runtime
+          .add({
+            target: {
+              type: "local-import",
+              source: { type: "file", path: folder },
+              name: "equals",
+            },
+          })
+          .pipe(Effect.flip);
+        expect(refusedEquals.message).toContain("--password");
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "answers with the program's own error when it cannot start, and shows it on the row",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const script = NodePath.join(harness.config.stateDir, "..", "crash.mjs");
+        yield* Effect.promise(() => NodeFSP.writeFile(script, LOCAL_SERVER));
+        const added = yield* harness.runtime.add({
+          target: {
+            type: "local-command",
+            command: process.execPath,
+            args: [script],
+            environment: [{ name: "MODE", value: "crash", secret: false }],
+          },
+          displayName: "Crasher",
+        });
+        const connectorId = added.connector.connectorId;
+        harness.delivered.add(connectorId);
+        // A typed command becomes a folder with a manifest Scient wrote.
+        const manifest = JSON.parse(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(
+              NodePath.join(added.connector.local!.directory, "manifest.json"),
+              "utf8",
+            ),
+          ),
+        );
+        expect(manifest.server.mcp_config).toMatchObject({
+          command: process.execPath,
+          args: [script],
+          env: { MODE: "crash" },
+        });
+        const answered = yield* readEvents(yield* harness.proxy(connectorId, initialize(7)));
+        expect(answered).toMatchObject([
+          { id: 7, error: { message: "Crasher could not start: boom: missing config." } },
+        ]);
+        const row = (yield* harness.runtime.list()).connectors.find(
+          (connector) => connector.connectorId === connectorId,
+        );
+        expect(row?.lastError).toBe("Crasher could not start: boom: missing config.");
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("refuses a bundle that puts its key on the command line", () =>
+    Effect.gen(function* () {
+      const accounts = fakeKeyAccounts();
+      const harness = yield* makeHarness().pipe(Effect.provide(accounts.layer));
+      const folder = NodePath.join(harness.config.stateDir, "..", "argv-key");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(folder, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(folder, "manifest.json"),
+          JSON.stringify({
+            name: "argv-key",
+            version: "1.0.0",
+            server: {
+              type: "node",
+              entry_point: "index.mjs",
+              mcp_config: { command: "node", args: ["index.mjs", "--key=${user_config.key}"] },
+            },
+            user_config: { key: { type: "string", title: "Key", sensitive: true, required: true } },
+          }),
+        );
+      });
+      const refused = yield* harness.runtime
+        .add({
+          target: {
+            type: "local-bundle",
+            path: folder,
+            settings: {},
+            keys: { key: { type: "value", value: LOCAL_KEY } },
+          },
+        })
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("command line");
+      expect(accounts.keys.size).toBe(0);
     }).pipe(Effect.provide(testLayer)),
   );
 });

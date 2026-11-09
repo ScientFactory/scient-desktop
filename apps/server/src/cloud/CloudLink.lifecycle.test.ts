@@ -223,6 +223,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
     readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
+    readonly connector?: ManagedEndpointRuntime.ConnectorFacts;
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -293,7 +294,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             requestRecovery: () => Effect.void,
             restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
-            inspectConnector: Effect.succeed(null),
+            inspectConnector: Effect.succeed(harness.connector ?? null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
@@ -1202,12 +1203,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(state.reachability?.status === "unreachable" && state.reachability.cause).not.toBe(
         "not_linked",
       );
+      // The address shows before any check passes.
+      expect(state.tunnelHostname).toBe("prod-abc.t3coderelay.com");
     }).pipe(
       provideReleaseHarness({
         store,
         applyConfigCalls: [],
         requests: [],
         latestReachability: Effect.succeedSome(notLinked),
+        connector: {
+          pid: 123,
+          readyConnections: 0,
+          hostname: "prod-abc.t3coderelay.com",
+          protocol: null,
+        },
       }),
     );
   });
