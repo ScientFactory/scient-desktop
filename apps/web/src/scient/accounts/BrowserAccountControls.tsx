@@ -102,7 +102,7 @@ function SaveSignIn({
             {comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"}
           </div>
           <div className="my-2 text-xs text-muted-foreground">
-            {new URL(origin).hostname} · {capture.username}
+            {[new URL(origin).hostname, capture.username].filter(Boolean).join(" · ")}
           </div>
           <div className="mb-3">
             <SaveStores
@@ -139,7 +139,7 @@ function SaveSignIn({
                 onClose();
               }}
             >
-              Never for this site
+              Don't ask for this site
             </Button>
           </div>
         </div>
@@ -220,7 +220,14 @@ function DesktopBrowserAccountControls({
           profileId: capture.profileId,
         });
         if (generation !== captureGeneration.current || !result.ok) return;
-        setPending(result.value.result === "same" ? null : { capture, comparison: result.value });
+        // Without a username it is a sign-in only on a site already saved with none.
+        const offer =
+          result.value.result !== "same" &&
+          (capture.username !== "" ||
+            matchingAccounts(data?.accounts ?? [], capture.url, capture.profileId).some(
+              ({ details }) => details.kind === "website" && !details.username,
+            ));
+        setPending(offer ? { capture, comparison: result.value } : null);
         // The saved password went in; once the login form is gone, it worked.
         const { accountId } = result.value;
         if (result.value.result === "same" && accountId) {
