@@ -1378,8 +1378,8 @@ importers:
         specifier: ^1.8.0
         version: 1.8.0
       plotly.js-strict-dist-min:
-        specifier: 3.7.0
-        version: 3.7.0
+        specifier: 4.2.0
+        version: 4.2.0
       prosemirror-commands:
         specifier: ^1.7.2
         version: 1.7.2
@@ -11985,8 +11985,8 @@ packages:
     resolution: {integrity: sha512-ZIfcLJC+7E7FBFnDxm9MPmt7D+DidyQ26lewieO75AdhA2ayMtsJSES0iWzqJQbcVRSrTufQoy0DR94xHue0oA==}
     engines: {node: '>=10.4.0'}
 
-  plotly.js-strict-dist-min@3.7.0:
-    resolution: {integrity: sha512-icoHjKd4XUDxQyijcHgj1v2iujC+QF4s/HCj2iHn5SY52/wb2tPsHP5wbtq6Vv/qW0qrqWmCjpxHRR0tfptRmw==}
+  plotly.js-strict-dist-min@4.2.0:
+    resolution: {integrity: sha512-187yjrpuOgQHocroi66mWVAh6Ckdm1BOEO6uWQE552lG1GlmL/70LJdLsvOMq3evTG/EehCLFggIVm2/2ZHyJQ==}
 
   pngjs@3.4.0:
     resolution: {integrity: sha512-NCrCHhWmnQklfH4MtJMRjZ2a8c80qXeMlQMv2uVp9ISJMTt562SbGd6n2oq0PaPgKm7Z6pL9E2UlLIhC+SHL3w==}
@@ -23502,7 +23502,7 @@ snapshots:
       base64-js: 1.5.1
       xmlbuilder: 15.1.1
 
-  plotly.js-strict-dist-min@3.7.0: {}
+  plotly.js-strict-dist-min@4.2.0: {}
 
   pngjs@3.4.0: {}
 

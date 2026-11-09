@@ -150,6 +150,10 @@ const browserTestProject = {
       "pdfjs-dist",
       "sql.js",
       "tiff",
+      // SCIENT-FORK:START — the real-bundle Plotly test loads these lazily.
+      "plotly.js-strict-dist-min",
+      "mathjax/es5/tex-svg.js",
+      // SCIENT-FORK:END
     ],
   },
   test: {
