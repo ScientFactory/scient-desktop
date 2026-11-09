@@ -20,6 +20,13 @@ const mocks = vi.hoisted(() => ({
     readonly onSubmit: (name: string) => Promise<boolean>;
     readonly onOpenChange: (open: boolean) => void;
   },
+  pickerProps: null as null | {
+    readonly open: boolean;
+    readonly threadRefs: readonly unknown[];
+    readonly anchor: unknown;
+    readonly onCreate: (name: string) => Promise<boolean>;
+    readonly onOpenChange: (open: boolean) => void;
+  },
   mode: "sections",
 }));
 vi.mock("./catalog", () => ({
@@ -74,6 +81,12 @@ vi.mock("../../state/entities", () => {
 vi.mock("./NewSectionPopover", () => ({
   NewSectionPopover: (props: NonNullable<typeof mocks.popoverProps>) => {
     mocks.popoverProps = props;
+    return null;
+  },
+}));
+vi.mock("./SectionPickerPopover", () => ({
+  SectionPickerPopover: (props: NonNullable<typeof mocks.pickerProps>) => {
+    mocks.pickerProps = props;
     return null;
   },
 }));
@@ -152,7 +165,7 @@ const refs = [
 ];
 
 it.each(["sections", "status"])(
-  "creates and files threads in an anchored popover in %s mode",
+  "opens an anchored section picker that creates and files threads in %s mode",
   async (mode) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -164,16 +177,16 @@ it.each(["sections", "status"])(
     mocks.moveThreadsToSection.mockResolvedValue(true);
     expect(_fixture.sections.sectionsView).toBe(mode === "sections");
     await act(async () => {
-      await _fixture.sections.handleSectionMenuAction("section:new", refs, { x: 20, y: 100 });
+      await _fixture.sections.handleSectionMenuAction("section", refs, { x: 20, y: 100 });
     });
-    expect(mocks.popoverProps).toMatchObject({
+    expect(mocks.pickerProps).toMatchObject({
       open: true,
-      threadCount: 2,
+      threadRefs: refs,
       anchor: { x: 20, y: 100 },
     });
     await act(async () => {
-      await mocks.popoverProps!.onSubmit("Design");
-      mocks.popoverProps!.onOpenChange(false);
+      await mocks.pickerProps!.onCreate("Design");
+      mocks.pickerProps!.onOpenChange(false);
     });
     expect(mocks.create).toHaveBeenCalledWith(LOCAL, "Design", {
       environmentIds: ["local"],
@@ -187,7 +200,7 @@ it.each(["sections", "status"])(
       environmentId: LOCAL,
       sectionId: "design",
     });
-    expect(mocks.popoverProps).toMatchObject({ open: false });
+    expect(mocks.pickerProps).toMatchObject({ open: false });
   },
 );
 
