@@ -29,6 +29,11 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
+import {
+  fixConnectorPrompt,
+  improveConnectorPrompt,
+  useConnectorAgentChat,
+} from "./connectorAgentChat";
 import { ActionError, SignInBlockedNotice } from "./ExtensionsFeedback";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
@@ -184,6 +189,9 @@ function ConnectorMenuItems({
           Restart
         </MenuItem>
       ) : null}
+      {connector.local !== undefined ? (
+        <LocalConnectorMenuItems connector={connector} actions={actions} />
+      ) : null}
       <MenuSeparator />
       <MenuItem
         variant="destructive"
@@ -191,6 +199,60 @@ function ConnectorMenuItems({
         onClick={() => void actions.remove()}
       >
         Remove
+      </MenuItem>
+    </>
+  );
+}
+
+/** Problem text an agent fixing the connector starts from: its folder problem, then its error. */
+export function connectorProblem(connector: ConnectorSummary): string | undefined {
+  return connector.local?.problem ?? connector.lastError;
+}
+
+/** A local connector's agent chats, Undo and Export; shared by its row and its page. */
+export function LocalConnectorMenuItems({
+  connector,
+  actions,
+}: {
+  readonly connector: ConnectorSummary;
+  readonly actions: ConnectorActionsState;
+}) {
+  const { environmentId } = useExtensionsEnvironment();
+  const startChat = useConnectorAgentChat(environmentId);
+  const problem = connectorProblem(connector);
+  return (
+    <>
+      {startChat !== undefined && problem !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void startChat(
+              fixConnectorPrompt(connector.displayName, connector.serverName, problem),
+              "fix",
+            )
+          }
+        >
+          Fix with an agent
+        </MenuItem>
+      ) : null}
+      {startChat !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void startChat(
+              improveConnectorPrompt(connector.displayName, connector.serverName),
+              "improve",
+            )
+          }
+        >
+          Improve with an agent
+        </MenuItem>
+      ) : null}
+      {connector.local?.canUndo ? (
+        <MenuItem disabled={actions.locked} onClick={() => void actions.undo()}>
+          Undo last change
+        </MenuItem>
+      ) : null}
+      <MenuItem disabled={actions.locked} onClick={() => void actions.exportBundle()}>
+        Export
       </MenuItem>
     </>
   );

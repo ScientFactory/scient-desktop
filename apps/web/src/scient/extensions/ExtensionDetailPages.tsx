@@ -2,6 +2,7 @@ import ChatMarkdown from "../../components/ChatMarkdown";
 import { ConnectorToolsList } from "./ConnectorToolsList";
 import { PluginContents } from "./PluginContents";
 import {
+  AccountId,
   type ConnectorSummary,
   type ConnectorTestResult,
   type DiscoverCatalog,
@@ -47,7 +48,16 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
-import { ActionFeedback, mcpServerSummary } from "./ExtensionItems";
+import {
+  ActionFeedback,
+  connectorProblem,
+  LocalConnectorMenuItems,
+  mcpServerSummary,
+} from "./ExtensionItems";
+import { fixConnectorPrompt, useConnectorAgentChat } from "./connectorAgentChat";
+import { ErrorNote } from "./ExtensionsFeedback";
+import { siteHost } from "./LocalSetupFields";
+import { useSignIn } from "../accounts/useSignIn";
 import {
   BackLink,
   ExtensionsPage,
@@ -602,6 +612,11 @@ function ConnectorDetail({
   const actions = useConnectorActions(connector);
   const allowed = connectorActions(connector);
   const [editing, setEditing] = useState(false);
+  const startChat = useConnectorAgentChat(environmentId);
+  const signInPerson = useSignIn(environmentId);
+  const problem = connectorProblem(connector);
+  const local = connector.local;
+  const signIn = local?.signIn;
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const revealFolder = async (folder: string) => {
     const result = await openInEditor({
@@ -683,10 +698,33 @@ function ConnectorDetail({
                   <MenuItem onClick={() => void revealFolder(connector.local!.directory)}>
                     Show in folder
                   </MenuItem>
+                  <LocalConnectorMenuItems connector={connector} actions={actions} />
                 </>
               ) : null}
             </MoreMenu>
           </CardRow>
+          {local !== undefined && (local.changedBy !== undefined || local.forkedFrom) ? (
+            <CardRow>
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                {[
+                  local.forkedFrom ? `Your copy of ${local.forkedFrom}` : null,
+                  `Changed by ${local.changedBy === "agent" ? "an agent" : "you"} on ${formatDate(connector.updatedAt)}`,
+                ]
+                  .filter(Boolean)
+                  .join(". ")}
+              </span>
+              {local.canUndo ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={actions.locked}
+                  onClick={() => void actions.undo()}
+                >
+                  Undo last change
+                </Button>
+              ) : null}
+            </CardRow>
+          ) : null}
           <CardRow>
             <span className="min-w-0 flex-1 text-sm text-foreground">Use with agents</span>
             <Switch
@@ -703,11 +741,53 @@ function ConnectorDetail({
             setAvailability={actions.setAvailability}
           />
         </div>
-        {connector.lastError ? (
-          <p className="text-sm text-destructive-foreground">{connector.lastError}</p>
+        {problem !== undefined ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <ErrorNote message={problem} />
+            </div>
+            {local !== undefined && startChat !== undefined ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void startChat(
+                    fixConnectorPrompt(connector.displayName, connector.serverName, problem),
+                    "fix",
+                  )
+                }
+              >
+                Fix with an agent
+              </Button>
+            ) : null}
+          </div>
         ) : null}
-        {connector.local !== undefined && connector.local.setup.length > 0 ? (
+        {local !== undefined && (local.setup.length > 0 || signIn !== undefined) ? (
           <div className={CARD_CLASS}>
+            {signIn !== undefined ? (
+              <CardRow>
+                <span className="min-w-0 flex-1 text-sm text-foreground">
+                  Sign-in to {siteHost(signIn.site)}
+                </span>
+                <span className="truncate text-sm text-muted-foreground">
+                  {signIn.state === "missing"
+                    ? "Missing"
+                    : signIn.state === "needs-user"
+                      ? "Needs sign-in"
+                      : signIn.account}
+                </span>
+                {signIn.state === "needs-user" && signIn.accountId !== undefined ? (
+                  <Button
+                    size="sm"
+                    disabled={!canWrite || actions.locked}
+                    // The next time its session ends, the connector takes the one the person made.
+                    onClick={() => void signInPerson(AccountId.make(signIn.accountId!))}
+                  >
+                    Sign in
+                  </Button>
+                ) : null}
+              </CardRow>
+            ) : null}
             {connector.local.setup.map(({ field, value, account }) => (
               <CardRow key={field.key}>
                 <span className="min-w-0 flex-1 text-sm text-foreground">{field.title}</span>

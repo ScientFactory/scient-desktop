@@ -13,7 +13,7 @@ import type {
   PersonalSkillSource,
 } from "@t3tools/contracts";
 import { VaultSecretRef } from "@t3tools/contracts";
-import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -45,6 +45,7 @@ import {
 import { useScientAnalyticsView } from "../analytics/client";
 import { finishSkillPrompt, useSkillAgentChat } from "../skills/skillAgentChat";
 import { canAddCandidate, ImportableSkillRows, SkillCandidateRows } from "./AddSkillsRows";
+import { MAKE_CONNECTOR_PROMPT, useConnectorAgentChat } from "./connectorAgentChat";
 import { commandFailureMessage, ErrorNote } from "./ExtensionsFeedback";
 import {
   addConnector,
@@ -239,6 +240,7 @@ export function AddLocalConnectorDialog({
   const [showImports, setShowImports] = useState(false);
   const [dragging, setDragging] = useState(false);
   const startChat = useSkillAgentChat(environmentId);
+  const startConnectorChat = useConnectorAgentChat(environmentId);
   useScientAnalyticsView(
     open
       ? {
@@ -661,6 +663,20 @@ export function AddLocalConnectorDialog({
                     {reading ? "Reading…" : "Open"}
                   </Button>
                 </div>
+                {!skillsFirst && startConnectorChat !== undefined ? (
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    className="-ms-2 justify-self-start"
+                    onClick={() => {
+                      onOpenChange(false);
+                      void startConnectorChat(MAKE_CONNECTOR_PROMPT, "make");
+                    }}
+                  >
+                    <SparklesIcon aria-hidden />
+                    Or make a connector with an agent
+                  </Button>
+                ) : null}
                 {importCount > 0 ? (
                   <div className="grid grid-cols-1 gap-2">
                     <Button

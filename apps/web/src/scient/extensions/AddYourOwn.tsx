@@ -1,9 +1,10 @@
-import { PlusIcon } from "lucide-react";
+import { PlusIcon, SparklesIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
+import { MAKE_CONNECTOR_PROMPT, useConnectorAgentChat } from "./connectorAgentChat";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import type { ExtensionKind } from "./extensionsView";
 
@@ -67,5 +68,23 @@ export function AddYourOwn({
         />
       ) : null}
     </>
+  );
+}
+
+/** Opens a chat where an agent makes a connector with the user; shown with the plugins. */
+export function MakeConnector({ kind }: { readonly kind?: ExtensionKind | undefined }) {
+  const { environmentId, canWrite } = useExtensionsEnvironment();
+  const startChat = useConnectorAgentChat(environmentId);
+  if (kind === "skills" || startChat === undefined) return null;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={!canWrite}
+      onClick={() => void startChat(MAKE_CONNECTOR_PROMPT, "make")}
+    >
+      <SparklesIcon aria-hidden />
+      Make a connector
+    </Button>
   );
 }

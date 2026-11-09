@@ -21,7 +21,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
-import { AddYourOwn } from "./AddYourOwn";
+import { AddYourOwn, MakeConnector } from "./AddYourOwn";
 import { ProviderStoreShelves, StoreInstall, storeAvailable } from "./ProviderStorePages";
 import { ConnectorItem, EntryItem, PluginItem } from "./ExtensionItems";
 import {
@@ -386,6 +386,7 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
       <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
         <ExtensionsTopBar tab="discover" kind={kind}>
           <span className="flex w-full items-center gap-2 sm:w-auto">
+            <MakeConnector kind={kind} />
             <AddYourOwn kind={kind} />
             <SearchField
               label={kind === "skills" ? "Search skills" : "Search plugins"}
