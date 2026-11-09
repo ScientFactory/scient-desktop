@@ -176,16 +176,27 @@ export function createVegaResourceLoader(vega: typeof import("vega")): VegaResou
     if (!failures.some((failure) => failure.message === error.message)) failures.push(error);
     return error;
   };
+  // One chart may be drawn more than once to fit its labels; each resource is fetched once.
+  const loaded = new Map<string, Promise<string>>();
+  const loadOnce = async (uri: string, options: Parameters<Loader["load"]>[1]) => {
+    try {
+      const kind = validateVegaResourceUri(uri);
+      return kind === "data"
+        ? await defaultLoader.load(uri, options)
+        : await fetchVegaRemoteResource(uri);
+    } catch (cause) {
+      throw recordFailure(cause);
+    }
+  };
   const loader: Loader = {
-    async load(uri, options) {
-      try {
-        const kind = validateVegaResourceUri(uri);
-        return kind === "data"
-          ? await defaultLoader.load(uri, options)
-          : await fetchVegaRemoteResource(uri);
-      } catch (cause) {
-        throw recordFailure(cause);
+    load(uri, options) {
+      const key = JSON.stringify([uri, options ?? null]);
+      let pending = loaded.get(key);
+      if (pending == null) {
+        pending = loadOnce(uri, options);
+        loaded.set(key, pending);
       }
+      return pending;
     },
     async sanitize(uri, options) {
       try {
@@ -215,7 +226,17 @@ export function createVegaResourceLoader(vega: typeof import("vega")): VegaResou
   return { failures, loader };
 }
 
-export function vegaLiteThemeConfig(theme: VegaLiteTheme): Record<string, unknown> {
+/**
+ * Category labels under a chart lie flat when they fit, slant when they would touch, and stand
+ * upright when even slanted ones would. An angle the chart sets itself always wins.
+ */
+export const X_CATEGORY_LABEL_ANGLES = [0, -45, -90] as const;
+export type XCategoryLabelAngle = (typeof X_CATEGORY_LABEL_ANGLES)[number];
+
+export function vegaLiteThemeConfig(
+  theme: VegaLiteTheme,
+  xCategoryLabelAngle: XCategoryLabelAngle = 0,
+): Record<string, unknown> {
   const dark = theme === "dark";
   const text = dark ? "#e5e5e5" : "#262626";
   const secondaryText = dark ? "#d4d4d4" : "#525252";
@@ -245,6 +266,7 @@ export function vegaLiteThemeConfig(theme: VegaLiteTheme): Record<string, unknow
     },
     // Gridlines already carry the vertical scale.
     axisY: { domain: false, ticks: false },
+    axisXDiscrete: { labelAngle: xCategoryLabelAngle },
     legend: {
       labelColor: secondaryText,
       labelFont: font,
@@ -310,6 +332,69 @@ export function applyScientVegaRuntimeDefaults(spec: VegaSpec): VegaSpec {
   return spec;
 }
 
+interface AxisLabelBox {
+  readonly fontSize: number;
+  readonly x: number;
+  readonly x1: number;
+  readonly x2: number;
+}
+
+function sceneChildren(value: unknown): ReadonlyArray<unknown> {
+  return isRecord(value) && Array.isArray(value.items) ? value.items : [];
+}
+
+function axisLabelBox(label: unknown): AxisLabelBox | null {
+  if (!isRecord(label) || label.opacity === 0 || !isRecord(label.bounds)) return null;
+  const { x, fontSize } = label;
+  const { x1, x2 } = label.bounds;
+  if (typeof x !== "number" || typeof x1 !== "number" || typeof x2 !== "number") return null;
+  if (label.text == null || String(label.text).length === 0) return null;
+  return { fontSize: typeof fontSize === "number" ? fontSize : 11, x, x1, x2 };
+}
+
+/** The drawn labels of every horizontal axis, left to right, from a view's scenegraph. */
+export function horizontalAxisLabels(scene: unknown): ReadonlyArray<ReadonlyArray<AxisLabelBox>> {
+  const axes: AxisLabelBox[][] = [];
+  const visit = (mark: unknown): void => {
+    if (!isRecord(mark)) return;
+    for (const item of sceneChildren(mark)) {
+      if (mark.role === "axis" && isRecord(item)) {
+        if (item.orient !== "bottom" && item.orient !== "top") continue;
+        const labels = sceneChildren(item).find(
+          (child) => isRecord(child) && child.role === "axis-label",
+        );
+        axes.push(
+          sceneChildren(labels)
+            .flatMap((label) => axisLabelBox(label) ?? [])
+            .toSorted((left, right) => left.x - right.x),
+        );
+        continue;
+      }
+      for (const child of sceneChildren(item)) visit(child);
+    }
+  };
+  // Vega's typings omit the scenegraph's root mark, which holds the drawn scene.
+  visit(isRecord(scene) ? scene.root : null);
+  return axes;
+}
+
+export function axisLabelsCollide(
+  axes: ReadonlyArray<ReadonlyArray<AxisLabelBox>>,
+  angle: XCategoryLabelAngle,
+): boolean {
+  return axes.some((labels) =>
+    labels.some((label, index) => {
+      const next = labels[index + 1];
+      if (next == null) return false;
+      // Flat labels touch when their boxes do. Slanted labels run in parallel lines, so they
+      // touch when the gap across those lines is narrower than the text is tall.
+      return angle === 0
+        ? label.x2 + 2 > next.x1
+        : (next.x - label.x) * Math.SQRT1_2 < label.fontSize;
+    }),
+  );
+}
+
 /** Restores transferred interaction state before the mounted view is exposed as ready. */
 export async function restoreVegaLiteViewState(
   view: Pick<View, "runAsync" | "setState">,
@@ -342,28 +427,42 @@ export async function mountVegaLiteView(input: {
       runtime.vegaLite.version,
     );
     const resourceLoader = createVegaResourceLoader(runtime.vega);
-    result = await runtime.default(input.container, renderSpec as VisualizationSpec, {
-      actions: false,
-      ast: true,
-      config: vegaLiteThemeConfig(input.theme),
-      defaultStyle: false,
-      expressionFunctions: {
-        // Vega 6.3.1's CSP interpreter omitted hypot; upstream fixed it for 6.4.
-        // Registering the standard function keeps codegen/interpreter behavior aligned.
-        hypot: Math.hypot,
-      },
-      loader: resourceLoader.loader,
-      logger,
-      mode: "vega-lite",
-      patch: applyScientVegaRuntimeDefaults,
-      renderer: "svg",
-      tooltip: createScientVegaTooltipHandler(input.theme),
-    });
+    const tooltip = createScientVegaTooltipHandler(input.theme);
+    // Label size is known only once drawn, so a chart whose labels touch is drawn again at the
+    // next angle. Drawing takes a few milliseconds and the loader reuses fetched data.
+    for (const angle of X_CATEGORY_LABEL_ANGLES) {
+      result?.finalize();
+      result = null;
+      result = await runtime.default(input.container, renderSpec as VisualizationSpec, {
+        actions: false,
+        ast: true,
+        config: vegaLiteThemeConfig(input.theme, angle),
+        defaultStyle: false,
+        expressionFunctions: {
+          // Vega 6.3.1's CSP interpreter omitted hypot; upstream fixed it for 6.4.
+          // Registering the standard function keeps codegen/interpreter behavior aligned.
+          hypot: Math.hypot,
+        },
+        loader: resourceLoader.loader,
+        logger,
+        mode: "vega-lite",
+        patch: applyScientVegaRuntimeDefaults,
+        renderer: "svg",
+        tooltip,
+      });
 
-    const firstResourceFailure = resourceLoader.failures[0];
-    if (firstResourceFailure != null) {
-      throw firstResourceFailure;
+      const firstResourceFailure = resourceLoader.failures[0];
+      if (firstResourceFailure != null) {
+        throw firstResourceFailure;
+      }
+      if (
+        angle === X_CATEGORY_LABEL_ANGLES.at(-1) ||
+        !axisLabelsCollide(horizontalAxisLabels(result.view.scenegraph()), angle)
+      ) {
+        break;
+      }
     }
+    if (result == null) throw new Error("Vega-Lite could not render this chart.");
 
     // Capture the authored default before restoring a transferred interaction state.
     // Both inline and expanded views can then reset to the same canonical chart.

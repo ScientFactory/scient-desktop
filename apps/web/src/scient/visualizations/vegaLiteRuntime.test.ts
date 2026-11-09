@@ -1,21 +1,41 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Static audit for the lazy renderer seam.
 import * as NodeFS from "node:fs";
 
-import { parse as parseVega, type Spec as VegaSpec } from "vega";
+import { parse as parseVega, type Spec as VegaSpec, View } from "vega";
 import { compile, type TopLevelSpec } from "vega-lite";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyScientVegaRuntimeDefaults,
+  axisLabelsCollide,
   createVegaResourceLoader,
   fetchVegaRemoteResource,
+  horizontalAxisLabels,
   MAX_VEGA_REMOTE_RESOURCE_BYTES,
   normalizedVegaLiteError,
   restoreVegaLiteViewState,
   SCIENT_VEGA_TOOLTIP_CURSOR,
   validateVegaResourceUri,
   vegaLiteThemeConfig,
+  type XCategoryLabelAngle,
 } from "./vegaLiteRuntime";
+
+async function drawnCategoryLabels(categories: ReadonlyArray<string>, angle: XCategoryLabelAngle) {
+  const spec: TopLevelSpec = {
+    data: { values: categories.map((category, index) => ({ category, value: index + 1 })) },
+    mark: "bar",
+    encoding: {
+      x: { field: "category", type: "nominal" },
+      y: { field: "value", type: "quantitative" },
+    },
+    config: vegaLiteThemeConfig("light", angle),
+  };
+  const view = new View(parseVega(compile(spec).spec), { renderer: "none" });
+  await view.runAsync();
+  const axes = horizontalAxisLabels(view.scenegraph());
+  view.finalize();
+  return axes;
+}
 
 function compiledSpecWithMarks(marks: ReadonlyArray<Record<string, unknown>>) {
   return { marks } as unknown as Parameters<typeof applyScientVegaRuntimeDefaults>[0];
@@ -113,6 +133,53 @@ describe("Vega-Lite runtime policy", () => {
       background: null,
       axis: { labelColor: "#d4d4d4" },
     });
+  });
+
+  it("lays category labels flat by default and lets a chart's own angle win", () => {
+    expect(vegaLiteThemeConfig("light")).toMatchObject({ axisXDiscrete: { labelAngle: 0 } });
+    const authored = compile({
+      data: { values: [{ category: "A", value: 1 }] },
+      mark: "bar",
+      encoding: {
+        x: { field: "category", type: "nominal", axis: { labelAngle: 30 } },
+        y: { field: "value", type: "quantitative" },
+      },
+      config: vegaLiteThemeConfig("light"),
+    }).spec.axes?.find((axis) => axis.orient === "bottom");
+    expect(authored?.labelAngle).toBe(30);
+  });
+
+  it("finds the horizontal axis labels of a drawn chart and tells when they touch", async () => {
+    const short = await drawnCategoryLabels(["A", "B", "C", "D"], 0);
+    expect(short).toHaveLength(1);
+    expect(short[0]?.map((label) => label.x)).toEqual(
+      [...(short[0]?.map((label) => label.x) ?? [])].sort((a, b) => a - b),
+    );
+    expect(short[0]).toHaveLength(4);
+    expect(axisLabelsCollide(short, 0)).toBe(false);
+
+    const long = await drawnCategoryLabels(
+      ["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"],
+      0,
+    );
+    expect(axisLabelsCollide(long, 0)).toBe(true);
+    // Twenty-pixel bands leave room for slanted 11-pixel text.
+    expect(
+      axisLabelsCollide(
+        await drawnCategoryLabels(
+          ["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"],
+          -45,
+        ),
+        -45,
+      ),
+    ).toBe(false);
+  });
+
+  it("stands slanted labels upright when their bands are narrower than the text is tall", () => {
+    const label = (x: number) => ({ fontSize: 11, x, x1: x - 40, x2: x });
+    expect(axisLabelsCollide([[label(0), label(20), label(40)]], -45)).toBe(false);
+    expect(axisLabelsCollide([[label(0), label(12), label(24)]], -45)).toBe(true);
+    expect(axisLabelsCollide([[label(0)], []], 0)).toBe(false);
   });
 
   it("adds the compact inspection cursor only to tooltip marks without an existing cursor", () => {
@@ -275,6 +342,23 @@ describe("Vega-Lite runtime policy", () => {
     expect(runtime.failures).toHaveLength(1);
     expect(runtime.failures[0]?.message).toContain("no stable base in chat");
     await expect(runtime.loader.load("data:text/plain,portable")).resolves.toBe("portable");
+  });
+
+  it("loads each resource once when a chart is drawn again", async () => {
+    const defaultLoader = {
+      file: vi.fn(),
+      http: vi.fn(),
+      load: vi.fn().mockResolvedValue("portable"),
+      sanitize: vi.fn(),
+    };
+    const runtime = createVegaResourceLoader({
+      loader: vi.fn(() => defaultLoader),
+    } as unknown as typeof import("vega"));
+
+    await runtime.loader.load("data:text/plain,portable");
+    await runtime.loader.load("data:text/plain,portable");
+    await runtime.loader.load("data:text/plain,other");
+    expect(defaultLoader.load).toHaveBeenCalledTimes(2);
   });
 });
 
