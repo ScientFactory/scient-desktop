@@ -81,6 +81,9 @@ import {
   layer as accountsSecretStoreLayer,
 } from "./scient/accounts/AccountsSecretStore.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+import { type RemovedAgentKeeper, removedAgentIds } from "./scient/accounts/removedAgentKeys.ts";
+// SCIENT-FORK:END
 import { withCustomModelKeyHints } from "./customModels.ts";
 // SCIENT-FORK:START — custom-model methods and text-generation fallback
 import {
@@ -321,6 +324,10 @@ export class ServerSettingsService extends Context.Service<
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
       options?: { readonly allowUnresolvedSecrets?: boolean },
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
+    // SCIENT-FORK:END
+
+    // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+    readonly setRemovedAgentKeeper?: (keeper: RemovedAgentKeeper) => Effect.Effect<void>;
     // SCIENT-FORK:END
 
     // SCIENT-FORK:START — authoritative project deletion. Server-only: no RPC exposes it.
@@ -1216,6 +1223,34 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+  let removedAgentKeeper: RemovedAgentKeeper | undefined;
+  const keepRemovedAgentKeys = Effect.fn("serverSettings.keepRemovedAgentKeys")(function* (
+    current: ServerSettings,
+    next: ServerSettings,
+  ) {
+    const removed = removedAgentIds(current, next);
+    if (removed.length === 0 || removedAgentKeeper === undefined) return;
+    const materialized = yield* materializeSettingsSecrets(current);
+    yield* removedAgentKeeper(
+      removed.flatMap((instanceId) => {
+        const instance = materialized.providerInstances[instanceId as ProviderInstanceId];
+        return instance ? [{ instanceId, instance }] : [];
+      }),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "keep-removed-agent-keys",
+            providerInstanceId: removed[0],
+            cause,
+          }),
+      ),
+    );
+  });
+  // SCIENT-FORK:END
+
   // Background sweeps read settings every few seconds; reading secret files each time is wasted.
   // Every secret write rewrites the settings file, so a new cached object implies fresh secrets.
   // A read that overlaps a secret write may see files a rollback then restores, so it is not kept.
@@ -1481,6 +1516,9 @@ const make = Effect.gen(function* () {
             providerInstanceId: deferredInstance,
             cause: new Error(CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE),
           });
+        // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+        yield* keepRemovedAgentKeys(current, vettedProviders.settings);
+        // SCIENT-FORK:END
         // After vetting, which can keep stored variables a policy hides from clients.
         const persisted = yield* persistSettingsSecrets(
           current,
@@ -1745,6 +1783,12 @@ const make = Effect.gen(function* () {
     ),
     // SCIENT-FORK:END
     withSettingsSnapshot,
+    // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+    setRemovedAgentKeeper: (keeper) =>
+      Effect.sync(() => {
+        removedAgentKeeper = keeper;
+      }),
+    // SCIENT-FORK:END
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

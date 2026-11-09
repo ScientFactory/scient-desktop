@@ -13,7 +13,9 @@ a browser import.
 
 When an agent needs a key you haven't saved, it asks in a private card and keeps your answer here.
 A key a service refuses shows **Key refused**. **Keys used by Scient** shows the keys Scient itself
-runs on. **Keys in plain files** lists secrets found in `.env` files and shell profiles; **Keep in
+runs on. Removing an agent keeps the keys you typed into its settings here, and adding that kind
+of agent again offers them back. A code you give an agent once, such as a 2FA or pairing code,
+goes to that agent only and isn't kept. **Keys in plain files** lists secrets found in `.env` files and shell profiles; **Keep in
 Accounts** copies one in and leaves the file alone.
 
 ## What agents may use
