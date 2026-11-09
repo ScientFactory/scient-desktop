@@ -24,3 +24,16 @@ it("keeps universal sibling selectors out of app styles", () => {
   });
   expect(offenders).toEqual([]);
 });
+
+// A :has() on body, html or :root makes Chromium restyle the whole document whenever a :has()
+// argument might have changed, such as on each keystroke in a controlled textarea. Key such
+// styles off an attribute on a small element instead.
+it("keeps :has() off the document root", () => {
+  const offenders = sources(root).flatMap((path) => {
+    const text = NodeFS.readFileSync(path, "utf8");
+    return /(?<![\w-])(?:html|body|:root)(?:\[[^\]]*\]|[.#][\w-]+)*:has\((?!\))/u.test(text)
+      ? [NodePath.relative(root, path)]
+      : [];
+  });
+  expect(offenders).toEqual([]);
+});
