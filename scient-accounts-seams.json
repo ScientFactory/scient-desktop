@@ -244,7 +244,7 @@
     {
       "path": "apps/server/src/serverSettings.ts",
       "anchor": "Scient Accounts: encrypt only Custom models credentials through the shared vault.",
-      "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
+      "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users; and, inside the write that removes an agent and before its secrets are deleted, hand its keys to Accounts, failing the removal if they can't be kept."
     },
     {
       "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
@@ -359,7 +359,7 @@
     {
       "path": "packages/contracts/src/settings.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: sign-ins go to other computers unless turned off in Accounts.",
-      "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers."
+      "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers, and name the settings error when a removed agent's keys can't be kept in Accounts."
     }
   ],
   "scientMounts": [

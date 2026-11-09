@@ -421,9 +421,12 @@ consumer's project. Activity names the plugin, variable and agent.
   **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
   Removing an agent deletes its settings, so `keptAgentKeys.ts` first keeps each key typed into
   them (sensitive variables and secret fields) as an API-key account with `keptFrom` (agent kind,
-  setting), unless it already follows an account or the same key is already kept. It watches
-  settings changes and keeps the last value it read. Adding an agent of the same kind offers them
-  back (`accounts.keys.restoreKept`); a restored variable then follows its account. Cursor and
+  setting), unless it is linked to an account (even one since deleted, which stays deleted) or the
+  same key is already kept, and drops the agent's links. It runs inside the settings write that
+  removes the agent, before its secrets are deleted (`setRemovedAgentKeeper`); if keeping fails,
+  the removal fails. Adding an agent of the same kind offers them back
+  (`accounts.keys.restoreKept`); a restored variable then follows its account. Both run once per
+  server, so a key changed in Accounts reaches linked variables whenever it changes. Cursor and
   Antigravity keep their sign-in per instance id, which re-adding under the same name reuses; a
   different name is a separate sign-in by design, so several accounts of one agent stay apart.
 - **One-time cards** (`request_secret` without the Accounts prefix) say on answer that the value went

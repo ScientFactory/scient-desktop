@@ -1,19 +1,17 @@
 import {
   AccountId,
+  AccountsError,
   defaultAccountControls,
-  type AccountSaveInput,
   type AccountSummary,
   type AccountsSnapshot,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { fakeAccounts } from "./Accounts.testkit.ts";
 import { makeKeptAgentKeys } from "./keptAgentKeys.ts";
+import type { RemovedAgent, RemovedAgentKeeper } from "./removedAgentKeys.ts";
 
 const kept = (accountId: string, agent: string, setting: string): AccountSummary => ({
   accountId: AccountId.make(accountId),
@@ -33,42 +31,32 @@ const agent = (environment: ReadonlyArray<object>, config: object = {}) => ({
   config,
 });
 
-const fakeSettings = (instances: Record<string, unknown>) =>
-  Effect.gen(function* () {
-    const changes = yield* Queue.unbounded<unknown>();
-    const updates: Array<{ instanceId: string; instance: Record<string, unknown> }> = [];
-    const service = {
-      getSettings: Effect.sync(() => ({ providerInstances: instances })),
-      subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
-      updateProviderInstance: (mutation: (typeof updates)[number]) =>
-        Effect.sync(() => {
-          updates.push(mutation);
-          return {};
-        }),
-    } as unknown as ServerSettingsService["Service"];
-    return { service, changes, updates };
-  });
+const fakeSettings = (instances: Record<string, unknown>) => {
+  const updates: Array<{ instanceId: string; instance: Record<string, unknown> }> = [];
+  let keeper: RemovedAgentKeeper | undefined;
+  const service = {
+    getSettings: Effect.sync(() => ({ providerInstances: instances })),
+    updateProviderInstance: (mutation: (typeof updates)[number]) =>
+      Effect.sync(() => {
+        updates.push(mutation);
+        return {};
+      }),
+    setRemovedAgentKeeper: (next: RemovedAgentKeeper) =>
+      Effect.sync(() => {
+        keeper = next;
+      }),
+  } as unknown as ServerSettingsService["Service"];
+  return { service, updates, keeper: () => keeper! };
+};
 
-it.effect("keeps a removed agent's typed keys in Accounts once each", () =>
+it.effect("keeps a removed agent's typed keys in Accounts once each, and drops its links", () =>
   Effect.gen(function* () {
-    const settings = yield* fakeSettings({
-      antigravity: agent(
-        [
-          { name: "LINKED_KEY", value: "from-accounts", sensitive: true },
-          { name: "OLD_KEY", value: "kept-before", sensitive: true },
-          // As read settings carry a stored variable: its value, still marked redacted.
-          { name: "NEW_KEY", value: "typed-key", sensitive: true, valueRedacted: true },
-          { name: "HOME_DIR", value: "/home", sensitive: false },
-        ],
-        { apiKey: "typed-api-key" },
-      ),
-    });
+    const settings = fakeSettings({});
     const fake = fakeAccounts({
       accounts: [kept("acc_oldkey01", "antigravity", "OLD_KEY")],
       values: { token: "kept-before" },
     });
-    const done = yield* Deferred.make<void>();
-    const saves: Array<AccountSaveInput> = [];
+    const links: Array<unknown> = [];
     const accounts = {
       ...fake.service,
       snapshot: fake.service.snapshot.pipe(
@@ -80,23 +68,40 @@ it.effect("keeps a removed agent's typed keys in Accounts once each", () =>
               variable: "LINKED_KEY",
               accountId: AccountId.make("acc_oldkey01"),
             },
+            // Its account was deleted: the key isn't saved back.
+            {
+              instanceId: "antigravity",
+              variable: "DELETED_KEY",
+              accountId: AccountId.make("acc_gone0001"),
+            },
           ],
         })),
       ),
-      save: (input: AccountSaveInput) =>
-        fake.service.save(input).pipe(
-          Effect.tap(() => {
-            saves.push(input);
-            return saves.length === 2 ? Deferred.succeed(done, undefined) : Effect.void;
-          }),
-        ),
+      setKeyLink: (target: unknown, accountId?: AccountId) =>
+        Effect.sync(() => {
+          links.push({ target, accountId });
+        }),
     };
     yield* makeKeptAgentKeys(accounts).pipe(
       Effect.provideService(ServerSettingsService, settings.service),
     );
-    yield* Queue.offer(settings.changes, { providerInstances: {} });
-    yield* Deferred.await(done);
-    expect(saves.map(({ name, details }) => ({ name, details }))).toEqual([
+    yield* settings.keeper()([
+      {
+        instanceId: "antigravity",
+        instance: agent(
+          [
+            { name: "LINKED_KEY", value: "from-accounts", sensitive: true },
+            { name: "DELETED_KEY", value: "deleted-by-user", sensitive: true },
+            { name: "OLD_KEY", value: "kept-before", sensitive: true },
+            // As read settings carry a stored variable: its value, still marked redacted.
+            { name: "NEW_KEY", value: "typed-key", sensitive: true, valueRedacted: true },
+            { name: "HOME_DIR", value: "/home", sensitive: false },
+          ],
+          { apiKey: "typed-api-key" },
+        ) as RemovedAgent["instance"],
+      },
+    ]);
+    expect(fake.saves.map(({ name, details }) => ({ name, details }))).toEqual([
       {
         name: "Antigravity · NEW_KEY",
         details: {
@@ -117,12 +122,39 @@ it.effect("keeps a removed agent's typed keys in Accounts once each", () =>
         },
       },
     ]);
-  }).pipe(Effect.scoped),
+    expect(links).toEqual([
+      { target: expect.objectContaining({ variable: "LINKED_KEY" }), accountId: undefined },
+      { target: expect.objectContaining({ variable: "DELETED_KEY" }), accountId: undefined },
+    ]);
+  }),
+);
+
+it.effect("fails, so the removal fails, when Accounts can't keep a key", () =>
+  Effect.gen(function* () {
+    const settings = fakeSettings({});
+    const fake = fakeAccounts();
+    const accounts = {
+      ...fake.service,
+      save: () => Effect.fail(new AccountsError({ reason: "unavailable", message: "Locked." })),
+    };
+    yield* makeKeptAgentKeys(accounts).pipe(
+      Effect.provideService(ServerSettingsService, settings.service),
+    );
+    const error = yield* settings
+      .keeper()([
+        {
+          instanceId: "antigravity",
+          instance: agent([], { apiKey: "typed-api-key" }) as RemovedAgent["instance"],
+        },
+      ])
+      .pipe(Effect.flip);
+    expect(error.message).toBe("Locked.");
+  }),
 );
 
 it.effect("puts kept keys back into an agent of the same kind, and only that kind", () =>
   Effect.gen(function* () {
-    const settings = yield* fakeSettings({
+    const settings = fakeSettings({
       antigravity_2: agent([{ name: "HOME_DIR", value: "/home", sensitive: false }]),
     });
     const fake = fakeAccounts({
@@ -172,5 +204,5 @@ it.effect("puts kept keys back into an agent of the same kind, and only that kin
       accountIds: [AccountId.make("acc_otherkey1")],
     }).pipe(Effect.flip);
     expect(refused.reason).toBe("invalid-input");
-  }).pipe(Effect.scoped),
+  }),
 );
