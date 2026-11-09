@@ -647,6 +647,13 @@
     "reason": "Upstream's Stable/Nightly track-switch guard (trackSwitchBlockReason). Scient's Stable and Beta never cross tracks (crossesReleaseTrack), so it never answers."
   },
   {
+    "path": "apps/server/src/cli/install.ts",
+    "line": "reason: `A t3.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Keep using npx t3.`,",
+    "rules": ["t3-command"],
+    "kind": "dormant-service",
+    "reason": "Inherited standalone `install` command, registered only while the service lifecycle is enabled (binCli.ts); the npx install offer needs a package-runner launch, which Scient builds do not ship."
+  },
+  {
     "path": "apps/web/src/components/sidebar/updateEverything.logic.ts",
     "rules": ["t3-command"],
     "kind": "unmounted-upstream",

@@ -199,6 +199,12 @@ A read-only quota feed outside this environment's provider CLIs, configured unde
 
 Scient-owned catalog and per-model visibility policy. Explicit `legacy` entries feed the model picker's Legacy section; unknown discovered models remain visible by default, with provider-native legacy flags preserved. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
 
+#### Text generation and text generators
+
+Text generation is app-owned one-shot writing, such as thread titles, commit messages, and
+transcript cleanup. A text generator is a model API used only for that writing; its id fills a
+model selection, and agent surfaces never list it. See [text generation](../user/text-generation.md).
+
 ### Checkpointing
 
 V2 checkpoint scopes associate filesystem history with runs/nodes. [CheckpointService][19]

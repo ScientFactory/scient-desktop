@@ -1,3 +1,4 @@
+import { isLocalEditorFileUrl } from "@t3tools/contracts";
 // SCIENT-FORK:START — file links canonicalize paths, keep `~/` links as authored and copy the
 // workspace-relative path (scient-universal-file-opening.md).
 import {
@@ -68,6 +69,14 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   const target = parseFileUrlHref(normalizedHref);
   // SCIENT-FORK:END
   return target ? `${target.path}${target.hash}` : null;
+}
+
+export function isLocalEditorFileHref(href: string): boolean {
+  try {
+    return isLocalEditorFileUrl(new URL(href));
+  } catch {
+    return false;
+  }
 }
 
 export function resolveInlineCodeFileLinkMeta(
