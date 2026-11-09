@@ -46,19 +46,45 @@ describe("UI state across app windows", () => {
     using first = await openUiStateWindow(storage);
     using second = await openUiStateWindow(storage);
 
-    second.store.getState().setSidebarProjectScopeKeys(["unsaved-here"]);
-    first.store.getState().setSidebarProjectScopeKeys(["from-first"]);
+    second.store.getState().setPullRequestMergeMethod("rebase");
+    first.store.getState().setPullRequestMergeMethod("squash");
     first.store.getState().setProjectExpanded("project", false);
     first.save();
     second.receiveStorageEvent();
     expect(second.store.getState().projectExpandedById).toEqual({ project: false });
-    expect(second.store.getState().sidebarProjectScopeKeys).toEqual(["unsaved-here"]);
+    expect(second.store.getState().pullRequestMergeMethod).toBe("rebase");
 
     second.save();
     expect(stored(storage)).toMatchObject({
       projectExpandedById: { project: false },
-      sidebarProjectScopeKeys: ["unsaved-here"],
+      pullRequestMergeMethod: "rebase",
     });
+  });
+
+  it("keeps each window's project scope and stores the latest one chosen", async () => {
+    const storage = sharedLocalStorage();
+    using first = await openUiStateWindow(storage);
+    using second = await openUiStateWindow(storage);
+
+    first.store.getState().setSidebarProjectScopeKeys(["overleaf"]);
+    first.save();
+    second.receiveStorageEvent();
+    expect(second.store.getState().sidebarProjectScopeKeys).toEqual([]);
+    // Saving anything else keeps the scope another window chose last.
+    second.store.getState().setProjectExpanded("project", false);
+    second.save();
+    expect(stored(storage).sidebarProjectScopeKeys).toEqual(["overleaf"]);
+
+    second.store.getState().setSidebarProjectScopeKeys(["compute"]);
+    second.save();
+    first.receiveStorageEvent();
+    expect(first.store.getState().sidebarProjectScopeKeys).toEqual(["overleaf"]);
+    first.store.getState().setPullRequestMergeMethod("squash");
+    first.save();
+    expect(stored(storage).sidebarProjectScopeKeys).toEqual(["compute"]);
+
+    using third = await openUiStateWindow(storage);
+    expect(third.store.getState().sidebarProjectScopeKeys).toEqual(["compute"]);
   });
 
   it("saves the later visit of either window, and an unread mark made here", async () => {

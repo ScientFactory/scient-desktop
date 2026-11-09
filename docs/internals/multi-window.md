@@ -73,7 +73,10 @@ localStorage the same way, so the merge applies between them too:
 
 This applies to composer drafts (per draft), the prompt stash, UI state
 (`uiStateSync.ts`; a thread visit keeps the later timestamp of the two windows,
-unless this window marked the thread unread), compute context bindings, and the
+unless this window marked the thread unread; the sidebar's project scope belongs
+to the window: adopting never changes it, and a save writes it only when this
+window chose a new one, so storage holds the latest choice for new windows and
+the next launch), compute context bindings, and the
 side panel's per-thread state (`rightPanelSync.ts`). With one window, the stored
 value always equals the window's own, so each store writes exactly what it wrote
 before. Another window's save is readable before its `storage` event arrives, so
