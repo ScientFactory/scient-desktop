@@ -19,6 +19,8 @@ export interface TiffFixturePage {
   readonly planar?: 1 | 2;
   /** Leaves out BitsPerSample, which TIFF 6.0 then takes as 1. */
   readonly omitBitsPerSample?: boolean;
+  /** BitsPerSample per sample when they differ; `bits` sizes the encoded data. */
+  readonly bitsPerSample?: readonly number[];
   /** Entries written with any count and value offset, for malformed-file tests. */
   readonly rawEntries?: readonly { tag: number; type: number; count: number; offset: number }[];
   readonly rowsPerStrip?: number;
@@ -122,7 +124,13 @@ export async function tiffFixture(
       { tag: 257, type: 4, values: [page.height] },
       ...(page.omitBitsPerSample
         ? []
-        : [{ tag: 258, type: 3, values: Array<number>(samples).fill(page.bits) }]),
+        : [
+            {
+              tag: 258,
+              type: 3,
+              values: [...(page.bitsPerSample ?? Array<number>(samples).fill(page.bits))],
+            },
+          ]),
       {
         tag: 259,
         type: 3,

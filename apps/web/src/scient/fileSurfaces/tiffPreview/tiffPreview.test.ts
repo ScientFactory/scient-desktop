@@ -722,6 +722,33 @@ describe("bounded TIFF block decoders", () => {
     await expect(result).rejects.toThrow("blocks too large to preview");
   });
 
+  it.each([
+    ["1/25/25", [1, 25, 25]],
+    ["5/6/5", [5, 6, 5]],
+  ])("refuses RGB samples of unequal widths (%s)", async (_name, widths) => {
+    const result = plane([
+      {
+        width: 1,
+        height: 1,
+        bits: widths[0]!,
+        bitsPerSample: widths,
+        samples: 3,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [new Uint8Array(8)] },
+      },
+    ]);
+    await expect(result).rejects.toThrow("This TIFF's sample width isn't supported for preview.");
+  });
+
+  it.each([8, 16] as const)("opens %i/%i/%i-bit RGB", async (bits) => {
+    const top = bits === 8 ? 255 : 65_535;
+    const result = await plane([
+      { width: 2, height: 1, bits, samples: 3, data: [top, 0, 0, 0, top, 0] },
+    ]);
+    expect(Array.from(result.rgba.subarray(0, 3))).toEqual([255, 0, 0]);
+    expect(Array.from(result.rgba.subarray(4, 7))).toEqual([0, 255, 0]);
+  });
+
   it("takes a missing BitsPerSample as 1, as bilevel files do", async () => {
     const result = await plane([
       {

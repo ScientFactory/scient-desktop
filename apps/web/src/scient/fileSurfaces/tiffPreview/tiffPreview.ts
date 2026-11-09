@@ -419,15 +419,19 @@ export async function readTiffPlane(
   ];
   const channels = read.length;
   const alphaMax = format === "float" ? 1 : 2 ** bits - 1;
+  const allBits = Array.from(
+    ((await directory.loadValue("BitsPerSample")) as ArrayLike<number> | undefined) ?? [bits],
+    Number,
+  );
   // geotiff places unsigned samples of other widths at the wrong offsets, so those are read by block;
-  // above 24 bits a sample can span five bytes, which geotiff's unpacking also gets wrong.
-  if (
+  // above 24 bits a sample can span five bytes, and it unpacks every sample at the first one's width.
+  const unsupportedWidth =
     format === "int"
       ? ![8, 16, 32].includes(bits)
       : format === "float"
         ? ![16, 32, 64].includes(bits)
-        : bits > 24 && bits !== 32
-  )
+        : bits > 24 && bits !== 32;
+  if (unsupportedWidth || allBits.some((sampleBits) => sampleBits !== bits))
     throw tiffPreviewError("This TIFF's sample width isn't supported for preview.");
   // Bits stored lowest first (FillOrder 2) are a fax convention geotiff does not reverse.
   if (Number((await directory.loadValue("FillOrder")) ?? 1) === 2)
@@ -438,10 +442,6 @@ export async function readTiffPlane(
     !image.isTiled &&
     image.planarConfiguration === 1 &&
     [8, 16, 32, 64].includes(bits);
-  const allBits = Array.from(
-    ((await directory.loadValue("BitsPerSample")) as ArrayLike<number> | undefined) ?? [bits],
-    Number,
-  );
   const blockBits =
     image.planarConfiguration === 2 ? bits : allBits.reduce((sum, value) => sum + value, 0);
   const tileWidth = image.getTileWidth();
