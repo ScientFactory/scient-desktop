@@ -233,8 +233,8 @@ describe("installSpellingSampler", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores fields without spellcheck and text too short to judge", () => {
-    document.body.innerHTML = `<textarea spellcheck="false">${FRENCH}</textarea><div contenteditable="true">Titre</div><p>${FRENCH}</p>`;
+  it("ignores fields without spellcheck and text too short to hold a word", () => {
+    document.body.innerHTML = `<textarea spellcheck="false">${FRENCH}</textarea><div contenteditable="true">a</div><p>${FRENCH}</p>`;
     for (const element of document.body.children) focus(element);
     expect(send).not.toHaveBeenCalled();
   });
