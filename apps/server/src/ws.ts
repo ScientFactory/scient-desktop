@@ -2090,6 +2090,8 @@ export const layerWsRpc = (
       const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
         registry: providerRegistry,
         serverSettings,
+        textGenerators,
+        cwd: config.cwd,
       });
       const analysis = yield* AnalysisService.AnalysisService;
       const dataTables = yield* DataTables.DataTables;
