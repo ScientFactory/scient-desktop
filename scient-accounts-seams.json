@@ -124,7 +124,17 @@
     {
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "Scient Accounts: approvals belong to the active thread.",
-      "purpose": "Show account approvals above the active thread composer."
+      "purpose": "Show account approvals above the active thread composer, and draw a side panel asked to open maximized (a sign-in) maximized from its first frame."
+    },
+    {
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 the conversation's browser profile.",
+      "purpose": "Offer and apply a conversation's browser profile from its right-click menu."
+    },
+    {
+      "path": "apps/web/src/components/threadActionMenu.logic.ts",
+      "anchor": "SCIENT-FORK:START \u2014 the conversation's browser profile.",
+      "purpose": "Place the conversation's Browser profile submenu in the thread menu."
     },
     {
       "path": "apps/web/src/components/preview/PreviewChromeRow.tsx",
