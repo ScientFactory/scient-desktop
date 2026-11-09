@@ -11,6 +11,9 @@ import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 // SCIENT-FORK:START — Scient Accounts: cookie copies hold a profile's context.
 import { ProfileContextLeases } from "../scient/accounts/profileContextLeases.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — development candidates can trust a local test site's certificate.
+import { developmentTrustedCertificateArgs } from "../scient/browser/developmentCertificates.ts";
+// SCIENT-FORK:END
 
 // Playwright needs its files on disk. createRequire also resolves it from a Node SEA executable.
 const requirePlaywright = NodeModule.createRequire(import.meta.url);
@@ -101,6 +104,9 @@ export class ServerBrowserContexts {
   private async launchOptions() {
     const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
+    // SCIENT-FORK:START — development candidates can trust a local test site's certificate.
+    const trusted = await developmentTrustedCertificateArgs(env, this.options.profilesDir);
+    // SCIENT-FORK:END
     return {
       executable,
       env,
@@ -108,6 +114,9 @@ export class ServerBrowserContexts {
         "--disable-gpu",
         "--force-device-scale-factor=2",
         "--disable-blink-features=AutomationControlled",
+        // SCIENT-FORK:START — development candidates can trust a local test site's certificate.
+        ...trusted,
+        // SCIENT-FORK:END
       ],
       ignoreDefaultArgs: ["--enable-automation"],
       headless: true,
