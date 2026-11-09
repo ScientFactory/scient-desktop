@@ -1,6 +1,7 @@
 import type { Loader, Spec as VegaSpec, View } from "vega";
 import type { Result as VegaEmbedResult, VisualizationSpec } from "vega-embed";
 
+import { SCIENT_CHART_SERIES_COLORS } from "./chartPalette";
 import {
   type ParsedVegaLiteSource,
   type VegaLiteRenderPlan,
@@ -32,8 +33,15 @@ let vegaEmbedRuntimePromise: Promise<typeof import("vega-embed")> | null = null;
 
 /** Vega is sizeable, so no renderer code enters the initial chat bundle. */
 export function getVegaEmbedRuntimePromise(): Promise<typeof import("vega-embed")> {
-  vegaEmbedRuntimePromise ??= import("vega-embed");
+  vegaEmbedRuntimePromise ??= import("vega-embed").catch((cause: unknown) => {
+    vegaEmbedRuntimePromise = null;
+    throw cause;
+  });
   return vegaEmbedRuntimePromise;
+}
+
+export function loadVegaLiteRuntime() {
+  return Promise.all([getVegaEmbedRuntimePromise(), import("./vegaLiteTooltip")]);
 }
 
 function logValue(value: unknown): string {
@@ -220,20 +228,31 @@ export function vegaLiteThemeConfig(theme: VegaLiteTheme): Record<string, unknow
     background: null,
     font,
     view: { stroke: null, continuousWidth: 560, continuousHeight: 320 },
+    range: { category: [...SCIENT_CHART_SERIES_COLORS] },
     axis: {
       domainColor: boundary,
       gridColor: grid,
       labelColor: secondaryText,
       labelFont: font,
+      labelFontSize: 11,
+      labelPadding: 4,
       tickColor: boundary,
+      tickSize: 4,
       titleColor: text,
       titleFont: font,
+      titleFontWeight: 500,
+      titlePadding: 8,
     },
+    // Gridlines already carry the vertical scale.
+    axisY: { domain: false, ticks: false },
     legend: {
       labelColor: secondaryText,
       labelFont: font,
+      labelFontSize: 11,
+      symbolType: "circle",
       titleColor: text,
       titleFont: font,
+      titleFontWeight: 500,
     },
     header: {
       labelColor: secondaryText,
@@ -241,7 +260,16 @@ export function vegaLiteThemeConfig(theme: VegaLiteTheme): Record<string, unknow
       titleColor: text,
       titleFont: font,
     },
-    title: { color: text, font, subtitleColor: secondaryText, subtitleFont: font },
+    title: {
+      anchor: "start",
+      color: text,
+      font,
+      fontSize: 13,
+      fontWeight: 600,
+      offset: 12,
+      subtitleColor: secondaryText,
+      subtitleFont: font,
+    },
   };
 }
 
@@ -300,10 +328,7 @@ export async function mountVegaLiteView(input: {
   readonly theme: VegaLiteTheme;
   readonly title: string;
 }): Promise<MountedVegaLiteView> {
-  const [runtime, { createScientVegaTooltipHandler }] = await Promise.all([
-    getVegaEmbedRuntimePromise(),
-    import("./vegaLiteTooltip"),
-  ]);
+  const [runtime, { createScientVegaTooltipHandler }] = await loadVegaLiteRuntime();
   const warnings: string[] = [];
   const logger = runtime.vega.logger(runtime.vega.Warn, undefined, (_method, _level, values) => {
     const warning = normalizeWarning(values);
