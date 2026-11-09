@@ -54,6 +54,7 @@ require a cosmetic folder migration.
 - [Project settings](./user/project-settings.md)
 - [Voice dictation](./user/voice-dictation.md)
 - [Keyboard shortcuts](./user/keybindings.md)
+- [Text generation models](./user/text-generation.md)
 - [Environment themes](./user/environment-theme.md)
 - [Appearance and themes](./user/appearance.md)
 - [SnapShots](./user/snap-shot.md)

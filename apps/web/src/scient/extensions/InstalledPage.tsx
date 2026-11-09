@@ -1,5 +1,5 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
-import { FolderOpenIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
@@ -9,7 +9,7 @@ import { actOnProviderPlugin } from "./extensionsState";
 import { openAuthorizationPage } from "./openAuthorizationPage";
 import { Button } from "../../components/ui/button";
 import { NativeSelect } from "../../components/ui/select";
-import { AddConnectorDialog } from "./AddConnectorDialog";
+import { AddYourOwn } from "./AddYourOwn";
 import {
   ConnectorItem,
   PluginItem,
@@ -35,7 +35,6 @@ import {
   showsKind,
   worksWithOptions,
 } from "./extensionsView";
-import { InstallBundleDialog } from "./InstallBundleDialog";
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AgentSkills } from "../skills/AgentSkills";
@@ -142,7 +141,6 @@ function ProviderSection({
 function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const {
     environmentId,
-    callbackOrigin,
     inventory,
     inventoryError,
     catalog,
@@ -151,7 +149,6 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     canWrite,
   } = useExtensionsEnvironment();
   const [worksWith, setWorksWith] = useState<ProviderInstanceId | null>(null);
-  const [dialog, setDialog] = useState<"add" | "install" | null>(null);
   const options = worksWithOptions(inventory?.providerSupport ?? [], providers);
   const selected = options.find((option) => option.instanceId === worksWith) ?? null;
   const groups = collectProviderExtensionGroups(
@@ -167,25 +164,28 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   return (
     <>
       <ExtensionsTopBar tab="installed" kind={kind}>
-        <span className="w-56">
-          <NativeSelect
-            size="sm"
-            aria-label="Works with"
-            value={worksWith ?? ""}
-            onChange={(event) =>
-              setWorksWith(
-                options.find((option) => option.instanceId === event.target.value)?.instanceId ??
-                  null,
-              )
-            }
-          >
-            <option value="">Works with any agent</option>
-            {options.map((option) => (
-              <option key={option.instanceId} value={option.instanceId}>
-                {option.label}
-              </option>
-            ))}
-          </NativeSelect>
+        <span className="flex items-center gap-2">
+          {showsKind(kind, "plugins") ? <AddYourOwn /> : null}
+          <span className="w-56">
+            <NativeSelect
+              size="sm"
+              aria-label="Works with"
+              value={worksWith ?? ""}
+              onChange={(event) =>
+                setWorksWith(
+                  options.find((option) => option.instanceId === event.target.value)?.instanceId ??
+                    null,
+                )
+              }
+            >
+              <option value="">Works with any agent</option>
+              {options.map((option) => (
+                <option key={option.instanceId} value={option.instanceId}>
+                  {option.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </span>
         </span>
       </ExtensionsTopBar>
       {inventoryError ? <MutedLine>{inventoryError}</MutedLine> : null}
@@ -206,11 +206,6 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
         <ExtensionsSection
           id={searchableSetting("extensions-connected-services").id}
           title="Connected services"
-          action={
-            <SectionAction icon={PlusIcon} disabled={!canWrite} onClick={() => setDialog("add")}>
-              Add by URL
-            </SectionAction>
-          }
         >
           {inventory === null ? (
             <MutedLine>{inventoryError ? "Unavailable." : "Loading…"}</MutedLine>
@@ -220,7 +215,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
                 `${selected?.label ?? "This agent"} does not support remote MCP servers.`}
             </MutedLine>
           ) : inventory.connectors.length === 0 ? (
-            <MutedLine>None yet. Add one from Discover or by URL.</MutedLine>
+            <MutedLine>None yet. Find one in Discover, or add your own.</MutedLine>
           ) : (
             <>
               {selected?.support?.status === "conditional" && selected.support.reason ? (
@@ -246,15 +241,6 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
         <ExtensionsSection
           id={searchableSetting("extensions-scient-plugins").id}
           title="Scient plugins"
-          action={
-            <SectionAction
-              icon={FolderOpenIcon}
-              disabled={!canWrite}
-              onClick={() => setDialog("install")}
-            >
-              Install from folder
-            </SectionAction>
-          }
         >
           {plugins.length === 0 ? (
             <MutedLine>{inventory === null ? "Loading…" : "None."}</MutedLine>
@@ -303,26 +289,6 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
             <ProjectSkills environmentId={environmentId} />
           </ExtensionsSection>
         </>
-      ) : null}
-
-      {dialog === "add" ? (
-        <AddConnectorDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setDialog(null);
-          }}
-          environmentId={environmentId}
-          entry={null}
-          callbackOrigin={callbackOrigin}
-        />
-      ) : null}
-      {dialog === "install" ? (
-        <InstallBundleDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setDialog(null);
-          }}
-        />
       ) : null}
     </>
   );

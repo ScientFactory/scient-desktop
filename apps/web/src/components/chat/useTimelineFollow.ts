@@ -33,8 +33,6 @@ import { releaseChatTimelineAnchor } from "../ChatView.logic";
 import type { Dispatch, RefObject } from "react";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 
-const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
-
 interface TimelineAnchor {
   readonly threadKey: string | null;
   readonly messageId: MessageId | null;
@@ -165,25 +163,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
       anchorScrollRestoreFrameRef.current = null;
     }
-    if (wasProgrammaticScrollMode) {
-      // LegendList may run queued scrolls after user navigation. A new imperative
-      // scroll cancels that queue; a missing item cancels without moving the view.
-      void legendListRef.current?.scrollToItem({
-        item: TIMELINE_SCROLL_CANCEL_SENTINEL,
-        animated: false,
-      });
-      // An already-started animated scroll (behavior: smooth) keeps running in
-      // the browser regardless of the queue; a same-position instant write is
-      // the only way to halt it where it is.
-      const scrollNode = legendListRef.current?.getScrollableNode() as
-        | { scrollTop?: number }
-        | null
-        | undefined;
-      const currentScrollTop = scrollNode?.scrollTop;
-      if (scrollNode && typeof currentScrollTop === "number") {
-        scrollNode.scrollTop = currentScrollTop;
-      }
-    }
+    if (wasProgrammaticScrollMode) legendListRef.current?.cancelScroll();
   };
   const cancelTimelinePositioningRef = useRef(cancelTimelinePositioning);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the latest cancel callback into a ref read by DOM scroll listeners

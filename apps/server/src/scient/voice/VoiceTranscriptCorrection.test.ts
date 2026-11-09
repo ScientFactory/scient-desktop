@@ -16,6 +16,7 @@ import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import { customModelsTestMethods } from "../../serverSettings.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { makeVoiceTranscriptCorrection } from "./VoiceTranscriptCorrection.ts";
 import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
 
@@ -108,6 +109,37 @@ describe("makeVoiceTranscriptCorrection", () => {
 
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) expect(result.failure.kind).toBe("authentication");
+      expect(correct).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("corrects through a selected text generator with Scient's prompt", () =>
+    Effect.gen(function* () {
+      const correct = vi.fn<ProviderVoiceTranscriptCorrection["correct"]>(() =>
+        Effect.succeed({ text: "unused" }),
+      );
+      const prompts: string[] = [];
+      const service = makeVoiceTranscriptCorrection({
+        registry: registry({ provider: provider(), correction: { correct } }),
+        serverSettings: settings(),
+        textGenerators: {
+          runner: (id) =>
+            Effect.succeed(
+              id === instanceId
+                ? (((request) => {
+                    prompts.push(request.prompt);
+                    return Effect.succeed({ text: "Hello, world." } as never);
+                  }) satisfies TextGenerationOperations.Runner)
+                : undefined,
+            ),
+          listModels: () => Effect.die("unused"),
+        },
+      });
+
+      const result = yield* service.correct({ transcript: "hello world" });
+
+      expect(result.text).toBe("Hello, world.");
+      expect(prompts[0]).toContain("Correct this speech-to-text transcript.");
       expect(correct).not.toHaveBeenCalled();
     }),
   );

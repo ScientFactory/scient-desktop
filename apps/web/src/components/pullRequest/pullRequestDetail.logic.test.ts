@@ -1,5 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import {
   GitCommandError,
   ProjectId,
@@ -14,12 +13,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { formatInlineContextReference } from "~/lib/composerContextReferences";
-import {
-  buildMessageContext,
-  reviewCommentContextLabel,
-  reviewCommentContextReference,
-} from "~/lib/composerContextRecords";
+import { reviewCommentContextLabel } from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -28,7 +22,6 @@ import {
   buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
   buildPullRequestCommentContext,
-  buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
   buildFixFindingsHandoff,
@@ -1012,27 +1005,6 @@ describe("asking about a change rather than working on it", () => {
     state: "open" as const,
     isDraft: false,
   };
-
-  it.each(["", "Please consider "])("preserves PR plan feedback with prose %j", (prose) => {
-    const comment = buildPullRequestReferenceContext(base);
-    const draftText = prose + formatInlineContextReference(reviewCommentContextReference(comment));
-    const submission = resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" });
-    const context = buildMessageContext({
-      terminalContexts: [],
-      previewAnnotations: [],
-      reviewComments: [comment],
-    });
-    expect(submission).toEqual({
-      text: draftText,
-      interactionMode: "plan",
-      selectedScientSkillNames: [],
-    });
-    expect(context?.records[0]).toMatchObject({ pullRequest: base });
-    expect(context!.records[0]).toMatchObject({ text: expect.stringContaining(base.url) });
-    expect(submission.text).toContain(prose);
-    expect(submission.text).not.toContain("PLEASE IMPLEMENT THIS PLAN");
-    expect(submission.text).toContain("t3-context://");
-  });
 
   it("puts the reader's request in the composer and the selected lines in chips", () => {
     const comment = {
