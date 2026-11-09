@@ -1,7 +1,7 @@
 export interface TiffFixturePage {
   readonly width: number;
   readonly height: number;
-  readonly bits: 8 | 16 | 32;
+  readonly bits: 8 | 16 | 32 | 64;
   /** 1 unsigned, 2 signed, 3 float. */
   readonly format?: 1 | 2 | 3;
   readonly samples?: number;
@@ -14,6 +14,10 @@ export interface TiffFixturePage {
   readonly rowsPerStrip?: number;
   readonly deflate?: boolean;
   readonly colorMap?: ArrayLike<number>;
+  /** ExtraSamples values: 0 unspecified, 1 premultiplied alpha, 2 straight alpha. */
+  readonly extraSamples?: readonly number[];
+  /** Stores these bytes as the image's blocks under this compression code, ignoring `data`. */
+  readonly rawBlocks?: { readonly compression: number; readonly blocks: readonly Uint8Array[] };
 }
 
 type Entry = { tag: number; type: number; values: number[] | Uint8Array };
@@ -31,6 +35,7 @@ function encode(page: TiffFixturePage, values: ArrayLike<number>) {
     if (page.bits === 8) out.setUint8(index, value);
     else if (page.bits === 16 && page.format === 2) out.setInt16(index * 2, value, true);
     else if (page.bits === 16) out.setUint16(index * 2, value, true);
+    else if (page.bits === 64) out.setFloat64(index * 8, value, true);
     else if (page.format === 3) out.setFloat32(index * 4, value, true);
     else if (page.format === 2) out.setInt32(index * 4, value, true);
     else out.setUint32(index * 4, value, true);
@@ -38,7 +43,8 @@ function encode(page: TiffFixturePage, values: ArrayLike<number>) {
   return new Uint8Array(out.buffer);
 }
 
-async function blocks(page: TiffFixturePage) {
+async function blocks(page: TiffFixturePage): Promise<readonly Uint8Array[]> {
+  if (page.rawBlocks) return page.rawBlocks.blocks;
   const samples = page.samples ?? 1;
   const pieces: number[][] = [];
   if (page.tile) {
@@ -98,7 +104,11 @@ export async function tiffFixture(
       { tag: 256, type: 4, values: [page.width] },
       { tag: 257, type: 4, values: [page.height] },
       { tag: 258, type: 3, values: Array(samples).fill(page.bits) },
-      { tag: 259, type: 3, values: [page.deflate ? 8 : 1] },
+      {
+        tag: 259,
+        type: 3,
+        values: [page.rawBlocks?.compression ?? (page.deflate ? 8 : 1)],
+      },
       { tag: 262, type: 3, values: [page.photometric ?? (samples >= 3 ? 2 : 1)] },
       { tag: 277, type: 3, values: [samples] },
       { tag: 284, type: 3, values: [1] },
@@ -118,6 +128,7 @@ export async function tiffFixture(
       ...(page.subfileType ? [{ tag: 254, type: 4, values: [page.subfileType] }] : []),
       ...(page.orientation ? [{ tag: 274, type: 3, values: [page.orientation] }] : []),
       ...(page.colorMap ? [{ tag: 320, type: 3, values: Array.from(page.colorMap) }] : []),
+      ...(page.extraSamples ? [{ tag: 338, type: 3, values: [...page.extraSamples] }] : []),
       ...(page.description
         ? [{ tag: 270, type: 2, values: new TextEncoder().encode(`${page.description}\0`) }]
         : []),

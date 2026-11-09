@@ -53,7 +53,7 @@ describe("Scient TIFF preview", () => {
     try {
       await expect.element(screen.getByText("Couldn't display this image")).toBeVisible();
       await screen.getByRole("button", { name: /details/iu }).click();
-      await expect.element(screen.getByText(/compression \(34712\)/u)).toBeVisible();
+      await expect.element(screen.getByText(/compression \(JPEG 2000\)/u)).toBeVisible();
       expect(onError).not.toHaveBeenCalled();
     } finally {
       URL.revokeObjectURL(src);

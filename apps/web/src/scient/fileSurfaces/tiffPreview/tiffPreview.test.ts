@@ -1,8 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Node's Zstandard encoder builds the test blocks.
+import * as NodeZlib from "node:zlib";
+
 import { fromArrayBuffer } from "geotiff";
 import { describe, expect, it } from "vite-plus/test";
 
 import { tiffFixture, type TiffFixturePage } from "../../../../test/tiffFixture";
-import { decodeLzw, inflateBounded, registerBoundedTiffDecoders } from "./tiffBlockDecoders";
+import {
+  decodeLzw,
+  inflateBounded,
+  jpegFrameSize,
+  registerBoundedTiffDecoders,
+  zstdContentSize,
+} from "./tiffBlockDecoders";
 import { readTiffPlane, tiffPlaneLabel } from "./tiffPreview";
 
 registerBoundedTiffDecoders();
@@ -151,15 +160,127 @@ describe("readTiffPlane", () => {
     expect(b).toBeLessThan(155);
   });
 
-  it("applies the stored orientation", async () => {
-    const data = [0, 255, 0, 0, 0, 0];
-    const rotated = await plane([{ width: 3, height: 2, bits: 8, data, orientation: 3 }]);
-    expect([0, 1, 2, 3, 4, 5].map((pixel) => red(rotated.rgba, pixel))).toEqual([
-      0, 0, 0, 0, 255, 0,
+  it.each([
+    [
+      1,
+      [
+        [1, 2, 3],
+        [4, 5, 6],
+      ],
+    ],
+    [
+      2,
+      [
+        [3, 2, 1],
+        [6, 5, 4],
+      ],
+    ],
+    [
+      3,
+      [
+        [6, 5, 4],
+        [3, 2, 1],
+      ],
+    ],
+    [
+      4,
+      [
+        [4, 5, 6],
+        [1, 2, 3],
+      ],
+    ],
+    [
+      5,
+      [
+        [1, 4],
+        [2, 5],
+        [3, 6],
+      ],
+    ],
+    [
+      6,
+      [
+        [4, 1],
+        [5, 2],
+        [6, 3],
+      ],
+    ],
+    [
+      7,
+      [
+        [6, 3],
+        [5, 2],
+        [4, 1],
+      ],
+    ],
+    [
+      8,
+      [
+        [3, 6],
+        [2, 5],
+        [1, 4],
+      ],
+    ],
+  ])("places stored rows 1 2 3 / 4 5 6 on screen for orientation %i", async (orientation, rows) => {
+    const result = await plane([
+      { width: 3, height: 2, bits: 8, data: [1, 2, 3, 4, 5, 6], orientation },
     ]);
-    const turned = await plane([{ width: 3, height: 2, bits: 8, data, orientation: 6 }]);
-    expect(turned.info).toMatchObject({ width: 2, height: 3 });
-    expect([turned.width, turned.height]).toEqual([2, 3]);
+    const width = rows[0]!.length;
+    expect([result.width, result.height]).toEqual([width, rows.length]);
+    expect([result.info.width, result.info.height]).toEqual([width, rows.length]);
+    const screen = rows.map((row, y) => row.map((_, x) => red(result.rgba, y * width + x)));
+    expect(screen).toEqual(rows);
+  });
+
+  it.each([
+    ["uncompressed rows", false],
+    ["Deflate blocks", true],
+  ])("keeps the precision of high-offset 32-bit integers read from %s", async (_path, deflate) => {
+    const result = await plane([
+      { width: 2, height: 1, bits: 32, data: [4_294_967_290, 4_294_967_295], deflate },
+    ]);
+    expect(result.info.range).toEqual([4_294_967_290, 4_294_967_295]);
+    expect(red(result.rgba, 0)).toBe(0);
+    expect(red(result.rgba, 1)).toBe(255);
+  });
+
+  it("keeps the precision of 64-bit floats in a narrow range", async () => {
+    const result = await plane([
+      { width: 2, height: 1, bits: 64, format: 3, data: [1e9 + 0.25, 1e9 + 0.75] },
+    ]);
+    expect(result.info.range).toEqual([1e9 + 0.25, 1e9 + 0.75]);
+    expect(red(result.rgba, 0)).toBeLessThan(red(result.rgba, 1));
+  });
+
+  it("uses straight and premultiplied alpha from ExtraSamples", async () => {
+    const straight = await plane([
+      { width: 2, height: 1, bits: 8, samples: 2, extraSamples: [2], data: [100, 0, 200, 255] },
+    ]);
+    expect([...straight.rgba]).toEqual([100, 100, 100, 0, 200, 200, 200, 255]);
+
+    const premultiplied = await plane([
+      { width: 1, height: 1, bits: 8, samples: 2, extraSamples: [1], data: [50, 128] },
+    ]);
+    expect(red(premultiplied.rgba, 0)).toBe(100);
+    expect(premultiplied.rgba[3]).toBe(128);
+
+    const rgba = await plane([
+      {
+        width: 1,
+        height: 1,
+        bits: 16,
+        samples: 4,
+        extraSamples: [2],
+        data: [4_000, 0, 2_000, 0],
+      },
+    ]);
+    expect(rgba.rgba[3]).toBe(0);
+    expect(rgba.info.range).toEqual([0, 4_000]);
+
+    const unspecified = await plane([
+      { width: 1, height: 1, bits: 8, samples: 4, extraSamples: [0], data: [1, 2, 3, 0] },
+    ]);
+    expect(unspecified.rgba[3]).toBe(255);
   });
 
   it("scales a plane above the pixel budget down by box averages and reports its true size", async () => {
@@ -198,13 +319,28 @@ describe("readTiffPlane", () => {
     expect(red(result.rgba, 0)).toBe(64);
   });
 
+  it("refuses codecs whose output it cannot bound", async () => {
+    const result = plane([
+      {
+        width: 1,
+        height: 1,
+        bits: 8,
+        data: [],
+        rawBlocks: { compression: 34_887, blocks: [new Uint8Array(4)] },
+      },
+    ]);
+    await expect(result).rejects.toThrow("compression (LERC) isn't supported for preview");
+  });
+
   it("names an unsupported compression", async () => {
     const bytes = await tiffFixture([{ width: 1, height: 1, bits: 8, data: [1] }]);
     const view = new DataView(bytes);
     // Compression (259) is the fourth entry of the first IFD.
     view.setUint16(view.getUint32(4, true) + 2 + 3 * 12 + 8, 34_712, true);
     const tiff = await fromArrayBuffer(bytes);
-    await expect(readTiffPlane(tiff, { plane: 0 })).rejects.toThrow("compression (34712)");
+    await expect(readTiffPlane(tiff, { plane: 0 })).rejects.toThrow(
+      "compression (JPEG 2000) isn't supported for preview",
+    );
   });
 
   it("reports damaged directories as invalid metadata", async () => {
@@ -219,6 +355,58 @@ describe("readTiffPlane", () => {
 });
 
 describe("bounded TIFF block decoders", () => {
+  const onePixel = (compression: number, block: Uint8Array) =>
+    plane([
+      { width: 1, height: 1, bits: 8, data: [], rawBlocks: { compression, blocks: [block] } },
+    ]);
+
+  it("decodes PackBits and stops a PackBits run that expands past the block", async () => {
+    // -3 repeats the next byte four times.
+    const runs = await plane([
+      {
+        width: 4,
+        height: 1,
+        bits: 8,
+        data: [],
+        rawBlocks: { compression: 32_773, blocks: [new Uint8Array([0xfd, 9])] },
+      },
+    ]);
+    expect([0, 1, 2, 3].map((pixel) => red(runs.rgba, pixel))).toEqual([9, 9, 9, 9]);
+    // 8 KiB of 128-byte runs would expand to 512 KiB for a one-byte image.
+    const bomb = new Uint8Array(8_192).map((_, index) => (index % 2 ? 7 : 0x81));
+    await expect(onePixel(32_773, bomb)).rejects.toThrow("oversized");
+  });
+
+  it("refuses a block whose stored size is far larger than its pixels", async () => {
+    await expect(onePixel(1, new Uint8Array(200_000))).rejects.toThrow("oversized");
+  });
+
+  it("decodes Zstandard only when the frame declares a size that fits the block", async () => {
+    const zstd = (bytes: Uint8Array) => new Uint8Array(NodeZlib.zstdCompressSync(bytes));
+    const fits = await plane([
+      {
+        width: 2,
+        height: 1,
+        bits: 8,
+        data: [],
+        rawBlocks: { compression: 50_000, blocks: [zstd(new Uint8Array([3, 250]))] },
+      },
+    ]);
+    expect([red(fits.rgba, 0), red(fits.rgba, 1)]).toEqual([3, 250]);
+    await expect(onePixel(50_000, zstd(new Uint8Array(1 << 20)))).rejects.toThrow("oversized");
+    // Frame header with no content size (descriptor 0), then one empty raw last block.
+    const unsized = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x58, 0x01, 0x00, 0x00]);
+    expect(zstdContentSize(unsized)).toBeNull();
+    await expect(onePixel(50_000, unsized)).rejects.toThrow("oversized");
+  });
+
+  it("refuses a JPEG block whose frame is larger than the block", async () => {
+    const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0xea, 0x60, 0xea, 0x60, 1, 1, 0x11, 0];
+    const jpeg = new Uint8Array([...frame, 0xff, 0xd9]);
+    expect(jpegFrameSize(jpeg)).toEqual({ width: 60_000, height: 60_000 });
+    await expect(onePixel(7, jpeg)).rejects.toThrow("oversized");
+  });
+
   // 16×16 bytes (x * 7 + y * 3) % 16, LZW-encoded by imagecodecs.
   const LZW =
     "gAAA4OAoMAYKAIIB4GBoEBYCBMHhMLhsPBMCggMhkOiEYgsShUXgcfhEKjcPg0likckUElcWj0phMdkcyk0VkkTk80B03lkxiUwmsglcZok7kU6is8kk/ocqhlPpU/qFLlsfq1AqEBA=";

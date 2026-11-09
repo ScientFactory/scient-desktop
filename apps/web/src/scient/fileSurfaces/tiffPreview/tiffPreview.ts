@@ -1,5 +1,13 @@
 import type { GeoTIFF, GeoTIFFImage } from "geotiff";
 
+import {
+  compressionName,
+  guardTiffDecoder,
+  maxCompressedBytes,
+  PREVIEW_COMPRESSIONS,
+  registerBoundedTiffDecoders,
+} from "./tiffBlockDecoders";
+
 const MAX_OUTPUT_PIXELS = 32_000_000;
 const MAX_OUTPUT_SIDE = 16_384;
 const MAX_SOURCE_SIDE = 1 << 20;
@@ -62,9 +70,6 @@ export function asMetadataError(cause: unknown): never {
   throw tiffPreviewError("Invalid TIFF metadata.");
 }
 
-// Raw, LZW, JPEG, Deflate, PackBits, LERC, Zstd and WebP: what geotiff can decode.
-const SUPPORTED_COMPRESSIONS = new Set([1, 5, 7, 8, 32773, 32946, 34887, 50000, 50001]);
-
 interface Layout {
   readonly pages: readonly number[] | null;
   readonly pageCount: number;
@@ -125,8 +130,7 @@ async function describeLayout(tiff: GeoTIFF, first: GeoTIFFImage): Promise<Layou
     ? String(await directory.loadValue("ImageDescription"))
     : undefined;
   const photometric = Number(directory.getValue("PhotometricInterpretation") ?? 1);
-  const extra = directory.hasTag("ExtraSamples") ? 1 : 0;
-  const colour = first.getSamplesPerPixel() - extra;
+  const colour = first.getSamplesPerPixel() - (await extraSamples(first)).length;
   const rgb = (photometric === 2 || photometric === 6) && colour >= 3;
   const samplesAsChannels = !rgb && photometric !== 3 && colour > 1 ? colour : 1;
   const parsed = parseDescription(description);
@@ -155,17 +159,37 @@ async function describeLayout(tiff: GeoTIFF, first: GeoTIFFImage): Promise<Layou
   };
 }
 
+async function extraSamples(image: GeoTIFFImage) {
+  const directory = image.getFileDirectory();
+  if (!directory.hasTag("ExtraSamples")) return [];
+  const value: unknown = await directory.loadValue("ExtraSamples");
+  return typeof value === "number" ? [value] : Array.from(value as ArrayLike<number>, Number);
+}
+
+// Where stored pixel (x, y) lands on screen; 5–8 put stored rows in screen columns.
+const ORIENTATIONS: Record<
+  number,
+  (x: number, y: number, w: number, h: number) => [number, number]
+> = {
+  1: (x, y) => [x, y],
+  2: (x, y, w) => [w - 1 - x, y],
+  3: (x, y, w, h) => [w - 1 - x, h - 1 - y],
+  4: (x, y, _w, h) => [x, h - 1 - y],
+  5: (x, y) => [y, x],
+  6: (x, y, _w, h) => [h - 1 - y, x],
+  7: (x, y, w, h) => [h - 1 - y, w - 1 - x],
+  8: (x, y, w) => [y, w - 1 - x],
+};
+
 function orientation(value: number, width: number, height: number) {
-  const swap = value >= 5;
+  const place = ORIENTATIONS[value] ?? ORIENTATIONS[1]!;
+  const swap = value >= 5 && value <= 8;
   const outWidth = swap ? height : width;
-  const flipX = [2, 3, 6, 7].includes(value);
-  const flipY = [3, 4, 7, 8].includes(value);
   return {
     swap,
     at: (x: number, y: number) => {
-      const fx = flipX ? width - 1 - x : x;
-      const fy = flipY ? height - 1 - y : y;
-      return swap ? fx * outWidth + fy : fy * outWidth + fx;
+      const [screenX, screenY] = place(x, y, width, height);
+      return screenY * outWidth + screenX;
     },
   };
 }
@@ -178,6 +202,7 @@ async function readRawRows(
   top: number,
   bottom: number,
   read: readonly number[],
+  precise: boolean,
   signal: AbortSignal | undefined,
 ): Promise<Band> {
   const width = image.getWidth();
@@ -187,7 +212,8 @@ async function readRawRows(
   const rowsPerStrip = image.getTileHeight();
   const directory = image.getFileDirectory();
   const readers = read.map((sample) => image.getReaderForSample(sample));
-  const out = new Float32Array((bottom - top) * width * read.length);
+  const length = (bottom - top) * width * read.length;
+  const out = precise ? new Float64Array(length) : new Float32Array(length);
   for (let y = top; y < bottom;) {
     const strip = Math.floor(y / rowsPerStrip);
     const rows = Math.min(bottom, (strip + 1) * rowsPerStrip) - y;
@@ -210,7 +236,7 @@ async function readRawRows(
 }
 
 function percentileRange(
-  values: Float32Array,
+  values: Float32Array | Float64Array,
   channels: number,
   colour: number,
   min: number,
@@ -268,6 +294,7 @@ export async function readTiffPlane(
   },
 ): Promise<TiffPlane> {
   const { signal } = request;
+  registerBoundedTiffDecoders();
   const first = await tiff.getImage(0).catch(asMetadataError);
   const layout = await describeLayout(tiff, first).catch(asMetadataError);
   const planes = layout.pageCount * layout.samplesAsChannels;
@@ -288,8 +315,11 @@ export async function readTiffPlane(
     );
   const photometric = Number(directory.getValue("PhotometricInterpretation") ?? 1);
   const compression = Number(directory.getValue("Compression") ?? 1);
-  if (!SUPPORTED_COMPRESSIONS.has(compression))
-    throw tiffPreviewError(`This TIFF's compression (${compression}) is not supported.`);
+  if (!PREVIEW_COMPRESSIONS.has(compression))
+    throw tiffPreviewError(
+      `This TIFF's compression (${compressionName(compression)}) isn't supported for preview.`,
+    );
+  guardTiffDecoder(compression);
   if (![0, 1, 2, 3].includes(photometric) && !(photometric === 6 && compression === 7))
     throw tiffPreviewError("This TIFF color format is not supported.");
   const samples = image.getSamplesPerPixel();
@@ -299,19 +329,42 @@ export async function readTiffPlane(
   const colorMap = photometric === 3 ? await directory.loadValue("ColorMap") : undefined;
   const palette = colorMap ? Array.from(colorMap, Number) : null;
   if (photometric === 3 && !palette) throw tiffPreviewError("This TIFF's palette is missing.");
-  const rgb = !palette && layout.samplesAsChannels === 1 && samples >= 3;
-  const alpha = rgb && samples >= 4;
-  const read = rgb ? (alpha ? [0, 1, 2, 3] : [0, 1, 2]) : [plane % layout.samplesAsChannels];
+  const extras = await extraSamples(image);
+  const colourSamples = samples - extras.length;
+  const rgb = !palette && layout.samplesAsChannels === 1 && colourSamples >= 3;
+  // ExtraSamples 1 is premultiplied (associated) alpha and 2 is straight alpha.
+  const alphaExtra = extras.findIndex((value) => value === 1 || value === 2);
+  const alpha = alphaExtra >= 0;
+  const associated = alpha && extras[alphaExtra] === 1;
+  const read = [
+    ...(rgb ? [0, 1, 2] : [plane % layout.samplesAsChannels]),
+    ...(alpha ? [colourSamples + alphaExtra] : []),
+  ];
   const channels = read.length;
+  const alphaMax = format === "float" ? 1 : 2 ** bits - 1;
   const rawRows =
     compression === 1 && !image.isTiled && image.planarConfiguration === 1 && bits % 8 === 0;
-  if (
-    !rawRows &&
-    image.getTileWidth() * image.getTileHeight() * image.getBytesPerPixel() > MAX_BLOCK_BYTES
-  )
+  const allBits = Array.from(
+    ((await directory.loadValue("BitsPerSample")) as ArrayLike<number> | undefined) ?? [bits],
+    Number,
+  );
+  const blockBits =
+    image.planarConfiguration === 2 ? bits : allBits.reduce((sum, value) => sum + value, 0);
+  const blockDecoded = Math.ceil((image.getTileWidth() * blockBits) / 8) * image.getTileHeight();
+  if (!rawRows && blockDecoded > MAX_BLOCK_BYTES)
     throw tiffPreviewError("This TIFF stores its image in blocks too large to preview.");
+  // Every block is checked before it is fetched, so a false byte count cannot pull in a whole file.
+  const byteCounts = (await directory.loadValue(
+    image.isTiled ? "TileByteCounts" : "StripByteCounts",
+  )) as ArrayLike<number | bigint> | undefined;
+  if (
+    Array.from(byteCounts ?? [], Number).some((count) => count > maxCompressedBytes(blockDecoded))
+  )
+    throw tiffPreviewError("This TIFF has an oversized compressed block.");
+  // 32-bit integers and 64-bit floats lose precision in Float32, so they keep doubles at half the pixels.
+  const precise = bits > 32 || (bits === 32 && format !== "float");
 
-  const budget = request.maxOutputPixels ?? MAX_OUTPUT_PIXELS;
+  const budget = (request.maxOutputPixels ?? MAX_OUTPUT_PIXELS) / (precise ? 2 : 1);
   const factor = Math.max(
     1,
     Math.ceil(Math.sqrt((width * height) / budget)),
@@ -319,7 +372,11 @@ export async function readTiffPlane(
   );
   const outWidth = Math.ceil(width / factor);
   const outHeight = Math.ceil(height / factor);
-  const values = new Float32Array(outWidth * outHeight * channels).fill(Number.NaN);
+  const values = (
+    precise
+      ? new Float64Array(outWidth * outHeight * channels)
+      : new Float32Array(outWidth * outHeight * channels)
+  ).fill(Number.NaN);
   const counts = factor > 1 && !palette ? new Uint16Array(outWidth * outHeight) : null;
   const blockRows = rawRows ? 1 : image.getTileHeight();
   const rowBytes = width * image.getBytesPerPixel();
@@ -330,11 +387,12 @@ export async function readTiffPlane(
   );
   let min = Infinity;
   let max = -Infinity;
+  const pixelValues = new Float64Array(channels);
   for (let top = 0; top < height; top += bandRows) {
     signal?.throwIfAborted();
     const bottom = Math.min(height, top + bandRows);
     const band: Band = rawRows
-      ? await readRawRows(image, top, bottom, read, signal)
+      ? await readRawRows(image, top, bottom, read, precise, signal)
       : await image.readRasters({
           window: [0, top, width, bottom],
           samples: [...read],
@@ -350,19 +408,25 @@ export async function readTiffPlane(
         for (let c = 0; c < channels; c++) {
           const value = band[source + c]!;
           if (!Number.isFinite(value)) finite = false;
-          else if (!(alpha && c === 3)) {
-            if (value < min) min = value;
-            if (value > max) max = value;
-          }
+          pixelValues[c] = value;
         }
         if (!finite) continue;
+        if (associated) {
+          const opacity = pixelValues[channels - 1]! / alphaMax;
+          for (let c = 0; c < channels - 1; c++)
+            pixelValues[c] = opacity > 0 ? pixelValues[c]! / opacity : 0;
+        }
+        for (let c = 0; c < (alpha ? channels - 1 : channels); c++) {
+          if (pixelValues[c]! < min) min = pixelValues[c]!;
+          if (pixelValues[c]! > max) max = pixelValues[c]!;
+        }
         if (counts) {
           const pixel = target / channels;
           if (!counts[pixel]) for (let c = 0; c < channels; c++) values[target + c] = 0;
-          for (let c = 0; c < channels; c++) values[target + c]! += band[source + c]!;
+          for (let c = 0; c < channels; c++) values[target + c]! += pixelValues[c]!;
           counts[pixel]!++;
         } else if (Number.isNaN(values[target]!))
-          for (let c = 0; c < channels; c++) values[target + c] = band[source + c]!;
+          for (let c = 0; c < channels; c++) values[target + c] = pixelValues[c]!;
       }
     }
   }
@@ -389,7 +453,7 @@ export async function readTiffPlane(
     outHeight,
   );
   const rgba = new Uint8ClampedArray(outWidth * outHeight * 4);
-  const alphaScale = format === "float" ? 255 : 255 / (2 ** bits - 1);
+  const alphaScale = 255 / alphaMax;
   const [low, high] = display ?? [0, 255];
   const span = high - low;
   for (let y = 0; y < outHeight; y++) {
@@ -413,7 +477,7 @@ export async function readTiffPlane(
           rgba[target + c] = photometric === 0 ? 255 - scaled : scaled;
         }
       }
-      rgba[target + 3] = alpha ? values[source + 3]! * alphaScale : 255;
+      rgba[target + 3] = alpha ? values[source + channels - 1]! * alphaScale : 255;
     }
   }
   const swap = orient.swap;

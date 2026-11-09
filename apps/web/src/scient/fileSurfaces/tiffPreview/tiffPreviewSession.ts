@@ -43,6 +43,11 @@ export function createTiffPreviewSession() {
     });
     return created;
   };
+  const stop = () => {
+    failAll(aborted());
+    worker?.terminate();
+    worker = null;
+  };
   return {
     decode(src: string, plane: number, signal: AbortSignal) {
       return new Promise<TiffPreviewResult>((resolve, reject) => {
@@ -56,10 +61,11 @@ export function createTiffPreviewSession() {
           cleanup.abort();
           finish();
         };
-        const timer = setTimeout(
-          () => settle(() => reject(tiffPreviewError("This image took too long to decode."))),
-          DECODE_TIMEOUT_MS,
-        );
+        // A worker past its deadline may still be decoding, so it is replaced rather than reused.
+        const timer = setTimeout(() => {
+          settle(() => reject(tiffPreviewError("This image took too long to decode.")));
+          stop();
+        }, DECODE_TIMEOUT_MS);
         cleanup.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
         signal.addEventListener("abort", () => settle(() => reject(aborted())), {
           once: true,
@@ -73,11 +79,7 @@ export function createTiffPreviewSession() {
         worker.postMessage({ id, src, plane } satisfies TiffWorkerRequest, { transfer: [] });
       });
     },
-    dispose() {
-      failAll(aborted());
-      worker?.terminate();
-      worker = null;
-    },
+    dispose: stop,
   };
 }
 
