@@ -381,7 +381,9 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     server: ImportedServer,
   ) {
     const env = yield* HostProcess.Environment;
-    const appOnly = server.passEnv.filter((name) => env[name] === undefined && !looksLikeKey(name));
+    const appOnly = server.passEnv.filter(
+      (name) => env[name] === undefined && server.env[name] === undefined && !looksLikeKey(name),
+    );
     if (appOnly.length > 0) {
       return `${server.name} only runs inside ${server.sourceLabel}: it needs ${appOnly.join(", ")}, which ${server.sourceLabel} gives it.`;
     }

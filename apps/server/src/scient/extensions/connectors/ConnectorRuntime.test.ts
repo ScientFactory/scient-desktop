@@ -2719,6 +2719,13 @@ describe("local connectors", () => {
                 // Neither could start here, so neither is offered.
                 off: { command: process.execPath, args: [script], disabled: true },
                 elsewhere: { command: "./Other.app/Contents/MacOS/helper", args: ["mcp"] },
+                // A pass-through variable its own `env` supplies is not app-only.
+                given: {
+                  command: process.execPath,
+                  args: [script],
+                  env: { SCIENT_TEST_REGION: "eu" },
+                  env_vars: ["SCIENT_TEST_REGION"],
+                },
               },
             }),
           );
@@ -2726,7 +2733,7 @@ describe("local connectors", () => {
         const inspected = yield* harness.runtime.inspectLocal({ path: folder });
         expect(inspected).toMatchObject({
           kind: "servers",
-          servers: [{ name: "echo", keys: ["TOKEN"] }],
+          servers: [{ name: "echo", keys: ["TOKEN"] }, { name: "given" }],
         });
         const added = yield* harness.runtime.add({
           target: { type: "local-import", source: { type: "file", path: folder }, name: "echo" },

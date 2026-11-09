@@ -668,7 +668,12 @@ function RemoteConnectorDialog({
               </form>
             </DialogPanel>
             <DialogFooter variant="bare">
-              <Button variant="outline" onClick={onBack ?? close}>
+              <Button
+                variant="outline"
+                // Back unmounts this form, so it waits for a pending Add to answer here.
+                disabled={onBack !== undefined && submitting}
+                onClick={onBack ?? close}
+              >
                 {onBack ? "Back" : "Cancel"}
               </Button>
               <Button disabled={submitting} onClick={() => void submit()}>
