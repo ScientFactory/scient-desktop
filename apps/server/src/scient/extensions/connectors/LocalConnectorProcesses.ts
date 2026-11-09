@@ -113,6 +113,8 @@ interface Session {
   held: JsonMessage[] | undefined;
   /** Answers Scient itself waits for (a replacement process's handshake). */
   readonly internal: Map<string, Deferred.Deferred<JsonMessage>>;
+  /** Done when the current process's error output has been read to its end. */
+  stderrDone: Deferred.Deferred<void>;
 }
 
 type Routed =
@@ -320,6 +322,9 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
   ) {
     // A process replaced after a new sign-in ends on purpose.
     if (session.stopping || session.process !== process) return;
+    // Its last words explain the exit; they may still be in the pipe.
+    yield* Deferred.await(session.stderrDone).pipe(Effect.timeout("2 seconds"), Effect.ignore);
+    if (session.stopping) return;
     const detail = lastLine(hidden(session.stderr, session.hide));
     const reason = detail ? `: ${detail}` : ` (exit code ${code})`;
     const message = session.initialized
@@ -449,8 +454,13 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     session: Session,
   ): Effect.fn.Return<void> {
     const { process, scope } = session;
+    const stderrDone = yield* Deferred.make<void>();
+    session.stderrDone = stderrDone;
     yield* readStdout(session, process).pipe(Effect.forkIn(scope));
-    yield* readStderr(session, process).pipe(Effect.forkIn(scope));
+    yield* readStderr(session, process).pipe(
+      Effect.ensuring(Deferred.succeed(stderrDone, undefined)),
+      Effect.forkIn(scope),
+    );
     yield* process.exitCode.pipe(
       Effect.orElseSucceed(() => -1),
       Effect.flatMap((code) => exited(session, process, code)),
@@ -496,6 +506,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       awaiting: new Set(),
       held: undefined,
       internal: new Map(),
+      stderrDone: yield* Deferred.make<void>(),
     };
     sessions.set(id, session);
     yield* watch(session);

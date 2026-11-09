@@ -2907,3 +2907,286 @@ describe("local connectors", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 });
+
+/** A connector an agent writes: logs a line, then answers `version` with its manifest version. */
+const AGENT_SERVER = `
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+process.stderr.write("starting " + manifest.version + "\\n");
+if (process.env.MODE === "broken") { process.stderr.write("cannot find module ./lib.mjs\\n"); process.exit(1); }
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "agent-made", version: manifest.version } } });
+  else if (message.method === "tools/list")
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "version", description: "Its version.", inputSchema: { type: "object" } }] } });
+  else if (message.method === "tools/call")
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [
+      { type: "text", text: "version " + manifest.version + (process.env.TOKEN ? " with key" : "") }] } });
+  else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
+
+const writeConnectorFolder = (
+  folder: string,
+  options: {
+    readonly version: string;
+    readonly mode?: string;
+    readonly meta?: unknown;
+    readonly keyRequired?: boolean;
+  },
+) =>
+  Effect.promise(async () => {
+    await NodeFSP.mkdir(folder, { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(folder, "manifest.json"),
+      JSON.stringify({
+        manifest_version: "0.3",
+        name: "agent-made",
+        display_name: "Agent Made",
+        version: options.version,
+        server: {
+          type: "node",
+          entry_point: "server.mjs",
+          mcp_config: {
+            command: "node",
+            args: ["${__dirname}/server.mjs"],
+            env: { TOKEN: "${user_config.api_key}", MODE: options.mode ?? "" },
+          },
+        },
+        user_config: {
+          api_key: {
+            type: "string",
+            title: "API key",
+            sensitive: true,
+            required: options.keyRequired ?? true,
+          },
+        },
+        ...(options.meta === undefined
+          ? {}
+          : { _meta: { "com.scientfactory.scient": options.meta } }),
+      }),
+    );
+    await NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), AGENT_SERVER);
+  });
+
+const versionOf = (folder: string) =>
+  Effect.promise(
+    async () =>
+      (
+        JSON.parse(await NodeFSP.readFile(NodePath.join(folder, "manifest.json"), "utf8")) as {
+          version: string;
+        }
+      ).version,
+  );
+
+describe("connectors agents make and fix", () => {
+  it.live("checks a folder without its key, saves it with history, and Undo walks back", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0" });
+
+      const checked = yield* harness.runtime.checkFolder(
+        { folder: work, calls: [{ tool: "version" }] },
+        undefined,
+      );
+      // Templates must start and list tools without keys; what they ran without is reported.
+      expect(checked).toMatchObject({
+        ok: true,
+        tools: [{ name: "version", description: "Its version." }],
+        calls: [{ tool: "version", isError: false, text: "version 1.0.0" }],
+        missing: ["API key"],
+      });
+      expect(checked.log).toContain("starting 1.0.0");
+
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      expect(saved.tools).toEqual(["version"]);
+      const connectorId = saved.connector.connectorId;
+      expect(saved.connector.local).toMatchObject({
+        owned: true,
+        changedBy: "agent",
+        canUndo: true,
+        missing: ["API key"],
+      });
+      const installed = saved.connector.local!.directory;
+      expect(NodePath.dirname(installed)).toBe(
+        NodePath.join(harness.config.stateDir, "connectors"),
+      );
+
+      // A fix replaces the folder in place, keeping the earlier one for Undo.
+      yield* writeConnectorFolder(work, { version: "1.1.0" });
+      const fixed = yield* harness.runtime.saveFolder(
+        { folder: work, connector: saved.connector.serverName },
+        undefined,
+      );
+      expect(fixed.connector.connectorId).toBe(connectorId);
+      expect(yield* versionOf(installed)).toBe("1.1.0");
+
+      yield* harness.runtime.undo({ connectorId });
+      expect(yield* versionOf(installed)).toBe("1.0.0");
+      const afterUndo = (yield* harness.runtime.list()).connectors.find(
+        (item) => item.connectorId === connectorId,
+      );
+      expect(afterUndo?.local?.changedBy).toBe("you");
+
+      // Remove keeps a copy; Undo brings the same connector back.
+      yield* harness.runtime.remove({ connectorId });
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+      yield* harness.runtime.undo({ connectorId });
+      const back = (yield* harness.runtime.list()).connectors;
+      expect(back).toMatchObject([{ connectorId, local: { directory: installed } }]);
+      expect(yield* versionOf(installed)).toBe("1.0.0");
+
+      const exported = yield* harness.runtime.exportLocal({ connectorId });
+      expect(exported.fileName).toBe("agent-made.mcpb");
+      expect(Buffer.from(exported.base64, "base64").toString("latin1")).toContain("manifest.json");
+
+      // Undoing the creation removes it.
+      yield* harness.runtime.undo({ connectorId });
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+      expect(
+        yield* Effect.promise(() =>
+          NodeFSP.stat(installed).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("refuses to save what fails its check, with the program's error output", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "broken");
+      yield* writeConnectorFolder(work, { version: "1.0.0", mode: "broken" });
+      const checked = yield* harness.runtime.checkFolder({ folder: work }, undefined);
+      expect(checked.ok).toBe(false);
+      expect(checked.log).toContain("cannot find module ./lib.mjs");
+      const refused = yield* harness.runtime
+        .saveFolder({ folder: work }, undefined)
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("cannot find module ./lib.mjs");
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+
+      // A malformed Scient block is a problem to fix, not silently ignored.
+      yield* writeConnectorFolder(work, { version: "1.0.0", meta: { signIn: "moodle.test" } });
+      const malformed = yield* harness.runtime.checkFolder({ folder: work }, undefined);
+      expect(malformed).toMatchObject({ ok: false });
+      expect(malformed.error).toContain("is not valid");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("fixes a bundle used in place as the user's own copy, and copies it for an agent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const vendor = NodePath.join(harness.config.stateDir, "..", "vendor-bundle");
+      yield* writeConnectorFolder(vendor, { version: "2.0.0" });
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: vendor, settings: {}, keys: {} },
+      });
+      const connectorId = added.connector.connectorId;
+      expect(added.connector.local).toMatchObject({ owned: false, changedBy: "you" });
+
+      const chat = NodePath.join(harness.config.stateDir, "..", "chat");
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        connector: added.connector.serverName,
+      });
+      expect(copied).toMatchObject({
+        folder: NodePath.join(chat, "connectors", "agent-made"),
+        status: "needs-setup",
+        missing: ["API key"],
+        manifest: { name: "agent-made", version: "2.0.0", runtime: "node" },
+      });
+      // A later copy of the same connector may replace this one; other files may not be.
+      yield* harness.runtime.copyForAgent({ workingFolder: chat, connector: connectorId });
+      const other = NodePath.join(chat, "connectors", "elsewhere");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(other, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(other, "notes.txt"), "mine");
+      });
+      const refused = yield* harness.runtime
+        .copyForAgent({ workingFolder: chat, name: "Elsewhere" })
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("already holds other files");
+
+      yield* writeConnectorFolder(copied.folder, { version: "2.0.1" });
+      const forked = yield* harness.runtime.saveFolder(
+        { folder: copied.folder, connector: added.connector.serverName },
+        undefined,
+      );
+      expect(forked.connector.local).toMatchObject({
+        owned: true,
+        forkedFrom: "Agent Made",
+        changedBy: "agent",
+      });
+      expect(forked.connector.local!.directory).not.toBe(vendor);
+      // The vendor's bundle is never edited.
+      expect(yield* versionOf(vendor)).toBe("2.0.0");
+
+      yield* harness.runtime.undo({ connectorId });
+      const undone = (yield* harness.runtime.list()).connectors.find(
+        (item) => item.connectorId === connectorId,
+      );
+      expect(undone?.local).toMatchObject({ directory: vendor, owned: false });
+      expect(undone?.local?.forkedFrom).toBeUndefined();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a connector's error output on disk and says when its sign-in is missing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const plain = NodePath.join(harness.config.stateDir, "..", "plain-bundle");
+      yield* writeConnectorFolder(plain, { version: "3.0.0", keyRequired: false, mode: "broken" });
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: plain, settings: {}, keys: {} },
+      });
+      const connectorId = added.connector.connectorId;
+      expect(yield* harness.runtime.test({ connectorId })).toMatchObject({
+        outcome: "error",
+        message: expect.stringContaining("cannot find module ./lib.mjs"),
+      });
+      const log = NodePath.join(harness.config.stateDir, "connector-logs", `${connectorId}.log`);
+      expect(yield* Effect.promise(() => NodeFSP.readFile(log, "utf8"))).toContain(
+        "starting 3.0.0",
+      );
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: NodePath.join(harness.config.stateDir, "..", "chat"),
+        connector: connectorId,
+      });
+      expect(copied.log).toContain("starting 3.0.0");
+      yield* harness.runtime.remove({ connectorId });
+      expect(
+        yield* Effect.promise(() =>
+          NodeFSP.stat(log).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false);
+
+      const portal = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
+      yield* writeConnectorFolder(portal, {
+        version: "1.0.0",
+        keyRequired: false,
+        meta: { signIn: { site: "https://moodle.example.edu/login" } },
+      });
+      const signedIn = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: portal, settings: {}, keys: {} },
+      });
+      expect(signedIn.connector.local).toMatchObject({
+        signIn: { site: "https://moodle.example.edu", state: "missing" },
+        missing: ["Sign-in to moodle.example.edu"],
+      });
+      expect(
+        yield* harness.runtime.test({ connectorId: signedIn.connector.connectorId }),
+      ).toMatchObject({ outcome: "needs-setup" });
+    }).pipe(Effect.provide(testLayer)),
+  );
+});

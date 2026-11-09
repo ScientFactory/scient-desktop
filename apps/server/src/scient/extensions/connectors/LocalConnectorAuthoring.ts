@@ -187,7 +187,9 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     const record = (yield* deps.records).find(
       (item) =>
         item.local !== undefined &&
-        (item.serverName === name.trim() || item.displayName.toLowerCase() === wanted),
+        (item.serverName === name.trim() ||
+          item.connectorId === name.trim() ||
+          item.displayName.toLowerCase() === wanted),
     );
     if (record === undefined)
       return yield* notFound(
