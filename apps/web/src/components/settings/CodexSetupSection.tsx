@@ -102,6 +102,8 @@ interface CodexSetupSectionProps {
   readonly mode: "managed" | "existing";
   readonly enabled: boolean;
   readonly readOnly?: boolean;
+  // Onboarding's "Use existing CLI" opens a terminal, which this session may not be allowed.
+  readonly existingCliDisabled?: boolean;
   readonly presentation?: "settings" | "onboarding";
   readonly onModeChange: (mode: "managed" | "existing") => void;
   readonly autoStart?: boolean;
@@ -188,7 +190,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
             <Button
               size="sm"
               variant="ghost-muted"
-              disabled={props.readOnly}
+              disabled={props.readOnly || props.existingCliDisabled}
               onClick={() => changeMode("existing")}
             >
               Use existing CLI
@@ -277,6 +279,7 @@ function ManagedCodexSetup({
   autoStart,
   onAutoStartConsumed,
   allowExistingCli = true,
+  existingCliDisabled,
   presentation,
   displayName,
   onSignInCancelled,
@@ -948,7 +951,7 @@ function ManagedCodexSetup({
               <Button
                 size="sm"
                 variant="ghost-muted"
-                disabled={readOnly || busy}
+                disabled={readOnly || busy || existingCliDisabled}
                 onClick={() => onModeChange("existing")}
               >
                 Use existing CLI

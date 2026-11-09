@@ -19,7 +19,8 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       aria-orientation="vertical"
       {...separatorProps}
       className={cn(
-        "cursor-platform-col-resize group absolute inset-y-0 -left-1 z-20 w-2 select-none",
+        // SCIENT-FORK: z-41 keeps the line above the browser page (30) and Scient's page corners (40).
+        "cursor-platform-col-resize group absolute inset-y-0 -left-1 z-41 w-2 select-none",
         className,
       )}
       {...handlers}
