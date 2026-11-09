@@ -59,6 +59,7 @@ const CARTESIAN_TRACE_TYPES = new Set([
   "image",
   "ohlc",
   "pointcloud",
+  "quiver",
   "scatter",
   "scattercarpet",
   "scattergl",
@@ -77,12 +78,6 @@ const TILE_MAP_TRACE_TYPES = new Set([
 ]);
 
 const GEO_TOPOLOGY_TRACE_TYPES = new Set(["choropleth", "scattergeo"]);
-
-const DEPRECATED_MAPBOX_TRACE_TYPES = new Set([
-  "choroplethmapbox",
-  "densitymapbox",
-  "scattermapbox",
-]);
 
 const PLOTLY_TYPED_ARRAY_BYTES = new Map<string, number>([
   ["f4", 4],
@@ -363,9 +358,6 @@ export function parsePlotlySource(source: string): ParsedPlotlySource {
   const hasImplicitScatter = data.some(
     (trace) => typeof trace.type !== "string" || trace.type.trim().length === 0,
   );
-  const deprecatedMapboxTypes = [...types].filter((type) =>
-    DEPRECATED_MAPBOX_TRACE_TYPES.has(type),
-  );
   const hasGeoTopology = [...types].some((type) => GEO_TOPOLOGY_TRACE_TYPES.has(type));
   const hasMapTiles = [...types].some((type) => TILE_MAP_TRACE_TYPES.has(type));
 
@@ -381,12 +373,8 @@ export function parsePlotlySource(source: string): ParsedPlotlySource {
     hasWebGl: [...types].some(
       (type) => WEB_GL_TRACE_TYPES.has(type) || TILE_MAP_TRACE_TYPES.has(type),
     ),
-    warnings:
-      deprecatedMapboxTypes.length === 0
-        ? []
-        : [
-            `This figure uses deprecated Mapbox trace ${deprecatedMapboxTypes.length === 1 ? "type" : "types"}: ${deprecatedMapboxTypes.join(", ")}. Plotly currently supports the figure, but current producers should prefer map traces.`,
-          ],
+    // Removed Mapbox traces draw as `map` traces (see plotlyRuntime), so nothing to warn about.
+    warnings: [],
   };
 }
 

@@ -27,11 +27,20 @@ formats so they do not add more inherited Markdown seams.
 
 ## Runtime contract
 
-Plotly uses the exact-pinned complete 3.7.0 browser distribution, dynamically
-imported only for a settled visible Plotly fence. MathJax 3.2.2 is loaded in a
-separate lazy chunk only when a figure contains TeX-like labels. The versions
-are deliberately paired to the current stable Plotly integration;
-upgrade Plotly and its math runtime together after compatibility verification.
+Plotly uses the exact-pinned complete 4.2.0 strict browser distribution,
+dynamically imported only for a settled visible Plotly fence. plotly.py 7 writes
+figures for plotly.js 4. MathJax 3.2.2 is loaded in a separate lazy chunk only
+when a figure contains TeX-like labels; Plotly 4 supports MathJax 3 and 4.
+Upgrade Plotly and its math runtime together after compatibility verification,
+and run `plotlyRuntime.real.browser.test.ts`, the one test that loads the real
+bundle.
+
+Plotly 4 removed the Mapbox traces and subplot. The render copy renames
+`scattermapbox`, `choroplethmapbox`, `densitymapbox` and `layout.mapbox*` to
+their `map` equivalents, so older figures still draw; the saved source is not
+rewritten. `Plotly.validate` throws on a one-trace figure with a `legend`
+object (every one-series Plotly Express figure), so it is retried without the
+legend, and its "did not get coerced" (`unused`) issues are not shown.
 The original JSON or JSONC is never rewritten: a structured clone receives responsive host
 defaults, current light/dark presentation when the author supplied no template,
 and local interaction policy. The host disables editing and cloud/Chart Studio

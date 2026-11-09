@@ -204,9 +204,11 @@ describe("Plotly runtime", () => {
       editable: false,
       responsive: true,
       scrollZoom: false,
-      showEditInChartStudio: false,
       showSendToCloud: false,
     });
+    // Plotly 4 removed these settings.
+    expect(inline.config).not.toHaveProperty("showEditInChartStudio");
+    expect(inline.config).not.toHaveProperty("showLink");
     expect(inline.config.modeBarButtonsToRemove).toBeUndefined();
     expect(expanded.config.scrollZoom).toBe(true);
     expect(inline.layout.dragmode).toBe("pan");
@@ -335,6 +337,104 @@ describe("Plotly runtime", () => {
 
     expect(mounted.warnings).toEqual(["The x-axis range was changed during defaults."]);
     mounted.dispose();
+  });
+
+  it("mounts a one-series Plotly Express figure whose legend makes validate throw", async () => {
+    const fixture = runtimeFixture();
+    fixture.spies.validate.mockImplementation((_data, layout) => {
+      const title = (layout as { title?: unknown }).title;
+      if ((layout as { legend?: unknown }).legend != null) {
+        throw new TypeError("Cannot read properties of undefined (reading 'validateFunction')");
+      }
+      return typeof title === "string"
+        ? [
+            {
+              astr: "title",
+              code: "object",
+              container: "layout",
+              msg: "In layout, key title must be linked to an object container",
+              path: ["title"],
+              trace: null,
+            },
+          ]
+        : [];
+    });
+    const parsed = parsePlotlySource(
+      JSON.stringify({
+        data: [{ type: "scatter", x: [1, 2], y: [3, 4] }],
+        layout: { legend: { tracegroupgap: 0 }, title: "Hello" },
+      }),
+    );
+    const mounted = await mountPlotlyView({
+      container: { replaceChildren: vi.fn() } as unknown as HTMLElement,
+      parsed,
+      runtime: fixture.runtime,
+      surface: "inline",
+      theme: "light",
+    });
+
+    const rendered = fixture.spies.react.mock.calls[0]?.[1] as PlotlyRuntimeFigure;
+    expect(rendered.layout.title).toEqual({ text: "Hello" });
+    expect(rendered.layout.legend).toEqual({ tracegroupgap: 0 });
+    expect(mounted.warnings).toEqual([]);
+    mounted.dispose();
+  });
+
+  it("hides Plotly's ignored-attribute warnings that every plotly.py figure carries", async () => {
+    const fixture = runtimeFixture();
+    fixture.spies.validate.mockReturnValueOnce([
+      {
+        astr: "orientation",
+        code: "unused",
+        container: "data",
+        msg: "In data trace 0, key orientation did not get coerced",
+        path: ["orientation"],
+        trace: 0,
+      },
+    ]);
+    const mounted = await mountPlotlyView({
+      container: { replaceChildren: vi.fn() } as unknown as HTMLElement,
+      parsed: parsedFigure(),
+      runtime: fixture.runtime,
+      surface: "inline",
+      theme: "light",
+    });
+
+    expect(mounted.warnings).toEqual([]);
+    mounted.dispose();
+  });
+
+  it("draws removed Mapbox traces as map traces without changing the saved figure", () => {
+    const parsed = parsePlotlySource(
+      JSON.stringify({
+        data: [
+          { type: "scattermapbox", lat: [1], lon: [2] },
+          { type: "densitymapbox", lat: [1], lon: [2], subplot: "mapbox2" },
+        ],
+        layout: {
+          mapbox: { style: "open-street-map", zoom: 3 },
+          mapbox2: { accesstoken: "pk.secret", style: "carto-positron" },
+          template: { data: { scattermapbox: [{ type: "scattermapbox" }] } },
+        },
+        frames: [{ data: [{ type: "scattermapbox", lat: [3] }], layout: { mapbox: { zoom: 5 } } }],
+      }),
+    );
+    const before = structuredClone(parsed.figure);
+    const prepared = preparePlotlyRuntimeFigure(parsed, "light", "inline");
+    const layout = prepared.layout as Record<string, unknown>;
+
+    expect(prepared.data.map((trace) => trace.type)).toEqual(["scattermap", "densitymap"]);
+    expect((prepared.data[1] as { subplot?: unknown }).subplot).toBe("map2");
+    expect(layout.map).toEqual({ style: "open-street-map", zoom: 3 });
+    expect(layout.map2).toEqual({ style: "carto-positron" });
+    expect(layout).not.toHaveProperty("mapbox");
+    expect(layout).not.toHaveProperty("mapbox2");
+    expect((layout.template as { data: Record<string, unknown> }).data).toEqual({
+      scattermap: [{ type: "scattermap" }],
+    });
+    expect(prepared.frames[0]?.data?.[0]?.type).toBe("scattermap");
+    expect(prepared.frames[0]?.layout as Record<string, unknown>).toEqual({ map: { zoom: 5 } });
+    expect(parsed.figure).toEqual(before);
   });
 
   it("repairs compatible string title shorthand before rendering and revalidates it", async () => {

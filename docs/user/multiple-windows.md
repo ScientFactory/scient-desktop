@@ -29,6 +29,10 @@ A new window opens slightly offset from the window you were using, or under the
 pointer when you drag a tab out. Move or resize it like any other window. Close
 it with its window controls; the other windows stay open.
 
+Each window keeps its own sidebar project filter, so one window can show one
+project's threads while another shows a different project or all projects. A
+new window, and Scient after a restart, starts with the filter you chose last.
+
 ## What windows share
 
 - **Threads and conversations.** A message sent in one window appears in every
