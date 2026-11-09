@@ -125,6 +125,8 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
   const list = sectionPickerList({ sections, inScope, lastActivity, query });
 
   const choose = (entry: SectionPickerEntry) => {
+    // A pending create files the threads when it lands, so it can't be overtaken.
+    if (creating) return;
     props.onOpenChange(false);
     if (entry.id === current) return;
     props.onMove(
@@ -148,6 +150,7 @@ function SectionPicker(props: Parameters<typeof SectionPickerPopover>[0]) {
       <AutocompleteItem
         key={entry.id}
         value={entry.id}
+        disabled={creating}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => choose(entry)}
       >

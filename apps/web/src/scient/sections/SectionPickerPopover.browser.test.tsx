@@ -114,6 +114,27 @@ it("creates a section from the typed name with Enter", async () => {
   expect(onCreate).toHaveBeenCalledExactlyOnceWith("Field notes");
 });
 
+it("holds other choices while a new section is being created", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  const onMove = vi.fn();
+  // The create never settles, as on a slow server.
+  await renderPicker(_fixture, { onMove, onCreate: () => new Promise<boolean>(() => {}) });
+
+  await userEvent.keyboard("field notes");
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Create “Field notes”"]));
+  await userEvent.keyboard("{Enter}");
+  await userEvent.clear(
+    document.querySelector<HTMLElement>('input[aria-label="Search sections"]')!,
+  );
+  await vi.waitFor(() => expect(rowNames()).toEqual(["General", "Voice"]));
+  expect(document.querySelector('[data-slot="autocomplete-item"]')).toHaveAttribute(
+    "data-disabled",
+  );
+  await userEvent.keyboard("{Enter}");
+  expect(onMove).not.toHaveBeenCalled();
+});
+
 async function _cleanupFixture0(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
   _fixture.host?.remove();
