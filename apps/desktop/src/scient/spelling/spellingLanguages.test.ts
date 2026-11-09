@@ -1,45 +1,45 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { dictionaryFor, makeDocumentSpelling } from "./spellingLanguages.ts";
+import { dictionaryFor, makeDocumentSpelling, type LanguageChoices } from "./spellingLanguages.ts";
 
 // The shape Electron reports on Windows and Linux: some bare codes, some regional.
 const AVAILABLE = [
-  "af",
   "bg",
+  "da",
   "de",
   "de-DE",
+  "el",
   "en-AU",
   "en-CA",
   "en-GB",
   "en-US",
   "es",
-  "es-ES",
   "fr",
   "fr-FR",
-  "gl",
   "he",
-  "it",
   "it-IT",
   "pt-BR",
   "pt-PT",
   "ru",
+  "sl",
 ];
 
-const FRENCH = "Les résultats montrent une amélioration significative de la précision du modèle.";
-const GERMAN = "Die Ergebnisse zeigen eine deutliche Verbesserung der Genauigkeit des Modells.";
-const SPANISH = "Los resultados muestran una mejora significativa en la precisión del modelo.";
-const ITALIAN = "I risultati mostrano un miglioramento significativo della precisione del modello.";
 const ENGLISH = "The results show a significant improvement in the accuracy of the model.";
-const GALICIAN =
-  "Os resultados mostran unha mellora significativa na precisión do modelo e na calidade da investigación.";
+const HEBREW = "התוצאות מראות שיפור משמעותי בדיוק של המודל";
 
-function setup(preferredLocales: readonly string[], available: readonly string[] = AVAILABLE) {
+function setup(
+  preferredLocales: readonly string[],
+  savedChoices: LanguageChoices = {},
+  available: readonly string[] = AVAILABLE,
+) {
   const setSpellCheckerLanguages = vi.fn<(languages: string[]) => void>();
   const spelling = makeDocumentSpelling(
     { availableSpellCheckerLanguages: available, setSpellCheckerLanguages },
     preferredLocales,
+    savedChoices,
   );
-  return { spelling, setSpellCheckerLanguages };
+  const codes = () => spelling.languages().map(({ code }) => code);
+  return { spelling, codes, setSpellCheckerLanguages };
 }
 
 describe("dictionaryFor", () => {
@@ -51,7 +51,7 @@ describe("dictionaryFor", () => {
   it("falls back to the language's main dictionary for a region without one", () => {
     expect(dictionaryFor("en-IL", AVAILABLE, ["en-IL"])).toBe("en-US");
     expect(dictionaryFor("fr-CA", AVAILABLE, ["fr-CA"])).toBe("fr");
-    expect(dictionaryFor("it-CH", ["it-IT"], ["it-CH"])).toBe("it-IT");
+    expect(dictionaryFor("it-CH", AVAILABLE, ["it-CH"])).toBe("it-IT");
   });
 
   it("finds nothing for a language without a dictionary", () => {
@@ -60,66 +60,84 @@ describe("dictionaryFor", () => {
 });
 
 describe("makeDocumentSpelling", () => {
-  it("enables every system language at once, not only the first", () => {
-    const { spelling, setSpellCheckerLanguages } = setup(["en-IL", "he-IL", "ja-JP"]);
+  it("sets every system language at start, replacing the list Electron kept", () => {
+    const { codes, setSpellCheckerLanguages } = setup(["en-IL", "he-IL", "ja-JP"]);
     expect(setSpellCheckerLanguages).toHaveBeenCalledExactlyOnceWith(["en-US", "he"]);
-    expect(spelling.languages()).toEqual(["en-US", "he"]);
+    expect(codes()).toEqual(["en-US", "he"]);
   });
 
-  it("keeps each regional dictionary the system lists", () => {
-    const { spelling } = setup(["en-GB", "en-US"]);
-    expect(spelling.languages()).toEqual(["en-GB", "en-US"]);
-    expect(spelling.noteSample(ENGLISH)).toBe(false);
+  // English prompts a language guesser took for Indonesian, French and Danish (issue screenshots).
+  it.each([
+    "look at @data/cohort.csv and compute mean age",
+    "write unit tests for parser.ts",
+    "delete the tmp folder and rerun",
+    "acknolegments",
+  ])("adds nothing to an English system for %j", (prompt) => {
+    const { spelling, codes } = setup(["en-US"]);
+    expect(spelling.noteSample(prompt)).toBe(false);
+    expect(codes()).toEqual(["en-US"]);
   });
 
-  it("tells Galician from Spanish", () => {
-    const { spelling } = setup(["en-US"]);
-    expect(spelling.noteSample(GALICIAN)).toBe(true);
-    expect(spelling.languages()).toEqual(["en-US", "gl"]);
+  it.each([
+    { system: ["he-IL"], sample: ENGLISH, expected: ["he", "en-US"] },
+    { system: ["ru-RU"], sample: ENGLISH, expected: ["ru", "en-US"] },
+    { system: ["ja-JP"], sample: ENGLISH, expected: ["en-US"] },
+    { system: ["fr-FR"], sample: ENGLISH, expected: ["fr-FR"] },
+    { system: ["en-US"], sample: HEBREW, expected: ["en-US", "he"] },
+    { system: ["fr-FR"], sample: `${HEBREW} ${ENGLISH}`, expected: ["fr-FR", "he"] },
+    { system: ["en-US"], sample: "Η ανάλυση των δεδομένων", expected: ["en-US", "el"] },
+    { system: ["en-US"], sample: "We reject at α = 0.05 with μ known", expected: ["en-US"] },
+    { system: ["ja-JP"], sample: "今日はとても良い天気ですね", expected: [] },
+  ])(
+    "turns on the language of an alphabet $system lacks: $sample",
+    ({ system, sample, expected }) => {
+      const { spelling, codes } = setup(system);
+      spelling.noteSample(sample);
+      expect(codes()).toEqual(expected);
+    },
+  );
+
+  it("reports why each language is on", () => {
+    const { spelling } = setup(["he-IL"], { sl: true });
+    spelling.noteSample(ENGLISH);
+    expect(spelling.languages()).toEqual([
+      { code: "he", source: "system" },
+      { code: "en-US", source: "alphabet" },
+      { code: "sl", source: "user" },
+    ]);
   });
 
-  it("records a dictionary only once Electron accepted it, so a failure is retried", () => {
-    const { spelling, setSpellCheckerLanguages } = setup(["en-US"]);
+  it("lets the user's choices win over the rules, and keeps them", () => {
+    const { spelling, codes } = setup(["en-US"]);
+    expect(spelling.choose("he", false)).toBe(false);
+    expect(spelling.noteSample(HEBREW)).toBe(false);
+    expect(spelling.choose("da", true)).toBe(true);
+    expect(spelling.choose("en-US", false)).toBe(true);
+    expect(codes()).toEqual(["da"]);
+    expect(spelling.choices()).toEqual({ he: false, da: true, "en-US": false });
+    expect(spelling.choose("xx", true)).toBe(false);
+  });
+
+  it("starts from saved choices, dropping dictionaries that are gone", () => {
+    const { codes, setSpellCheckerLanguages } = setup(["en-US"], { fr: true, xx: true });
+    expect(setSpellCheckerLanguages).toHaveBeenCalledExactlyOnceWith(["en-US", "fr"]);
+    expect(codes()).toEqual(["en-US", "fr"]);
+  });
+
+  it("records a change only once Electron accepted it, so a failure is retried", () => {
+    const { spelling, codes, setSpellCheckerLanguages } = setup(["en-US"]);
     setSpellCheckerLanguages.mockImplementationOnce(() => {
       throw new Error("dictionary unavailable");
     });
-    expect(() => spelling.noteSample(FRENCH)).toThrow("dictionary unavailable");
-    expect(spelling.languages()).toEqual(["en-US"]);
-    expect(spelling.noteSample(FRENCH)).toBe(true);
-    expect(spelling.languages()).toEqual(["en-US", "fr"]);
-  });
-
-  it("adds the dictionary for a document written in another language", () => {
-    const { spelling, setSpellCheckerLanguages } = setup(["en-US"]);
-    expect(spelling.noteSample(FRENCH)).toBe(true);
-    expect(setSpellCheckerLanguages).toHaveBeenLastCalledWith(["en-US", "fr"]);
-  });
-
-  it("changes nothing for a language that is already enabled", () => {
-    const { spelling, setSpellCheckerLanguages } = setup(["en-US"]);
-    expect(spelling.noteSample(ENGLISH)).toBe(false);
-    spelling.noteSample(FRENCH);
-    expect(spelling.noteSample(FRENCH)).toBe(false);
-    expect(setSpellCheckerLanguages).toHaveBeenCalledTimes(2);
-  });
-
-  it("keeps the three most recently written languages besides the system ones", () => {
-    const { spelling } = setup(["en-US"]);
-    for (const sample of [FRENCH, GERMAN, SPANISH, FRENCH, ITALIAN]) spelling.noteSample(sample);
-    expect(spelling.languages()).toEqual(["en-US", "es", "fr", "it"]);
-  });
-
-  it("ignores short samples and languages it cannot check", () => {
-    const { spelling, setSpellCheckerLanguages } = setup(["en-US"], ["en-US", "fr"]);
-    expect(spelling.noteSample("Titre")).toBe(false);
-    expect(spelling.noteSample(GERMAN)).toBe(false);
-    expect(spelling.noteSample("今日はとても良い天気ですね。散歩に行きましょう。")).toBe(false);
-    expect(setSpellCheckerLanguages).toHaveBeenCalledTimes(1);
+    expect(() => spelling.noteSample(HEBREW)).toThrow("dictionary unavailable");
+    expect(codes()).toEqual(["en-US"]);
+    expect(spelling.noteSample(HEBREW)).toBe(true);
+    expect(codes()).toEqual(["en-US", "he"]);
   });
 
   it("does nothing where spellcheck has no dictionaries", () => {
-    const { spelling, setSpellCheckerLanguages } = setup(["en-US"], []);
-    expect(spelling.noteSample(FRENCH)).toBe(false);
+    const { spelling, setSpellCheckerLanguages } = setup(["en-US"], {}, []);
+    expect(spelling.noteSample(HEBREW)).toBe(false);
     expect(setSpellCheckerLanguages).not.toHaveBeenCalled();
   });
 });
