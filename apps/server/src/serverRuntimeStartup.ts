@@ -222,10 +222,11 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
     projectCount,
   });
   yield* analytics.recordOwners(yield* getServerOwners, "server");
-  yield* getMachineOwners.pipe(
-    Effect.flatMap((owners) => analytics.recordOwners(owners, "server")),
-    Effect.forkDetach,
-  );
+  yield* Effect.gen(function* () {
+    const status = yield* analytics.status;
+    if (status.available && status.consent !== "off")
+      yield* analytics.recordOwners(yield* getMachineOwners, "server");
+  }).pipe(Effect.forkScoped);
 });
 
 const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({

@@ -50,7 +50,10 @@ export function createProviderAccountAnalyticsMapper() {
           add(
             provider.driver,
             auth.email?.trim().toLowerCase(),
-            provider.driver === "codex" || provider.driver === "claudeAgent"
+            (provider.driver === "codex" && auth.type === "chatgpt") ||
+              (provider.driver === "claudeAgent" &&
+                auth.type !== undefined &&
+                !["apiKey", "customEndpoint", "bedrock"].includes(auth.type))
               ? auth.label?.trim()
               : undefined,
             auth.type,

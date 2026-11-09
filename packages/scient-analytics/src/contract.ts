@@ -1175,6 +1175,7 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
+          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
         },
@@ -1187,6 +1188,7 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
+          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
           durationBucket: durationBucket(property(input, "durationMs")),
           stopClass: normalizedEnum(property(input, "stopClass"), TURN_STOP_CLASSES),
         },

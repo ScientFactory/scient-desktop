@@ -159,6 +159,9 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
         provider: correlation.provider,
         model: correlation.model,
         durationMs: elapsed >= 0 ? elapsed : undefined,
+        ...(browser === undefined
+          ? {}
+          : { browserToolCalls: browser.calls, browserToolFailures: browser.failures }),
       };
       return run.status === "completed"
         ? [
@@ -168,9 +171,6 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                 ...properties,
                 usedTools: correlation.usedTools,
                 hasAttachment: correlation.hasAttachment,
-                ...(browser === undefined
-                  ? {}
-                  : { browserToolCalls: browser.calls, browserToolFailures: browser.failures }),
               },
             },
           ]

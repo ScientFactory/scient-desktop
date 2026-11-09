@@ -640,22 +640,30 @@ describe("native V2 analytics", () => {
     expect(JSON.stringify(output)).not.toContain("private");
     expect(mapper.event(runEvent("completed"))).toEqual([]);
   });
-  it("adds the turn's browser calls and failures to its completion, not to the next turn", () => {
-    const ledger = new BrowserToolCallLedger();
-    const completedAt = DateTime.toEpochMillis(runEvent("completed").occurredAt);
-    ledger.record(threadId, completedAt - 2_000, false);
-    ledger.record(threadId, completedAt - 1_000, true);
-    ledger.record(threadId, completedAt + 1, false);
-    const mapper = createV2AnalyticsEventMapper(ledger);
-    mapper.event(runEvent("running"));
-    expect(mapper.event(runEvent("completed"))).toMatchObject([
-      {
-        name: "provider.turn.completed",
-        properties: { browserToolCalls: 2, browserToolFailures: 1 },
-      },
-    ]);
-    expect(ledger.take(threadId, completedAt + 1)).toEqual({ calls: 1, failures: 0 });
-  });
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "keeps browser counts on the %s turn, not the next turn",
+    (status) => {
+      const ledger = new BrowserToolCallLedger();
+      const completedAt = DateTime.toEpochMillis(runEvent("completed").occurredAt);
+      ledger.record(threadId, completedAt - 2_000, false);
+      ledger.record(threadId, completedAt - 1_000, true);
+      ledger.record(threadId, completedAt + 1, false);
+      const mapper = createV2AnalyticsEventMapper(ledger);
+      mapper.event(runEvent("running"));
+      expect(mapper.event(runEvent(status))).toMatchObject([
+        {
+          name:
+            status === "completed"
+              ? "provider.turn.completed"
+              : status === "failed"
+                ? "provider.turn.failed"
+                : "provider.turn.stopped",
+          properties: { browserToolCalls: 2, browserToolFailures: 1 },
+        },
+      ]);
+      expect(ledger.take(threadId, completedAt + 1)).toEqual({ calls: 1, failures: 0 });
+    },
+  );
   it("ignores restored terminals and workspace-preparation failures", () => {
     const mapper = createV2AnalyticsEventMapper();
     expect(mapper.event(runEvent("completed"))).toEqual([]);

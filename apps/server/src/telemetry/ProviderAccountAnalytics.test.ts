@@ -84,3 +84,18 @@ describe("createProviderAccountAnalyticsMapper", () => {
     ]);
   });
 });
+
+it.each(["codex", "claudeAgent"] as const)(
+  "does not report %s API-key authentication as a subscription tier",
+  (driver) => {
+    const mapper = createProviderAccountAnalyticsMapper();
+    const events = mapper.observe([
+      provider({
+        driver: driver as ServerProvider["driver"],
+        auth: { status: "authenticated", type: "apiKey", label: "API Key" },
+      }),
+    ]);
+    expect(events[0]?.properties).toMatchObject({ accountType: "apiKey" });
+    expect(events[0]?.properties).not.toHaveProperty("plan");
+  },
+);
