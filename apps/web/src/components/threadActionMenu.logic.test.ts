@@ -96,11 +96,7 @@ describe("buildThreadActionMenuItems", () => {
 
   // SCIENT-FORK:START
   it("places Section in the first group, after pin, settle and snooze", () => {
-    const sectionMenu = {
-      id: "section" as const,
-      label: "Section",
-      children: [{ id: "section:new" as const, label: "New section…" }],
-    };
+    const sectionMenu = { id: "section" as const, label: "Move to section…" };
     const items = buildThreadActionMenuItems({ ...baseState, sectionMenu });
     expect(items.map((item) => item.id).slice(0, 5)).toEqual([
       "pin",

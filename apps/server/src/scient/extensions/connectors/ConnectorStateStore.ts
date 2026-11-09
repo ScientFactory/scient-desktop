@@ -17,6 +17,8 @@ import {
   type ExtensionsDiagnostic,
   GrantScope,
   IsoDateTime,
+  LocalConnectorKind,
+  LocalImportSource,
   NonNegativeInt,
   ProjectId,
   TrimmedNonEmptyString,
@@ -59,6 +61,30 @@ export const ConnectorAuthRecord = Schema.Union([
 ]);
 export type ConnectorAuthRecord = typeof ConnectorAuthRecord.Type;
 
+const LocalSettingValue = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.Boolean,
+  Schema.Array(Schema.String),
+]);
+
+/** A local connector: a folder whose `manifest.json` Scient reads each time it starts it. */
+export const LocalLaunchRecord = Schema.Struct({
+  kind: LocalConnectorKind,
+  directory: TrimmedNonEmptyString,
+  /** Scient made the folder (an unpacked file or a generated manifest); removed with it. */
+  owned: Schema.Boolean,
+  /** Plain answers by `user_config` key. */
+  settings: Schema.Record(Schema.String, LocalSettingValue),
+  /** Keys by `user_config` key: linked Accounts API-key accounts (`account:<id>:token`). */
+  keys: Schema.Record(Schema.String, VaultSecretRef),
+  /** The other app's server it came from, so Add shows it as added. */
+  imported: Schema.optional(
+    Schema.Struct({ source: LocalImportSource, name: TrimmedNonEmptyString }),
+  ),
+});
+export type LocalLaunchRecord = typeof LocalLaunchRecord.Type;
+
 export const ConnectorRecord = Schema.Struct({
   connectorId: ConnectorId,
   serverName: ConnectorServerName,
@@ -76,6 +102,8 @@ export const ConnectorRecord = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),
+  /** Set exactly when `source.type` is `local`; `url` is then `scient-local:<connectorId>`. */
+  local: Schema.optional(LocalLaunchRecord),
 });
 export type ConnectorRecord = typeof ConnectorRecord.Type;
 
