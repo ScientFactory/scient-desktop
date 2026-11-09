@@ -11,6 +11,7 @@ import {
   AnalysisRuntimeId,
   type AnalysisArtifactCollection,
   type AnalysisRunContext,
+  type AnalysisRunSource,
   type AnalysisRuntimeAdapter,
 } from "@scientfactory/analysis";
 import {
@@ -31,6 +32,7 @@ import type {
 } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
 import { batchLogBaseline, batchLogsFor, type BatchLogBaseline } from "./batchLogOutput.ts";
+import { prepareStan, STAN_INSTALL_HINT, stanSetup, stanSourceProblem } from "./StanRun.ts";
 
 const MAXIMUM_CAPTURED_BYTES = 64 * 1024 * 1024;
 
@@ -194,6 +196,37 @@ export function mathlibNeedsCache(root: string): boolean {
   );
 }
 
+/** Stan samples through the CmdStan its stanc came with, which cmdstanpy and cmdstanr install. */
+function prepareStanRun(
+  stanc: string,
+  environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
+  context: AnalysisRunContext,
+) {
+  const setup = stanSetup(stanc, environment, platform);
+  if ("problem" in setup) {
+    throw new AnalysisOperationError({
+      operation: "start",
+      reason: "runtime-missing",
+      message: setup.problem,
+    });
+  }
+  const plan = prepareStan({
+    stanc,
+    root: setup.root,
+    toolchain: setup.toolchain,
+    model: context.absoluteSourcePath,
+    staging: context.artifactStagingDirectory,
+    cwd: context.source.cwd,
+    platform,
+  });
+  const started = <Step extends (typeof plan.before)[number]>(step: Step): Step => ({
+    ...step,
+    ...startable(step, step.environment, platform),
+  });
+  return { ...started(plan), before: plan.before.map(started) };
+}
+
 function prepare(
   route: ComputeRunRoute,
   environment: Readonly<Record<string, string>>,
@@ -202,6 +235,8 @@ function prepare(
 ) {
   const executable = context.runtime.executablePath;
   if (executable === null) throw new Error(`${context.runtime.label} was not found.`);
+  if (route.languageId === "stan")
+    return prepareStanRun(executable, environment, platform, context);
   const { command } = chooseTool(route, [], executable, environment)!;
   const file = context.absoluteSourcePath;
   const process = { cwd: context.source.cwd, environment };
@@ -349,7 +384,9 @@ export function makeRunTableAdapters(input: {
     const missing =
       route.languageId === "sas" && input.platform === "darwin"
         ? "SAS has no version for Mac. It runs on Windows and Linux, or online through SAS OnDemand for Academics."
-        : `${label} was not found on this computer.`;
+        : route.languageId === "stan"
+          ? `Stan was not found on this computer. ${STAN_INSTALL_HINT}`
+          : `${label} was not found on this computer.`;
     return {
       id: AnalysisRuntimeId.make(`file:${route.languageId}`),
       kind: route.languageId,
@@ -358,16 +395,21 @@ export function makeRunTableAdapters(input: {
       inspect: async ({ customExecutablePath, inspectedAt }) => {
         const tools = (await input.tools()).get(route.languageId) ?? [];
         const tool = chooseTool(route, tools, customExecutablePath, environment);
+        const setup =
+          tool !== null && route.languageId === "stan"
+            ? stanSetup(tool.executable, environment, input.platform)
+            : null;
+        const problem = setup !== null && "problem" in setup ? setup : null;
         return {
           id: AnalysisRuntimeId.make(`file:${route.languageId}`),
           kind: route.languageId,
           label,
-          availability: tool === null ? "missing" : "available",
+          availability: tool === null ? "missing" : (problem?.availability ?? "available"),
           source:
             customExecutablePath !== undefined ? "custom" : tool === null ? "unconfigured" : "path",
           executablePath: tool?.executable ?? null,
           version: tool?.version ?? null,
-          detail: tool === null ? missing : null,
+          detail: tool === null ? missing : (problem?.problem ?? null),
           capabilities: ["run-file", "stream-output", "cancel-process-tree"],
           inspectedAt,
           verification: null,
@@ -375,6 +417,15 @@ export function makeRunTableAdapters(input: {
         };
       },
       ...capture,
+      ...(route.languageId === "stan"
+        ? {
+            validateSource: (source: AnalysisRunSource) =>
+              stanSourceProblem(
+                pathModule(input.platform).join(source.cwd, source.relativePath),
+                input.platform,
+              ),
+          }
+        : {}),
       ...(logs === undefined
         ? {}
         : {

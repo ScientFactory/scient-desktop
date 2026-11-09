@@ -70,7 +70,7 @@ import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
-import { appendBoundedAnalysisOutput } from "./analysisOutputBuffer.ts";
+import { appendBoundedAnalysisOutput, makeHeldAnalysisOutput } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
 import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
@@ -969,17 +969,33 @@ const make = Effect.gen(function* () {
           if (running?.receipt.cancellationRequested) {
             yield* handle.cancel;
           }
+          const held =
+            "showOutput" in step && step.showOutput === "on-failure"
+              ? makeHeldAnalysisOutput()
+              : null;
           [, exitCode] = yield* Effect.all(
             [
               handle.output.pipe(
                 Stream.groupedWithin(OUTPUT_COALESCE_MAX_CHUNK, OUTPUT_COALESCE_WINDOW),
-                Stream.runForEach((outputs) => appendOutput(runId, outputs)),
+                Stream.runForEach((outputs) =>
+                  held === null
+                    ? appendOutput(runId, outputs)
+                    : Effect.sync(() => held.hold(outputs)),
+                ),
               ),
               handle.exitCode,
             ],
             { concurrency: 2 },
           );
-          if (exitCode !== 0) break;
+          if (exitCode !== 0) {
+            if (
+              held !== null &&
+              !(yield* Ref.get(runsRef)).get(runId)?.receipt.cancellationRequested
+            ) {
+              yield* appendOutput(runId, held.release());
+            }
+            break;
+          }
         }
         yield* updateReceipt(runId, "start", (run) => ({ ...run, phase: "capturing" }));
         const concludeRun = adapter.concludeRun;

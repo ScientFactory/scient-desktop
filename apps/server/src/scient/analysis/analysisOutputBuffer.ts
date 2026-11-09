@@ -89,3 +89,44 @@ export function appendBoundedAnalysisOutput(input: {
 
   return { chunks, outputByteLength, outputTruncated };
 }
+
+/**
+ * Output held back until a step's outcome is known, keeping its end: a failure's cause is printed
+ * last, and the run shows no more than its own limit anyway.
+ */
+export function makeHeldAnalysisOutput(maximumBytes = ANALYSIS_OUTPUT_MAXIMUM_BYTES) {
+  const held: Array<{ output: ExecutionProcessOutput; bytes: number }> = [];
+  let total = 0;
+  let dropped = false;
+  return {
+    hold: (outputs: ReadonlyArray<ExecutionProcessOutput>): void => {
+      for (const output of outputs) {
+        const bytes = new TextEncoder().encode(output.text).byteLength;
+        held.push({ output, bytes });
+        total += bytes;
+        while (total > maximumBytes && held.length > 0) {
+          dropped = true;
+          const first = held[0]!;
+          const excess = total - maximumBytes;
+          if (first.bytes <= excess) {
+            held.shift();
+            total -= first.bytes;
+            continue;
+          }
+          const encoded = new TextEncoder().encode(first.output.text);
+          let start = excess;
+          while (start < encoded.byteLength && (encoded[start]! & 0xc0) === 0x80) start += 1;
+          const text = new TextDecoder().decode(encoded.subarray(start));
+          held[0] = { output: { ...first.output, text }, bytes: encoded.byteLength - start };
+          total -= start;
+        }
+      }
+    },
+    release: (): ReadonlyArray<ExecutionProcessOutput> => [
+      ...(dropped
+        ? [{ stream: "stderr" as const, text: "[Earlier output of this step was left out.]\n" }]
+        : []),
+      ...held.map((entry) => entry.output),
+    ],
+  };
+}

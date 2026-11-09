@@ -54,7 +54,7 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string, string?]>> = {
   scala: ["a.scala", '@main def run(): Unit = println("scient-ran")\n'],
   perl: ["a.pl", 'print "scient-ran\\n";\n'],
   spss: ["a.sps", "ECHO 'scient-ran'.\n"],
-  stan: ["a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n", ""],
+  stan: ["a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n", "R_hat"],
   lean: ["a.lean", '#eval IO.println "scient-ran"\n'],
   isabelle: [
     "a.thy",
@@ -301,6 +301,75 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           expect(result.code, output).toBe(0);
         }
         expect(output).toContain("scient-ran");
+      }).pipe(Effect.provide(Live)),
+  );
+
+  // Eight schools with its data beside it, in a folder with a space, which make alone cannot build.
+  it.live.runIf(installedForTest?.includes("stan") ?? tools.has("stan"))(
+    "samples a Stan model with its data, and keeps the draws beside it",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "stan")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        expect(profile.availability, profile.detail ?? "").toBe("available");
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stan ")),
+        );
+        const models = NodePath.join(cwd, "my models");
+        NodeFS.mkdirSync(models);
+        NodeFS.writeFileSync(
+          NodePath.join(models, "eight schools.stan"),
+          "data {\n  int<lower=0> J;\n  array[J] real y;\n  array[J] real<lower=0> sigma;\n}\nparameters {\n  real mu;\n  real<lower=0> tau;\n  vector[J] theta_tilde;\n}\ntransformed parameters {\n  vector[J] theta = mu + tau * theta_tilde;\n}\nmodel {\n  mu ~ normal(0, 5);\n  tau ~ cauchy(0, 5);\n  theta_tilde ~ normal(0, 1);\n  y ~ normal(theta, sigma);\n}\n",
+        );
+        const source = {
+          cwd,
+          relativePath: "my models/eight schools.stan",
+          revision: "live" as never,
+        };
+        expect(adapter.validateSource?.(source)).toMatch(/reads data/u);
+        NodeFS.writeFileSync(
+          NodePath.join(models, "eight schools.data.json"),
+          '{"J": 8, "y": [28, 8, -3, 7, -1, 1, 18, 12], "sigma": [15, 10, 16, 11, 9, 11, 10, 18]}',
+        );
+        expect(adapter.validateSource?.(source)).toBeNull();
+        const staging = NodePath.join(cwd, ".staging");
+        NodeFS.mkdirSync(staging);
+        const prepared = adapter.prepare({
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source,
+          absoluteSourcePath: NodePath.join(models, "eight schools.stan"),
+          artifactStagingDirectory: staging,
+        });
+        let shown = "";
+        for (const step of [...(prepared.before ?? []), prepared]) {
+          const result = yield* runStep(step);
+          expect(result.code, `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`).toBe(
+            0,
+          );
+          if (!("showOutput" in step)) shown += result.output;
+        }
+        expect(shown).toMatch(/^mu\s+\S+/mu);
+        expect(shown).toMatch(/^theta\[8\]\s+\S+/mu);
+        expect(shown).toContain("R_hat");
+        expect(shown).toContain("Processing complete");
+        expect(shown).not.toContain("num_warmup");
+        expect(NodeFS.readdirSync(NodePath.join(models, "eight schools-draws")).sort()).toEqual([
+          "eight_schools_1.csv",
+          "eight_schools_2.csv",
+          "eight_schools_3.csv",
+          "eight_schools_4.csv",
+          "summary.csv",
+        ]);
+        expect(NodeFS.readdirSync(models).filter((name) => name.endsWith(".hpp"))).toEqual([]);
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
       }).pipe(Effect.provide(Live)),
   );
 });

@@ -12,7 +12,7 @@ import {
   computeRunRoutesForPath,
   isSqliteScript,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
 import {
@@ -21,6 +21,7 @@ import {
   makeRunTableAdapters,
   mathlibNeedsCache,
 } from "./RunTableAdapter.ts";
+import { stanBuildFolder } from "./StanRun.ts";
 
 const tool = (languageId: string, name: string, executable: string): FoundLanguageTool => ({
   languageId,
@@ -593,5 +594,112 @@ describe("the run table", () => {
     expect(computeRunRouteForPath("macro.C")?.languageId).toBe("root");
     expect(computeRunRouteForPath("main.c")?.languageId).toBe("c");
     expect(computeRunRouteForPath("notes.txt")).toBeUndefined();
+  });
+});
+
+describe("a Stan model", () => {
+  const made: string[] = [];
+  afterEach(() => {
+    for (const folder of made.splice(0)) NodeFS.rmSync(folder, { recursive: true, force: true });
+  });
+  /** CmdStan as cmdstanpy installs it, a make on PATH, and a model in a folder whose name has a space. */
+  const stanComputer = (complete = true) => {
+    const folder = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient stan ")),
+    );
+    // CmdStan's makefiles cannot build from a path with spaces, so it lives elsewhere.
+    const home = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-cmdstan-")),
+    );
+    made.push(folder, home);
+    const root = NodePath.join(home, ".cmdstan", "cmdstan-2.40.0");
+    const tools = NodePath.join(home, "tools");
+    for (const directory of [NodePath.join(root, "bin"), tools])
+      NodeFS.mkdirSync(directory, { recursive: true });
+    const parts = complete
+      ? ["makefile", "bin/stanc", "bin/stansummary", "bin/diagnose"]
+      : ["bin/stanc"];
+    for (const part of parts) NodeFS.writeFileSync(NodePath.join(root, part), "");
+    NodeFS.writeFileSync(NodePath.join(tools, "make"), "");
+    const stanc = NodePath.join(root, "bin", "stanc");
+    const adapter = makeRunTableAdapters({
+      tools: async () =>
+        new Map([["stan", [{ ...tool("stan", "stanc", stanc), version: "2.40.0" }]]]),
+      environment: { PATH: tools },
+      platform: "linux",
+    }).find((candidate) => candidate.kind === "stan")!;
+    const model = (name: string, source: string) => {
+      NodeFS.mkdirSync(NodePath.dirname(NodePath.join(folder, name)), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(folder, name), source);
+    };
+    const run = async (relativePath: string) => {
+      const absoluteSourcePath = NodePath.join(folder, relativePath);
+      made.push(stanBuildFolder(root, absoluteSourcePath, "linux"));
+      return adapter.prepare({
+        runId: ExecutionRunId.make("run"),
+        projectId: "project",
+        runtime: await inspect(adapter),
+        source: { cwd: folder, relativePath, revision: "1" as never },
+        absoluteSourcePath,
+        artifactStagingDirectory: NodePath.join(folder, ".staging"),
+      });
+    };
+    return { adapter, folder, model, root, run, stanc, tools };
+  };
+
+  it("samples through the CmdStan its stanc belongs to, and leaves no C++ in the project", async () => {
+    const { folder, model, root, run, stanc, tools } = stanComputer();
+    model("models/a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n");
+    const prepared = await run("models/a.stan");
+    expect(prepared.before?.map((step) => step.executable)).toEqual([
+      stanc,
+      NodePath.join(tools, "make"),
+      expect.stringMatching(/scient-stan[\\/][0-9a-f]{16}[\\/]a$/u),
+      NodePath.join(root, "bin", "stansummary"),
+    ]);
+    expect(prepared.executable).toBe(NodePath.join(root, "bin", "diagnose"));
+    expect(prepared.before?.[0]?.args).toContain(
+      `--o=${NodePath.join(folder, ".staging", "a.hpp")}`,
+    );
+    expect(prepared.before?.map((step) => step.showOutput)).toEqual([
+      undefined,
+      "on-failure",
+      "on-failure",
+      undefined,
+    ]);
+    expect(NodeFS.readdirSync(NodePath.join(folder, "models")).sort()).toEqual([
+      "a-draws",
+      "a.stan",
+    ]);
+  });
+
+  it("says what to install when nothing samples", async () => {
+    const missing = await inspect(adapterFor("stan", []));
+    expect(missing.availability).toBe("missing");
+    expect(missing.detail).toMatch(/cmdstanpy\.install_cmdstan.*cmdstanr::install_cmdstan/su);
+    const { adapter, stanc } = stanComputer(false);
+    const alone = await inspect(adapter);
+    expect(alone).toMatchObject({ availability: "missing", executablePath: stanc });
+    expect(alone.detail).toContain(`Found stanc at ${stanc}, which only checks a model.`);
+  });
+
+  it("is ready when CmdStan and make are here", async () => {
+    const { adapter } = stanComputer();
+    expect(await inspect(adapter)).toMatchObject({
+      availability: "available",
+      version: "2.40.0",
+      detail: null,
+    });
+  });
+
+  it("asks for the data file a model reads before running it", () => {
+    const { adapter, folder, model } = stanComputer();
+    model("eight.stan", "data {\n  int<lower=0> J;\n}\nparameters {\n  real mu;\n}\n");
+    const source = { cwd: folder, relativePath: "eight.stan", revision: "1" as never };
+    expect(adapter.validateSource?.(source)).toBe(
+      "eight.stan reads data. Put it in eight.data.json beside the model.",
+    );
+    model("eight.data.json", '{"J": 8}');
+    expect(adapter.validateSource?.(source)).toBeNull();
   });
 });

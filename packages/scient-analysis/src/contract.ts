@@ -540,6 +540,8 @@ export interface AnalysisRuntimeAdapter {
       readonly args: ReadonlyArray<string>;
       readonly cwd: string;
       readonly environment: Readonly<Record<string, string>>;
+      /** "on-failure": its output appears only if it fails, such as a build that worked. */
+      readonly showOutput?: "on-failure";
     }>;
   };
   readonly collectArtifacts?: (context: AnalysisRunContext) => Promise<AnalysisArtifactCollection>;

@@ -228,7 +228,9 @@ A `.lean` file in a Lake project runs through Lake from the project's folder, so
 first; a Mathlib project fetches Mathlib's ready-built files the first time. Stata and SAS write
 their results to files in the project's folder, and Run shows them: Stata's log, or SAS's listing
 followed by any warnings. A do-file that stops at an error fails with that error, though Stata
-itself reports success. A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
+itself reports success. A Stan model samples four chains with the CmdStan that cmdstanpy or cmdstanr
+installed, reading its data from `<name>.data.json` beside it, and shows the summary and
+diagnostics; the draws stay in `<name>-draws` beside the model. A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
 NetLogo runs nothing else without its window; save an experiment in the model to run it. A run gets
 no typed input, so a tool that waits at a prompt after its file exits instead.
 
