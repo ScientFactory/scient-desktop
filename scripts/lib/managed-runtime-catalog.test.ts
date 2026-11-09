@@ -162,6 +162,60 @@ describe("Scient Agent first managed release", () => {
     ).rejects.toThrow(/missing scient-agent-.*\.zst or its checksum/u);
   });
 
+  it("publishes compressed copies added to an already published release", async () => {
+    const first = await refreshManagedRuntimeProvider(currentCatalog, "scient", scientFetch());
+    const published = mergeQualifiedManagedRuntimeProvider({
+      current: currentCatalog,
+      candidate: first.catalog,
+      provider: "scient",
+    });
+    const unchanged = await refreshManagedRuntimeProvider(published, "scient", scientFetch());
+    expect(unchanged).toEqual({ catalog: published, changedProviders: [] });
+    const added = await refreshManagedRuntimeProvider(
+      published,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all") }),
+    );
+    expect(added.changedProviders).toEqual(["scient"]);
+    const republished = mergeQualifiedManagedRuntimeProvider({
+      current: published,
+      candidate: added.catalog,
+      provider: "scient",
+    });
+    expect(republished.providers.scient).toEqual(added.catalog.providers.scient);
+    expect(republished.providers.scient!.artifacts["darwin-arm64"]!.compressed).toBeDefined();
+    const again = await refreshManagedRuntimeProvider(
+      republished,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all") }),
+    );
+    expect(again.changedProviders).toEqual([]);
+    // Other binaries under the same version are still a repack.
+    const binary = added.catalog.providers.scient!.artifacts["darwin-arm64"]!;
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: published,
+        candidate: {
+          ...added.catalog,
+          providers: {
+            ...added.catalog.providers,
+            scient: {
+              ...added.catalog.providers.scient!,
+              artifacts: {
+                ...added.catalog.providers.scient!.artifacts,
+                "darwin-arm64": {
+                  ...binary,
+                  checksum: { algorithm: "sha256", digest: "b".repeat(64) },
+                },
+              },
+            },
+          },
+        },
+        provider: "scient",
+      }),
+    ).toThrow(/same-version catalog repack/u);
+  });
+
   it("keeps the compressed copies through reading, validation and publication", async () => {
     const discovered = await refreshManagedRuntimeProvider(
       currentCatalog,

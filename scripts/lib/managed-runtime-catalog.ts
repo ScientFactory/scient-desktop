@@ -441,8 +441,10 @@ export function readManagedRuntimeCatalog(
 }
 
 /** Binds a Cursor qualification to its predecessor without depending on sibling changes. */
+/** With `withTransport: false`, the binaries alone: compressed copies are left out. */
 export function managedRuntimeProviderIdentity(
   release: ManagedRuntimeCatalogProviderData | undefined,
+  withTransport = true,
 ): string {
   const normalized = release
     ? {
@@ -463,6 +465,7 @@ export function managedRuntimeProviderIdentity(
               },
               size: artifact.size,
               antigravityAcp: artifact.antigravityAcp,
+              ...(withTransport && artifact.compressed ? { compressed: artifact.compressed } : {}),
             },
           ]),
       }
@@ -632,7 +635,14 @@ function releaseChanged(
   if (current.version === version) {
     return (
       current.contractRevision !== MANAGED_RUNTIME_POLICY[provider].revision ||
-      approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined)
+      approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined) ||
+      // Copies published after the release are looked for again; finding none changes nothing.
+      (provider !== "antigravityAcp" &&
+        policyEntries(provider).some(
+          ({ key, policy }) =>
+            policy.compressedArtifactName !== undefined &&
+            current.artifacts[key]?.compressed === undefined,
+        ))
     );
   }
   const comparison = compareManagedRuntimeReleases({ provider, current, candidate: { version } });
@@ -1362,6 +1372,13 @@ export async function refreshManagedRuntimeProvider(
   if (candidate.version !== latestVersion) {
     throw new Error(`${provider} stable release changed during discovery.`);
   }
+  if (
+    current.providers[provider] &&
+    managedRuntimeProviderIdentity(existing) === managedRuntimeProviderIdentity(candidate)
+  ) {
+    report(`${provider} is already current at ${latestVersion}.`);
+    return { catalog: current, changedProviders: [] };
+  }
   report(`${provider} ${latestVersion} candidate metadata is complete.`);
   return {
     catalog: {
@@ -1408,16 +1425,22 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
       managedRuntimeProviderIdentity(currentRelease) !==
       managedRuntimeProviderIdentity(candidateRelease)
     ) {
+      // Compressed copies added to a published release: the same binaries, qualified again.
+      const sameBinaries =
+        managedRuntimeProviderIdentity(currentRelease, false) ===
+        managedRuntimeProviderIdentity(candidateRelease, false);
       if (
-        JSON.stringify(currentRelease.supersedes) !== JSON.stringify(candidateRelease.supersedes) ||
-        !preservesPublishedArtifacts({
-          provider: input.provider,
-          current: currentRelease,
-          candidate: candidateRelease,
-        }) ||
-        (candidateRelease.contractRevision === currentRelease.contractRevision &&
-          Object.keys(candidateRelease.artifacts).length <=
-            Object.keys(currentRelease.artifacts).length)
+        !sameBinaries &&
+        (JSON.stringify(currentRelease.supersedes) !==
+          JSON.stringify(candidateRelease.supersedes) ||
+          !preservesPublishedArtifacts({
+            provider: input.provider,
+            current: currentRelease,
+            candidate: candidateRelease,
+          }) ||
+          (candidateRelease.contractRevision === currentRelease.contractRevision &&
+            Object.keys(candidateRelease.artifacts).length <=
+              Object.keys(currentRelease.artifacts).length))
       ) {
         throw new Error(`${input.provider} attempted a same-version catalog repack.`);
       }
