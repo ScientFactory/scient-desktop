@@ -372,4 +372,75 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         NodeFS.rmSync(cwd, { recursive: true, force: true });
       }).pipe(Effect.provide(Live)),
   );
+
+  // Windows forbids double quotes in names; everything else a shell or make reads is here.
+  it.live.runIf(installedForTest?.includes("stan") ?? tools.has("stan"))(
+    "builds a Stan model with includes from a folder whose name a shell would run",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "stan")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        expect(profile.availability, profile.detail ?? "").toBe("available");
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stan-")),
+        );
+        const markers = ["scient-ran-tick", "scient-ran-sub", "scient-ran-semi"];
+        const name = `a \`touch ${markers[0]}\` $(touch ${markers[1]}) $HOME ${NodeProcess.platform === "win32" ? "" : '"q" '}'s' ;touch ${markers[2]}; 100%`;
+        const models = NodePath.join(cwd, name, "models");
+        NodeFS.mkdirSync(NodePath.join(models, "parts"), { recursive: true });
+        NodeFS.mkdirSync(NodePath.join(cwd, name, "shared"));
+        NodeFS.writeFileSync(
+          NodePath.join(models, "m.stan"),
+          "functions {\n#include parts/f.stanfunctions\n#include ../shared/g.stanfunctions\n}\nparameters {\n  real y;\n}\nmodel {\n  y ~ normal(f(), g());\n}\n",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(models, "parts", "f.stanfunctions"),
+          "real f() { return 0; }\n",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, name, "shared", "g.stanfunctions"),
+          "real g() { return 1; }\n",
+        );
+        const staging = NodePath.join(cwd, ".staging");
+        NodeFS.mkdirSync(staging);
+        const relativePath = `${name}/models/m.stan`;
+        const source = { cwd, relativePath, revision: "live" as never };
+        expect(adapter.validateSource?.(source)).toBeNull();
+        const prepared = adapter.prepare({
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source,
+          absoluteSourcePath: NodePath.join(models, "m.stan"),
+          artifactStagingDirectory: staging,
+        });
+        let shown = "";
+        for (const step of [...(prepared.before ?? []), prepared]) {
+          const result = yield* runStep(step);
+          expect(result.code, `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`).toBe(
+            0,
+          );
+          if (!("showOutput" in step)) shown += result.output;
+        }
+        expect(shown).toMatch(/^y\s+\S+/mu);
+        expect(shown).toContain("R_hat");
+        const root = NodePath.dirname(
+          NodePath.dirname(NodeFS.realpathSync(profile.executablePath!)),
+        );
+        for (const folder of [cwd, models, root, NodeProcess.cwd()]) {
+          for (const marker of markers) {
+            expect(NodeFS.existsSync(NodePath.join(folder, marker)), `${marker} in ${folder}`).toBe(
+              false,
+            );
+          }
+        }
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }).pipe(Effect.provide(Live)),
+  );
 });

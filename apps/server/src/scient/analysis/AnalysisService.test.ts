@@ -1054,7 +1054,7 @@ describe("analysis service coordination", () => {
       for (const scenario of [
         { exitCode: 0, failureMessage: "file nothere.dta not found (r(601))", status: "failed" },
         { exitCode: 1, failureMessage: null, status: "succeeded" },
-        { exitCode: 0, throws: true, status: "succeeded" },
+        { exitCode: 0, throws: true, status: "failed" },
         { exitCode: 3, throws: true, status: "failed" },
         { cancel: true, failureMessage: null, status: "cancelled" },
       ] as const) {
@@ -1088,8 +1088,11 @@ describe("analysis service coordination", () => {
             expect(finished.receipt.status).toBe(scenario.status);
             if ("throws" in scenario) {
               expect(finished.receipt.output).toEqual([]);
+              // Unreadable results never pass a run whose exit code cannot be trusted.
               expect(finished.receipt.failureMessage).toBe(
-                scenario.exitCode === 0 ? null : "MATLAB test runtime exited with code 3.",
+                scenario.exitCode === 0
+                  ? "Scient could not read the MATLAB test runtime results."
+                  : "MATLAB test runtime exited with code 3, and Scient could not read its results.",
               );
               return;
             }

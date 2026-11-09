@@ -10,6 +10,7 @@ import {
   prepareStan,
   stanBuildFolder,
   stanDataFile,
+  stanMakeSafe,
   stanModelName,
   stanNeedsData,
   stanSetup,
@@ -127,7 +128,7 @@ describe("a model's data", () => {
     expect(stanSourceProblem(model, "linux", "/tmp")).toBeNull();
     expect(
       stanSourceProblem(model, "win32", "C:\\Users\\Ada Lovelace\\AppData\\Local\\Temp"),
-    ).toMatch(/has spaces/u);
+    ).toMatch(/spaces or symbols/u);
   });
 });
 
@@ -264,12 +265,7 @@ describe("the run", () => {
       },
       {
         executable: "/usr/bin/make",
-        args: [
-          "-s",
-          "STAN_THREADS=true",
-          `STANCFLAGS=--include-paths="${folder}"`,
-          NodePath.join(build, "eight_schools"),
-        ],
+        args: ["-s", "STAN_THREADS=true", NodePath.join(build, "eight_schools")],
         cwd: root,
         environment: { PATH: "/usr/bin" },
         showOutput: "on-failure",
@@ -327,42 +323,140 @@ describe("the run", () => {
     expect(NodeFS.readdirSync(draws)).toEqual(["notes.txt"]);
   });
 
-  it("keeps an unchanged build copy, so make reuses the program, and always rewrites one with #include", () => {
+  it("rebuilds when the model or a file it includes changes, and only then", () => {
     const { root, stanc } = cmdstan();
     const temporary = temporaryFolder("scient-stan-build-");
     const folder = temporaryFolder("scient-stan-");
-    const run = (name: string) =>
+    const model = NodePath.join(folder, "m.stan");
+    const run = () =>
       prepareStan({
         stanc,
         root,
         toolchain: { make: "/usr/bin/make", environment: {} },
-        model: NodePath.join(folder, name),
+        model,
         staging: folder,
         cwd: folder,
         platform: "linux",
         temporary,
       });
-    const copyOf = (name: string) =>
-      NodePath.join(stanBuildFolder(root, NodePath.join(folder, name), "linux", temporary), name);
-    NodeFS.writeFileSync(NodePath.join(folder, "plain.stan"), "parameters { real y; }\n");
-    NodeFS.writeFileSync(
-      NodePath.join(folder, "included.stan"),
-      "functions {\n#include f.stanfunctions\n}\n",
-    );
-    run("plain.stan");
-    run("included.stan");
+    const copy = NodePath.join(stanBuildFolder(root, model, "linux", temporary), "m.stan");
+    NodeFS.writeFileSync(model, "functions {\n#include f.stanfunctions\n}\n");
+    NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 1; }\n");
+    run();
     // 2020-01-01, in seconds.
     const old = 1_577_836_800;
-    for (const name of ["plain.stan", "included.stan"]) NodeFS.utimesSync(copyOf(name), old, old);
-    run("plain.stan");
-    run("included.stan");
-    expect(NodeFS.statSync(copyOf("plain.stan")).mtimeMs).toBe(old * 1000);
-    expect(NodeFS.statSync(copyOf("included.stan")).mtimeMs).not.toBe(old * 1000);
+    const age = () => NodeFS.utimesSync(copy, old, old);
+    const rebuilt = () => NodeFS.statSync(copy).mtimeMs !== old * 1000;
+    age();
+    run();
+    expect(rebuilt()).toBe(false);
+    NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 2; }\n");
+    run();
+    expect(rebuilt()).toBe(true);
+    age();
+    NodeFS.writeFileSync(
+      model,
+      "functions {\n#include f.stanfunctions\n}\nparameters { real y; }\n",
+    );
+    run();
+    expect(rebuilt()).toBe(true);
   });
 
   it("names programs as Stan identifiers", () => {
     expect(stanModelName("/m/my-model.stan", "linux")).toBe("my_model");
     expect(stanModelName("/m/2024 fit.stan", "linux")).toBe("m_2024_fit");
     expect(stanModelName("C:\\m\\Fit.STAN", "win32")).toBe("Fit");
+  });
+});
+
+/** Names a shell or make would read: backticks, substitutions, variables, quotes and separators. */
+const HOSTILE = [
+  "tick `touch scient-ran-tick` x",
+  "sub $(touch scient-ran-sub) x",
+  "var $HOME x",
+  'double "quote" x',
+  "single 'quote' x",
+  "semi ;touch scient-ran-semi; x",
+  "space x",
+  "percent 100% x",
+];
+
+describe("a model in a folder whose name a shell or make would read", () => {
+  it.each(HOSTILE)("keeps %s away from make, building from copies in the build folder", (name) => {
+    const { root, stanc } = cmdstan();
+    const temporary = temporaryFolder("scient-stan-build-");
+    const project = temporaryFolder("scient-stan-project-");
+    const folder = NodePath.join(project, name, "models");
+    NodeFS.mkdirSync(NodePath.join(folder, "parts"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(project, name, "shared"));
+    const model = NodePath.join(folder, "m.stan");
+    NodeFS.writeFileSync(
+      model,
+      "functions {\n#include parts/f.stanfunctions\n#include ../shared/g.stanfunctions\n}\n",
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(folder, "parts", "f.stanfunctions"),
+      "#include parts/h.stanfunctions\n",
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(folder, "parts", "h.stanfunctions"),
+      "real h() { return 0; }\n",
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(project, name, "shared", "g.stanfunctions"),
+      "real g() { return 1; }\n",
+    );
+    const prepared = prepareStan({
+      stanc,
+      root,
+      toolchain: { make: "/usr/bin/make", environment: {} },
+      model,
+      staging: temporary,
+      cwd: project,
+      platform: "linux",
+      temporary,
+    });
+    const make = prepared.before[1]!;
+    expect(make.executable).toBe("/usr/bin/make");
+    for (const arg of make.args) {
+      expect(arg).not.toContain(name);
+      expect(stanMakeSafe(arg.replace(/^[A-Z_]+=(?:--include-paths=)?/u, ""), "linux"), arg).toBe(
+        true,
+      );
+    }
+    const build = stanBuildFolder(root, model, "linux", temporary);
+    const includes = NodePath.join(build, "include", "up");
+    expect(make.args).toContain(`STANCFLAGS=--include-paths=${includes}`);
+    // stanc reads every name against the include folder, as the check step reads them against the model's.
+    expect(
+      NodeFS.readFileSync(NodePath.join(includes, "parts", "h.stanfunctions"), "utf8"),
+    ).toContain("h()");
+    expect(
+      NodeFS.readFileSync(NodePath.join(build, "include", "shared", "g.stanfunctions"), "utf8"),
+    ).toContain("g()");
+    expect(prepared.before[0]?.args).toContain(`--include-paths=${folder}`);
+  });
+
+  it("lets only plain path characters reach make", () => {
+    expect(stanMakeSafe("/var/folders/v4/x_y-z/T/scient-stan/0123abcd", "darwin")).toBe(true);
+    expect(stanMakeSafe("C:\\Users\\ADALOV~1\\AppData\\Local\\Temp", "win32")).toBe(true);
+    expect(stanMakeSafe("C:/cmdstan/cmdstan-2.40.0", "win32")).toBe(true);
+    // A user name in any language is a folder make builds in.
+    expect(stanMakeSafe("C:\\Users\\José\\AppData\\Local\\Temp", "win32")).toBe(true);
+    expect(stanMakeSafe("/home/zoë/.cmdstan/cmdstan-2.40.0", "linux")).toBe(true);
+    expect(stanMakeSafe("/home/山田/tmp", "linux")).toBe(true);
+    for (const name of HOSTILE) expect(stanMakeSafe(`/tmp/${name}`, "linux"), name).toBe(false);
+    expect(stanMakeSafe("/tmp/a:b", "linux")).toBe(false);
+    expect(stanMakeSafe("/tmp/a#b", "linux")).toBe(false);
+    expect(stanMakeSafe("/tmp/a=b", "linux")).toBe(false);
+    expect(stanMakeSafe("C:\\Users\\Ada Lovelace\\Temp", "win32")).toBe(false);
+  });
+
+  it("refuses a temporary folder make cannot build in, before anything runs", () => {
+    const folder = temporaryFolder("scient-stan-");
+    const model = NodePath.join(folder, "a.stan");
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    expect(stanSourceProblem(model, "linux", "/tmp/x $(y)")).toMatch(/spaces or symbols.*TMPDIR/su);
+    expect(stanSourceProblem(model, "linux", "/tmp")).toBeNull();
   });
 });

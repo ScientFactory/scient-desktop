@@ -683,6 +683,38 @@ describe("a Stan model", () => {
     expect(alone.detail).toContain(`Found stanc at ${stanc}, which only checks a model.`);
   });
 
+  it("chooses a stanc inside CmdStan over one found first that only checks, unless someone chose it", async () => {
+    const { stanc, tools } = stanComputer();
+    const lone = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stanc-")),
+    );
+    made.push(lone);
+    NodeFS.writeFileSync(NodePath.join(lone, "stanc"), "");
+    const adapter = makeRunTableAdapters({
+      tools: async () =>
+        new Map([
+          [
+            "stan",
+            [
+              tool("stan", "stanc", NodePath.join(lone, "stanc")),
+              { ...tool("stan", "stanc", stanc), version: "2.40.0" },
+            ],
+          ],
+        ]),
+      environment: { PATH: tools },
+      platform: "linux",
+    }).find((candidate) => candidate.kind === "stan")!;
+    expect(await inspect(adapter)).toMatchObject({
+      availability: "available",
+      executablePath: stanc,
+      detail: null,
+    });
+    expect(await inspect(adapter, NodePath.join(lone, "stanc"))).toMatchObject({
+      availability: "missing",
+      executablePath: NodePath.join(lone, "stanc"),
+    });
+  });
+
   it("is ready when CmdStan and make are here", async () => {
     const { adapter } = stanComputer();
     expect(await inspect(adapter)).toMatchObject({

@@ -32,7 +32,13 @@ import type {
 } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
 import { batchLogBaseline, batchLogsFor, type BatchLogBaseline } from "./batchLogOutput.ts";
-import { prepareStan, STAN_INSTALL_HINT, stanSetup, stanSourceProblem } from "./StanRun.ts";
+import {
+  cmdstanRoot,
+  prepareStan,
+  STAN_INSTALL_HINT,
+  stanSetup,
+  stanSourceProblem,
+} from "./StanRun.ts";
 
 const MAXIMUM_CAPTURED_BYTES = 64 * 1024 * 1024;
 
@@ -45,16 +51,26 @@ interface RunnableTool {
 const programName = (executable: string) =>
   NodePath.basename(executable.replaceAll("\\", "/")).replace(/\.(exe|cmd|bat|com)$/iu, "");
 
-/** JAVA_HOME names the Java someone wants, which outranks the newest one. */
+/**
+ * JAVA_HOME names the Java someone wants, which outranks the newest one. A stanc inside CmdStan
+ * samples, so it outranks one that only checks a model.
+ */
 function runnable(
   route: ComputeRunRoute,
   tools: ReadonlyArray<FoundLanguageTool>,
   environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ): ReadonlyArray<FoundLanguageTool> {
   const ordered = computeRunnableTools(route, tools);
   const home = environment.JAVA_HOME;
-  if (route.languageId !== "java" || home === undefined) return ordered;
-  const chosen = ordered.filter((tool) => tool.executable.startsWith(home));
+  const leads =
+    route.languageId === "stan"
+      ? (tool: FoundLanguageTool) => cmdstanRoot(tool.executable, platform) !== null
+      : route.languageId === "java" && home !== undefined
+        ? (tool: FoundLanguageTool) => tool.executable.startsWith(home)
+        : null;
+  if (leads === null) return ordered;
+  const chosen = ordered.filter(leads);
   return [...chosen, ...ordered.filter((tool) => !chosen.includes(tool))];
 }
 
@@ -64,6 +80,7 @@ function chooseTool(
   tools: ReadonlyArray<FoundLanguageTool>,
   added: string | undefined,
   environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ): RunnableTool | null {
   if (added !== undefined) {
     const name = programName(added);
@@ -71,7 +88,7 @@ function chooseTool(
       route.commands.find((candidate) => candidate.command === name) ?? route.commands[0];
     return command === undefined ? null : { command, executable: added, version: null };
   }
-  const tool = runnable(route, tools, environment)[0];
+  const tool = runnable(route, tools, environment, platform)[0];
   const command = route.commands.find((candidate) => candidate.command === tool?.name);
   return tool === undefined || command === undefined
     ? null
@@ -237,7 +254,7 @@ function prepare(
   if (executable === null) throw new Error(`${context.runtime.label} was not found.`);
   if (route.languageId === "stan")
     return prepareStanRun(executable, environment, platform, context);
-  const { command } = chooseTool(route, [], executable, environment)!;
+  const { command } = chooseTool(route, [], executable, environment, platform)!;
   const file = context.absoluteSourcePath;
   const process = { cwd: context.source.cwd, environment };
   const output = NodePath.join(
@@ -296,10 +313,11 @@ function alternatives(
   chosen: RunnableTool | null,
   label: string,
   environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ) {
   if (chosen === null) return [];
   const seen = new Set([`${programName(chosen.executable)} ${chosen.version}`]);
-  return runnable(route, tools, environment).flatMap((tool) => {
+  return runnable(route, tools, environment, platform).flatMap((tool) => {
     const key = `${tool.name} ${tool.version}`;
     if (seen.has(key)) return [];
     seen.add(key);
@@ -394,7 +412,7 @@ export function makeRunTableAdapters(input: {
       readsLiveScan: true,
       inspect: async ({ customExecutablePath, inspectedAt }) => {
         const tools = (await input.tools()).get(route.languageId) ?? [];
-        const tool = chooseTool(route, tools, customExecutablePath, environment);
+        const tool = chooseTool(route, tools, customExecutablePath, environment, input.platform);
         const setup =
           tool !== null && route.languageId === "stan"
             ? stanSetup(tool.executable, environment, input.platform)
@@ -413,7 +431,7 @@ export function makeRunTableAdapters(input: {
           capabilities: ["run-file", "stream-output", "cancel-process-tree"],
           inspectedAt,
           verification: null,
-          alternatives: alternatives(route, tools, tool, label, environment),
+          alternatives: alternatives(route, tools, tool, label, environment, input.platform),
         };
       },
       ...capture,

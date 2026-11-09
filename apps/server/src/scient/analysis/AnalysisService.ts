@@ -1010,9 +1010,19 @@ const make = Effect.gen(function* () {
                   cause,
                 ),
             }).pipe(
+              // The exit code alone cannot say how such a run went (batch Stata exits 0 after an
+              // error), so results that cannot be read fail the run rather than pass it.
               Effect.catchCause((cause) =>
                 Effect.logWarning("analysis run conclusion failed", { runId, cause }).pipe(
-                  Effect.as(null),
+                  Effect.as({
+                    output: [],
+                    failureMessage:
+                      exitCode === 0 || exitCode === null
+                        ? `Scient could not read the ${profile.label} results.`
+                        : `${profile.label} exited with code ${exitCode}, and Scient could not read its results.`,
+                    diagnostics: [],
+                    writtenFiles: [],
+                  }),
                 ),
               ),
             )
