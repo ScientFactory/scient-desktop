@@ -40,11 +40,32 @@ const DEFAULT_EXTRACTION_LIMITS: ManagedRuntimeExtractionLimits = {
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30 * 1_000;
 
+/** Why a runtime install, update or repair failed, as analytics reports it. */
+export type ManagedRuntimeFailureClass =
+  | "network"
+  | "timeout"
+  | "http_4xx"
+  | "http_5xx"
+  | "checksum"
+  | "size_mismatch"
+  | "certificate"
+  | "disk_full"
+  | "permission"
+  | "extract"
+  | "cancelled"
+  | "busy"
+  | "other";
+
 // @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedRuntimeFileError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly failureClass: ManagedRuntimeFailureClass | undefined;
+  constructor(
+    message: string,
+    options?: ErrorOptions & { readonly failureClass?: ManagedRuntimeFailureClass },
+  ) {
     super(message, options);
     this.name = "ManagedRuntimeFileError";
+    this.failureClass = options?.failureClass;
   }
 }
 
@@ -74,18 +95,90 @@ class TransientDownloadFailure extends Error {
   /** Short reason for progress text, e.g. `HTTP 504`. */
   readonly reason: string;
   readonly retryAfterMs: number | null;
+  readonly status: number | null;
   constructor(
     kind: TransientDownloadFailure["kind"],
     reason: string,
     retryAfterMs: number | null = null,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly status?: number },
   ) {
     super(reason, options);
     this.name = "TransientDownloadFailure";
     this.kind = kind;
     this.reason = reason;
     this.retryAfterMs = retryAfterMs;
+    this.status = options?.status ?? null;
   }
+}
+
+const httpFailureClass = (status: number): ManagedRuntimeFailureClass =>
+  status >= 500 ? "http_5xx" : "http_4xx";
+
+function transientFailureClass(failure: TransientDownloadFailure): ManagedRuntimeFailureClass {
+  switch (failure.kind) {
+    case "status":
+      return failure.status === null ? "http_5xx" : httpFailureClass(failure.status);
+    case "stalled":
+      return "timeout";
+    case "connection":
+    case "cut-off":
+      return "network";
+  }
+}
+
+const SYSTEM_ERROR_CLASSES: Readonly<Record<string, ManagedRuntimeFailureClass>> = {
+  ENOSPC: "disk_full",
+  EDQUOT: "disk_full",
+  EACCES: "permission",
+  EPERM: "permission",
+  EROFS: "permission",
+  ETIMEDOUT: "timeout",
+  ECONNRESET: "network",
+  ECONNREFUSED: "network",
+  ECONNABORTED: "network",
+  ENOTFOUND: "network",
+  EAI_AGAIN: "network",
+  ENETUNREACH: "network",
+  EHOSTUNREACH: "network",
+  EPIPE: "network",
+};
+const BUSY_ERROR_NAMES = new Set([
+  "ManagedProviderRuntimeBusyError",
+  "ManagedProviderRuntimeOwnershipLostError",
+  "ManagedRuntimeMutationLockLostError",
+]);
+
+/**
+ * Classifies a failed install, update or repair from the error types along its cause chain;
+ * messages are never read. `stage` is the last progress stage, which places an unclassified
+ * file error in extraction.
+ */
+export function managedRuntimeFailureClass(
+  cause: unknown,
+  stage?: string,
+): ManagedRuntimeFailureClass {
+  const chain: unknown[] = [];
+  for (let current = cause; current !== undefined && chain.length < 8;) {
+    chain.push(current);
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  const errors = chain.filter((entry): entry is Error => entry instanceof Error);
+  for (const error of errors) {
+    if (error instanceof ManagedRuntimeFileError && error.failureClass !== undefined)
+      return error.failureClass;
+    if (error instanceof TransientDownloadFailure) return transientFailureClass(error);
+  }
+  if (errors.some((error) => error.name === "TimeoutError")) return "timeout";
+  if (errors.some((error) => error.name === "AbortError")) return "cancelled";
+  for (const error of errors) {
+    const code = "code" in error && typeof error.code === "string" ? error.code : undefined;
+    const known = code === undefined ? undefined : SYSTEM_ERROR_CLASSES[code];
+    if (known !== undefined) return known;
+  }
+  if (errors.some((error) => BUSY_ERROR_NAMES.has(error.name))) return "busy";
+  if (stage === "installing" && errors.some((error) => error instanceof ManagedRuntimeFileError))
+    return "extract";
+  return "other";
 }
 
 function retryAfterMs(header: string | null): number | null {
@@ -106,7 +199,7 @@ function connectionFailure(cause: unknown): TransientDownloadFailure | ManagedRu
   if (code && /CERT|SELF_SIGNED|UNABLE_TO_VERIFY/u.test(code)) {
     return new ManagedRuntimeFileError(
       `Scient couldn't verify the download server's certificate (${code}). A proxy or security program may be intercepting the connection.`,
-      { cause },
+      { cause, failureClass: "certificate" },
     );
   }
   return new TransientDownloadFailure(
@@ -147,6 +240,7 @@ async function fetchWithAllowedRedirects(input: {
         "status",
         `HTTP ${response.status}`,
         retryAfterMs(response.headers.get("retry-after")),
+        { status: response.status },
       );
     }
     if (response.status < 300 || response.status >= 400) return response;
@@ -265,7 +359,7 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
       if (sources.length === 1) {
         throw new ManagedRuntimeFileError(
           exhaustedMessage(cause as TransientDownloadFailure, tries),
-          { cause },
+          { cause, failureClass: transientFailureClass(cause as TransientDownloadFailure) },
         );
       }
       const details = sources
@@ -276,7 +370,7 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
         .join(" ");
       throw new ManagedRuntimeFileError(
         `Scient couldn't download it from either source after ${tries} tries. ${details}`,
-        { cause },
+        { cause, failureClass: outOfTime ? "timeout" : managedRuntimeFailureClass(cause) },
       );
     }
     const delayMs =
@@ -330,6 +424,7 @@ async function downloadOnce(
       await response.body?.cancel().catch(() => undefined);
       throw new ManagedRuntimeFileError(
         `Managed runtime download failed with HTTP ${response.status}.`,
+        { failureClass: httpFailureClass(response.status) },
       );
     }
     const contentLengthHeader = response.headers.get("content-length");
@@ -343,6 +438,7 @@ async function downloadOnce(
     ) {
       throw new ManagedRuntimeFileError(
         "Managed runtime download size does not match the reviewed catalog.",
+        { failureClass: "size_mismatch" },
       );
     }
 
@@ -354,7 +450,9 @@ async function downloadOnce(
       resetIdleTimer();
       if (downloaded > MAX_DOWNLOAD_BYTES || downloaded > input.expectedSize) {
         source.destroy(
-          new ManagedRuntimeFileError("Managed runtime download exceeded the reviewed size."),
+          new ManagedRuntimeFileError("Managed runtime download exceeded the reviewed size.", {
+            failureClass: "size_mismatch",
+          }),
         );
       }
       input.onProgress?.(downloaded, input.expectedSize);
@@ -400,7 +498,9 @@ export async function verifyManagedRuntimeChecksum(
     await file.close().catch(() => undefined);
   }
   if (hash.digest("hex") !== expected) {
-    throw new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.");
+    throw new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.", {
+      failureClass: "checksum",
+    });
   }
 }
 

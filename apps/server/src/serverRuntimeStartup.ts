@@ -48,6 +48,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
+import { getMachineOwners } from "./telemetry/MachineId.ts";
 import { observeAnalyticsEffect } from "./telemetry/OperationAnalytics.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -221,6 +222,10 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
     projectCount,
   });
   yield* analytics.recordOwners(yield* getServerOwners, "server");
+  yield* getMachineOwners.pipe(
+    Effect.flatMap((owners) => analytics.recordOwners(owners, "server")),
+    Effect.forkDetach,
+  );
 });
 
 const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({

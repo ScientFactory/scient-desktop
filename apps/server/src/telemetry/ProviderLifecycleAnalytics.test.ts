@@ -132,6 +132,20 @@ describe("Provider lifecycle analytics", () => {
     expect(mapper.observe([provider(operation("failed"))])).toEqual([]);
   });
 
+  it("reports the runtime owner's failure class for a failed download", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    mapper.observe([provider(operation("downloading"))]);
+    expect(
+      mapper.observe([provider({ ...operation("failed"), failureClass: "http_5xx" })]),
+    ).toMatchObject([
+      {
+        name: "provider.lifecycle.failed",
+        properties: { stage: "downloading", failureClass: "http_5xx" },
+      },
+    ]);
+  });
+
   it("does not replay terminal or pre-consent operations as new successes or failures", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([

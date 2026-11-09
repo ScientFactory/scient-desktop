@@ -1020,6 +1020,7 @@ describe("LatexBuildService", () => {
         expect(yield* Ref.get(harness.installCount)).toBe(15);
         expect(yield* Ref.get(harness.startCount)).toBe(16);
         expect(finished.failureSummary).toContain("pkg15.sty");
+        expect(finished.failureClass).toBe("missing_package");
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -1708,6 +1709,7 @@ describe("LatexBuildService", () => {
 
         expect(finished.state).toBe("failed");
         expect(finished.failureSummary).toContain("main.tex:12:");
+        expect(finished.failureClass).toBe("compile_error");
         expect(finished.diagnostics[0]).toMatchObject({
           severity: "error",
           file: "main.tex",
@@ -2108,6 +2110,7 @@ describe("LatexBuildService", () => {
         const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("failed");
         expect(finished.failureSummary).toContain("sources changed");
+        expect(finished.failureClass).toBe("sources_changed");
         expect(finished.visualSourceRevisions).toBeUndefined();
         expect(yield* Ref.get(harness.startCount)).toBe(2);
       }).pipe(Effect.provide(harness.serviceLayer));
@@ -3171,6 +3174,7 @@ describe("LatexBuildService", () => {
         const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("failed");
         expect(finished.failureSummary).toContain("No LaTeX toolchain found");
+        expect(finished.failureClass).toBe("missing_engine");
         expect(finished.descriptor).toBeNull();
         expect(yield* Ref.get(harness.startCount)).toBe(0);
 

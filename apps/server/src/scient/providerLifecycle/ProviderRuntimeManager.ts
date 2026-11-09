@@ -12,6 +12,7 @@ import {
   type ProviderRuntimeSummary,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { managedRuntimeFailureClass } from "@scientfactory/provider-runtime";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -133,6 +134,7 @@ function operation(input: {
   readonly totalBytes?: number;
   readonly waitingForIdle?: boolean;
   readonly retrying?: boolean;
+  readonly failureClass?: ProviderRuntimeOperation["failureClass"];
 }): ProviderRuntimeOperation {
   return {
     operationId: input.operationId,
@@ -149,6 +151,7 @@ function operation(input: {
       : { totalBytes: Math.max(1, Math.floor(input.totalBytes)) }),
     ...(input.waitingForIdle ? { waitingForIdle: true } : {}),
     ...(input.retrying ? { retrying: true } : {}),
+    ...(input.failureClass === undefined ? {} : { failureClass: input.failureClass }),
   };
 }
 
@@ -513,9 +516,12 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             ? cleanupInterruptedStart(input.instanceId, operationId)
             : cleanupIfCurrent(input.instanceId, operationId, "interrupt").pipe(Effect.asVoid);
 
+      // Places a failure: the same file error is an extraction failure while installing.
+      let lastStage: ProviderManagedRuntimeProgress["status"] = "preparing";
       const publishProgress = Effect.fn("ProviderRuntimeManager.publishProgress")(function* (
         progress: ProviderManagedRuntimeProgress,
       ) {
+        lastStage = progress.status;
         const current = (yield* Ref.get(activeRef)).get(input.instanceId);
         if (current?.operationId !== operationId) return;
         yield* providerRegistry.setProviderManagedRuntimeSummary({
@@ -589,6 +595,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
               startedAt,
               finishedAt,
               message: "The provider runtime operation stopped unexpectedly.",
+              failureClass: "other",
             }),
           },
         });
@@ -659,6 +666,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                           completion._tag === "Success"
                             ? runtimeSuccessMessage(input.action)
                             : completion.failure.message,
+                        ...(completion._tag === "Success"
+                          ? {}
+                          : {
+                              failureClass: managedRuntimeFailureClass(
+                                completion.failure,
+                                lastStage,
+                              ),
+                            }),
                       }),
                     },
                   })

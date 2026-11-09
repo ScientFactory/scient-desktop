@@ -48,7 +48,15 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 // SCIENT-FORK:START — adapt owned tool names and transport results; Scient's working tools count every call.
-import { scientMcpAnalyticsInput } from "../telemetry/ScientMcpAnalytics.ts";
+import {
+  BrowserToolCalls,
+  isBrowserTool,
+  noteToolFailure,
+  scientMcpAnalyticsInput,
+  scientToolOutcome,
+  ToolFailureNote,
+  type ToolFailureFacts,
+} from "../telemetry/ScientMcpAnalytics.ts";
 import { SCIENT_ACTION_TOOLS } from "../telemetry/ScientFeatureUsage.ts";
 // SCIENT-FORK:END
 import {
@@ -829,6 +837,8 @@ const registerRequestToolkit = Effect.fn("McpHttpServer.registerRequestToolkit")
                         Tool.Failure<typeof requestTool> | AiError.AiError | AiError.AiErrorReason
                       > = source.handler(payload, context);
                       return action.pipe(
+                        // SCIENT-FORK: the MCP result keeps only a declared failure's message.
+                        Effect.tapError(noteToolFailure),
                         Effect.updateContext((input: Context.Context<never>) =>
                           Context.merge(sourceServices, input),
                         ),
@@ -1145,6 +1155,8 @@ const withToolAnalytics =
     if (Option.isNone(analytics)) return yield* registration;
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
+    // SCIENT-FORK: browser calls are counted per turn instead of recorded one by one.
+    const browserCalls = yield* BrowserToolCalls;
     const shellOf = (threadId: string) =>
       Option.isNone(threads)
         ? Effect.succeed(null)
@@ -1195,24 +1207,26 @@ const withToolAnalytics =
           args: unknown,
           toolResult: McpSchema.CallToolResult | undefined,
           durationMs: number,
-        ) {
           // SCIENT-FORK:START
+          failure: ToolFailureFacts,
+        ) {
           const { tool, result } = scientMcpAnalyticsInput(toolName, toolResult);
           // SCIENT-FORK:END
           const handoff =
             HANDOFF_TOOLS.has(tool) ||
             isInputTargetHandoff(tool, args) ||
             hasAction(RESULT_TARGET_ACTIONS, tool, args);
-          const outcome = toolOutcome(result);
+          // SCIENT-FORK: a closed error code even when the result carries only a message.
+          const outcome = scientToolOutcome(result, failure);
+          // Client credentials (no calling thread) report an unknown caller.
+          const invocation = Option.getOrUndefined(
+            yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+          )?.thread;
           // Agents call status, read, and preview tools in tight loops, so an
           // event per successful call floods analytics. Only failures count there.
           // SCIENT-FORK:START — Scient's tools that do work count every call
           if (!handoff && outcome.outcome === "ok" && !SCIENT_ACTION_TOOLS.has(tool)) return;
           // SCIENT-FORK:END
-          // Client credentials (no calling thread) report an unknown caller.
-          const invocation = Option.getOrUndefined(
-            yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
-          )?.thread;
           const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
           // Only handoff tools pay for thread lookups; the rest report the
           // caller's provider from the credential.
@@ -1252,7 +1266,7 @@ const withToolAnalytics =
             yield* analytics.value.record("mcp.tool.invoked", properties);
           }
         },
-        (effect, _tool, _args, _result, _durationMs) => effect.pipe(Effect.ignoreCause),
+        (effect, _tool, _args, _result, _durationMs, _failure) => effect.pipe(Effect.ignoreCause),
       );
     const recordingServer = McpServer.McpServer.of({
       ...server,
@@ -1263,19 +1277,38 @@ const withToolAnalytics =
             /* Request instrumentation already owns the span; keep this helper in that context. */
             Effect.fnUntraced(function* (payload) {
               const startedAt = yield* Clock.currentTimeMillis;
+              // SCIENT-FORK: the handler notes its typed failure here.
+              const failure: ToolFailureFacts = {};
               return yield* options.handle(payload).pipe(
+                Effect.provideService(ToolFailureNote, failure),
                 Effect.onExit((exit) => {
                   const result = exit._tag === "Success" ? exit.value : undefined;
                   // A call that asks for input is retried with it, and that call is the one counted.
                   if (result instanceof McpSchema.InputRequired) return Effect.void;
                   // Handoff tools look up threads to record; the response must not wait on them.
-                  return Clock.currentTimeMillis.pipe(
-                    Effect.flatMap((endedAt) =>
-                      record(options.tool.name, payload, result, endedAt - startedAt),
-                    ),
-                    Effect.forkDetach,
-                    Effect.asVoid,
-                  );
+                  return Effect.gen(function* () {
+                    const endedAt = yield* Clock.currentTimeMillis;
+                    const { tool, result: analyticsResult } = scientMcpAnalyticsInput(
+                      options.tool.name,
+                      result,
+                    );
+                    const invocation = Option.getOrUndefined(
+                      yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+                    )?.thread;
+                    if (isBrowserTool(tool) && invocation !== undefined)
+                      browserCalls.record(
+                        invocation.threadId,
+                        endedAt,
+                        scientToolOutcome(analyticsResult, failure).outcome !== "ok",
+                      );
+                    yield* record(
+                      options.tool.name,
+                      payload,
+                      result,
+                      endedAt - startedAt,
+                      failure,
+                    ).pipe(Effect.forkDetach);
+                  });
                 }),
               );
             }),

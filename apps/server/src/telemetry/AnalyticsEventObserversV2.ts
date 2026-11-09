@@ -13,7 +13,9 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
+import { BrowserToolCalls, type BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
 
 type Observation = {
   readonly name: string;
@@ -30,7 +32,7 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V) {
 }
 
 /** Correlates live V2 admissions, steering and outcomes; IDs stay in bounded local maps. */
-export function createV2AnalyticsEventMapper() {
+export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedger) {
   const submissions = new Map<string, true>();
   const runMetadata = new Map<
     string,
@@ -146,6 +148,7 @@ export function createV2AnalyticsEventMapper() {
         return observations;
       runMetadata.delete(key);
       remember(terminals, key, true);
+      const browser = browserCalls?.take(entry.threadId, DateTime.toEpochMillis(entry.occurredAt));
       const correlation = runs.get(key);
       runs.delete(key);
       // A historical/consent-boundary terminal or failed workspace preparation
@@ -165,6 +168,9 @@ export function createV2AnalyticsEventMapper() {
                 ...properties,
                 usedTools: correlation.usedTools,
                 hasAttachment: correlation.hasAttachment,
+                ...(browser === undefined
+                  ? {}
+                  : { browserToolCalls: browser.calls, browserToolFailures: browser.failures }),
               },
             },
           ]
@@ -256,6 +262,7 @@ export function createV2AnalyticsEventMapper() {
     return [];
   };
   const clear = () => {
+    browserCalls?.clear();
     submissions.clear();
     runMetadata.clear();
     runs.clear();
@@ -270,8 +277,9 @@ export function createV2AnalyticsEventMapper() {
 /** Native event and lifecycle observers share one consent and deletion fence. */
 export const makeV2AnalyticsObservers = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
-  const mapper = createV2AnalyticsEventMapper();
+  const mapper = createV2AnalyticsEventMapper(yield* BrowserToolCalls);
   const lifecycle = createProviderLifecycleAnalyticsMapper();
+  const accounts = createProviderAccountAnalyticsMapper();
   let epoch = yield* analytics.collectionEpoch;
   const enabled = Effect.gen(function* () {
     const next = yield* analytics.collectionEpoch;
@@ -279,6 +287,7 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
     if (next !== epoch || !status.available || status.consent === "off") {
       mapper.clear();
       lifecycle.clear();
+      accounts.clear();
       epoch = next;
     }
     return status.available && status.consent !== "off";
@@ -305,7 +314,9 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
     snapshot: ReadonlyArray<ServerProvider>,
   ) {
     if (!(yield* enabled)) return;
-    yield* record(lifecycle.observe(snapshot), yield* analytics.collectionEpoch);
+    const recordingEpoch = yield* analytics.collectionEpoch;
+    yield* record(lifecycle.observe(snapshot), recordingEpoch);
+    yield* record(accounts.observe(snapshot), recordingEpoch);
   });
   return { enabled, event, providers };
 });

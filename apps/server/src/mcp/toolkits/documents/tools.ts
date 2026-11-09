@@ -1,6 +1,7 @@
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import {
+  ScientLatexBuildFailureClass,
   ScientLatexPdfBuildDiagnostic,
   ScientLatexPdfBuildInput,
   ScientLatexPdfBuildResult,
@@ -114,6 +115,8 @@ export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBui
       Schema.Array(ScientLatexPdfBuildDiagnostic).check(Schema.isMaxLength(64)),
     ),
     toolchain: Schema.optional(Schema.NullOr(ScientLatexToolchainStatus)),
+    /** Why the build failed, for analytics. */
+    failureClass: Schema.optional(ScientLatexBuildFailureClass),
     publishedSource: Schema.optional(PdfSourceDescriptor),
     publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
     recoveryId: Schema.optional(Schema.String),

@@ -28,7 +28,8 @@ export interface NativeTurnUsage {
   readonly costUsd: number | undefined;
   readonly modelDurationMs: number | undefined;
   readonly firstTokenMs: number | undefined;
-  readonly models: ReadonlySet<string>;
+  /** Each reported model's input and output tokens, in the order first seen. */
+  readonly models: ReadonlyMap<string, number>;
 }
 
 const count = (value: number | undefined) =>
@@ -55,11 +56,22 @@ export function addRequestUsage(
     costUsd: addKnown(total?.costUsd, request.costUsd, first),
     modelDurationMs: addKnown(total?.modelDurationMs, request.durationMs, first),
     firstTokenMs: first ? request.firstTokenMs : total.firstTokenMs,
-    models:
-      request.model === undefined || request.model.trim() === ""
-        ? (total?.models ?? new Set())
-        : new Set([...(total?.models ?? []), request.model.trim()]),
+    models: withModelTokens(total?.models, request),
   };
+}
+
+function withModelTokens(
+  models: ReadonlyMap<string, number> | undefined,
+  request: NativeRequestUsage,
+): ReadonlyMap<string, number> {
+  const model = request.model?.trim();
+  if (model === undefined || model === "") return models ?? new Map();
+  const next = new Map(models);
+  next.set(
+    model,
+    (next.get(model) ?? 0) + count(request.inputTokens) + count(request.outputTokens),
+  );
+  return next;
 }
 
 /** The provider turn's usage: complete only when the turn completed. */
@@ -81,7 +93,14 @@ export function nativeTurnTokenUsage(
     ...(usage.reasoningTokens === undefined
       ? {}
       : { reasoningTokens: Math.min(optional(usage.reasoningTokens)!, usage.outputTokens) }),
-    ...(usage.models.size === 0 ? {} : { models: [...usage.models] }),
+    // The model with the most tokens comes first; ties keep the order first seen.
+    ...(usage.models.size === 0
+      ? {}
+      : {
+          models: [...usage.models]
+            .toSorted((left, right) => right[1] - left[1])
+            .map(([model]) => model),
+        }),
     requests: usage.requests,
     failedRequests: usage.failedRequests,
     ...(usage.costUsd === undefined ? {} : { estimatedCostUsd: usage.costUsd }),
