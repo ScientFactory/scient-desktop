@@ -17,6 +17,8 @@ export interface TiffFixturePage {
   readonly jpegTables?: Uint8Array;
   /** 2 stores each sample in its own blocks; only meaningful with `rawBlocks`. */
   readonly planar?: 1 | 2;
+  /** Leaves out BitsPerSample, which TIFF 6.0 then takes as 1. */
+  readonly omitBitsPerSample?: boolean;
   /** Entries written with any count and value offset, for malformed-file tests. */
   readonly rawEntries?: readonly { tag: number; type: number; count: number; offset: number }[];
   readonly rowsPerStrip?: number;
@@ -118,7 +120,9 @@ export async function tiffFixture(
     const entries: Entry[] = [
       { tag: 256, type: 4, values: [page.width] },
       { tag: 257, type: 4, values: [page.height] },
-      { tag: 258, type: 3, values: Array(samples).fill(page.bits) },
+      ...(page.omitBitsPerSample
+        ? []
+        : [{ tag: 258, type: 3, values: Array<number>(samples).fill(page.bits) }]),
       {
         tag: 259,
         type: 3,

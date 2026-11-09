@@ -135,8 +135,13 @@ function parseDescription(description: string | undefined): Description | null {
 }
 
 // geotiff keeps every directory it walks past, so each one is opened on its own.
-function openDirectory(tiff: GeoTIFF, offset: number) {
-  return new GeoTIFF(tiff.source, tiff.littleEndian, tiff.bigTiff, offset).getImage(0);
+async function openDirectory(tiff: GeoTIFF, offset: number) {
+  const image = await new GeoTIFF(tiff.source, tiff.littleEndian, tiff.bigTiff, offset).getImage(0);
+  // TIFF 6.0 defaults BitsPerSample to 1, as in bilevel files; geotiff has no default of its own.
+  const directory = image.getFileDirectory();
+  if (!directory.hasTag("BitsPerSample"))
+    directory.actualizedFields.set(258, Array<number>(image.getSamplesPerPixel()).fill(1));
+  return image;
 }
 
 async function describeLayout(first: GeoTIFFImage, walked: TiffLayout): Promise<Layout> {
@@ -396,9 +401,6 @@ export async function readTiffPlane(
     throw tiffPreviewError("This TIFF color format is not supported.");
   const samples = image.getSamplesPerPixel();
   const bits = image.getBitsPerSample(0);
-  // geotiff cannot unpack samples without a stated width, such as bilevel files that rely on the default.
-  if (!bits)
-    throw tiffPreviewError("This TIFF doesn't state its sample width, which preview needs.");
   const sampleFormat = image.getSampleFormat(0);
   const format = sampleFormat === 3 ? "float" : sampleFormat === 2 ? "int" : "uint";
   const colorMap = photometric === 3 ? await directory.loadValue("ColorMap") : undefined;
@@ -417,11 +419,19 @@ export async function readTiffPlane(
   ];
   const channels = read.length;
   const alphaMax = format === "float" ? 1 : 2 ** bits - 1;
-  // geotiff places unsigned samples of other widths at the wrong offsets, so those are read by block.
-  if (format === "int" ? ![8, 16, 32].includes(bits) : format === "uint" && bits > 32)
-    throw tiffPreviewError(`This TIFF's ${bits}-bit samples aren't supported for preview.`);
-  if (format === "float" && ![16, 32, 64].includes(bits))
-    throw tiffPreviewError(`This TIFF's ${bits}-bit samples aren't supported for preview.`);
+  // geotiff places unsigned samples of other widths at the wrong offsets, so those are read by block;
+  // above 24 bits a sample can span five bytes, which geotiff's unpacking also gets wrong.
+  if (
+    format === "int"
+      ? ![8, 16, 32].includes(bits)
+      : format === "float"
+        ? ![16, 32, 64].includes(bits)
+        : bits > 24 && bits !== 32
+  )
+    throw tiffPreviewError("This TIFF's sample width isn't supported for preview.");
+  // Bits stored lowest first (FillOrder 2) are a fax convention geotiff does not reverse.
+  if (Number((await directory.loadValue("FillOrder")) ?? 1) === 2)
+    throw tiffPreviewError("This TIFF's bit order (FillOrder 2) isn't supported for preview.");
   const oddWidth = format === "uint" && ![8, 16, 32].includes(bits);
   const rawRows =
     compression === 1 &&
@@ -461,7 +471,9 @@ export async function readTiffPlane(
   const blockInFlight =
     Math.max(blockMemory, jpegWorking) * blockSamples +
     tileWidth * tileHeight * channels * windowBytes;
-  if (!rawRows && blockInFlight > TILE_BYTES)
+  // Uncompressed rows are read whole: the fetched bytes plus their converted values.
+  const rowInFlight = width * (image.getBytesPerPixel() + channels * (precise ? 8 : 4));
+  if (rawRows ? rowInFlight > TILE_BYTES : blockInFlight > TILE_BYTES)
     throw tiffPreviewError("This TIFF stores its image in blocks too large to preview.");
   // Edge tiles are decoded whole, so a thin image must not hide tiles far larger than itself.
   if (
@@ -509,11 +521,7 @@ export async function readTiffPlane(
   const blocksPerBand = Math.max(1, Math.floor(bandBytes / blockInFlight));
   let bandRows = tileHeight;
   let bandColumns = width;
-  if (rawRows)
-    bandRows = Math.max(
-      1,
-      Math.floor(bandBytes / (width * Math.max(image.getBytesPerPixel(), channels * floatBytes))),
-    );
+  if (rawRows) bandRows = Math.max(1, Math.floor(bandBytes / rowInFlight));
   else if (!image.isTiled || tilesAcross <= blocksPerBand)
     bandRows = tileHeight * Math.max(1, Math.floor(blocksPerBand / tilesAcross));
   else bandColumns = tileWidth * blocksPerBand;

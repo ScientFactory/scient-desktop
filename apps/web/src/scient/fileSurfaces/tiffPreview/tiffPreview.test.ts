@@ -675,6 +675,68 @@ describe("bounded TIFF block decoders", () => {
     expect([0, 1, 2, 3, 4].map((pixel) => red(result.rgba, pixel))).toEqual([255, 0, 255, 255, 0]);
   });
 
+  it.each([
+    [25, [16_777_216, 16_777_217]],
+    [31, [1, 2, 3, 4, 5, 6, 7, 8]],
+  ])("refuses %i-bit samples, which can span five bytes", async (bits, values) => {
+    const result = plane([
+      {
+        width: values.length,
+        height: 1,
+        bits,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [packSamples(values, bits)] },
+      },
+    ]);
+    await expect(result).rejects.toThrow("This TIFF's sample width isn't supported for preview.");
+  });
+
+  it("refuses bits stored lowest first", async () => {
+    const result = plane([
+      {
+        width: 8,
+        height: 1,
+        bits: 1,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [new Uint8Array([0x0d])] },
+        rawEntries: [{ tag: 266, type: 3, count: 1, offset: 2 }],
+      },
+    ]);
+    await expect(result).rejects.toThrow("bit order (FillOrder 2) isn't supported for preview");
+  });
+
+  it("refuses an uncompressed row too wide to read within the tile budget", async () => {
+    // One 1,048,576-pixel row of 64 Float64 samples is 512 MiB.
+    const result = plane([
+      {
+        width: 1 << 20,
+        height: 1,
+        bits: 64,
+        format: 3,
+        samples: 64,
+        photometric: 1,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [new Uint8Array(8)] },
+      },
+    ]);
+    await expect(result).rejects.toThrow("blocks too large to preview");
+  });
+
+  it("takes a missing BitsPerSample as 1, as bilevel files do", async () => {
+    const result = await plane([
+      {
+        width: 8,
+        height: 1,
+        bits: 1,
+        omitBitsPerSample: true,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [new Uint8Array([0b1011_0000])] },
+      },
+    ]);
+    expect(result.info.bits).toBe(1);
+    expect([0, 1, 2, 3, 4].map((pixel) => red(result.rgba, pixel))).toEqual([255, 0, 255, 255, 0]);
+  });
+
   it("refuses a 1-bit image whose unpacked copy is far larger than its packed bytes", async () => {
     using allocations = watchAllocations("Uint8Array", 1 << 26);
     // 32 MB packed, 256 MB once geotiff widens each bit to a byte.
