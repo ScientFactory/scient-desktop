@@ -125,11 +125,17 @@ export function compareLinuxPayloads(cleanRoot, baselineRoot) {
     const stat = NodeFS.statSync(path);
     if (!stat.isFile()) continue;
     const baselinePath = NodePath.join(baselineRoot, "resources", file);
-    NodeAssert.equal(
-      digest(NodeFS.readFileSync(path)),
-      digest(NodeFS.readFileSync(baselinePath)),
-      `External bytes changed: ${file}`,
-    );
+    // V8 writes compile-cache entries at packaging time and their bytes are not reproducible;
+    // both builds must still hold the same non-empty entries (the listing above).
+    if (file.startsWith(`server-compile-cache${NodePath.sep}`)) {
+      NodeAssert.ok(stat.size > 0, `Empty server compile-cache entry: ${file}`);
+    } else {
+      NodeAssert.equal(
+        digest(NodeFS.readFileSync(path)),
+        digest(NodeFS.readFileSync(baselinePath)),
+        `External bytes changed: ${file}`,
+      );
+    }
     NodeAssert.equal(
       stat.mode & 0o777,
       NodeFS.statSync(baselinePath).mode & 0o777,

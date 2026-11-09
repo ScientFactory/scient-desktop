@@ -1,4 +1,6 @@
 /** Pinned loose inventories: whisper.cpp v1.9.1 and Cursor SDK 1.0.35. */
+export const WINDOWS_SERVER_COMPILE_CACHE_ROOT = "resources/server-compile-cache/";
+export const WINDOWS_SERVER_COMPILE_CACHE_FILE_LIMIT = 64;
 export const WINDOWS_VOICE_FILES = [
   "whisper-server.exe",
   "ggml-base.dll",
@@ -145,6 +147,16 @@ export function analyzeWindowsPayloadInventory(input: {
     counts[component.name] = actual.length;
     allowance += "optional" in component && actual.length === 0 ? 0 : expected.size;
   }
+  // SCIENT-FORK:START — the server's V8 compile cache holds one small entry per cached module and
+  // grows as upstream caches more of startup, so it counts apart from the core budget, up to a cap.
+  const compileCache = input.files.filter((file) =>
+    file.startsWith(WINDOWS_SERVER_COMPILE_CACHE_ROOT),
+  ).length;
+  if (compileCache > 0) {
+    counts.compileCache = compileCache;
+    allowance += Math.min(compileCache, WINDOWS_SERVER_COMPILE_CACHE_FILE_LIMIT);
+  }
+  // SCIENT-FORK:END
   counts.core =
     input.files.length - Object.values(counts).reduce((total, count) => total + count, 0);
   const breakdown = Object.entries(counts)
