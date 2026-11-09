@@ -36,8 +36,10 @@ export function useTiffPreview(props: {
   useEffect(() => {
     if (!props.enabled) return;
     const controller = new AbortController();
-    sessionRef.current ??= createTiffPreviewSession();
-    sessionRef.current.decode(props.src, requested, controller.signal).then(
+    // React Compiler does not support `??=` yet.
+    const session = sessionRef.current ?? createTiffPreviewSession();
+    sessionRef.current = session;
+    session.decode(props.src, requested, controller.signal).then(
       ({ blob, info }) => {
         if (controller.signal.aborted) return;
         const url = URL.createObjectURL(blob);
