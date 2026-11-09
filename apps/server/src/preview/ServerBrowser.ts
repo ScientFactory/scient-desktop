@@ -2056,13 +2056,22 @@ const make = Effect.gen(function* () {
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
+      // SCIENT-FORK:START — sent upstream: status reconnects like the other operations, or
+      // the broker forgets the agent's tab after a desktop detach.
       case "status":
         return statusWithTitle(
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
+            : ((await runPromise(
+                findTab(request.threadId, request.tabId).pipe(
+                  Effect.catchTags({
+                    ServerBrowserTabNotFoundError: () => Effect.void,
+                  }),
+                ),
+              )) ?? undefined),
           request.agentSessionId,
         );
+      // SCIENT-FORK:END
       case "open": {
         if (!request.agentSessionId)
           throw new BrowserControlInterrupted({
@@ -2247,11 +2256,11 @@ const make = Effect.gen(function* () {
     }
     const agentSessionId = request.agentSessionId!;
 
-    if (
-      READ_OPERATIONS.has(request.operation) &&
-      tab.control.agentId !== agentSessionId &&
-      !tab.control.agentCanActNow(agentSessionId)
-    ) {
+    // SCIENT-FORK:START — sent upstream: the owner reads too while a person drives.
+    const observeOnly =
+      READ_OPERATIONS.has(request.operation) && !tab.control.agentCanActNow(agentSessionId);
+    // SCIENT-FORK:END
+    if (observeOnly) {
       return tab.control.observe(async () => {
         if (tab.dialog)
           throw new BrowserControlInterrupted({
