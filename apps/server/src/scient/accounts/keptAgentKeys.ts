@@ -62,6 +62,8 @@ export const makeKeptAgentKeys = Effect.fn("KeptAgentKeys.make")(function* (
   const settings = yield* ServerSettingsService;
 
   const keep = Effect.fn("KeptAgentKeys.keep")(function* (removed: ReadonlyArray<RemovedAgent>) {
+    // An agent with no keys is removed without opening Accounts.
+    if (!removed.some(({ instance }) => typedKeys(instance).length > 0)) return;
     const snapshot = yield* accounts.snapshot;
     for (const { instanceId, instance } of removed) {
       const agent = keptAgentOf(instance);

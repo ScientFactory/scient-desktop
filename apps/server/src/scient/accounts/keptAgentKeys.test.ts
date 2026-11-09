@@ -204,3 +204,25 @@ it.effect("puts kept keys back into an agent of the same kind, and only that kin
     expect(refused.reason).toBe("invalid-input");
   }),
 );
+
+it.effect("removes an agent with no keys without opening Accounts", () =>
+  Effect.gen(function* () {
+    const settings = fakeSettings({});
+    const fake = fakeAccounts();
+    const accounts = {
+      ...fake.service,
+      snapshot: Effect.fail(new AccountsError({ reason: "unavailable", message: "Locked." })),
+    };
+    yield* makeKeptAgentKeys(accounts).pipe(
+      Effect.provideService(ServerSettingsService, settings.service),
+    );
+    yield* settings.keeper()([
+      {
+        instanceId: "antigravity",
+        instance: agent([
+          { name: "HOME_DIR", value: "/home", sensitive: false },
+        ]) as RemovedAgent["instance"],
+      },
+    ]);
+  }),
+);

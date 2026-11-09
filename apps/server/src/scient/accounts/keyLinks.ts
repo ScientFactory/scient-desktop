@@ -69,7 +69,8 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
   yield* Stream.runForEach(accounts.changes, follow).pipe(Effect.forkScoped);
 
   // After a settings change commits, links of agents that no longer exist go, so a later agent
-  // with the same id starts clean and a removal that failed keeps its links.
+  // with the same id starts clean and a removal that failed keeps its links. Only on a change, so
+  // startup never opens Accounts.
   const dropRemoved = (current: ServerSettings) =>
     accounts.snapshot.pipe(
       Effect.flatMap((snapshot) =>
@@ -84,12 +85,9 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
       Effect.ignore,
     );
   yield* Effect.scoped(
-    Effect.gen(function* () {
-      const changes = yield* settings.subscribeChanges;
-      const current = yield* settings.getSettings.pipe(Effect.option);
-      if (current._tag === "Some") yield* dropRemoved(current.value);
-      yield* Stream.runForEach(changes, dropRemoved);
-    }),
+    settings.subscribeChanges.pipe(
+      Effect.flatMap((changes) => Stream.runForEach(changes, dropRemoved)),
+    ),
   ).pipe(Effect.forkScoped);
 
   return Effect.fn("AccountKeyLinks.link")(function* (link: AccountKeyLink) {
