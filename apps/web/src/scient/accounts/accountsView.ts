@@ -982,6 +982,16 @@ export function activityLine(entry: AccountActivityEntry, where: string | undefi
   return where ? `${what} · ${where}` : what;
 }
 
+/** Keys Scient kept from removed agents of this kind: the latest for each setting. */
+export function keptAgentKeys(accounts: ReadonlyArray<AccountSummary>, agent: string) {
+  const bySetting = new Map<string, AccountSummary>();
+  for (const account of accounts.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const from = account.details.kind === "api-key" ? account.details.keptFrom : undefined;
+    if (from?.agent === agent) bySetting.set(from.setting, account);
+  }
+  return [...bySetting.values()];
+}
+
 export interface KeyInUse {
   readonly name: string;
   readonly usedBy: ReadonlyArray<string>;

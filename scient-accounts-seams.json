@@ -317,6 +317,11 @@
       "purpose": "Say on scient_account_add cards that the key is kept in Accounts, and on one-time cards that it went to that agent only and is not kept, on web and mobile."
     },
     {
+      "path": "apps/web/src/components/settings/AddProviderInstanceDialog.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: offer the keys kept from an earlier agent of this kind.",
+      "purpose": "Offer the keys Accounts kept from a removed agent when one of the same kind is added, and put them back after it is created."
+    },
+    {
       "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: only scient_account_add may open an Accounts card.",
       "purpose": "Reserve the Accounts card id prefix so request_secret cannot imitate an Accounts card."

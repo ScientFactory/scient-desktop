@@ -43,6 +43,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsPlainKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepPlainKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUnlinkKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsRestoreKeptKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,

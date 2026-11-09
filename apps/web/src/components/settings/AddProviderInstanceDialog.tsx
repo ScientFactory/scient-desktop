@@ -63,6 +63,10 @@ import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
+// SCIENT-FORK:START — Scient Accounts: offer the keys kept from an earlier agent of this kind.
+import { keptAgentOf } from "@t3tools/contracts";
+import { KeptAgentKeysRow, useKeptAgentKeys } from "../../scient/accounts/KeptAgentKeys";
+// SCIENT-FORK:END
 
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -260,6 +264,9 @@ export function AddProviderInstanceDialog({
   const previewLabel = label.trim() || `${driverOption.label} Workspace`;
 
   const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
+  // SCIENT-FORK:START — Scient Accounts: offer the keys kept from an earlier agent of this kind.
+  const keptKeys = useKeptAgentKeys(environmentId, keptAgentOf({ driver, config: configDraft }));
+  // SCIENT-FORK:END
   const isLocalAcp = isAcpRegistry && isManualAcpConfiguration && configDraft.source === "local";
   const localCommandPath =
     typeof configDraft.commandPath === "string" ? configDraft.commandPath.trim() : "";
@@ -437,6 +444,9 @@ export function AddProviderInstanceDialog({
       });
       return;
     }
+    // SCIENT-FORK:START — Scient Accounts: offer the keys kept from an earlier agent of this kind.
+    await keptKeys.applyTo(brandedId);
+    // SCIENT-FORK:END
     onCreated?.(brandedId);
     if (isAcpRegistry && !isLocalAcp) {
       setCreatedInstanceId(brandedId);
@@ -760,6 +770,16 @@ export function AddProviderInstanceDialog({
                   </p>
                 </div>
               ) : null}
+              {/* SCIENT-FORK:START — Scient Accounts: offer the keys kept from an earlier agent of this kind. */}
+              {wizardStep === (isAcpRegistry ? identityStep : 2) ? (
+                <SettingsGroup variant="plain">
+                  <KeptAgentKeysRow
+                    kept={keptKeys}
+                    agentLabel={(isAcpRegistry && selectedAcp?.name) || driverOption.label}
+                  />
+                </SettingsGroup>
+              ) : null}
+              {/* SCIENT-FORK:END */}
             </WizardPanel>
 
             <WizardFooter>

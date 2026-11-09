@@ -22,6 +22,7 @@ import {
   sitesToKeep,
   activityLine,
   keysInUse,
+  keptAgentKeys,
   agentMayUse,
   libraryLinkTemplate,
   githubIdentities,
@@ -50,6 +51,7 @@ import {
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { keptAgentOf } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
@@ -926,4 +928,27 @@ describe("renamedSourceLabel", () => {
       "Microsoft Edge · Profile 1",
     );
   });
+});
+
+it("offers back the latest key kept for each setting of this kind of agent", () => {
+  const kept = (id: string, agent: string, setting: string, createdAt: string): AccountSummary => ({
+    ...website(),
+    accountId: AccountId.make(`acc_kept_${id}`),
+    details: { kind: "api-key", sites: [], auth: { type: "bearer" }, keptFrom: { agent, setting } },
+    createdAt,
+  });
+  const gemini = keptAgentOf({ driver: "acpRegistry", config: { agentId: "gemini" } });
+  const older = kept("older01", gemini, "GEMINI_API_KEY", "2026-01-01T00:00:00.000Z");
+  const newer = kept("newer01", gemini, "GEMINI_API_KEY", "2026-02-01T00:00:00.000Z");
+  const field = kept("field01", gemini, "config.apiKey", "2026-01-01T00:00:00.000Z");
+  const otherAgent = kept(
+    "other01",
+    "acpRegistry:qwen",
+    "GEMINI_API_KEY",
+    "2026-03-01T00:00:00.000Z",
+  );
+  expect(keptAgentKeys([newer, otherAgent, older, field, website()], gemini)).toEqual([
+    newer,
+    field,
+  ]);
 });

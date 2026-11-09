@@ -221,6 +221,25 @@ export type CliLoginVariable = typeof CliLoginVariable.Type;
 export const PaperRoute = Schema.Literals(["publisher", "university", "library"]);
 export type PaperRoute = typeof PaperRoute.Type;
 
+/** Where a key Scient kept from a removed agent came from, so adding one like it can offer it. */
+export const AccountKeptFrom = Schema.Struct({
+  /** The agent: its driver, or `acpRegistry:<agentId>` for an ACP Registry agent. */
+  agent: TrimmedNonEmptyString,
+  /** The environment variable, or `config.<field>` for a key in the agent's settings. */
+  setting: TrimmedNonEmptyString,
+});
+export type AccountKeptFrom = typeof AccountKeptFrom.Type;
+
+/** `AccountKeptFrom.agent` for a provider instance: two ACP Registry agents are different agents. */
+export function keptAgentOf(instance: { readonly driver: string; readonly config?: unknown }) {
+  const config = instance.config;
+  const agentId =
+    instance.driver === "acpRegistry" && config !== null && typeof config === "object"
+      ? (config as { readonly agentId?: unknown }).agentId
+      : undefined;
+  return typeof agentId === "string" && agentId ? `acpRegistry:${agentId}` : instance.driver;
+}
+
 /** What the account is; secret values are held separately under `secrets`. */
 export const AccountDetails = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("website"), ...WebsiteFields }),
@@ -230,6 +249,7 @@ export const AccountDetails = Schema.Union([
     auth: ApiKeyAuth,
     /** Variable name scripts read the key from, e.g. HF_TOKEN. */
     envName: Schema.optional(EnvironmentVariableName),
+    keptFrom: Schema.optional(AccountKeptFrom),
   }),
   Schema.Struct({
     kind: Schema.Literal("database"),
@@ -837,6 +857,13 @@ export const AccountKeyLink = Schema.Struct({
   variable: EnvironmentVariableName,
 });
 export type AccountKeyLink = typeof AccountKeyLink.Type;
+
+/** Kept keys (`keptFrom`) to put back into a newly added agent of the same kind. */
+export const AccountRestoreKeptKeysInput = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  accountIds: Schema.Array(AccountId).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+});
+export type AccountRestoreKeptKeysInput = typeof AccountRestoreKeptKeysInput.Type;
 
 export const AccountKeyUnlinkInput = Schema.Struct({
   instanceId: TrimmedNonEmptyString,

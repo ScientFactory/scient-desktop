@@ -419,6 +419,13 @@ consumer's project. Activity names the plugin, variable and agent.
   stop every provider from starting. `keyLinks.ts` lets one follow an API-key account: providers read
   variables at start, so the value is copied in and copied again when the account changes.
   **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
+  Removing an agent deletes its settings, so `keptAgentKeys.ts` first keeps each key typed into
+  them (sensitive variables and secret fields) as an API-key account with `keptFrom` (agent kind,
+  setting), unless it already follows an account or the same key is already kept. It watches
+  settings changes and keeps the last value it read. Adding an agent of the same kind offers them
+  back (`accounts.keys.restoreKept`); a restored variable then follows its account. Cursor and
+  Antigravity keep their sign-in per instance id, which re-adding under the same name reuses; a
+  different name is a separate sign-in by design, so several accounts of one agent stay apart.
 - **One-time cards** (`request_secret` without the Accounts prefix) say on answer that the value went
   to that agent only and isn't kept in Accounts. Agent copy sends API keys and tokens the user
   creates to `scient_account_add`, and `request_secret` only to codes used once (2FA, pairing) or
