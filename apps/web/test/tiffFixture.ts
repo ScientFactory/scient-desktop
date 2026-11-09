@@ -14,6 +14,8 @@ export interface TiffFixturePage {
   /** Tile height when it differs from the tile width. */
   readonly tileHeight?: number;
   readonly jpegTables?: Uint8Array;
+  /** 2 stores each sample in its own blocks; only meaningful with `rawBlocks`. */
+  readonly planar?: 1 | 2;
   readonly rowsPerStrip?: number;
   readonly deflate?: boolean;
   readonly colorMap?: ArrayLike<number>;
@@ -115,7 +117,7 @@ export async function tiffFixture(
       },
       { tag: 262, type: 3, values: [page.photometric ?? (samples >= 3 ? 2 : 1)] },
       { tag: 277, type: 3, values: [samples] },
-      { tag: 284, type: 3, values: [1] },
+      { tag: 284, type: 3, values: [page.planar ?? 1] },
       { tag: 339, type: 3, values: Array(samples).fill(page.format ?? 1) },
       ...(page.tile
         ? [

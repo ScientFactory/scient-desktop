@@ -572,6 +572,58 @@ describe("bounded TIFF block decoders", () => {
     expect(red(result.rgba, 256 * 256 - 1)).toBe(200);
   });
 
+  it("refuses a false block count before geotiff allocates from it", async () => {
+    const bytes = await tiffFixture([{ width: 1, height: 1, bits: 8, data: [7] }]);
+    const view = new DataView(bytes);
+    const ifd = view.getUint32(4, true);
+    const entries = view.getUint16(ifd, true);
+    const stripOffsets = Array.from({ length: entries }, (_, index) => ifd + 2 + index * 12).find(
+      (at) => view.getUint16(at, true) === 273,
+    )!;
+    // 2^30 LONG offsets would be a 4 GiB array.
+    view.setUint32(stripOffsets + 4, 2 ** 30, true);
+    const large: number[] = [];
+    const Real = globalThis.Uint32Array;
+    vi.stubGlobal(
+      "Uint32Array",
+      new Proxy(Real, {
+        construct(target, args: unknown[]) {
+          if (typeof args[0] === "number" && args[0] > 1 << 24) {
+            large.push(args[0]);
+            throw new RangeError("large test allocation");
+          }
+          return Reflect.construct(target, args) as object;
+        },
+      }),
+    );
+    try {
+      const result = fromArrayBuffer(bytes).then((tiff) => readTiffPlane(tiff, { plane: 0 }));
+      await expect(result).rejects.toThrow("This TIFF's layout isn't supported for preview.");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(large).toEqual([]);
+  });
+
+  it("refuses a planar Float64 RGBA tile larger than one tile's budget", async () => {
+    const result = plane([
+      {
+        width: 4_096,
+        height: 3_904,
+        bits: 64,
+        format: 3,
+        samples: 4,
+        extraSamples: [2],
+        planar: 2,
+        tile: 4_096,
+        tileHeight: 3_904,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [1, 2, 3, 4].map(() => new Uint8Array(8)) },
+      },
+    ]);
+    await expect(result).rejects.toThrow("blocks too large to preview");
+  });
+
   it("refuses tiles far larger than a thin image", async () => {
     const result = plane([
       {

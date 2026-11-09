@@ -1,5 +1,6 @@
 import type { GeoTIFF, GeoTIFFImage } from "geotiff";
 
+import { checkTiffLayout, LAYOUT_INVALID, LAYOUT_UNSUPPORTED } from "./tiffLayout";
 import {
   compressionName,
   guardTiffDecoder,
@@ -15,10 +16,13 @@ const MAX_OUTPUT_PIXELS = 32_000_000;
 const MAX_OUTPUT_SIDE = 16_384;
 const MAX_SOURCE_SIDE = 1 << 20;
 const MAX_SOURCE_PIXELS = 256_000_000;
-const MAX_BLOCK_BYTES = 128 * 1024 * 1024;
+// Peak decode memory stays under about 400 MiB: values up to 128 MiB, one window's blocks up to
+// 64 MiB plus 1.5× compressed and a 64 MiB interleaved copy, and 128 MiB of RGBA at 32 MP.
+// PNG encoding later holds the RGBA, the canvas and the PNG, also under about 400 MiB.
+const TILE_BYTES = 64 * 1024 * 1024;
+const VALUES_BYTES = 128 * 1024 * 1024;
 // Decoded bytes read at once; a window always holds at least one block, so a larger block is read alone.
 const BAND_BYTES = 16 * 1024 * 1024;
-const MAX_WALKED_PAGES = 10_000;
 // Fiji's Enhance Contrast default, split between both ends of the histogram.
 const SATURATED = 0.0035;
 
@@ -128,7 +132,11 @@ function parseDescription(description: string | undefined): Description | null {
   };
 }
 
-async function describeLayout(tiff: GeoTIFF, first: GeoTIFFImage): Promise<Layout> {
+async function describeLayout(
+  tiff: GeoTIFF,
+  first: GeoTIFFImage,
+  directories: number,
+): Promise<Layout> {
   const directory = first.getFileDirectory();
   const description = directory.hasTag("ImageDescription")
     ? String(await directory.loadValue("ImageDescription"))
@@ -138,8 +146,8 @@ async function describeLayout(tiff: GeoTIFF, first: GeoTIFFImage): Promise<Layou
   const rgb = (photometric === 2 || photometric === 6) && colour >= 3;
   const samplesAsChannels = !rgb && photometric !== 3 && colour > 1 ? colour : 1;
   const parsed = parseDescription(description);
-  if (parsed && parsed.count >= 1) {
-    // Multi-file OME and ImageJ's >4 GB stacks describe planes this file does not hold.
+  // Multi-file OME and ImageJ's >4 GB stacks describe planes this file does not hold.
+  if (parsed && parsed.count >= 1 && parsed.count <= directories) {
     const present = await tiff.getImage(parsed.count - 1).then(
       () => true,
       () => false,
@@ -147,7 +155,7 @@ async function describeLayout(tiff: GeoTIFF, first: GeoTIFFImage): Promise<Layou
     if (present) return { pages: null, pageCount: parsed.count, samplesAsChannels, ...parsed };
   }
   const pages: number[] = [];
-  for (let index = 0; index < MAX_WALKED_PAGES; index++) {
+  for (let index = 0; index < directories; index++) {
     const image = await tiff.getImage(index).catch(() => null);
     if (!image) break;
     // Skip reduced-resolution and mask images.
@@ -240,7 +248,7 @@ async function readRawRows(
 }
 
 function percentileRange(
-  values: Float32Array | Float64Array,
+  values: ArrayLike<number>,
   channels: number,
   colour: number,
   min: number,
@@ -301,8 +309,13 @@ export async function readTiffPlane(
 ): Promise<TiffPlane> {
   const { signal } = request;
   registerBoundedTiffDecoders();
+  const directories = await checkTiffLayout(tiff).catch((cause: unknown) => {
+    if (cause instanceof Error && [LAYOUT_INVALID, LAYOUT_UNSUPPORTED].includes(cause.message))
+      throw tiffPreviewError(cause.message);
+    return asMetadataError(cause);
+  });
   const first = await tiff.getImage(0).catch(asMetadataError);
-  const layout = await describeLayout(tiff, first).catch(asMetadataError);
+  const layout = await describeLayout(tiff, first, directories).catch(asMetadataError);
   const planes = layout.pageCount * layout.samplesAsChannels;
   if (planes < 1) throw tiffPreviewError("This TIFF has no readable image.");
   const plane = Math.min(Math.max(0, Math.trunc(request.plane)), planes - 1);
@@ -360,7 +373,9 @@ export async function readTiffPlane(
   const tileHeight = image.getTileHeight();
   const tilesAcross = Math.ceil(width / tileWidth);
   const blockDecoded = Math.ceil((tileWidth * blockBits) / 8) * tileHeight;
-  if (!rawRows && blockDecoded > MAX_BLOCK_BYTES)
+  // A block, with every sample read from it, is decoded whole whatever the window budget.
+  const blockSamples = image.planarConfiguration === 2 ? channels : 1;
+  if (!rawRows && blockDecoded * blockSamples > TILE_BYTES)
     throw tiffPreviewError("This TIFF stores its image in blocks too large to preview.");
   // Edge tiles are decoded whole, so a thin image must not hide tiles far larger than itself.
   if (
@@ -379,19 +394,36 @@ export async function readTiffPlane(
   // 32-bit integers and 64-bit floats lose precision in Float32, so they keep doubles at half the pixels.
   const precise = bits > 32 || (bits === 32 && format !== "float");
 
-  const budget = (request.maxOutputPixels ?? MAX_OUTPUT_PIXELS) / (precise ? 2 : 1);
-  const factor = Math.max(
-    1,
-    Math.ceil(Math.sqrt((width * height) / budget)),
-    Math.ceil(Math.max(width, height) / MAX_OUTPUT_SIDE),
-  );
+  // Values keep the source's own integer type when every output pixel is one source pixel.
+  const floatBytes = precise ? 8 : 4;
+  const nativeBytes = format === "float" || precise || associated ? floatBytes : bits <= 8 ? 1 : 2;
+  const scaleFor = (bytesPerPixel: number) => {
+    const pixels = Math.min(
+      request.maxOutputPixels ?? MAX_OUTPUT_PIXELS,
+      Math.floor(VALUES_BYTES / bytesPerPixel),
+    );
+    return Math.max(
+      1,
+      Math.ceil(Math.sqrt((width * height) / pixels)),
+      Math.ceil(Math.max(width, height) / MAX_OUTPUT_SIDE),
+    );
+  };
+  let factor = scaleFor(nativeBytes * channels);
+  // Averaging needs float sums and a count per output pixel.
+  if (factor > 1) factor = scaleFor(floatBytes * channels + (palette ? 0 : 2));
   const outWidth = Math.ceil(width / factor);
   const outHeight = Math.ceil(height / factor);
-  const values = (
-    precise
-      ? new Float64Array(outWidth * outHeight * channels)
-      : new Float32Array(outWidth * outHeight * channels)
-  ).fill(Number.NaN);
+  const length = outWidth * outHeight * channels;
+  const values =
+    factor > 1 || nativeBytes === floatBytes
+      ? (precise ? new Float64Array(length) : new Float32Array(length)).fill(Number.NaN)
+      : nativeBytes === 1
+        ? format === "int"
+          ? new Int8Array(length)
+          : new Uint8Array(length)
+        : format === "int"
+          ? new Int16Array(length)
+          : new Uint16Array(length);
   const counts = factor > 1 && !palette ? new Uint16Array(outWidth * outHeight) : null;
   // geotiff decodes every block of a window at once, so windows hold a bounded number of blocks.
   const bandBytes = request.bandBytes ?? BAND_BYTES;
@@ -402,11 +434,15 @@ export async function readTiffPlane(
       : 0;
   if (jpegWorking > JPEG_TILE_BYTES) throw tiffPreviewError(JPEG_TOO_LARGE);
   const blockWorking = Math.max(blockDecoded, jpegWorking);
-  const blockInFlight = blockWorking * (image.planarConfiguration === 2 ? channels : 1);
+  const blockInFlight = blockWorking * blockSamples;
   const blocksPerBand = Math.max(1, Math.floor(bandBytes / blockInFlight));
   let bandRows = tileHeight;
   let bandColumns = width;
-  if (rawRows) bandRows = Math.max(1, Math.floor(bandBytes / (width * image.getBytesPerPixel())));
+  if (rawRows)
+    bandRows = Math.max(
+      1,
+      Math.floor(bandBytes / (width * Math.max(image.getBytesPerPixel(), channels * floatBytes))),
+    );
   else if (!image.isTiled || tilesAcross <= blocksPerBand)
     bandRows = tileHeight * Math.max(1, Math.floor(blocksPerBand / tilesAcross));
   else bandColumns = tileWidth * blocksPerBand;
@@ -453,7 +489,7 @@ export async function readTiffPlane(
             if (!counts[pixel]) for (let c = 0; c < channels; c++) values[target + c] = 0;
             for (let c = 0; c < channels; c++) values[target + c]! += pixelValues[c]!;
             counts[pixel]!++;
-          } else if (Number.isNaN(values[target]!))
+          } else if (factor === 1 || Number.isNaN(values[target]!))
             for (let c = 0; c < channels; c++) values[target + c] = pixelValues[c]!;
         }
       }

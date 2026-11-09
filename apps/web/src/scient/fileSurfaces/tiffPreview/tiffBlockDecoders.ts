@@ -88,9 +88,9 @@ export async function inflateBounded(input: Uint8Array<ArrayBuffer>, limit: numb
   return output.buffer;
 }
 
-// Packed rows can legitimately be a little larger than the raw block; anything far larger is not a block.
+// LZW can expand incompressible data by half; anything larger is not a block.
 export function maxCompressedBytes(decodedBytes: number) {
-  return decodedBytes * 2 + 64 * 1024;
+  return decodedBytes * 1.5 + 64 * 1024;
 }
 
 function checkCompressed(buffer: ArrayBufferLike, parameters: BlockParameters) {
