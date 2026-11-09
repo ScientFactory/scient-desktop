@@ -176,7 +176,8 @@ describe("searchSettings", () => {
     );
   });
 
-  it("finds the Welcome page only where a primary computer can open it", () => {
+  // SCIENT-FORK: Scient's Getting started replaces T3's Welcome page, so Settings has no row for it.
+  it("does not offer T3's Welcome page", () => {
     const availability = {
       hasCloudPublicConfig: true,
       hasEnvironment: true,
@@ -190,9 +191,8 @@ describe("searchSettings", () => {
         "welcome page",
         filterAvailableSettingsSearchItems({ ...availability, hasPrimaryEnvironment }),
       ).map((item) => item.id);
-    // Hosted web reaches remote computers but has no primary one to set up.
     expect(ids(false)).not.toContain("welcome-page");
-    expect(ids(true)).toContain("welcome-page");
+    expect(ids(true)).not.toContain("welcome-page");
   });
 
   it("finds keybinding commands by label, command id, and default key", () => {

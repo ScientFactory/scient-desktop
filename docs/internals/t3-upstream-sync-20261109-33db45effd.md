@@ -102,3 +102,19 @@ Local: macOS arm64, Node 26.12.1, isolated synthetic state.
 
 - **Static checks:** typecheck (every package), `vp lint`, `vp fmt --check`, knip and
   `brand:check` pass. The lockfile keeps every `hasBin` marker (128).
+- **Full suites** (each package on its own): web 15,115 passed, server 15,082, desktop 1,547,
+  scripts 892, and every other package passed. Each failure was rerun alone:
+  - **Fixed in this PR:** T3's Welcome-page settings search test now checks that Scient offers
+    no such row.
+  - **Local only:** T3's `agy.cmd` test on a case-insensitive macOS disk (CI runs Linux), and
+    `EnvironmentFileOpen`'s native file-watch timing, which passes alone.
+  - **Known on main:** `LatexRealEngine`.
+- **Seam and provenance checks** pass. T3's MCP wizard files that name connectors are classified
+  as upstream mounts outside Scient Extensions.
+- **Codex review** (GPT-6.1 Sol, medium): no findings.
+- **Live review on a dev app:** fresh isolated state. Results and screenshots are in
+  `reviews/t3-sync-33db-20261109/RECORD.md`.
+  - **Passes:** a fresh start shows Getting started; `/welcome` sends a local user there; the
+    command palette and Sharing & access offer no MCP wizard; Codex turns in projectless chats.
+  - **Seen once, not reproduced:** the first send after a fresh start left its text in the
+    composer; later sends cleared it.
