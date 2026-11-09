@@ -4,7 +4,7 @@ import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -20,13 +20,15 @@ import { makeMuseManagedRuntimeResolution } from "../scient/providerLifecycle/Mu
 import { ProviderLifecycleCoordinator } from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import { makeNativeSessionShutdown } from "./NativeSessionShutdown.ts";
 import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
+import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
+import { buildScientAwareness } from "./ScientAwareness.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 
 export type MuseCompositionEnv =
   | MuseDriverEnv
   | ServerConfig
   | ProviderLifecycleCoordinator
-  | Crypto.Crypto;
+  | SecureRandom.SecureRandom;
 
 /** Scient owns lifecycle policy; the original package remains the sole MSP implementation. */
 export const MuseDriver = makeMuseDriver<
@@ -34,6 +36,8 @@ export const MuseDriver = makeMuseDriver<
   Pick<ScientProviderInstance, "managedRuntimeActions">
 >({
   runtimeInstructions: buildScientRuntimeInstructions,
+  // Muse has no system seam; its first turn carries the awareness, and a changed one again.
+  scientAwareness: (capabilities) => buildScientAwareness(toMcpCapabilities(capabilities)),
   resolveRuntime: Effect.fnUntraced(function* (input) {
     const host = yield* ProviderHost;
     const config = yield* ServerConfig;

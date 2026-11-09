@@ -26,6 +26,11 @@ import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserSession from "../BrowserSession.ts";
 import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
 import type { CookieReadResult } from "./CookieDatabase.ts";
+// SCIENT-FORK:START — Scient Accounts: partitioned cookies keep their key.
+import type { ImportedCookie } from "./CookieDatabase.ts";
+import { sessionCookieFromImported, setCookies } from "@t3tools/shared/scientSessionCookies";
+import { withCookieDebugger } from "../../scient/accounts/sessionCookies.ts";
+// SCIENT-FORK:END
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
 import {
@@ -38,6 +43,9 @@ import {
   type BrowserImportPathContext,
   type BrowserImportSourceDefinition,
 } from "./Sources.ts";
+// SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+import { countSites } from "../../scient/accounts/signedInSites.ts";
+// SCIENT-FORK:END
 
 export class BrowserImportFailedError extends Schema.TaggedError<BrowserImportFailedError>()(
   "BrowserImportFailedError",
@@ -92,16 +100,25 @@ export const checkBrowserImportPolicy = Effect.fn("BrowserImport.checkPolicy")(f
   }
 });
 
+class BrowserCookieFlushError extends Schema.TaggedError<BrowserCookieFlushError>()(
+  "BrowserCookieFlushError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Imported cookies could not be flushed to disk.";
+  }
+}
+
 export class BrowserCookieWriteError extends Schema.TaggedError<BrowserCookieWriteError>()(
   "BrowserCookieWriteError",
   {
     url: Schema.String,
-    name: Schema.String,
+    cookieName: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Could not write imported cookie ${this.name} for ${this.url}.`;
+    return `Could not write imported cookie ${this.cookieName} for ${this.url}.`;
   }
 }
 
@@ -128,7 +145,10 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
 > {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
-  if (yield* isSourceRunning(definition, context)) return "browserRunning";
+  // SCIENT-FORK:START — Scient Accounts: Chromium on macOS and Linux is read from a copy while it runs.
+  const readWhileRunning = definition.engine === "chromium" && context.platform !== "win32";
+  if (!readWhileRunning && (yield* isSourceRunning(definition, context))) return "browserRunning";
+  // SCIENT-FORK:END
   // TCC permits stat without Full Disk Access, so a listed Safari jar may still be unreadable.
   if (definition.engine === "safari") {
     const jar = yield* resolveCookieDatabase(definition, context, ".");
@@ -160,14 +180,30 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   read: CookieReadResult,
   // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
   keepSites: ReadonlyArray<string> = [],
+  /** Electron's cookie API has no partition key, so partitioned cookies need their own writer. */
+  writePartitioned: (cookie: ImportedCookie) => Effect.Effect<boolean> = () =>
+    Effect.succeed(false),
   // SCIENT-FORK:END
 ) {
   let imported = 0;
+  // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+  const importedHosts = new Set<string>();
+  // SCIENT-FORK:END
   let skipped = read.undecryptable;
   const skippedDomains = new Set(read.undecryptableHosts);
   for (const cookie of read.cookies) {
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
     if (coveredBySite(cookie.url, keepSites)) continue;
+    if (cookie.partitionKey) {
+      if (yield* writePartitioned(cookie)) {
+        imported += 1;
+        importedHosts.add(cookieHost(cookie.url));
+      } else {
+        skipped += 1;
+        skippedDomains.add(cookieHost(cookie.url));
+      }
+      continue;
+    }
     // SCIENT-FORK:END
     const written = yield* Effect.tryPromise({
       try: () =>
@@ -183,7 +219,8 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
           sameSite: cookie.sameSite,
           ...(cookie.expirationDate === undefined ? {} : { expirationDate: cookie.expirationDate }),
         }),
-      catch: (cause) => new BrowserCookieWriteError({ url: cookie.url, name: cookie.name, cause }),
+      catch: (cause) =>
+        new BrowserCookieWriteError({ url: cookie.url, cookieName: cookie.name, cause }),
     }).pipe(
       Effect.as(true),
       Effect.tapError((error) => Effect.logDebug(error.message, { cause: error.cause })),
@@ -191,6 +228,9 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
     );
     if (written) {
       imported += 1;
+      // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+      importedHosts.add(cookieHost(cookie.url));
+      // SCIENT-FORK:END
     } else {
       skipped += 1;
       skippedDomains.add(cookieHost(cookie.url));
@@ -198,14 +238,24 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   }
   // Cookie writes settle in memory; flush to disk before reporting a durable import.
   if (imported > 0) {
-    yield* Effect.tryPromise(() => session.cookies.flushStore()).pipe(
+    yield* Effect.tryPromise({
+      try: () => session.cookies.flushStore(),
+      catch: (cause) => new BrowserCookieFlushError({ cause }),
+    }).pipe(
       Effect.tapError((error) =>
         Effect.logWarning("Imported cookies could not be flushed to disk", { cause: error.cause }),
       ),
       Effect.ignore,
     );
   }
-  return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
+  return {
+    imported,
+    skipped,
+    skippedDomains: [...skippedDomains].slice(0, 20),
+    // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
+    importedSites: countSites(importedHosts),
+    // SCIENT-FORK:END
+  };
 });
 
 /** @public */
@@ -350,7 +400,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
 
     // Chromium serializes writes; a rejected cookie should not prevent the others.
     // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
-    return yield* writeCookies(session, result, input.input.keepSites);
+    return yield* writeCookies(session, result, input.input.keepSites, (cookie) =>
+      Effect.tryPromise({
+        try: () =>
+          withCookieDebugger(session, (send) =>
+            setCookies(send, [sessionCookieFromImported(cookie)]),
+          ),
+        catch: (cause) =>
+          new BrowserCookieWriteError({ url: cookie.url, cookieName: cookie.name, cause }),
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
     // SCIENT-FORK:END
   });
 

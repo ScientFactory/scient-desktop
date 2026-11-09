@@ -57,8 +57,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import * as Crypto from "effect/Crypto";
-import * as PlatformError from "effect/PlatformError";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ProviderAdapters from "./orchestration-v2/ProviderAdapterRegistry.ts";
@@ -226,8 +224,7 @@ it.effect.each([
         }),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: false,
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-          prepareTrial: Effect.succeed(undefined),
+          prepareTrial: Effect.undefined,
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(AnalyticsService.AnalyticsService)({}),
@@ -474,8 +471,6 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" as const }),
           collectionEpoch: Effect.succeed(0),
-          setConsent: () => Effect.succeed({ available: false, consent: "off" as const }),
-          deleteData: Effect.succeed(false),
         }),
         Effect.provide(
           Layer.mergeAll(
@@ -534,7 +529,7 @@ const bootstrapConfigLayer = Layer.effect(
   })),
 ).pipe(
   Layer.provide(ServerConfig.layerTest("/tmp/startup-project", { prefix: "startup-bootstrap-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const bootstrapThreadsLayer = ThreadManagement.layer.pipe(
   Layer.provide(
@@ -724,36 +719,6 @@ it.effect(
         ),
       ),
     ),
-);
-
-it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation failures", () =>
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const uuidError = PlatformError.systemError({
-      _tag: "Unknown",
-      module: "Crypto",
-      method: "randomUUIDv4",
-      description: "UUID generation unavailable",
-    });
-    const error = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(ProjectService.ProjectService)({
-            bootstrap: () => Effect.die("UUID failure must prevent project creation"),
-          }),
-          Layer.mock(ThreadManagement.ThreadManagementService)({}),
-          Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
-          Layer.succeed(Crypto.Crypto, {
-            ...crypto,
-            randomUUIDv4: (() => Effect.fail(uuidError)) as Crypto.Crypto["randomUUIDv4"],
-          }),
-          ServerSettings.layerTest(),
-        ).pipe(Layer.provideMerge(bootstrapConfigLayer)),
-      ),
-      Effect.flip,
-    );
-    assert.strictEqual(error, uuidError);
-  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("completeAutoBootstrapWelcome settles failures without bootstrap targets", () =>

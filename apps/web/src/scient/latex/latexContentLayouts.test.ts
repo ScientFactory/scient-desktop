@@ -6,7 +6,6 @@ import {
   applyLatexVisualDocumentChange,
   serializeLatexVisualBlock,
 } from "./latexVisualDocument";
-import { latexVisualCompatibility } from "./latexVisualCompatibility";
 import { latexContentHeadingMacros } from "./latexContentLayouts";
 import { latexListOptionsSource } from "./latexListOptions";
 
@@ -37,11 +36,6 @@ describe("complete source-owned content layouts", () => {
     expect(applyLatexVisualDocumentChange(template, projection, projection.content)?.source).toBe(
       template,
     );
-    expect(
-      latexVisualCompatibility(template, projection).some((issue) =>
-        issue.message.includes("Column and page breaks use browser layout"),
-      ),
-    ).toBe(true);
   });
   it("patches a heading argument while retaining its macro definition and unrelated source", () => {
     const result = change(template, (nodes) => {
@@ -73,9 +67,6 @@ Before.
 After.}`);
     const projection = projectLatexVisualDocument(source);
     expect(projection.rawBlocks).toBe(1);
-    expect(
-      latexVisualCompatibility(source, projection).some((issue) => issue.kind === "source"),
-    ).toBe(true);
     expect(
       change(source, (nodes) => {
         nodes.find((node) => node.text === "After.")!.text = "Changed.";

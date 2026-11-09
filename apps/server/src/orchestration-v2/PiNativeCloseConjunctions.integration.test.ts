@@ -149,13 +149,18 @@ const emit = value => { record("out", value); process.stdout.write(JSON.stringif
 if (!fs.readFileSync(file, "utf8").trim()) fs.writeFileSync(file, JSON.stringify({ type: "session", version: 3, id: crypto.randomUUID(), timestamp: new Date().toISOString(), cwd: process.cwd() }) + "\n");
 const header = JSON.parse(fs.readFileSync(file, "utf8").split("\n")[0]);
 record("spawn", { argv: sessionArguments, sessionId: header.id });
-process.on("SIGTERM", () => {
- record("signal", "SIGTERM");
- if (pendingPrompt) emit({ type: "response", command: "prompt", success: process.env.PI_CLOSE_LATE_ACK === "positive", ...(process.env.PI_CLOSE_LATE_ACK === "positive" ? {} : { error: "late rejected prompt" }) });
+// Teardown ends stdin before SIGTERM (Effect 4.1 destroys an interrupted
+// writer's stream), so answer the held prompt late on whichever comes first.
+const shutDown = reason => {
+ record("shutdown", reason);
+ const held = pendingPrompt;
+ pendingPrompt = null;
+ if (held) emit({ type: "response", command: "prompt", success: process.env.PI_CLOSE_LATE_ACK === "positive", ...(process.env.PI_CLOSE_LATE_ACK === "positive" ? {} : { error: "late rejected prompt" }) });
  process.exit(0);
-});
+};
+process.on("SIGTERM", () => shutDown("SIGTERM"));
 process.on("exit", code => record("exit", code));
-rl.createInterface({ input: process.stdin }).on("line", line => {
+rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_end")).on("line", line => {
  const r = JSON.parse(line); record("in", r);
  let data = {};
  if (r.type === "switch_session") { if (r.sessionPath !== file) throw Error("Foreign native file switch"); data = { cancelled: false }; }

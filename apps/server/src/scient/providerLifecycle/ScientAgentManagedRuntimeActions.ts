@@ -7,7 +7,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
-  detectManagedRuntimeTarget,
   downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
@@ -33,12 +32,16 @@ import { OMP_ISOLATED_ARGS, makeOmpRpcProcess } from "../../provider/omp/OmpRpcP
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { scientAgentTarget } from "../../provider/scient/ScientAgentTarget.ts";
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ConfiguredRuntimeProbe,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   QualifiedRpcManagedRuntime,
   type ManagedRpcQualification,
@@ -156,7 +159,7 @@ export const qualifyManagedScientAgentRuntime = Effect.fn("ScientAgentManagedRun
       }),
     ).pipe(
       Effect.mapError((cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : new ProviderConnectionActionError({
               message: "The staged Scient Agent runtime failed its RPC qualification check.",
@@ -257,14 +260,6 @@ const probeConfiguredScientAgentRuntime =
       Effect.provide(NodeServices.layer),
       Effect.orElseSucceed(() => Option.none<string>()),
     );
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 export const makeScientAgentManagedRuntimeResolution = Effect.fn(
   "ScientAgentManagedRuntime.makeResolution",

@@ -9,11 +9,13 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+// SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
 import type { AgentSkillScope } from "../scient/operations/AgentInvocationContext.ts";
+// SCIENT-FORK:END
 import * as Fiber from "effect/Fiber";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 /** Authenticated external-provider transport grants, owned by the MCP host. */
 const ALL_MCP_CAPABILITIES = [
@@ -25,6 +27,7 @@ const ALL_MCP_CAPABILITIES = [
   "worktree",
   "device",
   "pull-requests",
+  // SCIENT-FORK:START — Scient's own grants.
   "documents:build",
   /** Run code in Scient Compute sessions and read their results. */
   "compute",
@@ -33,9 +36,11 @@ const ALL_MCP_CAPABILITIES = [
   "sources:write",
   // The handoff-summary reader retains its own read-only grant alongside native orchestration tools.
   "threads:read",
+  // SCIENT-FORK:END
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
+// SCIENT-FORK:START — adapters receive grants as package strings.
 const MCP_CAPABILITY_SET: ReadonlySet<string> = new Set(ALL_MCP_CAPABILITIES);
 
 /** Decode package capability names into the grants recognized by the Scient MCP host. */
@@ -45,6 +50,7 @@ export const toMcpCapabilities = (capabilities: ReadonlySet<string>): ReadonlySe
       MCP_CAPABILITY_SET.has(capability),
     ),
   );
+// SCIENT-FORK:END
 
 export interface McpThreadCaller {
   readonly threadId: ThreadId;
@@ -68,8 +74,8 @@ export interface McpClientCaller {
    * another environment passing on the limits of the agent it calls for.
    */
   readonly narrowedTo?: ClientModes | undefined;
-  /** The origin an outside client reached; its thread links open the web app there. */
-  readonly webOrigin?: string | undefined;
+  /** An outside client's thread links go through this hosted app, as Copy thread's do. */
+  readonly hostedAppUrl?: string | undefined;
 }
 
 /**
@@ -148,7 +154,9 @@ export const withRuntimeModeCeiling = (
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly capabilities: ReadonlySet<McpCapability>;
+  // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
   readonly skillScope?: AgentSkillScope;
+  // SCIENT-FORK:END
   readonly issuedAt: number;
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
@@ -167,16 +175,15 @@ export interface McpInvocationScope {
 
 /**
  * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so
- * they get a web URL on the origin they reached instead.
+ * they get the hosted link Copy thread copies, which opens the thread in either app or a browser.
  */
 export const threadLinkFor = (
   scope: Pick<McpInvocationScope, "environmentId" | "client">,
   threadId: ThreadId,
 ): string => {
-  const origin = scope.client?.webOrigin;
-  return origin === undefined
-    ? formatThreadLink({ environmentId: scope.environmentId, threadId })
-    : `${origin}/${encodeURIComponent(scope.environmentId)}/${encodeURIComponent(threadId)}`;
+  const hostedAppUrl = scope.client?.hostedAppUrl;
+  const ref = { environmentId: scope.environmentId, threadId };
+  return hostedAppUrl === undefined ? formatThreadLink(ref) : hostedThreadLink(ref, hostedAppUrl);
 };
 
 export class McpInvocationContext extends Context.Service<
@@ -184,10 +191,10 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
-export type {
-  AgentSkillDescriptor as McpScientSkillDescriptor,
-  AgentSkillScope as McpScientSkillScope,
-} from "../scient/operations/AgentInvocationContext.ts";
+// SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
+export type { AgentSkillScope as McpScientSkillScope } from "../scient/operations/AgentInvocationContext.ts";
+// SCIENT-FORK:END
+
 /**
  * `McpSchema.EnabledWhen` for tools a delegated child must not see or call.
  * EnabledWhen only receives the MCP client profile, so read the T3 caller from the request fiber.
@@ -223,6 +230,7 @@ const missingCapability = (
           providerInstanceId: invocation.thread.providerInstanceId,
         }),
   };
+  // SCIENT-FORK:START — the preview error names its thread; a thread-less caller gets the generic one.
   return capability === "preview" && invocation.thread !== undefined
     ? new PreviewAutomationUnavailableError({
         capability,
@@ -230,6 +238,7 @@ const missingCapability = (
         threadId: invocation.thread!.threadId,
       })
     : new McpCapabilityUnavailableError({ capability, ...fields });
+  // SCIENT-FORK:END
 };
 
 export const requireMcpCapability = <const C extends McpCapability>(
@@ -258,7 +267,9 @@ export const requireThreadMcpCapability = <const C extends "preview" | "device">
 const threadCallerRequired = (operation: string) =>
   new OrchestratorMcpFailure({
     code: "thread_credential_required",
+    // SCIENT-FORK:START — Scient-facing copy.
     message: `${operation} acts as the calling Scient thread, so it needs an agent running inside Scient. This MCP client signed in from outside a thread.`,
+    // SCIENT-FORK:END
   });
 
 export type McpThreadInvocationScope = McpInvocationScope & { readonly thread: McpThreadCaller };

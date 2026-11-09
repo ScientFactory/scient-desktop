@@ -64,7 +64,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import * as ServerConfig from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makePiCustomModelsConnectionFactory } from "../../provider/pi/PiCustomModelsConnection.ts";
-import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
+import { encodePiModelSlug } from "@t3tools/provider-pi/server/model";
 import {
   isNativeStartReceiptError,
   makeAdapter,
@@ -966,8 +966,8 @@ describe("PiAdapterV2 Models", () => {
         const updates = yield* PubSub.unbounded<ReturnType<typeof snapshot>>();
         fake.onSpawn((env) =>
           http
-            .get(env.SCIENT_PI_MODELS_URL!, {
-              headers: { authorization: "Bearer " + env.SCIENT_PI_MODELS_TOKEN! },
+            .get(String(env.SCIENT_PI_MODELS_URL), {
+              headers: { authorization: "Bearer " + String(env.SCIENT_PI_MODELS_TOKEN) },
             })
             .pipe(
               Effect.flatMap((response) => response.text),

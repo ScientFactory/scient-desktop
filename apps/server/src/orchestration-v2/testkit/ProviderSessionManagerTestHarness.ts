@@ -1,5 +1,6 @@
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as NetAddress from "effect/net/NetAddress";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert } from "@effect/vitest";
 import {
@@ -60,6 +61,7 @@ import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { layerProviderRuntimeTestServices } from "./ProviderRuntimeTestServices.ts";
+import type { WorkspaceBindingResolver } from "../../scient/projectScope/WorkspaceBindingResolver.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 
@@ -481,6 +483,8 @@ function makeTestLayer(input: {
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   /** Optional Scient Extensions services the manager reads with `serviceOption`. */
   readonly extensionsLayer?: Layer.Layer<ConnectorRuntime | ExtensionDeliveryReceipts>;
+  /** The workspace check awareness follows; without one every grant is described. */
+  readonly workspaceResolverLayer?: Layer.Layer<WorkspaceBindingResolver>;
   /** Provider snapshots returned by the registry (native MCP servers, etc.). */
   readonly providers?: ReadonlyArray<ServerProvider>;
 }) {
@@ -542,8 +546,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-          getInstance: () => Effect.succeed(undefined),
+          getInstance: () => Effect.undefined,
         }),
         configuredEventSinkLayer,
         IdAllocator.layer,
@@ -579,6 +582,7 @@ function makeTestLayer(input: {
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.extensionsLayer === undefined ? [] : [input.extensionsLayer]),
+          ...(input.workspaceResolverLayer === undefined ? [] : [input.workspaceResolverLayer]),
         ),
       ),
     ),
@@ -587,7 +591,7 @@ function makeTestLayer(input: {
       layerProviderRuntimeTestServices(Layer.merge(configuredEventSinkLayer, TestStoresLayer)),
     ),
     Layer.provide(ThreadCommandExecutor.layer),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(input.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );
 }
@@ -608,6 +612,7 @@ const TestMcpRegistryLayer = McpSessionRegistry.layer.pipe(
       Layer.succeed(HttpServer.HttpServer, fakeHttpServer),
       Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment),
       NodeServices.layer,
+      NodeCrypto.layer,
     ),
   ),
 );

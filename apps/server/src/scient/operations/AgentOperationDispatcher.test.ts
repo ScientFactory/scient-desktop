@@ -88,19 +88,15 @@ it.effect(
     ),
 );
 
-it.effect("does not require a project for Browser or turn-scoped skill reads", () =>
+it.effect("does not require a project for turn-scoped skill reads", () =>
   Effect.gen(function* () {
     const names = (yield* listAvailableScientOperations()).map((operation) => operation.id);
-    expect(names).toContain("browser.snapshot");
     expect(names).toContain("skills.load");
     expect(names).not.toContain("sources.list");
     expect(yield* dispatchScientOperation("skills.list", Effect.succeed("skills"))).toBe("skills");
-    expect(yield* dispatchScientOperation("browser.status", Effect.succeed("browser"))).toBe(
-      "browser",
-    );
   }).pipe(
     Effect.provideService(AgentInvocationContext, {
-      ...invocation("projectless", ["preview", "skills:read", "sources:read"]),
+      ...invocation("projectless", ["skills:read", "sources:read"]),
       skillScope: { releases: new Map(), skills: [] },
     }),
     Effect.provideService(
@@ -120,7 +116,7 @@ it.effect("does not require a project for Browser or turn-scoped skill reads", (
 it.effect("withholds skill operations when a grant has no authorized release scope", () =>
   Effect.gen(function* () {
     const available = yield* listAvailableScientOperations();
-    expect(available.filter((operation) => operation.family === "skills")).toEqual([]);
+    expect(available.filter((operation) => operation.scope === "skill-release")).toEqual([]);
     expect(
       (yield* dispatchScientOperation("skills.load", Effect.succeed("never")).pipe(Effect.flip))
         ._tag,

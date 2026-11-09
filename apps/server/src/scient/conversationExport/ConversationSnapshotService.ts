@@ -21,7 +21,7 @@ import {
   selectedConversationAttachments,
 } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -42,6 +42,8 @@ import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1Th
 import * as Option from "effect/Option";
 import { conversationSnapshotProjection } from "./conversationSnapshotProjection.ts";
 import { turnItemMetadataSql } from "../../orchestration-v2/scient-fork/ContextHistorySql.ts";
+
+const isSnapshotRangeError = Schema.is(SnapshotRangeError);
 
 const isConversationExportError = Schema.is(ScientConversationExportError);
 
@@ -98,7 +100,7 @@ const make = Effect.gen(function* () {
   const importer = yield* LegacyV1ThreadImporter;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const digests = yield* Digest.Digest;
   const captureLock = yield* Semaphore.make(1);
 
   const locate = (attachment: ChatAttachment): string | null =>
@@ -220,7 +222,7 @@ const make = Effect.gen(function* () {
       return yield* new ConversationThreadNotFoundError({ threadId: input.threadId });
     }
     const rangeError = (cause: unknown) =>
-      cause instanceof SnapshotRangeError
+      isSnapshotRangeError(cause)
         ? new ConversationRangeError({ messageId: cause.messageId as MessageId })
         : new ConversationSnapshotReadError({ cause });
     const content = yield* Effect.try({
@@ -250,9 +252,10 @@ const make = Effect.gen(function* () {
         }),
       catch: rangeError,
     });
-    const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(canonicalSnapshotContent(snapshotContent)))
-      .pipe(Effect.mapError((cause) => new ConversationSnapshotReadError({ cause })));
+    const digest = yield* digests.digest(
+      Digest.sha256,
+      new TextEncoder().encode(canonicalSnapshotContent(snapshotContent)),
+    );
     return {
       snapshot: { ...snapshotContent, contentDigest: `sha256:${Hex.encode(digest)}` },
       attachmentFiles,

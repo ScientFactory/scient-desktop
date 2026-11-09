@@ -12,6 +12,9 @@ export {
   type PiRuntimeResolution,
   type PiRuntimeResolverInput,
 } from "./server/driver.ts";
+// SCIENT-FORK:START — a host keeps its private Pi runtime out of Pi's update rule.
+export { piMaintenanceResolver } from "./server/driver.ts";
+// SCIENT-FORK:END
 /**
  * Default native Pi adapter for hosts composing providers through the server entry.
  *

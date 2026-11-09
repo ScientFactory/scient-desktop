@@ -10,7 +10,7 @@ import { normalizePersistentIdentifier } from "./normalize.ts";
 import { normalizeScientSourceAbstract } from "./abstract.ts";
 import { normalizeScientSourceAbstractDocument } from "./abstract.ts";
 
-export const SCIENT_SOURCE_EDITABLE_FIELDS = [
+const SCIENT_SOURCE_EDITABLE_FIELDS = [
   "type",
   "customType",
   "title",

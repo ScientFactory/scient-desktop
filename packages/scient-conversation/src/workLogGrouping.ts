@@ -55,7 +55,7 @@ export interface TurnFold {
 export { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 // SCIENT-FORK:END
 
-export function computeElapsedMs(startIso: string, endIso: string): number | null {
+function computeElapsedMs(startIso: string, endIso: string): number | null {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;

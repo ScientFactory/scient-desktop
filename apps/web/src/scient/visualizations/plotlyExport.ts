@@ -2,12 +2,9 @@ import {
   downloadPresentationBlob,
   markdownFenceCopySource,
   presentationFileBaseName,
+  presentationPngScale,
 } from "../presentation/presentationExport";
 import type { PlotlyViewController } from "./PlotlyView";
-
-const MAX_PNG_DIMENSION = 8_192;
-const MAX_PNG_PIXELS = 16_777_216;
-const DEFAULT_PNG_SCALE = 2;
 
 export function plotlyFileBaseName(title: string | null): string {
   const normalizedTitle = title?.replace(/(?:\.plotly)?\.json$/i, "") ?? null;
@@ -26,18 +23,6 @@ export function downloadPlotlySource(source: string, title: string | null): void
   downloadPresentationBlob(
     new Blob([source], { type: "application/json;charset=utf-8" }),
     `${plotlyFileBaseName(title)}.plotly.json`,
-  );
-}
-
-export function plotlyPngScale(sourceWidth: number, sourceHeight: number): number {
-  if (!(sourceWidth > 0 && sourceHeight > 0)) {
-    throw new Error("The rendered Plotly figure has no measurable size.");
-  }
-  return Math.min(
-    DEFAULT_PNG_SCALE,
-    MAX_PNG_DIMENSION / sourceWidth,
-    MAX_PNG_DIMENSION / sourceHeight,
-    Math.sqrt(MAX_PNG_PIXELS / (sourceWidth * sourceHeight)),
   );
 }
 
@@ -61,7 +46,7 @@ function decodeDataUrl(dataUrl: string, expectedType: string): Blob {
 
 export async function plotlyPngBlob(controller: PlotlyViewController): Promise<Blob> {
   const dimensions = controller.getDimensions();
-  const scale = plotlyPngScale(dimensions.width, dimensions.height);
+  const scale = presentationPngScale(dimensions.width, dimensions.height, "Plotly figure");
   return decodeDataUrl(await controller.toImage("png", scale), "image/png");
 }
 

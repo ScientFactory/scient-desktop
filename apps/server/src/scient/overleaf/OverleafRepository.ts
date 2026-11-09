@@ -285,13 +285,7 @@ export class OverleafRepository extends Context.Service<
       ReadonlyArray<{ readonly commit: string; readonly tree: string }>,
       OverleafRepositoryError | OverleafGitError
     >;
-    /** Scient's own references, under `refs/scient/`. They keep snapshots alive. */
-    readonly setRef: (input: {
-      readonly repo: string;
-      readonly name: string;
-      readonly oid: string;
-    }) => Effect.Effect<void, OverleafRepositoryError | OverleafGitError>;
-    /** Several of Scient's references at once: all are written or none. */
+    /** Scient's own references, under `refs/scient/`, which keep snapshots alive: all are written or none. */
     readonly setRefs: (input: {
       readonly repo: string;
       readonly refs: ReadonlyArray<{ readonly name: string; readonly oid: string }>;
@@ -746,8 +740,6 @@ export const make = Effect.gen(function* () {
     return out;
   });
 
-  const setRef: OverleafRepository["Service"]["setRef"] = (input) =>
-    run(input.repo, ["update-ref", refName(input.name), input.oid]).pipe(Effect.asVoid);
   const setRefs: OverleafRepository["Service"]["setRefs"] = Effect.fn("OverleafRepository.setRefs")(
     function* (input) {
       if (input.refs.length === 0) return;
@@ -811,7 +803,6 @@ export const make = Effect.gen(function* () {
     push,
     isAncestor,
     treesSince,
-    setRef,
     setRefs,
     readRef,
     deleteRef,

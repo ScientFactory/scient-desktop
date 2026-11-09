@@ -7,13 +7,13 @@ import {
   ScientDocumentPageReadiness,
   scientDocumentBlockedRequestsNote,
   scientDocumentReadinessRejection,
+  ScientDocumentPageRenderRejection,
   type DesktopDocumentPageRenderInput,
   type DesktopDocumentPageRenderOutcome,
   type DesktopPreviewPdfExportArtifact,
 } from "@t3tools/contracts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -238,17 +238,18 @@ const appendNotesScript = (notes: ReadonlyArray<string>) => `
 const decodeReadiness = Schema.decodeUnknownEffect(ScientDocumentPageReadiness);
 
 const rejected = (
-  reason: Extract<DesktopDocumentPageRenderOutcome, { _tag: "rejected" }>["reason"],
+  reason: ScientDocumentPageRenderRejection["reason"],
   detail: string,
-): DesktopDocumentPageRenderOutcome => ({
+): ScientDocumentPageRenderRejection => ({
   _tag: "rejected",
   reason,
   detail: detail.slice(0, 2_048),
 });
 
-class DocumentPageRejection extends Data.TaggedError("DocumentPageRejection")<{
-  readonly outcome: DesktopDocumentPageRenderOutcome;
-}> {}
+class DocumentPageRejection extends Schema.TaggedError<DocumentPageRejection>()(
+  "DocumentPageRejection",
+  { outcome: ScientDocumentPageRenderRejection },
+) {}
 
 const ensureProtocol = (
   session: Session,

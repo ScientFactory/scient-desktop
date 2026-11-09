@@ -13,7 +13,10 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
@@ -381,7 +384,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
     (effect, action) =>
       effect.pipe(
         Effect.mapError((cause) =>
-          cause instanceof ProviderConnectionActionError
+          isProviderConnectionActionError(cause)
             ? cause
             : cause instanceof Error && cause.message.trim()
               ? failure(cause.message, cause)

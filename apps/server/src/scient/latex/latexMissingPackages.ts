@@ -106,8 +106,3 @@ export function missingLatexPackageInputs(transcript: string): ReadonlyArray<Mis
   }
   return packages;
 }
-
-/** The installable packages one transcript asks for, deduplicated and bounded. */
-export function missingLatexPackages(transcript: string): string[] {
-  return missingLatexPackageInputs(transcript).map((missing) => missing.packageName);
-}

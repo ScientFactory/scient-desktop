@@ -18,7 +18,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -82,6 +82,15 @@ const PAGE_ANCHOR_BUDGET = "8 minutes";
 const PAGE_ANCHOR_SCAN_CHUNK = 4 * 1024 * 1024;
 
 /** Counts lines of the form `{<digits>` starting in `[from, to)`, without decoding. */
+class SyncTexIndexDecompressError extends Schema.TaggedError<SyncTexIndexDecompressError>()(
+  "SyncTexIndexDecompressError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not decompress the SyncTeX index.";
+  }
+}
+
 function countSheets(index: Uint8Array, from: number, to: number): number {
   let count = 0;
   for (let at = from; at < to; at++) {
@@ -142,7 +151,7 @@ export const make = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const runtime = yield* SyncTexRuntime.SyncTexRuntime;
   const hostPlatform = yield* HostProcess.Platform;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const workspaceFiles = yield* WorkspaceFileSystem;
   const authority = ArtifactAuthority.make(yield* environment.getEnvironmentId);
 
@@ -208,7 +217,7 @@ export const make = Effect.gen(function* () {
     let temporaryDirectory: string | null = null;
     return Effect.gen(function* () {
       if (yield* fileSystem.exists(finalDirectory)) return;
-      const stagingDirectory = `${finalDirectory}.tmp-${yield* crypto.randomUUIDv4()}`;
+      const stagingDirectory = `${finalDirectory}.tmp-${yield* random.uuidV4()}`;
       temporaryDirectory = stagingDirectory;
       const compressedPath = input.syncTexPath;
       const plainPath = compressedPath.replace(/\.gz$/iu, "");
@@ -620,8 +629,8 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(bytes)) continue;
       // Decompressed off the event loop, with a bound on its size.
       const index = name.endsWith(".gz")
-        ? yield* Effect.tryPromise(
-            () =>
+        ? yield* Effect.tryPromise({
+            try: () =>
               new Promise<Uint8Array>((resolve, reject) =>
                 NodeZlib.gunzip(
                   bytes.value,
@@ -629,7 +638,8 @@ export const make = Effect.gen(function* () {
                   (error, result) => (error ? reject(error) : resolve(result)),
                 ),
               ),
-          ).pipe(Effect.option)
+            catch: (cause) => new SyncTexIndexDecompressError({ cause }),
+          }).pipe(Effect.option)
         : Option.some(bytes.value);
       if (Option.isNone(index)) return 0;
       let count = 0;

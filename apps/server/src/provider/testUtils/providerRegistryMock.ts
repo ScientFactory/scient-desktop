@@ -19,21 +19,17 @@ export const makeProviderRegistryMock = (
   reloadSecretsAndRefresh: () => Effect.succeed(providers),
   refreshAfterUpdate: () => Effect.succeed(providers),
   refreshWorkspaceSnapshot: () => Effect.succeed(providers),
+  invalidateModelCaches: () => Effect.void,
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-  getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-  getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-  getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
+  getProviderConnectionActionsForInstance: () => Effect.undefined,
+  getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
+  getProviderSkillActionsForInstance: () => Effect.undefined,
   // SCIENT-FORK:START — Scient Extensions provider plugins and native inventory.
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-  getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+  getProviderPluginActionsForInstance: () => Effect.undefined,
   recordProviderNativeInventory: () => Effect.succeed(providers),
   // SCIENT-FORK:END
   getVoiceTranscriptCorrectionForInstance: () =>
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
     Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
   setProviderManagedRuntimeSummary: () => Effect.succeed([]),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),

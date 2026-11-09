@@ -1,5 +1,8 @@
 {
-  "codexAdditionalContextAllCapabilitiesBytes": 9037,
-  "scientAwarenessAllCapabilitiesBytes": 3901,
-  "scientOrchestrationBytes": 3778
+  "claudeSystemAppendBytes": 6292,
+  "codexAdditionalContextBytes": 8009,
+  "mcpToolListJsonBytes": 85834,
+  "codexAdditionalContextAllCapabilitiesBytes": 9680,
+  "scientAwarenessAllCapabilitiesBytes": 4348,
+  "scientOrchestrationBytes": 3976
 }

@@ -103,6 +103,8 @@ export const makePiRunJson = (run: {
           mcpSession: undefined,
           extensionPath: undefined,
           ephemeral: true,
+          // Stopped as soon as it answers, so Pi's startup refresh must not rotate OAuth tokens.
+          shortLived: true,
           disableExtensions: true,
           disableTools: true,
         });
@@ -112,7 +114,6 @@ export const makePiRunJson = (run: {
           // workspace instructions, skills, tools, extensions or persisted session.
           args: [
             ...launch.args.slice(2),
-            "--offline",
             "--no-skills",
             "--no-prompt-templates",
             "--no-context-files",

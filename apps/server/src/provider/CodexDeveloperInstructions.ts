@@ -1,7 +1,7 @@
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
+// SCIENT-FORK:START Scient instruction owners
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
-// SCIENT-FORK:START Scient instruction owners
 import { SCIENT_ORCHESTRATION_SECTIONS } from "./ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 // SCIENT-FORK:END Scient instruction owners

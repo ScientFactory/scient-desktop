@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { BindingGeneration, type PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   ScientDocumentPageExpectation,
@@ -16,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
@@ -63,8 +65,10 @@ export const documentExportTestLayer = (prefix: string) => {
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),
     ),
-    ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
-  ).pipe(Layer.provideMerge(NodeServices.layer));
+    AssetSigner.layer.pipe(
+      Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
+    ),
+  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 };
 
 export async function makeFixtureDirectory(fixtures: string[], prefix: string): Promise<string> {

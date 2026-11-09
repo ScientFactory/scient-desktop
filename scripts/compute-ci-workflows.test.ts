@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- workflow contract tests read checked-in YAML only.
 import * as NodeFS from "node:fs";
+import * as NodeVM from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
 import * as YAML from "yaml";
 
@@ -14,6 +15,7 @@ describe("Compute CI suite selection", () => {
           inputs: {
             real_kernel: { type: "boolean", default: true },
             managed_python: { type: "boolean", default: true },
+            platforms: { type: "string", default: "all" },
           },
         },
         workflow_dispatch: {
@@ -41,6 +43,8 @@ describe("Compute CI suite selection", () => {
               "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}",
             managed_python:
               "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}",
+            compute_platforms:
+              "${{ github.event_name == 'push' && 'all' || steps.compute.outputs.platforms }}",
           },
         },
         compute_native: {
@@ -50,6 +54,8 @@ describe("Compute CI suite selection", () => {
           with: {
             real_kernel: "${{ needs.changes.outputs.real_kernel != 'false' }}",
             managed_python: "${{ needs.changes.outputs.managed_python != 'false' }}",
+            platforms:
+              "${{ needs.changes.outputs.compute_platforms == 'linux' && 'linux' || 'all' }}",
           },
         },
         check: {
@@ -61,16 +67,69 @@ describe("Compute CI suite selection", () => {
     });
   });
 
+  it("narrows every native matrix to Linux only on an explicit linux", () => {
+    const jobs = (
+      workflow("scient-compute-python-kernel.yml") as {
+        jobs: Record<
+          string,
+          {
+            strategy: { matrix: { runner: string } };
+            steps?: Array<{ env?: Record<string, string> }>;
+          }
+        >;
+      }
+    ).jobs;
+    // Each value is one `${{ ... }}` expression; these use only ==, &&, || and fromJSON.
+    const evaluate = (expression: string, context: object) =>
+      NodeVM.runInNewContext(expression.slice(3, -2), { fromJSON: JSON.parse, ...context });
+    const all = ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"];
+    for (const id of ["managed_python", "real_kernel", "real_languages"]) {
+      const runner = jobs[id]!.strategy.matrix.runner;
+      expect(evaluate(runner, { inputs: { platforms: "linux" } }), id).toEqual(["ubuntu-24.04"]);
+      expect(evaluate(runner, { inputs: { platforms: "all" } }), id).toEqual(all);
+      // Manual dispatch has no such input.
+      expect(evaluate(runner, { inputs: {} }), id).toEqual(all);
+    }
+    const target = jobs.managed_python!.steps!.find((step) => step.env?.EXPECTED_TARGET)!.env!
+      .EXPECTED_TARGET!;
+    expect(all.map((runner) => evaluate(target, { matrix: { runner } }))).toEqual([
+      "linux-x64",
+      "darwin-arm64",
+      "darwin-x64",
+      "win32-x64",
+    ]);
+  });
+
   it("qualifies recipes and the opted-in managed product in their respective lanes", () => {
     expect(workflow("scient-compute-python-kernel.yml")).toMatchObject({
       jobs: {
         managed_python: {
           steps: expect.arrayContaining([
             expect.objectContaining({
+              name: "Qualify recipes",
+              if: "${{ matrix.runner != 'windows-2025' }}",
+              "working-directory": "apps/server",
+              env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
+              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1",
+            }),
+            expect.objectContaining({
               name: "Qualify base, every toolkit combination, and retained kernels",
               "working-directory": "apps/server",
               env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
-              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1 && vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1",
+              run: "vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts --maxWorkers=1",
+            }),
+          ]),
+        },
+        // Windows, where managed_python is longest, qualifies recipes beside it.
+        managed_recipes: {
+          if: "${{ inputs.managed_python && inputs.platforms != 'linux' }}",
+          "runs-on": "windows-2025",
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              name: "Qualify recipes",
+              "working-directory": "apps/server",
+              env: { SCIENT_TEST_MANAGED_PYTHON: "1", MPLBACKEND: "Agg" },
+              run: "vp test run src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1",
             }),
           ]),
         },

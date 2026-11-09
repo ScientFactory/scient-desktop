@@ -1,3 +1,5 @@
+import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import { MessageId } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ChatComposerHandle } from "./ChatComposer";
@@ -94,7 +96,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   type ComposerSubmissionIntent,
-  parseSideChatCommand,
   parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
@@ -237,6 +238,8 @@ export interface ComposerSendInput {
   readonly panelAnimationsActive: boolean;
   readonly panelAnimationDurationMs: number;
   readonly keepFullHistory: boolean;
+  /** `/clear` can arm a fresh session on this thread. */
+  readonly freshSessionAvailable: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly showPlanFollowUpPrompt: boolean;
   readonly usageLimitsKey: string | null;
@@ -326,6 +329,7 @@ export function useComposerSend(input: ComposerSendInput) {
     panelAnimationsActive,
     panelAnimationDurationMs,
     keepFullHistory,
+    freshSessionAvailable,
     resumeCompactionTokens,
     showPlanFollowUpPrompt,
     usageLimitsKey,
@@ -862,6 +866,28 @@ export function useComposerSend(input: ComposerSendInput) {
             onForkConversation();
             return;
           }
+          // `/clear` arms a fresh session for the next message, as upstream does.
+          if (
+            freshSessionAvailable &&
+            !directAnnotation &&
+            directPrompt === null &&
+            !extractedIntent &&
+            !queueEdit &&
+            composerImages.length === 0 &&
+            effectiveComposerFiles.length === 0 &&
+            sendableComposerTerminalContexts.length === 0 &&
+            composerPreviewAnnotations.length === 0 &&
+            effectiveReviewComments.length === 0 &&
+            isClearComposerCommand(trimmed)
+          ) {
+            armFreshSession(routeThreadKey);
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+            return;
+          }
+          // Read once: an arm made while this send is in flight belongs to the next message.
+          const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
           const feedbackCommand =
             directPrompt === null &&
             ctxSelectedProvider === "codex" &&
@@ -937,6 +963,7 @@ export function useComposerSend(input: ComposerSendInput) {
             !directAnnotation &&
             directPrompt === null &&
             !extractedIntent &&
+            freshArm === undefined &&
             sendInteractionModeEnabled &&
             showPlanFollowUpPrompt &&
             activeProposedPlan &&
@@ -1104,15 +1131,18 @@ export function useComposerSend(input: ComposerSendInput) {
           );
           const selectedScientSkillNames = collectSelectedScientSkillNames(promptForSend);
           // Explicit actions and captured queue records retain their own admission and retry payload.
-          const compactBeforeSend = shouldCompactBeforeSend({
-            ordinaryServerSend:
-              isServerThread && !steerRequested && !directAnnotation && directPrompt === null,
-            hasCapturedQueueSubmission: Boolean(queueEdit || extractedIntent),
-            multipleModels: multipleModelSelections !== null,
-            resumeCompactionTokens,
-            keepFullHistory,
-            messageText: messageTextForSend,
-          });
+          // A fresh session drops the old conversation, so it never compacts it first.
+          const compactBeforeSend =
+            freshArm === undefined &&
+            shouldCompactBeforeSend({
+              ordinaryServerSend:
+                isServerThread && !steerRequested && !directAnnotation && directPrompt === null,
+              hasCapturedQueueSubmission: Boolean(queueEdit || extractedIntent),
+              multipleModels: multipleModelSelections !== null,
+              resumeCompactionTokens,
+              keepFullHistory,
+              messageText: messageTextForSend,
+            });
           const { missingWorktreeBaseBranch, baseBranchForWorktree, turnDispatchMode } =
             planComposerTurn({
               messageText: messageTextForSend,
@@ -1127,6 +1157,7 @@ export function useComposerSend(input: ComposerSendInput) {
               keepFullHistory,
               phase,
               dispatchMode,
+              freshContext: freshArm !== undefined,
             });
           if (missingWorktreeBaseBranch) {
             setThreadError(
@@ -1735,6 +1766,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   runtimeMode,
                   interactionMode: sendInteractionMode,
                   dispatchMode: steerRequested || directAnnotation ? "steer" : turnDispatchMode,
+                  ...(freshArm === undefined ? {} : { freshContext: true }),
                   ...(bootstrap ? { bootstrap } : {}),
                   createdAt: messageCreatedAt,
                 },
@@ -1780,6 +1812,7 @@ export function useComposerSend(input: ComposerSendInput) {
               } else {
                 turnStartSucceeded = true;
                 setKeepFullHistory(routeThreadKey, false);
+                if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
                 // SCIENT-FORK:START — an admitted send retires its extracted intent and queue edit, then
                 // clears the draft it was sent from (only if the draft is unchanged since).
                 requestAccepted = true;

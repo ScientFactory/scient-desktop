@@ -160,7 +160,9 @@ export function workspaceRelativeFilePath(
     "",
   );
   // SCIENT-FORK:END
-  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
+  const caseInsensitive =
+    isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot)) ||
+    (isNetworkPath(workspaceRoot) && isUncPath(path));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";

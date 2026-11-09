@@ -1,6 +1,7 @@
 /** Controlled native subprocess → actual RPC → V2 SQL. No vendor model or account. */
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -11,7 +12,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -69,6 +70,7 @@ const TranscriptEntry = Schema.Union([
 const decodeTranscript = Schema.decodeEffect(Schema.Array(Schema.fromJsonString(TranscriptEntry)));
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   gateLayer,
   ServerSettings.layerTest(),
@@ -141,7 +143,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             },
             fileSystem: fs,
             path,
-            crypto: yield* Crypto.Crypto,
+            random: yield* SecureRandom.SecureRandom,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             serverConfig: config,
             idAllocator: yield* IdAllocatorV2,

@@ -6,6 +6,7 @@ import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcp
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ModelSelection, ProviderSessionId, RunAttemptId } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -13,7 +14,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -124,7 +125,12 @@ describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
         assert.lengthOf(h.offeredMessages, 1);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
   );
@@ -271,7 +277,12 @@ describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
         }
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -294,7 +305,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
         });
         let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -310,6 +321,10 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -430,7 +445,12 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -449,7 +469,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
         });
         const offeredMessages: Array<SDKUserMessage> = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -463,6 +483,10 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
               Effect.succeed({
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 setPermissionMode: () =>
                   Effect.die("Permission-mode mutation is outside this fixture."),
                 messages: Stream.never,
@@ -582,7 +606,12 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
         ]);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -657,7 +686,12 @@ describe("ClaudeAdapterV2 background wake turns (Errors)", () => {
       assert.equal(closeCount, 1);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -730,7 +764,12 @@ describe("ClaudeAdapterV2 background wake turns (Errors)", () => {
         assert.isFalse(harness.events.some((event) => event.type === "authentication.invalidated"));
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
   );
@@ -907,7 +946,12 @@ describe("ClaudeAdapterV2 provider-native inventory (NativeInventory)", () => {
       }),
     ).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -943,7 +987,12 @@ describe("ClaudeAdapterV2 provider-native inventory (NativeInventory)", () => {
       }),
     ).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -989,7 +1038,7 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
         const events: Array<ProviderAdapterV2Event> = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -1007,6 +1056,10 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
@@ -1147,7 +1200,12 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
         assert.lengthOf(processQueues, 3);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -1184,6 +1242,10 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -1226,7 +1288,12 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
       }),
     ).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -1246,7 +1313,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
           });
           let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
           const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-            crypto: yield* Crypto.Crypto,
+            random: yield* SecureRandom.SecureRandom,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
@@ -1262,6 +1329,10 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.never,
@@ -1473,7 +1544,12 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
           );
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -1559,7 +1635,12 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
           }).pipe(Effect.ensuring(h.save));
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -1603,7 +1684,12 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
           }).pipe(Effect.ensuring(h.save));
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -1694,7 +1780,12 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
           }).pipe(Effect.ensuring(h.save));
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -1761,7 +1852,12 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
         assert.lengthOf(harness.terminalEvents(), 1);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -1825,7 +1921,12 @@ describe("ClaudeAdapterV2 background wake turns (Stop)", () => {
         assert.lengthOf(harness.terminalEvents(), 1);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -1926,7 +2027,12 @@ describe("ClaudeAdapterV2 background wake turns (Tools)", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -2105,7 +2211,12 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -2244,7 +2355,12 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
         assert.equal(reopened?.presentation?.firstSeenAt, before[0]?.presentation?.firstSeenAt);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -2357,7 +2473,12 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
           assert.lengthOf(h.offeredMessages, 1);
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -2438,7 +2559,12 @@ describe("ClaudeAdapterV2 background wake turns (Workflows)", () => {
           assert.isFalse(yield* h.hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -2544,7 +2670,12 @@ it.effect(
         }).pipe(Effect.provideService(Clock.Clock, controlledClock));
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -2563,7 +2694,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         });
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -2579,6 +2710,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.empty,
@@ -2622,7 +2757,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         return openedQueries;
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     );
@@ -2691,7 +2831,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
           const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-            crypto: yield* Crypto.Crypto,
+            random: yield* SecureRandom.SecureRandom,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
@@ -2714,6 +2854,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
@@ -2875,7 +3019,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           assert.isFalse(yield* hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -2928,7 +3077,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       );
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -2987,7 +3141,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       assert.equal(terminal.failure.class, recovered ? "provider_error" : "usage_limit");
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -3036,7 +3195,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           assert.notInclude(terminal.failure.message.toLowerCase(), "usage limit");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
   );
@@ -3094,7 +3258,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.equal(terminal.failure.code, "api_error_529");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3241,7 +3410,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.lengthOf(harness.offeredMessages, 1);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3308,7 +3482,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3351,7 +3530,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3406,7 +3590,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3470,7 +3659,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3509,7 +3703,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.equal(harness.terminalEvents()[0]?.status, "failed");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3622,7 +3821,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3688,7 +3892,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3854,7 +4063,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.deepEqual([...new Set(userRunItems)], ["assistant_message"]);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -3965,7 +4179,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4047,7 +4266,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.deepEqual(routing.assistantTexts(harness.threadId), ["The auditor finished."]);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4113,7 +4337,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.deepEqual(retryStatuses, ["running"]);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4130,7 +4359,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         });
         let openCount = 0;
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -4146,6 +4375,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -4204,7 +4437,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.equal(openCount, 0);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4270,7 +4508,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   );
@@ -4380,7 +4623,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4549,7 +4797,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
   });
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-  it("projects assistant usage against the selected context window", () => {
+  it("projects assistant usage against the given context window", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {
         input_tokens: 42_000,
@@ -4557,7 +4805,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         cache_read_input_tokens: 5_000,
         output_tokens: 1_000,
       },
-      CLAUDE_TEST_MODEL_SELECTION,
+      200_000,
       "2026-08-29T00:00:00.000Z",
     );
 
@@ -4616,7 +4864,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.lengthOf(harness.continuationRequests, 0);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4679,7 +4932,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -4701,7 +4959,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
           const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-            crypto: yield* Crypto.Crypto,
+            random: yield* SecureRandom.SecureRandom,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
@@ -4733,6 +4991,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
@@ -4888,7 +5150,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
           assert.equal(continuationRequests[1]?.detail, "Retry build completed successfully");
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+              McpProviderSessions.layer,
+            ),
           ),
         ),
       ),
@@ -4905,7 +5172,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         });
         const events: Array<ProviderAdapterV2Event> = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -4968,7 +5235,12 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         assert.lengthOf(providerThreadRosterEvents(events), 0);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),
@@ -5103,7 +5375,12 @@ it.effect.each(
       );
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          McpProviderSessions.layer,
+        ),
       ),
     ),
   ),

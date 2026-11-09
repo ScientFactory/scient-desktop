@@ -813,7 +813,7 @@ const seedRollbackHistory = Effect.gen(function* () {
       ),
     ),
   );
-  const rollback = (ordinal: number) =>
+  const rollback = (ordinal: number, restoreFiles?: boolean) =>
     Effect.gen(function* () {
       const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
       yield* service.execute({
@@ -821,6 +821,7 @@ const seedRollbackHistory = Effect.gen(function* () {
         providerThreadId,
         scopeId,
         checkpointId: checkpointId(ordinal),
+        ...(restoreFiles === undefined ? {} : { restoreFiles }),
       });
     }).pipe(Effect.provide(serviceLayer));
 
@@ -936,5 +937,51 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           );
         }),
     );
+
+    // SCIENT-FORK:START — a turn whose file snapshot failed still rewinds the conversation.
+    it.effect("rewinds the conversation, never the files, to a turn without a snapshot", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const sql = yield* SqlClient.SqlClient;
+        // Checkpoint 7 belongs to an already rolled-back run, as records written before
+        // snapshot-less boundaries were marked stale can.
+        yield* sql`UPDATE orchestration_v2_projection_checkpoints
+          SET status = 'error', payload_json = json_set(payload_json, '$.status', 'error')
+          WHERE checkpoint_id IN (${history.checkpointId(2)}, ${history.checkpointId(4)},
+            ${history.checkpointId(7)})`;
+        const expectRefused = (ordinal: number, restoreFiles?: boolean) =>
+          Effect.gen(function* () {
+            const refused = yield* Effect.flip(history.rollback(ordinal, restoreFiles));
+            assert.instanceOf(refused, CheckpointRollbackService.CheckpointRollbackExecutionError);
+            assert.equal(refused.reason, "rollback-target-invalid");
+          });
+
+        yield* expectRefused(2);
+        yield* expectRefused(7, false);
+        assert.deepEqual(history.rollbackCounts, []);
+
+        yield* history.rollback(2, false);
+        assert.deepEqual(history.rollbackCounts, [4]);
+        assert.deepEqual(history.restored, []);
+        assert.sameMembers(history.deletedRefs, [3, 5, 6].map(history.checkpointId));
+        const records = yield* history.store.getThreadRecords(history.threadId, [
+          "runs",
+          "checkpoints",
+        ]);
+        assert.deepEqual(
+          records.runs.filter((run) => run.status !== "rolled_back").map((run) => run.ordinal),
+          [1, 2],
+        );
+        assert.equal(
+          records.checkpoints.find((checkpoint) => checkpoint.id === history.checkpointId(4))
+            ?.status,
+          "stale",
+        );
+
+        yield* expectRefused(4, false);
+        assert.deepEqual(history.rollbackCounts, [4]);
+      }),
+    );
+    // SCIENT-FORK:END
   },
 );

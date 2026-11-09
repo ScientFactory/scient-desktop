@@ -3,6 +3,7 @@
  * turn start, handoff preparation and credential lifecycle with scripted OMP
  * stdio. This qualifies host integration; it does not launch a live model.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -14,7 +15,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -64,6 +65,7 @@ const mcpLayer = Layer.effect(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       Layer.succeed(HttpServer.HttpServer, {
         address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43125),
         serve: () => Effect.void,
@@ -81,14 +83,14 @@ const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.mergeAll(
       projectsLayer,
       Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.undefined,
       }),
     ),
   ),
 );
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   mcpLayer,
   McpProviderSessions.layer,
@@ -110,7 +112,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfig.ServerConfig;
-      const crypto = yield* Crypto.Crypto;
+      const random = yield* SecureRandom.SecureRandom;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const mcp = yield* McpSessionRegistry.McpSessionRegistry;
@@ -135,7 +137,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
         environment: {},
         fileSystem: fs,
         path,
-        crypto,
+        random,
         spawner,
         serverConfig: config,
         idAllocator,

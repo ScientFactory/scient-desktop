@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,7 +46,7 @@ import {
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 // SCIENT-FORK:START Scient ACP application bridge
-import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
+import { scientAntigravityBridge } from "./ScientAcpApplicationBridge.ts";
 // SCIENT-FORK:END Scient ACP application bridge
 import {
   AcpProviderCapabilitiesV2,
@@ -129,7 +129,7 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
 };
 
 interface AntigravityFlavorServices {
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly host: ProviderHost.ProviderHost["Service"];
@@ -219,7 +219,7 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
       } satisfies typeof runtime;
     },
-    Effect.provideService(Crypto.Crypto, options.crypto),
+    Effect.provideService(SecureRandom.SecureRandom, options.random),
     Effect.mapError((cause): EffectAcpErrors.AcpError =>
       cause._tag === "ProviderSetupError"
         ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
@@ -231,11 +231,10 @@ export function makeAntigravityAcpAdapterFlavor(
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
-    // SCIENT-FORK:START Scient native-delivery observation mount
-    // Runtimes before 1.4.5 have no private system-prompt or rules channel,
-    // so only native-delivery observations are bridged here.
-    application: scientAcpProviderBridge,
-    // SCIENT-FORK:END Scient native-delivery observation mount
+    // SCIENT-FORK:START Scient prompt and native-delivery observation mount
+    // Scient's awareness rides the first prompt, as upstream's orchestration text does.
+    application: scientAntigravityBridge,
+    // SCIENT-FORK:END Scient prompt and native-delivery observation mount
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
@@ -309,6 +308,8 @@ export function makeAntigravityAcpAdapterFlavor(
     // ACP 1.3.0 treats /compact as ordinary model input.
     supportsCompaction: false,
     requiresSignIn: isAntigravitySignInRequiredError,
+    // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
+    promptInactivityTimeout: "15 minutes",
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
@@ -325,7 +326,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
   options: AntigravityAdapterV2Options,
 ) {
   const services: AntigravityFlavorServices = {
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     fileSystem: yield* FileSystem.FileSystem,
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,

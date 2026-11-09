@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
 import { makeAnalyticsUiAdapter } from "./AnalyticsUiAdapter.ts";
@@ -16,22 +16,63 @@ function fixture() {
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
-    deleteData: Effect.sync(() => {
-      epoch += 1;
-      return true;
-    }),
     flush: Effect.void,
   });
-  return { service, events };
+  // Another client's consent change or a deletion moves the service to a new epoch.
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  const deleteData = Effect.sync(() => {
+    epoch += 1;
+  });
+  return { service, events, setConsent, deleteData };
 }
 
 describe("UI operation consent context", () => {
+  it.effect(
+    "fences all voice stages across consent changes and deletion without exporting the context",
+    () =>
+      Effect.gen(function* () {
+        const f = fixture();
+        const ui = makeAnalyticsUiAdapter(f.service);
+        const status = yield* ui.status;
+        expect(status.voiceLifecycleVersion).toBe(2);
+        for (const name of [
+          "voice.transcription.started",
+          "voice.transcription.completed",
+          "voice.transcription.failed",
+          "voice.transcription.cancelled",
+          "voice.recording.failed",
+        ]) {
+          const event = { name, properties: { voiceSchemaVersion: 2 } };
+          expect(yield* ui.record(event)).toEqual({ accepted: false });
+          expect(
+            yield* ui.record({ ...event, collectionContext: status.collectionContext }),
+          ).toEqual({ accepted: true });
+        }
+        yield* f.deleteData;
+        expect(
+          yield* ui.record({
+            name: "voice.transcription.completed",
+            properties: {},
+            collectionContext: status.collectionContext,
+          }),
+        ).toEqual({ accepted: false });
+        const refreshed = yield* ui.status;
+        yield* f.setConsent("off");
+        yield* f.setConsent("product");
+        expect(
+          yield* ui.record({
+            name: "voice.transcription.completed",
+            properties: {},
+            collectionContext: refreshed.collectionContext,
+          }),
+        ).toEqual({ accepted: false });
+        expect(JSON.stringify(f.events)).not.toMatch(/collectionContext|voiceLifecycleVersion/u);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
   it.effect("accepts Visual LaTeX outcomes only within the current collection context", () =>
     Effect.gen(function* () {
       const f = fixture();
@@ -45,12 +86,12 @@ describe("UI operation consent context", () => {
       expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
         accepted: true,
       });
-      yield* f.service.deleteData;
+      yield* f.deleteData;
       expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
         accepted: false,
       });
       expect(f.events).toEqual([event]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
   it.effect("strips the context before recording and rejects absent or wrong contexts", () =>
     Effect.gen(function* () {
@@ -71,7 +112,7 @@ describe("UI operation consent context", () => {
       });
       expect(f.events).toEqual([event]);
       expect((yield* ui.status).collectionContext).toBe(current.collectionContext);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect("fences other-client consent changes, deletion and a fresh HTTP lifetime", () =>
@@ -84,13 +125,13 @@ describe("UI operation consent context", () => {
         properties: { operationKind: "document-export" },
         collectionContext: original.collectionContext,
       };
-      yield* f.service.setConsent("off");
+      yield* f.setConsent("off");
       expect(yield* ui.record(event)).toEqual({ accepted: false });
       expect((yield* ui.status).collectionContext).toBeUndefined();
-      yield* f.service.setConsent("product");
+      yield* f.setConsent("product");
       expect(yield* ui.record(event)).toEqual({ accepted: false });
       const afterConsent = yield* ui.status;
-      yield* f.service.deleteData;
+      yield* f.deleteData;
       expect(
         yield* ui.record({ ...event, collectionContext: afterConsent.collectionContext }),
       ).toEqual({ accepted: false });
@@ -100,7 +141,7 @@ describe("UI operation consent context", () => {
         yield* restarted.record({ ...event, collectionContext: afterDelete.collectionContext }),
       ).toEqual({ accepted: false });
       expect(f.events).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect("keeps the legacy UI protocol and restricts new operations to UI-owned kinds", () =>
@@ -123,6 +164,6 @@ describe("UI operation consent context", () => {
         status: Effect.succeed({ available: false, consent: "off" }),
       });
       expect(yield* disabled.status).toEqual({ available: false, consent: "off" });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

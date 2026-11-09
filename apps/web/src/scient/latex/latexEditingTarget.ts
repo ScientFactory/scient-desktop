@@ -1,9 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { createContext, useState, useSyncExternalStore } from "react";
-import { NodeSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { NodeSelection, type EditorState } from "@tiptap/pm/state";
 import { countSelectedWords } from "../writing/caretStatus";
-import { createEditorBackgroundTask } from "./editorBackgroundTask";
-import { isOrdinaryTyping } from "./visualTyping";
 
 export const LatexInlineOwnerContext = createContext<Editor | null>(null);
 
@@ -55,20 +53,15 @@ interface EditingSnapshot<T> {
 
 interface EditingSnapshotStore<T> {
   readonly editor: Editor | null;
-  readonly deferTyping: boolean;
   readonly select: (editor: Editor | null) => T;
   readonly equal: (before: T, after: T) => boolean;
   readonly subscribe: (listener: () => void) => () => void;
   readonly snapshot: () => EditingSnapshot<T>;
 }
 
-/**
- * One editor's cached selected data. The store, not render, holds the last
- * published snapshot, so a quiet typing period keeps its identity.
- */
+/** One editor's cached selected data; the store, not render, holds the last published snapshot. */
 function createEditingSnapshotStore<T>(
   editor: Editor | null,
-  deferTyping: boolean,
   select: (editor: Editor | null) => T,
   equal: (before: T, after: T) => boolean,
 ): EditingSnapshotStore<T> {
@@ -93,48 +86,25 @@ function createEditingSnapshotStore<T>(
   observed = read();
   return {
     editor,
-    deferTyping,
     select,
     equal,
     subscribe: (listener) => {
       if (!editor) return () => {};
-      const task = createEditorBackgroundTask();
       const publish = () => {
         const next = read();
         if (observed && same(observed, next)) return;
         observed = next;
         listener();
       };
-      const transaction = ({ transaction }: { transaction: Transaction }) => {
-        // Layout/reference metadata has its own presentation subscriptions.
-        // It must not publish a pending typing snapshot before its quiet period.
-        if (
-          deferTyping &&
-          !transaction.docChanged &&
-          !transaction.selectionSet &&
-          !transaction.storedMarksSet &&
-          observed?.editable === editor.isEditable
-        )
-          return;
-        if (deferTyping && isOrdinaryTyping(transaction)) task.schedule(publish);
-        else {
-          task.cancel();
-          publish();
-        }
-      };
-      const update = () => {
-        if (!deferTyping || observed?.editable !== editor.isEditable) publish();
-      };
-      editor.on("transaction", transaction);
-      editor.on("update", update);
+      editor.on("transaction", publish);
+      editor.on("update", publish);
       return () => {
-        task.cancel();
-        editor.off("transaction", transaction);
-        editor.off("update", update);
+        editor.off("transaction", publish);
+        editor.off("update", publish);
       };
     },
     snapshot: () => {
-      const next = !deferTyping || !observed ? read() : observed;
+      const next = read();
       if (!observed || !same(observed, next)) observed = next;
       return observed;
     },
@@ -144,43 +114,22 @@ function createEditingSnapshotStore<T>(
 /** Keep commands on the live editor while subscriptions publish only their selected data. */
 function useLatexEditingSnapshot<T>(
   owner: Editor | null,
-  deferTyping: boolean,
   select: (editor: Editor | null) => T,
   equal: (before: T, after: T) => boolean,
 ) {
   const editor = useLatexEditingTarget(owner);
   // Held in state so its cached snapshot outlives compiler cache eviction;
   // a new target or selection starts a new store.
-  const [store, setStore] = useState(() =>
-    createEditingSnapshotStore(editor, deferTyping, select, equal),
-  );
+  const [store, setStore] = useState(() => createEditingSnapshotStore(editor, select, equal));
   let current = store;
-  if (
-    store.editor !== editor ||
-    store.deferTyping !== deferTyping ||
-    store.select !== select ||
-    store.equal !== equal
-  ) {
-    current = createEditingSnapshotStore(editor, deferTyping, select, equal);
+  if (store.editor !== editor || store.select !== select || store.equal !== equal) {
+    current = createEditingSnapshotStore(editor, select, equal);
     setStore(current);
   }
   // Editability can change without replacing EditorState. Include it in the
   // stable snapshot so formatting controls still react to that transition.
   const state = useSyncExternalStore(current.subscribe, current.snapshot, current.snapshot);
-  return { editor, value: state.value, editable: state.editable };
-}
-
-const editingState = (editor: Editor | null) => editor?.state ?? null;
-
-/** Read the new target immediately, even before it emits its next transaction. */
-export function useLatexEditingState(owner: Editor | null, deferTyping = false) {
-  const { editor, value, editable } = useLatexEditingSnapshot(
-    owner,
-    deferTyping,
-    editingState,
-    Object.is,
-  );
-  return { editor, state: value, editable };
+  return { editor, value: state.value };
 }
 
 interface EditingPresentation {
@@ -220,7 +169,6 @@ const sameEditingPresentation = (before: EditingPresentation, after: EditingPres
 export function useLatexEditingPresentation(owner: Editor | null) {
   const { editor, value } = useLatexEditingSnapshot(
     owner,
-    false,
     editingPresentation,
     sameEditingPresentation,
   );

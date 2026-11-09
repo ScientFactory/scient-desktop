@@ -21,7 +21,7 @@ export const ScientHandoffSummaryReadInput = Schema.Struct({
 });
 export type ScientHandoffSummaryReadInput = typeof ScientHandoffSummaryReadInput.Type;
 
-export const ScientHandoffSummaryReadResult = Schema.Struct({
+const ScientHandoffSummaryReadResult = Schema.Struct({
   text: Schema.String,
   nextTextOffset: Schema.NullOr(NonNegativeInt),
 });
@@ -29,12 +29,7 @@ export const ScientHandoffSummaryReadResult = Schema.Struct({
 export class ScientHandoffSummaryReadToolError extends Schema.TaggedError<ScientHandoffSummaryReadToolError>()(
   "ScientHandoffSummaryReadToolError",
   {
-    code: Schema.Literals([
-      "capability_denied",
-      "thread_not_found",
-      "thread_outside_project",
-      "orchestration_error",
-    ]),
+    code: Schema.Literals(["thread_not_found", "orchestration_error"]),
     message: Schema.Trimmed.check(Schema.isNonEmpty()),
   },
 ) {}
@@ -54,11 +49,8 @@ export const ScientHandoffSummaryReadTool = Tool.make("scient_handoff_summary_re
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, {
     id: "threads.handoff-summary.read",
-    family: "threads",
     scope: "thread",
     requiredCapabilities: ["threads:read"],
-    approval: "session-grant",
-    documentation: "docs/internals/context-handoffs.md",
   });
 
 export const ScientThreadsToolkit = Toolkit.make(ScientHandoffSummaryReadTool);

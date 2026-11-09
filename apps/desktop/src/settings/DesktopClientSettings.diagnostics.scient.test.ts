@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -32,12 +33,18 @@ function layer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir }),
+      ),
     ),
   );
 
   return DesktopClientSettings.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(layerEnvironment, NodeServices.layer, fileSystemLayer)),
+    Layer.provideMerge(
+      Layer.mergeAll(layerEnvironment, NodeServices.layer, NodeCrypto.layer, fileSystemLayer),
+    ),
   );
 }
 

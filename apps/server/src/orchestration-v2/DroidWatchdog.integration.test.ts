@@ -1,5 +1,7 @@
 /** Real ACP stdio → V2 SQL terminal → held user queue; no live provider/model. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -34,6 +36,7 @@ import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 const decodeSettings = Schema.decodeEffect(DroidSettings);
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-watchdog-sql-" }).pipe(
@@ -61,7 +64,7 @@ it.layer(layer)("Droid native idle supervision persistence", (it) => {
           const adapter = yield* makeDroidAdapterV2({
             instanceId,
             settings: yield* decodeSettings({ enabled: true, binaryPath: peer.binaryPath }),
-            environment: { PATH: process.env.PATH },
+            environment: { PATH: (yield* HostProcess.Environment).PATH },
             sensitiveEnvironmentValues: [],
             makeRuntime: makeDroidAcpRuntime,
             childProcessSpawner: spawner,

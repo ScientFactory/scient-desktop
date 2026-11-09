@@ -344,7 +344,7 @@ import {
 } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
 import { Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, FileText } from "lucide-react";
-import type { MathSourceCompletion } from "./latexMathCompletion";
+import type { LatexSourceChoice } from "./latexCommandCompletion";
 import { installLatexTextareaCompletion } from "./latexTextCompletion";
 import {
   CSS_PIXELS_PER_INCH,
@@ -1006,7 +1006,7 @@ function LatexMathView({
     setSourceError(accepted?.attrs.tex === tex ? null : mathSaveRefusal);
   };
 
-  const applyCompletion = (completion: MathSourceCompletion) => {
+  const applyCompletion = (completion: LatexSourceChoice) => {
     const previous = sourceEditor.current?.value ?? draft;
     const next =
       previous.slice(0, completion.from) + completion.replacement + previous.slice(completion.to);

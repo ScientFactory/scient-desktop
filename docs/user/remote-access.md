@@ -391,6 +391,10 @@ Removing a saved remote environment from **Settings → Environments** forgets i
 this device only. Scient hosts no relay, so there is no account-level
 registration left behind to revoke.
 
+When the app connects to more than one environment, choose one at the top of the
+page. A desktop app with **Local environment** off can manage a background
+service on the same machine this way.
+
 A session with an open connection stays listed after its access credential
 expires.
 

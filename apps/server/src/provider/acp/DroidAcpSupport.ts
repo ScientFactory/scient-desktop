@@ -6,7 +6,7 @@ import {
   type ModelConnectionReadiness,
 } from "@t3tools/contracts";
 import { createModelCapabilities, preferredReasoningLevel } from "@t3tools/shared/model";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,9 +30,6 @@ import type { DroidRequestLimitBreach } from "../droid/DroidKeyBroker.ts";
  * Effort ladders belong only to the selected model; modes also appear as autonomy_level. Keep
  * version-sensitive assumptions pinned by DroidAcpCliProbe.test.ts.
  */
-
-/** Compatibility marker advertised by genuine Droid ACP agents. */
-export const DROID_AGENT_INFO_NAME = "@factory/cli";
 
 const DROID_AUTH_METHOD_API_KEY = "factory-api-key";
 export const DROID_AUTH_METHOD_DEVICE_PAIRING = "device-pairing";
@@ -166,7 +163,11 @@ export function droidRequestFailureDetail(error: EffectAcpErrors.AcpRequestError
 export type DroidToolGuard = "enforced" | "disabled-by-policy" | "unconfirmed";
 export type DroidAcpRuntimeFactory = (
   input: DroidAcpRuntimeInput,
-) => Effect.Effect<DroidAcpRuntime, EffectAcpErrors.AcpError, Crypto.Crypto | Scope.Scope>;
+) => Effect.Effect<
+  DroidAcpRuntime,
+  EffectAcpErrors.AcpError,
+  SecureRandom.SecureRandom | Scope.Scope
+>;
 
 /** One command authority for health probes, ACP sessions, and text generation. */
 export function resolveDroidCliBinaryPath(configuredPath: string | null | undefined): string {
@@ -202,18 +203,6 @@ export function hasDroidApiKeyEnvironment(environment: NodeJS.ProcessEnv | undef
 }
 
 /**
- * Auth selection before `initialize` advertises the real method list: prefer
- * the noninteractive API key when the environment carries one, else fall
- * back to device-pairing (which authenticates headlessly whenever a cached
- * pairing exists). `_meta.headless` keeps every path browser-free.
- */
-export function resolveDroidAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
-  return hasDroidApiKeyEnvironment(environment)
-    ? DROID_AUTH_METHOD_API_KEY
-    : DROID_AUTH_METHOD_DEVICE_PAIRING;
-}
-
-/**
  * Resolves the auth method against the actually advertised list. Returns
  * `undefined` when nothing matches so callers can classify honestly instead
  * of attempting an interactive flow.
@@ -243,7 +232,7 @@ export const makeDroidAcpRuntime = Effect.fn("DroidAcpSupport.makeDroidAcpRuntim
 ): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
   const { authenticationMode = "active", runtimeSettingsPath, modelTools, ...runtimeInput } = input;
   if (modelTools === "disabled")

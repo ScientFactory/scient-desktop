@@ -24,19 +24,16 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { WorkspaceBindingResolver } from "../../projectScope/WorkspaceBindingResolver.ts";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../../mcp/ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../../mcp/ScientOperationTool.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
 import { ProfileResult } from "./profileClassification.ts";
 
 const ResultFiles = Schema.Struct({ paths: Schema.Array(Schema.String), usage: Schema.String });
-const accountOperation = (id: string): OperationMetadata => ({
+const accountOperation = (id: string): OperationDefinition => ({
   id: `accounts.${id}`,
-  family: "accounts",
   scope: "thread",
   requiredCapabilities: ["accounts"],
-  approval: "session-grant",
-  documentation: "docs/internals/scient-accounts.md",
 });
 const metadata = <T extends Tool.Any>(tool: T, id: string, title: string, readOnly = false) =>
   tool
@@ -216,8 +213,11 @@ const add = metadata(
       SecretRequests,
     ],
     description:
-      "Ask the user, in a private card, for an API key or token to keep in Accounts, and wait. It stays out of chat. Returns its accountId and how to use it. A matching account is returned instead, or reported as turned off.",
+      "Ask the user to add an account in a private card here, and wait. api-key: they paste a key. website or university: they sign in on its own page in the card, and Scient keeps it. You only get the account's name and how to use it. A matching account is returned instead, or reported as turned off.",
     parameters: Schema.Struct({
+      kind: Schema.optional(Schema.Literals(["api-key", "website", "university"])).annotate({
+        description: "api-key (default), website, or university.",
+      }),
       name: AccountSummary.fields.name.annotate({ description: "The service, e.g. OpenAI." }),
       reason: TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
         description: "What it is for and where to get it.",
@@ -235,10 +235,22 @@ const add = metadata(
         description: "Replace this account's key when it is wrong or expired.",
       }),
       placeholder: Schema.optional(TrimmedNonEmptyString),
+      site: Schema.optional(AccountSite).annotate({
+        description: "website: the site to sign in to, e.g. github.com.",
+      }),
+      loginUrl: Schema.optional(
+        TrimmedNonEmptyString.check(Schema.isPattern(/^https:\/\//)),
+      ).annotate({ description: "website: its sign-in page, when not on the site's home page." }),
+      username: Schema.optional(Schema.String.check(Schema.isMaxLength(256))).annotate({
+        description: "website: who signs in, when the user has several there.",
+      }),
+      institution: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120))).annotate({
+        description: "university: its name or email domain, e.g. huji.ac.il.",
+      }),
     }),
     success: Schema.Union([
       Schema.Struct({
-        status: Schema.Literals(["saved", "exists"]),
+        status: Schema.Literals(["saved", "exists", "signed-in"]),
         accountId: AccountId,
         usage: Schema.Array(Schema.String),
       }),
@@ -252,6 +264,12 @@ const add = metadata(
       }),
       Schema.Struct({ status: Schema.Literals(["declined", "cancelled", "timed_out"]) }),
       Schema.Struct({ status: Schema.Literal("unavailable"), message: Schema.String }),
+      Schema.Struct({
+        status: Schema.Literal("choose").annotate({
+          description: "Several universities match: call again with the right one's domain.",
+        }),
+        universities: Schema.Array(Schema.Struct({ name: Schema.String, domain: Schema.String })),
+      }),
     ]),
   }),
   "add",
@@ -268,7 +286,7 @@ const paperGet = metadata(
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "Get one paper's PDF by DOI or link and save it in the project: a free legal copy, or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
+      "The first step for any paper: get its PDF by DOI or link and save it in the project, from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),

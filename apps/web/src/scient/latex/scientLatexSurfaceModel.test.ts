@@ -14,6 +14,10 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  nudgeScientSplitFraction,
+  scientSplitFractionFromPointer,
+} from "~/scient/layout/scientSplitFraction";
+import {
   DEFAULT_LATEX_PREVIEW_MODE,
   DEFAULT_LATEX_SPLIT_FRACTION,
   LATEX_SPLIT_KEYBOARD_STEP,
@@ -29,11 +33,9 @@ import {
   latexDiagnosticPath,
   latexDiagnosticRows,
   latexSnapshotsEqual,
-  latexSplitFractionFromPointer,
   latexStatusStripModel,
   normalizeLatexPreviewMode,
   normalizeLatexSplitFraction,
-  nudgeLatexSplitFraction,
   toolchainsEqual,
   type LatexBuildStatus,
 } from "./scientLatexSurfaceModel";
@@ -138,6 +140,16 @@ describe("latex split fraction", () => {
     );
     expect(normalizeLatexSplitFraction(0.42)).toBe(0.42);
   });
+
+  // The bounds and step ScientLatexSurface hands to useScientSplit.
+  const bounds = { minimum: MIN_LATEX_SPLIT_FRACTION, fallback: DEFAULT_LATEX_SPLIT_FRACTION };
+  const latexSplitFractionFromPointer = (input: {
+    pointerX: number;
+    left: number;
+    width: number;
+  }) => scientSplitFractionFromPointer(input, bounds);
+  const nudgeLatexSplitFraction = (current: number, key: string) =>
+    nudgeScientSplitFraction(current, key, bounds, LATEX_SPLIT_KEYBOARD_STEP);
 
   it("maps a pointer position onto the clamped fraction", () => {
     expect(latexSplitFractionFromPointer({ pointerX: 500, left: 100, width: 800 })).toBe(0.5);

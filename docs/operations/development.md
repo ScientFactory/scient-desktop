@@ -49,6 +49,11 @@ can identify a listener, but a port or worktree match alone does not establish
 ownership. Never pipe a process search into a kill command. Managed Electron
 candidates use the [local dev app stop command](./local-dev-app.md) instead.
 
+To stop a worktree's dev stack when its thread settles, import the **Dev** action from
+`t3.json` in Settings > Projects > Actions and start it through the action menu or its
+keybinding. Its `stopOnSettle` option lets Scient stop the terminal and its child processes.
+Running `vp run dev` through an agent's own shell tool does not attach it to this lifecycle.
+
 ### State and ports
 
 Scient candidate apps use their worktree-owned `.scient-next` state. The stable development
@@ -236,9 +241,11 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
-`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
-refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
+TypeScript workspaces typecheck with `effect-tsgo tsrs --noEmit` from `@effect/tsgo`: the
+[tsrs](https://github.com/oxc-project/tsrs) checker with Effect diagnostics, quick fixes, and
+refactors built in. Only `apps/marketing` installs `typescript`, for Astro. VS Code's TypeScript 7
+extension starts the same checker through `.vscode/tsdk/tsgo` (`js/ts.tsdk.path`), a POSIX
+script, so on Windows open the workspace through WSL.
 
 Shared replay-test support uses `*.testkit.ts` modules, keeping it outside product-surface
 brand checks. Preserve recorded inbound protocol frames; synthetic initialization
@@ -276,7 +283,7 @@ is the formatting/lint lane; `Build and Typecheck` shares one dependency install
 and rejects failures, cancellations, missing jobs, and unexplained skips.
 
 Every PR and fresh merge group runs all workspace/package and scripts tests,
-all three web shards (unit and browser), all eight server shards, build, typecheck,
+all six web shards (unit and browser), all twelve server shards, build, typecheck,
 and lint. Documentation can be a test input, so docs-only PRs run these lanes too.
 Release-note content keeps its additional catalog and rendering qualification;
 it does not suppress the full suites. Test selection never uses an import scan
@@ -299,31 +306,36 @@ legacy, or partial evidence falls back to ordinary CI. One reporting job per sui
 covers reused qualification; shard names are not required
 contexts. A successful workflow still needs transfer evidence whenever server tests ran.
 
-Server tests use eight sequential-file shards with 10-minute job timeouts. Web keeps
-three shards on standard GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
+Workspace package tests run on three runners. Part 1 keeps the `Test` name that
+`release/stable` requires and runs every package parts 2 and 3 don't name, so a new
+package always runs; it alone sets up Electron and the browser secret helper.
+
+Server tests use twelve sequential-file shards. Web uses six shards on standard
+GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
 Both use longest-file-first allocation with package-relative path tie breaking and
 the lowest shard index on equal load. New files receive the sequencer's fallback
 weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
 exclude them. The shard-one performance suites retain their own measurements.
 
-Regenerate weights from every shard report of a representative successful CI run:
+Weights come from main's own timings. The `Shard weights` job reads the reports of the
+newest main pushes (successful reports only, medians over up to three runs per suite)
+and publishes one artifact that every shard of the run copies over
+`apps/{server,web}/src/testUtils/shardWeights.json`, so all shards derive the same split.
+When no recent report is readable, or that job fails, every shard uses the checked-in
+weights instead. To refresh the checked-in fallback:
 
 ```sh
-# Use a fresh directory and the selected run's attempt number.
-gh run download 40121165937 --repo ScientFactory/scient-desktop \
-  --pattern 'vitest-*-attempt-1' --dir /tmp/scient-shard-reports
-node .github/scripts/shard-weights.mjs --suite server \
-  /tmp/scient-shard-reports/vitest-server-*/*.json
-node .github/scripts/shard-weights.mjs --suite web \
-  /tmp/scient-shard-reports/vitest-web-*/*.json
+GITHUB_REPOSITORY=ScientFactory/scient-desktop RUNNER_TEMP=/tmp \
+  node .github/scripts/ci-shard-weights.mjs /tmp/scient-shard-weights
+cp /tmp/scient-shard-weights/web.json apps/web/src/testUtils/shardWeights.json
+cp /tmp/scient-shard-weights/server.json apps/server/src/testUtils/shardWeights.json
 node .github/scripts/verify-ci-shards.mjs
 ```
 
 The importer normalizes runner roots and takes per-file medians across multiple runs.
 It rejects failed reports, malformed paths, duplicates within a report, and invalid
 durations. Server weights include elapsed gaps between serial file results to capture
-imports/setup; overlapping web projects use individual file durations. Review both
-`apps/{server,web}/src/testUtils/shardWeights.json` files with their source run IDs.
+imports/setup; overlapping web projects use individual file durations.
 The verifier loads the actual Vitest configurations, discovers every test specification,
 and checks that the configured partitions cover each exactly once, independent of
 discovery order. Vitest's `list --filesOnly --shard` does not apply the sequencer.
@@ -337,15 +349,22 @@ in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
   Linux/macOS/Windows real-kernel matrix, without provisioning managed toolkits.
 - Managed live-test files and the managed `pyproject.toml`/`uv.lock` fixtures run
   managed Python qualification, without the system-Python matrix.
-- Shared runtime, process ownership, persistence, workspace dependencies, Compute
-  contracts and test infrastructure run both. `ManagedPython*.ts` is shared too:
-  the existing-Python runtime imports it even when not provisioning an environment.
-- Unrelated UI/docs changes run neither. Mixed changes take the union; uncertain
-  diffs and JavaScript dependency lockfile changes retain both suites.
+- Shared runtime, process ownership, persistence and Compute contracts run both.
+  `ManagedPython*.ts` is shared too: the existing-Python runtime imports it even
+  when not provisioning an environment.
+- Broad inputs run both suites on Linux only: package manifests, the lockfile,
+  workspace configuration, root Vite configuration, server configuration and
+  settings, `ci.yml`, workspace code and test infrastructure. They are rarely
+  Compute changes but every upstream alignment touches them, and a push to main
+  still runs all four computers, so a platform-only break shows there after merge.
+- Unit tests, which run in the ordinary lanes, and the server's RPC fixture
+  `ComputeRpcServerTests.ts` run neither, as do unrelated UI and docs changes.
+  Mixed changes take the union, so a Compute file beside the lockfile still runs
+  every platform; uncertain diffs run everything.
 
-Both suites remain enabled by default for reusable callers and manual dispatch;
-manual dispatch can also select either suite. Relevant pushes to main retain
-post-merge verification of the integrated tree. No cross-revision success cache or
+Both suites remain enabled on every platform by default for reusable callers and
+manual dispatch; manual dispatch can also select either suite. Every push to main
+runs both suites on all four computers. No cross-revision success cache or
 dependency-lock graph is used to skip checks. This uses the existing required
 `Test` check without separate branch-protection settings for conditional jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
@@ -353,7 +372,7 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
+`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor

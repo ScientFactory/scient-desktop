@@ -17,15 +17,24 @@ import type {
 import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { identifyFolder, locateFile, type FolderIdentity } from "./folderIdentity.ts";
+
+class FolderIdentityError extends Schema.TaggedError<FolderIdentityError>()("FolderIdentityError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "The folder could not be found or examined.";
+  }
+}
 
 export interface EditorFlushFolderInput {
   /** Absolute path of the checkout. */
@@ -163,7 +172,7 @@ export class EditorFlush extends Context.Service<
 const windowKey = (sessionId: string, clientId: string) => `${sessionId}\0${clientId}`;
 
 const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOptions) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   const retirementMillis = Duration.toMillis(options.retirement);
   const startedAt = yield* Clock.currentTimeMillis;
@@ -218,7 +227,7 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
     input: EditorFlushWindow,
   ) {
     const queue = yield* Queue.unbounded<EditorFlushStreamEvent, Cause.Done>();
-    const connectionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const connectionId = yield* random.uuidV4();
     const now = yield* Clock.currentTimeMillis;
     return yield* Effect.sync((): Registration => {
       const key = windowKey(sessionId, input.clientId);
@@ -353,15 +362,16 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
 
   const flushFolder: EditorFlush["Service"]["flushFolder"] = Effect.fn("EditorFlush.flushFolder")(
     function* (input) {
-      const identity = yield* Effect.tryPromise(() =>
-        identifyFolder(input.checkoutRoot, input.folder),
-      ).pipe(Effect.option);
+      const identity = yield* Effect.tryPromise({
+        try: () => identifyFolder(input.checkoutRoot, input.folder),
+        catch: (cause) => new FolderIdentityError({ cause }),
+      }).pipe(Effect.option);
       if (identity._tag === "None")
         return {
           _tag: "FolderUnavailable",
           message: "The folder could not be found or examined.",
         } as const;
-      const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const requestId = yield* random.uuidV4();
       const start = yield* Clock.currentTimeMillis;
       const request: OpenRequest = {
         request: { requestId, checkoutRoot: input.checkoutRoot, folder: input.folder },

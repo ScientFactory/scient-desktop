@@ -472,9 +472,9 @@ describe("OverleafRepository transport", () => {
         const repo = yield* h.repo("a");
         const tree = yield* h.tree(repo, { "main.tex": "x\n" });
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBeNull();
-        yield* h.repos.setRef({ repo, name: "base", oid: tree });
+        yield* h.repos.setRefs({ repo, refs: [{ name: "base", oid: tree }] });
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBe(tree);
-        yield* h.repos.setRef({ repo, name: "attempt/1/parent", oid: tree });
+        yield* h.repos.setRefs({ repo, refs: [{ name: "attempt/1/parent", oid: tree }] });
         expect(yield* h.repos.listRefs({ repo })).toEqual(
           new Map([
             ["attempt/1/parent", tree],

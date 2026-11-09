@@ -4,6 +4,7 @@ import type { AssistantCitation } from "@t3tools/contracts";
 import {
   isComputeCitation,
   isFileCitation,
+  isOfficeCitation,
   isPdfCitation,
   type ComposerCitation,
 } from "@t3tools/contracts";
@@ -25,6 +26,12 @@ import { FileCitationHoverCard } from "~/scient/markdownEditor/FileCitationHover
 import { PdfCitationHoverCard } from "~/scient/pdf/anchors/PdfCitationHoverCard";
 import { pdfCitationHash, pdfCitationNavigation } from "~/scient/pdf/anchors/pdfCitationNavigation";
 import { pdfCitationDocumentLabel } from "@t3tools/shared/pdfCitations";
+import { officeCitationPlaceLabel } from "@t3tools/shared/officeCitations";
+import {
+  OfficeCitationHoverCard,
+  officeCitationHash,
+  officeCitationNavigation,
+} from "~/scient/office/officeQuote";
 // SCIENT-FORK:END
 import { Link, useNavigate } from "@tanstack/react-router";
 // SCIENT-FORK:START — a composer chip can be removed.
@@ -89,6 +96,7 @@ export function AssistantCitationChip({
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
+  const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
   const commentOpen = commentEditor?.open ?? false;
@@ -120,7 +128,10 @@ export function AssistantCitationChip({
     if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
     // SCIENT-FORK:START — a document quote has no assistant-message source to find.
     const assistantQuote =
-      isFileCitation(citation) || isPdfCitation(citation) || isComputeCitation(citation)
+      isFileCitation(citation) ||
+      isPdfCitation(citation) ||
+      isComputeCitation(citation) ||
+      isOfficeCitation(citation)
         ? undefined
         : citation;
     const anchor =
@@ -157,14 +168,19 @@ export function AssistantCitationChip({
   // SCIENT-FORK:START — file and PDF quotes label, copy and link to their document.
   const label = composerCitationLabel(citation);
   const documentQuote =
-    isFileCitation(citation) || isPdfCitation(citation) || isComputeCitation(citation);
+    isFileCitation(citation) ||
+    isPdfCitation(citation) ||
+    isComputeCitation(citation) ||
+    isOfficeCitation(citation);
   const sourceName = isFileCitation(citation)
     ? citation.path
     : isPdfCitation(citation)
       ? pdfCitationDocumentLabel(citation)
       : isComputeCitation(citation)
         ? computeCitationPlaceLabel(citation)
-        : "assistant text";
+        : isOfficeCitation(citation)
+          ? officeCitationPlaceLabel(citation)
+          : "assistant text";
   // SCIENT-FORK:END
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
@@ -174,9 +190,11 @@ export function AssistantCitationChip({
       ? pdfCitationHash(citation)
       : isComputeCitation(citation)
         ? computeCitationHash(citation)
-        : isFileCitation(citation)
-          ? fileCitationHash(citation)
-          : assistantCitationHash(citation),
+        : isOfficeCitation(citation)
+          ? officeCitationHash(citation)
+          : isFileCitation(citation)
+            ? fileCitationHash(citation)
+            : assistantCitationHash(citation),
     "data-markdown-copy": serializeComposerCitation(citation),
     // SCIENT-FORK:END
     resetScroll: false,
@@ -191,6 +209,8 @@ export function AssistantCitationChip({
         void navigate(pdfCitationNavigation(citation));
       } else if (isComputeCitation(citation)) {
         void navigate(computeCitationNavigation(citation));
+      } else if (isOfficeCitation(citation)) {
+        void navigate(officeCitationNavigation(citation));
       } else if (isFileCitation(citation)) {
         void navigate(fileCitationNavigation(citation));
       } else void navigate(assistantCitationNavigation(citation));
@@ -272,13 +292,18 @@ export function AssistantCitationChip({
           citation={citation}
           trigger={composer ? composerSourceLink : chatSourceLink}
         />
+      ) : isOfficeCitation(citation) ? (
+        <OfficeCitationHoverCard
+          citation={citation}
+          trigger={composer ? composerSourceLink : chatSourceLink}
+        />
       ) : (
         composerSourceLink
       )}
       {/* SCIENT-FORK:END */}
       {commentEditor ? (
         <Popover
-          open={commentEditor.open}
+          open={commentEditor.open && !voiceSetupOpen}
           onOpenChange={(open, eventDetails) => {
             if (!open && !settleDraftOnClose(eventDetails.reason)) {
               eventDetails.cancel();
@@ -296,6 +321,8 @@ export function AssistantCitationChip({
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
+              // The editor stays mounted while its voice setup dialog replaces the popover.
+              keepMounted
               {...composerFloatingLayerProps}
               // SCIENT-FORK:START — the editor's writing menu stays with its selection.
               data-writing-menu-owner={activeSourceAnchor?.selectionOwnerId}
@@ -338,6 +365,7 @@ export function AssistantCitationChip({
                 {...(commentEditor.mode ? { mode: commentEditor.mode } : {})}
                 // SCIENT-FORK:END
                 inputRef={commentInputRef}
+                onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
                   commentEditor.onDraftChange?.(comment);
@@ -377,9 +405,11 @@ export function AssistantCitationChip({
               ? "Remove PDF citation"
               : isComputeCitation(citation)
                 ? "Remove Compute citation"
-                : isFileCitation(citation)
-                  ? "Remove file citation"
-                  : "Remove assistant citation"
+                : isOfficeCitation(citation)
+                  ? "Remove Office citation"
+                  : isFileCitation(citation)
+                    ? "Remove file citation"
+                    : "Remove assistant citation"
           }
         >
           <XIcon aria-hidden="true" className="size-[0.85em]" />

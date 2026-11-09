@@ -7,8 +7,10 @@ import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { HttpClient, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -107,7 +109,7 @@ const withService = <A, E>(
         address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
       }),
       ServerConfig.layerTest("/", { prefix: "t3-cloud-preferences-test-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
       Layer.succeed(
         HttpClient.HttpClient,
@@ -118,7 +120,13 @@ const withService = <A, E>(
       const link = yield* CloudLink.CloudLink;
       return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
     }).pipe(
-      Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
+      Effect.provide(
+        CloudLink.layer.pipe(
+          // These tests never sign proofs; the mocked secret store cannot create a key pair.
+          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          Layer.provide(layerDependencies),
+        ),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
       Effect.scoped,
     );
@@ -290,6 +298,7 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
+      NodeCrypto.layer,
     );
     yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
@@ -303,6 +312,14 @@ it.effect("unlinks on startup and refuses to link when the policy turns Connect 
         "Example Corp's policy does not allow the cloud connection.",
       );
       assert.equal(mintError._tag, "ManagedPolicyRefusedError");
-    }).pipe(Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(
+      Effect.provide(
+        CloudLink.layer.pipe(
+          // These tests never sign proofs; the mocked secret store cannot create a key pair.
+          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
   }),
 );

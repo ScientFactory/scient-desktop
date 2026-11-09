@@ -24,6 +24,7 @@ import { emptyProjection } from "../ProjectionStore.ts";
 import {
   freezeConversationForkNativeSource,
   frozenForkPortableReason,
+  frozenForkSourceTurns,
 } from "./ConversationForkNativeSource.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import type { ConversationForkSource } from "./ConversationForkPlan.ts";
@@ -188,6 +189,83 @@ it("freezes inclusive native identity independently of later source mutation", (
   assert.equal(frozen.sourceProviderTurns[1]?.nativeTurnRef?.nativeId, "native-turn-2");
   assert.equal(frozen.sourceRun.id, input.boundaryRunId);
   assert.equal(frozen.providerTurnId, ProviderTurnId.make("turn-2"));
+});
+
+it("hands the native clone the source's live turns after the frozen boundary", () => {
+  const input = fixture();
+  const result = freezeConversationForkNativeSource({
+    ...input,
+    retainedSourceItems: input.retainedSourceItems.slice(0, 1),
+    boundaryRunId: RunId.make("run-1"),
+  });
+  if (result.strategy !== "native_fork") return assert.fail(result.reason);
+  const frozen = result.frozenSource;
+  assert.deepEqual(
+    frozen.sourceProviderTurns.map((turn) => turn.id),
+    [ProviderTurnId.make("turn-1")],
+  );
+  // Adapters read a turn with nothing after it as the session head and fork everything.
+  const otherThreadTurn = {
+    ...input.projection.providerTurns[1]!,
+    id: ProviderTurnId.make("other-thread-turn"),
+    providerThreadId: ProviderThreadId.make("other-provider-thread"),
+  };
+  const liveTurns = [
+    { ...input.projection.providerTurns[0]!, nativeTurnRef: null },
+    input.projection.providerTurns[1]!,
+    otherThreadTurn,
+  ];
+  const turns = frozenForkSourceTurns(frozen, { ...input.projection, providerTurns: liveTurns });
+  assert.deepEqual(
+    turns.map((turn) => turn.id),
+    [ProviderTurnId.make("turn-1"), ProviderTurnId.make("turn-2")],
+  );
+  assert.equal(turns[0]?.nativeTurnRef?.nativeId, "native-turn-1");
+  assert.deepEqual(
+    frozenForkSourceTurns(frozen, { runs: [], attempts: [], providerTurns: [] }),
+    frozen.sourceProviderTurns,
+  );
+});
+
+it("leaves out the live turns of runs an undo rolled back after the fork was frozen", () => {
+  const input = fixture();
+  const result = freezeConversationForkNativeSource({
+    ...input,
+    retainedSourceItems: input.retainedSourceItems.slice(0, 1),
+    boundaryRunId: RunId.make("run-1"),
+  });
+  if (result.strategy !== "native_fork") return assert.fail(result.reason);
+  // The source undid run 2 after the fork froze run 1, then ran run 3.
+  const liveRun3: OrchestrationV2Run = {
+    ...input.projection.runs[1]!,
+    id: RunId.make("run-3"),
+    ordinal: 3,
+    activeAttemptId: RunAttemptId.make("attempt-3"),
+  };
+  const liveSource = {
+    runs: [
+      input.projection.runs[0]!,
+      { ...input.projection.runs[1]!, status: "rolled_back" as const },
+      liveRun3,
+    ],
+    attempts: [
+      ...input.projection.attempts,
+      { ...input.projection.attempts[1]!, id: RunAttemptId.make("attempt-3"), runId: liveRun3.id },
+    ],
+    providerTurns: [
+      ...input.projection.providerTurns,
+      {
+        ...input.projection.providerTurns[1]!,
+        id: ProviderTurnId.make("turn-3"),
+        runAttemptId: RunAttemptId.make("attempt-3"),
+        ordinal: 3,
+      },
+    ],
+  };
+  assert.deepEqual(
+    frozenForkSourceTurns(result.frozenSource, liveSource).map((turn) => turn.id),
+    [ProviderTurnId.make("turn-1"), ProviderTurnId.make("turn-3")],
+  );
 });
 
 it("uses the unique root turn's durable reverse attempt link when the forward link is absent", () => {

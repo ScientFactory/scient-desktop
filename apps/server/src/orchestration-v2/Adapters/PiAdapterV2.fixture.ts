@@ -1,5 +1,6 @@
 // Test-only fake Pi runtime; all mutable protocol state is allocated inside each Effect.
 import { assert } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   NodeId,
@@ -43,7 +44,7 @@ const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-pi-v2-adapter-",
-}).pipe(Layer.provide(NodeServices.layer));
+}).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 // Like ProviderHostLive, Scient's host is strict about current-request attachments.
 const scientProviderHostLayer = Layer.effect(
@@ -52,10 +53,17 @@ const scientProviderHostLayer = Layer.effect(
     const host = yield* ProviderHost.ProviderHost;
     return ProviderHost.ProviderHost.of({ ...host, preserveAttachmentContext: true });
   }),
-).pipe(Layer.provide(TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer))));
+).pipe(
+  Layer.provide(
+    TestProviderHost.layer().pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
+);
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   serverConfigLayer,
   scientProviderHostLayer,
@@ -124,10 +132,12 @@ interface FakePi {
   /** Holds the external child's stdin after recording the next prompt. */
   readonly blockNextPromptWrite: () => void;
   readonly releasePromptWrite: Effect.Effect<void>;
-  readonly onSpawn: (setup: (env: NodeJS.ProcessEnv) => Effect.Effect<void>) => void;
+  readonly onSpawn: (
+    setup: (env: NonNullable<ChildProcess.CommandOptions["env"]>) => Effect.Effect<void>,
+  ) => void;
   readonly lastSpawn: () => {
     readonly args: ReadonlyArray<string>;
-    readonly env: NodeJS.ProcessEnv;
+    readonly env: NonNullable<ChildProcess.CommandOptions["env"]>;
   };
 }
 
@@ -292,16 +302,18 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     }
   });
 
-  let lastSpawn: { readonly args: ReadonlyArray<string>; readonly env: NodeJS.ProcessEnv } = {
+  let lastSpawn: ReturnType<FakePi["lastSpawn"]> = {
     args: [],
     env: {},
   };
-  let spawnSetup: (env: NodeJS.ProcessEnv) => Effect.Effect<void> = () => Effect.void;
+  let spawnSetup: (
+    env: NonNullable<ChildProcess.CommandOptions["env"]>,
+  ) => Effect.Effect<void> = () => Effect.void;
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (ChildProcess.isStandardCommand(command)) {
         lastSpawn = {
-          args: command.args,
+          args: command.args.map(String),
           env: command.options.env ?? {},
         };
       }

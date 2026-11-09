@@ -75,7 +75,6 @@ describe("model connection presentation", () => {
     expect(
       modelConnectionStatus(provider, { ...available, state: "needs_setup", reason: "credential" }),
     ).toBe(MISSING_KEY_STATUS);
-    expect(MISSING_KEY_STATUS).toBe("Saved key missing. Re-enter it");
   });
   it("distinguishes installation, disabled, authentication and probe failures", () => {
     expect(modelConnectionStatus({ ...provider, enabled: false }, available)).toBe("Disabled");

@@ -20,6 +20,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
@@ -466,18 +467,25 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
   } satisfies ScientPdfBuildResult;
 });
 
-const handlers = {
-  scient_pdf_build: (input) =>
-    observeAnalyticsEffect(buildScientPdfForInvocation(input), {
-      kind: "pdf-export",
-      trigger: "agent",
-    }),
-  scient_latex_build: (input) => buildScientLatexForInvocation(input),
-  scient_document_export: (input) =>
-    observeAnalyticsEffect(exportScientDocumentForInvocation(input), {
-      kind: "pdf-export",
-      trigger: "agent",
-    }),
-} satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
-
-export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer(handlers);
+export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer(
+  Effect.gen(function* () {
+    // Built documents return signed asset links.
+    const withAssetSigner = Effect.provideService(
+      AssetSigner.AssetSigner,
+      yield* AssetSigner.AssetSigner,
+    );
+    return {
+      scient_pdf_build: (input) =>
+        observeAnalyticsEffect(buildScientPdfForInvocation(input).pipe(withAssetSigner), {
+          kind: "pdf-export",
+          trigger: "agent",
+        }),
+      scient_latex_build: (input) => buildScientLatexForInvocation(input),
+      scient_document_export: (input) =>
+        observeAnalyticsEffect(exportScientDocumentForInvocation(input).pipe(withAssetSigner), {
+          kind: "pdf-export",
+          trigger: "agent",
+        }),
+    } satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
+  }),
+);

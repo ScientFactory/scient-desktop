@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -205,7 +206,9 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
   const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
     splitAfterFirstIdle(materialized);
   const options = {
-    databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+    databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   };
   const harness = {
     ...CursorOrchestratorReplayHarness,
@@ -309,7 +312,7 @@ describe("orchestrator replay recovery", () => {
           };
           const options = {
             databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
-              Layer.provide(NodeServices.layer),
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           };
 
@@ -359,7 +362,9 @@ describe("orchestrator replay recovery", () => {
           assert.lengthOf(projection.providerThreads, 1);
         }).pipe(
           provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+          Effect.provide(
+            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
         ),
       ),
   );
@@ -375,7 +380,9 @@ describe("orchestrator replay recovery", () => {
           yield* runner.assertComplete;
         }).pipe(
           provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+          Effect.provide(
+            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
         ),
       ),
   );
@@ -407,7 +414,7 @@ describe("orchestrator replay recovery", () => {
         const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
         const options = {
           databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-            Layer.provide(NodeServices.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         };
 
@@ -487,7 +494,9 @@ describe("orchestrator replay recovery", () => {
         );
       }).pipe(
         provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
       ),
     ),
   );
@@ -519,7 +528,7 @@ describe("orchestrator replay recovery", () => {
         const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
         const options = {
           databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-            Layer.provide(NodeServices.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         };
         const childThreadOf = (result: OrchestratorV2ScenarioResult, parentThreadId: ThreadId) =>
@@ -573,7 +582,7 @@ describe("orchestrator replay recovery", () => {
             harness,
             {
               databaseLayer: SqlitePersistence.layerFromPath(snapshotPath).pipe(
-                Layer.provide(NodeServices.layer),
+                Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
               ),
               recoverOnStartup: true,
               continueThreadsAfterServerUpdate: false,
@@ -608,7 +617,9 @@ describe("orchestrator replay recovery", () => {
         );
       }).pipe(
         provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
       ),
     ),
   );

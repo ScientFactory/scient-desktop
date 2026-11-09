@@ -6,7 +6,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as YAML from "yaml";
 const require = NodeModule.createRequire(import.meta.url);
 const { computeQualificationSuites } = require("../.github/scripts/compute-ci-gate.mjs") as {
-  computeQualificationSuites: (paths: string[]) => { realKernel: boolean; managedPython: boolean };
+  computeQualificationSuites: (paths: string[]) => {
+    realKernel: boolean;
+    managedPython: boolean;
+    platforms: string;
+  };
 };
 const { needsLinuxPackaging, needsWindowsPackaging } =
   require("../.github/scripts/windows-packaging-ci-gate.mjs") as {
@@ -35,7 +39,8 @@ type Job = {
   steps?: Array<{ name?: string; uses?: string; run?: string; env?: Record<string, string> }>;
   if?: string;
   needs?: string | string[];
-  strategy?: { matrix: Record<string, unknown[]> };
+  // A string is a `${{ fromJSON(...) }}` expression over the caller's inputs.
+  strategy?: { matrix: Record<string, unknown[] | string> };
   with?: Record<string, string>;
   name?: string;
   uses?: string;
@@ -61,6 +66,7 @@ function simulate(
       compute_changed: eventName === "push" || compute.realKernel || compute.managedPython,
       real_kernel: eventName === "push" || compute.realKernel,
       managed_python: eventName === "push" || compute.managedPython,
+      compute_platforms: eventName === "push" ? "all" : compute.platforms,
       windows_changed: eventName === "push" || needsWindowsPackaging(files),
       linux_changed: eventName === "push" || needsLinuxPackaging(files),
     }).map(([key, value]) => [key, String(value)]),
@@ -129,11 +135,20 @@ function simulate(
 // Expand reusable workflows as well as the web/server matrices. This checks runner
 // counts against the YAML instead of treating a reusable call as one machine.
 function runnerCount(needs: Record<string, JobResult>) {
-  const matrixSize = (job: Job) => {
+  const matrixSize = (job: Job, inputs: Record<string, unknown> = {}) => {
     const matrix = job.strategy?.matrix;
     if (!matrix) return 1;
     if (matrix.include) return matrix.include.length;
-    return Object.values(matrix).reduce((count, values) => count * values.length, 1);
+    return Object.values(matrix).reduce((count, values) => {
+      const list =
+        typeof values === "string"
+          ? (NodeVM.runInNewContext(values.slice(3, -2), {
+              inputs,
+              fromJSON: JSON.parse,
+            }) as unknown[])
+          : values;
+      return count * list.length;
+    }, 1);
   };
   return Object.entries(workflow.jobs).reduce((total, [id, job]) => {
     if (needs[id]!.result !== "success") return total;
@@ -151,7 +166,7 @@ function runnerCount(needs: Record<string, JobResult>) {
       total +
       Object.values(called.jobs).reduce((count, child) => {
         const run = !child.if || NodeVM.runInNewContext(child.if.slice(3, -2), { inputs });
-        return count + (run ? matrixSize(child) : 0);
+        return count + (run ? matrixSize(child, inputs) : 0);
       }, 0)
     );
   }, 0);
@@ -191,7 +206,7 @@ describe("CI workflow decisions", () => {
     },
   );
 
-  it("has one required gate covering every job, eight server shards and three hosted web shards", () => {
+  it("has one required gate covering every job, twelve server shards and six hosted web shards", () => {
     expect(workflow.jobs.check).toMatchObject({ name: "Check", if: "${{ always() }}" });
     expect([...(workflow.jobs.check!.needs as string[])].sort()).toEqual(
       Object.keys(workflow.jobs)
@@ -201,11 +216,11 @@ describe("CI workflow decisions", () => {
     expect(workflow.jobs.lint!.name).toBe("Lint");
     expect(workflow.jobs.test_server).toMatchObject({
       "timeout-minutes": 20,
-      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8] } },
+      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } },
     });
     expect(workflow.jobs.test_web).toMatchObject({
       "runs-on": "ubuntu-24.04",
-      strategy: { matrix: { shard: [1, 2, 3] } },
+      strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6] } },
     });
   });
 
@@ -353,14 +368,23 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 20],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 26],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 20],
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 46],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 29],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 20],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 30],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 36],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 30],
+    // CI wiring runs Compute on Linux only; a push to main still runs all four.
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 43],
+    ["lockfile PR", "pnpm-lock.yaml", "pull_request", false, 42],
+    [
+      "Compute PR",
+      "apps/server/src/scient/compute/ComputeSessionService.ts",
+      "pull_request",
+      false,
+      49,
+    ],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
-    ["main push", "docs/operations/development.md", "push", false, 45],
+    ["main push", "docs/operations/development.md", "push", false, 52],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {
@@ -387,8 +411,28 @@ describe("CI workflow decisions", () => {
     expect(nodeTests).toBeGreaterThan(install);
     const test = workflow.jobs.test!.steps!.find((step) => step.name === "Test")!;
     expect(test.env).toBeUndefined();
-    expect(test.run).toBe(
-      "vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test",
+    expect(test.run).toContain(
+      "vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test 2>&1",
+    );
+    expect(test.run).not.toContain("TEST_PACKAGES");
+    // Part 1 runs everything except the server, web and root packages and what parts 2 and 3
+    // name, so the parts together run every workspace exactly once.
+    const parts = (
+      workflow.jobs.test!.strategy!.matrix as unknown as {
+        include: Array<{ part: number; packages: string }>;
+      }
+    ).include;
+    expect(parts.map((part) => part.part)).toEqual([1, 2, 3]);
+    const filters = (packages: string) =>
+      [...packages.matchAll(/--filter '?([^' ]+)'?/g)].map((match) => match[1]!);
+    const named = parts.slice(1).flatMap((part) => filters(part.packages));
+    expect(named.every((name) => !name.startsWith("!"))).toBe(true);
+    expect(new Set(named).size).toBe(named.length);
+    expect(filters(parts[0]!.packages).toSorted()).toEqual(
+      ["!t3", "!@t3tools/monorepo", "!@t3tools/web", ...named.map((name) => `!${name}`)].toSorted(),
+    );
+    expect(workflow.jobs.test!.name).toBe(
+      "${{ matrix.part == 1 && 'Test' || format('Test {0}', matrix.part) }}",
     );
     for (const id of ["build", "test", "test_web", "test_server"])
       expect(workflow.jobs[id]!.if).not.toContain("needs.changes.outputs");

@@ -126,7 +126,12 @@ it.live.each(["sql", "replay"] as const)(
         );
         assert.equal(
           (yield* Effect.result(
-            checkpoints.materializeBaselineCheckpoint({ scope: corrupt, ordinalWithinScope: 0 }),
+            checkpoints.materializeBaselineCheckpoint({
+              scope: corrupt,
+              ordinalWithinScope: 0,
+              nodeId: corrupt.nodeId,
+              capturedAt: corrupt.createdAt,
+            }),
           ))._tag,
           "Failure",
         );

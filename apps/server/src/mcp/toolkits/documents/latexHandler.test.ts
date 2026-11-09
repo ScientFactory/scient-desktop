@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -80,7 +81,7 @@ const makeWorkspaceLayer = (root: string, stateRoot: string, helper = publicatio
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
     Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const source = {
@@ -730,21 +731,12 @@ describe("Scient LaTeX build handler", () => {
     }),
   );
 
-  it.effect("rejects missing authority and projectless invocations before building", () =>
+  it.effect("rejects projectless invocations before building", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-latex-authority-"));
       yield* Effect.promise(() => writeTex(root));
       const builds = makeBuildService({ initial: snapshot() });
       const { context, threadId } = yield* makeContext(root, builds);
-
-      const denied = yield* runBuild(buildScientLatexForInvocation(defaultInput), {
-        ...context,
-        invocation: makeInvocation(threadId, new Set()),
-      }).pipe(Effect.result);
-      expect(denied).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "ScientLatexBuildToolError", code: "capability-unavailable" },
-      });
 
       const projectless = yield* runBuild(buildScientLatexForInvocation(defaultInput), {
         ...context,

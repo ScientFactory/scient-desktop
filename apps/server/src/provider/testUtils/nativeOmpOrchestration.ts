@@ -7,7 +7,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type ModelSelection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -67,7 +67,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
   };
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const allocator = yield* IdAllocatorV2;
   const cwd = input.cwd ?? (yield* checkpointWorkspace("omp-background-native"));
@@ -88,7 +88,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
           environment: input.environment ?? { HOME: config.stateDir },
           fileSystem: fs,
           path,
-          crypto,
+          random,
           spawner,
           idAllocator: allocator,
           serverConfig: config,

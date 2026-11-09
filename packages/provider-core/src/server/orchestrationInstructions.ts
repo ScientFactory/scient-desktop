@@ -11,16 +11,16 @@ Ordinary coding tasks need no T3 tools.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
 - If you are a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
-  `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`; shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
+  `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`. Honor a requested base. Otherwise, independent work uses the default branch as \`remote/branch\` with \`startFromOrigin:true\`; with no remote, use the local default. Required unpublished commits and dependent work use their local base. Shell worktrees do not bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
 - Given a thread id, \`t3_thread_read\` it before you answer about it.
 - Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` to a T3 tool to act there. Ids are then that machine's, so pass \`threadId\`.
 - A machine the user names that is not linked ("delegate this to my vps"): call \`t3_environment_link\` with a \`hint\` from their words. Never ask for a pairing code in chat.
 - In your reply, mention a thread by its \`link\`, verbatim. Never a plain title or bare id.
-- A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to a T3 tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
+- A login, token, PIN or pairing code only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. When asked only to schedule, \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
-- Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
+- Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass the path to an HTML file, or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Do not repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
 ];
 
@@ -29,7 +29,6 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
 
-/** @public SCIENT-FORK: Scient's Codex awareness carries its own browser block. */
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
 ## T3 Code browser
@@ -72,6 +71,10 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+  /** The session's granted MCP capabilities, as its provider-facing manifest lists them. */
+  readonly capabilities?: ReadonlySet<string>;
+  // SCIENT-FORK:END
 }
 
 // SCIENT-FORK:START — host copy for the shared ACP prompt composer.
@@ -88,6 +91,14 @@ export interface T3AcpPromptWithInstructionsInput {
   readonly previousState?: T3AcpInstructionState;
   readonly content?: T3AcpInstructionContent;
 }
+
+const sameCapabilities = (
+  left: ReadonlySet<string> | undefined,
+  right: ReadonlySet<string> | undefined,
+) =>
+  left === undefined || right === undefined
+    ? left === right
+    : left.size === right.size && [...left].every((capability) => right.has(capability));
 // SCIENT-FORK:END
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -99,7 +110,10 @@ export function t3AcpPromptWithInstructions(input: T3AcpPromptWithInstructionsIn
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
+    // SCIENT-FORK:START — host copy depends on the session's grants, so they are delivered state.
+    sameCapabilities(input.previousState.capabilities, input.state.capabilities)
+    // SCIENT-FORK:END
   ) {
     return input.prompt;
   }
@@ -156,6 +170,8 @@ export function t3OrchestrationPrompt(input: {
   readonly instructions?: string;
   readonly deviceInstructions?: string;
   readonly wrapperElement?: string;
+  /** The session's granted MCP capabilities, for host copy that depends on them. */
+  readonly capabilities?: ReadonlySet<string>;
   // SCIENT-FORK:END
 }): string {
   if (!input.hasT3Mcp) return input.prompt;

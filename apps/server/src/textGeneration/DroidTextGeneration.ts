@@ -1,5 +1,5 @@
 import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -239,7 +239,7 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
   environment: NodeJS.ProcessEnv,
   makeAcpRuntime: DroidAcpRuntimeFactory,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const runDroidJsonEffect = Effect.fn("DroidTextGeneration.runDroidJson")(
@@ -264,7 +264,7 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
         cwd,
         clientInfo: { name: "scient-git-text", version: "0.0.0" },
         modelTools: "disabled",
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
 
       // Nothing a background prompt asks for is ever granted.
       yield* runtime.handleRequestPermission((request) => {
@@ -509,5 +509,13 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
     generateThreadTitle,
     generateReviewGuide: () =>
       Effect.fail(investigationUnsupported("generateReviewGuide", "Droid")),
+    // SCIENT-FORK: T3 voice transcript cleanup is dormant in Scient.
+    generateTranscriptionPostProcessing: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "Droid does not clean up voice transcripts.",
+        }),
+      ),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

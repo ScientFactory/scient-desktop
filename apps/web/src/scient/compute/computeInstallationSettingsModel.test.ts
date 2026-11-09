@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ComputeLanguageId,
+  computeLanguageComingSoon,
+  computeLanguageDetail,
+  computeLanguageDownloadUrl,
   type ComputeLanguageRuntimeInventory,
   type ComputeManagedRuntimeStatus,
 } from "@t3tools/contracts";
@@ -8,9 +11,6 @@ import {
   automaticComputeRuntimeLabel,
   computeCurrentRuntimeSummary,
   computeLanguageAbsent,
-  computeLanguageComingSoon,
-  computeLanguageDetail,
-  computeLanguageDownloadUrl,
   computeLanguageGroups,
   computeLanguagePrimaryAction,
   computeManagedPrimaryAction,

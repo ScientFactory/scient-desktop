@@ -7,6 +7,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AntigravitySettings,
@@ -23,6 +24,7 @@ import {
   type SecretReference,
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -45,7 +47,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "@t3tools/provider-cursor/server";
-import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import { GrokDriver, type GrokCompositionRequirements } from "./AppProviderDriverComposition.ts";
 import { OpenCodeDriver, type OpenCodeCompositionEnv } from "./OpenCodeDriverComposition.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -227,7 +228,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   const layerBaseDeps = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "unused-managed-installation",
@@ -1001,7 +1002,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 describe("ProviderInstanceRegistry — all drivers slice", () => {
   const layerInfra = OpenCodeRuntime.layer.pipe(
     Layer.provide(OpenCodeServerLedger.layerTest),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "unused-managed-installation",
@@ -1446,6 +1447,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     };
     const gate = Deferred.makeUnsafe<void>();
     const resolver = Layer.succeed(SecretResolver.SecretResolver, {
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Deferred.await(gate).pipe(
           Effect.andThen(
@@ -1481,7 +1483,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+    return { vault, reads, invalidated, created, configs, configMap, make, makeGated, gate };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -1499,16 +1501,26 @@ describe("ProviderInstanceRegistry secret environment", () => {
     }).pipe(Effect.scoped);
   });
 
-  it.effect("marks an instance unavailable and names the variable it could not read", () => {
-    const fixture = setup({});
+  // An empty secret must not let a driver fall back to a credential the server inherited.
+  it.effect.each([
+    ["missing", {}],
+    ["empty", { [secret.reference]: " " }],
+  ] as const)("marks an instance unavailable when its secret is %s", ([, initial]) => {
+    const fixture = setup(initial);
     return Effect.gen(function* () {
-      const { registry } = yield* fixture.make;
+      const { registry, mutator } = yield* fixture.make;
+      const readsAtStartup = fixture.reads.length;
 
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       expect(fixture.created).toEqual([]);
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+
+      // A settings save that leaves it alone does not read the vault again.
+      yield* mutator.reconcile({ ...fixture.configMap });
+      expect(fixture.reads).toHaveLength(readsAtStartup);
+      expect(yield* registry.listUnavailable).toHaveLength(1);
     }).pipe(Effect.scoped);
   });
 
@@ -1564,6 +1576,22 @@ describe("ProviderInstanceRegistry secret environment", () => {
         { apiKey: "gw-live", model: "m" },
         { apiKey: "gw-rotated", model: "m" },
       ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect.each([
+    { name: "Antigravity apiKey", schema: AntigravitySettings, field: "apiKey" },
+    { name: "OpenCode serverPassword", schema: OpenCodeSettings, field: "serverPassword" },
+  ])("hands the driver the secret its $name names", ({ schema, field }) => {
+    const reference: SecretReference = { ...secret, reference: "op://Private/Provider/key" };
+    const fixture = setup(
+      { [secret.reference]: "sk-live", [reference.reference]: "provider-live" },
+      schema,
+      { enabled: true, [field]: reference },
+    );
+    return Effect.gen(function* () {
+      yield* fixture.make;
+      expect(fixture.configs).toEqual([expect.objectContaining({ [field]: "provider-live" })]);
     }).pipe(Effect.scoped);
   });
 

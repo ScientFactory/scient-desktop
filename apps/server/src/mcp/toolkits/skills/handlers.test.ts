@@ -266,12 +266,6 @@ describe("Scient skills MCP handlers", () => {
       ).pipe(Effect.flip);
       expect(traversal.code).toBe("resource-unavailable");
 
-      const noCapability = yield* provideContext(listScientSkillsForInvocation(), {
-        catalog,
-        invocation: makeInvocation([catalog.releases[0]!], new Set()),
-      }).pipe(Effect.flip);
-      expect(noCapability.code).toBe("capability-unavailable");
-
       const invocation = makeInvocation([catalog.releases[0]!]);
       const descriptor = invocation.skillScope!.skills[0]!;
       const ambiguous = AgentInvocationContext.AgentInvocationContext.of({

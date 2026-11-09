@@ -9,7 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -52,7 +52,7 @@ export class CheckpointCaptureServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   CheckpointCaptureServiceV2,
   never,
-  | Crypto.Crypto
+  | Digest.Digest
   | CheckpointService.CheckpointServiceV2
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
@@ -60,7 +60,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const checkpoints = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
@@ -110,21 +110,23 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
+      // The baselines this capture materializes are attributed to the run materializing them. The
+      // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
+      const materializeBaseline = (ordinalWithinScope: number) =>
+        checkpoints.materializeBaselineCheckpoint({
+          scope,
+          ordinalWithinScope,
+          nodeId: rootNode.id,
+          capturedAt: run.requestedAt,
+          forceMissing: sideChat,
+        });
       const threadStartCheckpoint =
         baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
-          : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
-              ordinalWithinScope: 0,
-              forceMissing: sideChat,
-            });
+          : yield* materializeBaseline(0);
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
-            ordinalWithinScope: baselineOrdinalWithinScope,
-            forceMissing: sideChat,
-          });
+        : yield* materializeBaseline(baselineOrdinalWithinScope);
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -249,7 +251,7 @@ export const layer: Layer.Layer<
             { eventSink, ids, projections, makeCheckpointTurnItem },
             input,
           ),
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(Digest.Digest, digest),
           // SCIENT-FORK:END checkpoint-capture-final-attempt
           Effect.mapError((cause) =>
             isCheckpointCaptureExecutionError(cause)

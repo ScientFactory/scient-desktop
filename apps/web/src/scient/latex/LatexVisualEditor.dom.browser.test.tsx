@@ -49,7 +49,6 @@ import {
 import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
 import { latexEditingTarget } from "./latexEditingTarget";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
-import { mathSourceCompletions } from "./latexMathCompletion";
 import { clearVisualDraft, readPersistedVisualDraft } from "./visualDrafts";
 import { clearTypingDraft } from "./visualTyping";
 import { scientificStatementsFixture } from "./scientificStatements.fixture";
@@ -2093,21 +2092,6 @@ Control & 1 \\\\
     await act(() => inline.click());
     await advance();
     expect(current).toBe(tex("\\(x^2\\)"));
-  });
-
-  it("offers bounded command and environment completions", async (testContext) => {
-    await using _fixture = _createFixture(testContext);
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(mathSourceCompletions("\\[\n\\fra", 7)[0]).toMatchObject({
-      label: "\\frac",
-      replacement: "\\frac{}{}",
-    });
-    expect(mathSourceCompletions("\\[\n\\begin{ali", 13)[0]).toMatchObject({
-      label: "\\begin{align}",
-      replacement: "\\begin{align}\n\n\\end{align}",
-    });
   });
 
   it("converts a completely typed supported math environment", async (testContext) => {

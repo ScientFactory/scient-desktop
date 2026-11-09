@@ -5,7 +5,7 @@
  */
 import { SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE, type CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -83,15 +83,15 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const provide = <A, E>(
-    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom>,
   ) =>
     effect.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
     );
 
   // One lock per import: an import and the settling of its attempt never overlap.
@@ -201,7 +201,7 @@ const make = Effect.gen(function* () {
     const journal: ConversationImportJournal = {
       version: 1,
       importId: lease.importId,
-      attemptId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+      attemptId: yield* random.uuidV4(),
       binding: {
         packageSha256: lease.input.package.packageSha256,
         destination: request.destination,

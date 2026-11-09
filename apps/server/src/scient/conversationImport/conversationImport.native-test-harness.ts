@@ -8,6 +8,7 @@ import {
   type ProjectCloneSnapshot,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -65,7 +66,7 @@ export function nativeImportTestLayer(controls: NativeImportTestControls = {}) {
   const native = Commit.layer.pipe(
     Layer.provideMerge(EventSink.layer.pipe(Layer.provideMerge(stores))),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-v2-import-test-" })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const controlledCommit = Layer.effect(
     Commit.ConversationImportCommit,
@@ -180,9 +181,7 @@ export function nativeImportRuntimeTestLayer(
   const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(ServerSettings.layerTest().pipe(Layer.orDie)),
     Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
-    Layer.provide(
-      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.sync(() => undefined) }),
-    ),
+    Layer.provide(Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.undefined })),
     Layer.orDie,
   );
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
@@ -191,7 +190,7 @@ export function nativeImportRuntimeTestLayer(
     { databaseLayer: database, configureMcp: false, runtimePolicyLayer, ...options },
   ).pipe(
     Layer.provideMerge(database),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Executor.layer),
   );
   const provider: ServerProvider = {

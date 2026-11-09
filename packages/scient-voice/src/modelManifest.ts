@@ -68,9 +68,6 @@ export const SMALL_VOICE_MODEL_ID = WHISPER_SMALL_MULTILINGUAL_Q5_1.id;
 export const MEDIUM_VOICE_MODEL_ID = WHISPER_MEDIUM_MULTILINGUAL_Q5_0.id;
 export const TURBO_VOICE_MODEL_ID = WHISPER_LARGE_V3_TURBO_MULTILINGUAL_Q5_0.id;
 
-/** Small is the safe migration fallback for existing installations. */
-export const DEFAULT_VOICE_MODEL_ID = SMALL_VOICE_MODEL_ID;
-
 /** Every supported model, in preference order. */
 export const VOICE_MODEL_DEFINITIONS: readonly VoiceModelDefinition[] = Object.freeze([
   WHISPER_SMALL_MULTILINGUAL_Q5_1,
@@ -85,13 +82,4 @@ const VOICE_MODELS_BY_ID: ReadonlyMap<string, VoiceModelDefinition> = new Map(
 /** Look up a model definition by id, or `undefined` when unknown. */
 export function getVoiceModelDefinition(id: string): VoiceModelDefinition | undefined {
   return VOICE_MODELS_BY_ID.get(id);
-}
-
-/** Look up a model definition by id, throwing when unknown. */
-export function requireVoiceModelDefinition(id: string): VoiceModelDefinition {
-  const definition = VOICE_MODELS_BY_ID.get(id);
-  if (!definition) {
-    throw new Error(`Unknown voice model id: ${id}`);
-  }
-  return definition;
 }

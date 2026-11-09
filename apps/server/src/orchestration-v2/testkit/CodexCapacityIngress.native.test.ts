@@ -1,8 +1,9 @@
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -604,13 +605,13 @@ it.live(
           Effect.gen(function* () {
             const peer = yield* makePeer(autoComplete, startup);
             const allocator = yield* IdAllocatorV2;
-            const crypto = yield* Crypto.Crypto;
+            const digest = yield* Digest.Digest;
             const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
             const adapters = yield* Effect.forEach(
               [instanceId, ProviderInstanceId.make("other-codex")],
               (id) =>
                 makeCodexAdapterV2({
-                  crypto,
+                  digest,
                   instanceId: id,
                   settings,
                   environment: {},
@@ -1366,6 +1367,7 @@ it.live(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             idAllocatorLayer,
             ServerConfig.layerTest(process.cwd(), { prefix: "first-codex-capacity-" }).pipe(
               Layer.provide(NodeServices.layer),

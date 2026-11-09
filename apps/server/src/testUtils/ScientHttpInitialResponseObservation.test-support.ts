@@ -6,8 +6,8 @@ import type { HttpClientResponse } from "effect/http";
 type InitialResponse = Pick<HttpClientResponse.HttpClientResponse, "status" | "headers">;
 type Publish = (message: string) => void;
 
-export const HTTP_FAILURE_OBSERVATION_PREFIX = "[scient-http-initial-response-failure] ";
-export const MAX_HTTP_FAILURE_OBSERVATION_BYTES = 1_024;
+const HTTP_FAILURE_OBSERVATION_PREFIX = "[scient-http-initial-response-failure] ";
+const MAX_HTTP_FAILURE_OBSERVATION_BYTES = 1_024;
 
 const decodeStatus = Schema.decodeUnknownOption(
   Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })),

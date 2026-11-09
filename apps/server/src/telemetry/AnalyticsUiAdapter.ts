@@ -1,6 +1,6 @@
 import type { ScientAnalyticsStatus, ScientAnalyticsUiEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { AnalyticsService } from "./AnalyticsService.ts";
 
 // The server records these operations itself; a UI copy would count them twice.
@@ -17,7 +17,7 @@ const SERVER_OBSERVED_OPERATIONS: ReadonlySet<string> = new Set([
 export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
   let epoch: number | undefined;
   let context: string | undefined;
-  const status: Effect.Effect<ScientAnalyticsStatus, never, Crypto.Crypto> = Effect.gen(
+  const status: Effect.Effect<ScientAnalyticsStatus, never, SecureRandom.SecureRandom> = Effect.gen(
     function* () {
       const current = yield* analytics.status;
       const currentEpoch = yield* analytics.collectionEpoch;
@@ -28,15 +28,18 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
       }
       if (epoch !== currentEpoch || context === undefined) {
         epoch = currentEpoch;
-        const crypto = yield* Crypto.Crypto;
-        context = yield* crypto.randomUUIDv4().pipe(Effect.orElseSucceed(() => undefined));
+        const random = yield* SecureRandom.SecureRandom;
+        context = yield* random.uuidV4().pipe(Effect.orElseSucceed(() => undefined));
       }
-      return context === undefined ? current : { ...current, collectionContext: context };
+      return context === undefined
+        ? current
+        : { ...current, collectionContext: context, voiceLifecycleVersion: 2 as const };
     },
   );
 
   const record = Effect.fn("AnalyticsUiAdapter.record")(function* (event: ScientAnalyticsUiEvent) {
     if (
+      event.name.startsWith("voice.") ||
       event.name === "panel.viewed" ||
       event.name === "settings.viewed" ||
       event.name === "usage.viewed" ||

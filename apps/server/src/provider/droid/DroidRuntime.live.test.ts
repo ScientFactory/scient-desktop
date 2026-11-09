@@ -2,10 +2,13 @@
 import * as NodeHttp from "node:http";
 import { beforeAll } from "vite-plus/test";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
@@ -68,7 +71,7 @@ it.effect.skipIf(!binary)(
         cwd: root,
         clientInfo: { name: "scient-droid-controls-test", version: "0" },
         environment: {
-          PATH: process.env.PATH,
+          PATH: (yield* HostProcess.Environment).PATH,
           HOME: root,
           FACTORY_PROFILE_DIR: path.join(root, "profile"),
           FACTORY_API_KEY: "fk-fixture",
@@ -102,7 +105,11 @@ it.effect.skipIf(!binary)(
         expect.arrayContaining(["normal", "spec", "auto-low", "auto-medium", "auto-high"]),
       );
       expect(choices("reasoning_effort").length).toBeGreaterThan(0);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   30_000,
 );
 
@@ -248,7 +255,7 @@ for (const explicitLimits of [true, false]) {
           cwd: root,
           clientInfo: { name: "scient-droid-limit-test", version: "0" },
           environment: {
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             HOME: root,
             FACTORY_PROFILE_DIR: path.join(root, "profile"),
             FACTORY_API_KEY: "fk-fixture",
@@ -315,7 +322,11 @@ for (const explicitLimits of [true, false]) {
         expect(next.stopReason).toBe("end_turn");
         expect(text).toContain("Recovered fixture answer");
         expect(unexpected).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        TestClock.withLive,
+      ),
     30_000,
   );
 }
@@ -407,7 +418,7 @@ it.effect.skipIf(!binary)(
               cwd: root,
               clientInfo: { name: "scient-droid-test", version: "0" },
               environment: {
-                PATH: process.env.PATH,
+                PATH: (yield* HostProcess.Environment).PATH,
                 HOME: root,
                 FACTORY_PROFILE_DIR: path.join(root, "profile"),
                 FACTORY_API_KEY: "fk-fixture",
@@ -488,6 +499,10 @@ it.effect.skipIf(!binary)(
           }),
         );
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   30_000,
 );

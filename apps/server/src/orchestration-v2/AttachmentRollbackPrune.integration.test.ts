@@ -47,7 +47,7 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ThreadCommandExecutor, layer as commandsLayer } from "./ThreadCommandExecutor.ts";
 import { makeReplayServerConfig } from "./testkit/ProviderReplayHarness.ts";
@@ -170,7 +170,7 @@ const fixture = Effect.gen(function* () {
   const services = Layer.mergeAll(
     stores,
     EventSink.layer.pipe(Layer.provide(stores)),
-    ProjectionMaintenance.layer.pipe(Layer.provide(stores)),
+    ProjectionReplay.layer.pipe(Layer.provide(stores)),
     commandsLayer,
   ).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -369,7 +369,7 @@ it.live(
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* verify;
-            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            const maintenance = yield* ProjectionReplay.ProjectionReplay;
             yield* maintenance.rebuild;
             yield* verify;
           }).pipe(Effect.provide(pruning)),

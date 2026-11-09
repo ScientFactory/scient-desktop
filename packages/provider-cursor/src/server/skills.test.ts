@@ -4,6 +4,7 @@ import { assert, it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
@@ -158,6 +159,93 @@ describe("Cursor skills", () => {
         expect(yield* machineCatalog).toEqual(expected.filter((skill) => skill.scope === "user"));
       }),
     ));
+
+  // An in-memory tree: T3's version writes 11,000 real files.
+  it("finds sibling skills when one skill ships more files than the scan budget", async () => {
+    const root = "/workspace/.cursor/skills";
+    const skillFiles = new Set([`${root}/a-large/SKILL.md`, `${root}/b-small/SKILL.md`]);
+    const directories = new Set([
+      root,
+      `${root}/a-large`,
+      `${root}/a-large/artifacts`,
+      `${root}/b-small`,
+    ]);
+    const notFound = PlatformError.systemError({
+      _tag: "NotFound",
+      module: "FileSystem",
+      method: "stat",
+    });
+    const fileSystem = FileSystem.layerNoop({
+      realPath: (path) => Effect.succeed(path),
+      readDirectory: (path) => {
+        if (path === root) return Effect.succeed(["a-large", "b-small"]);
+        if (path === `${root}/a-large`) return Effect.succeed(["SKILL.md", "artifacts"]);
+        // More ordinary files than the whole-scan entry budget of 10,000.
+        if (path === `${root}/a-large/artifacts`) {
+          return Effect.succeed(Array.from({ length: 11_000 }, (_, index) => `file-${index}.txt`));
+        }
+        return Effect.succeed([]);
+      },
+      stat: (path) => {
+        if (directories.has(path)) {
+          return Effect.succeed({ type: "Directory" } as FileSystem.File.Info);
+        }
+        if (skillFiles.has(path)) {
+          return Effect.succeed({ type: "File", size: 8n } as unknown as FileSystem.File.Info);
+        }
+        if (path.startsWith(`${root}/a-large/artifacts/`)) {
+          return Effect.succeed({ type: "File" } as FileSystem.File.Info);
+        }
+        return Effect.fail(notFound);
+      },
+      readFileString: () => Effect.succeed("---\n---\n"),
+    });
+
+    const skills = await probeCursorSkills("/workspace", { HOME: "/home" }).pipe(
+      Effect.provide(Layer.mergeAll(fileSystem, Path.layer)),
+      Effect.runPromise,
+    );
+
+    expect(skills).toEqual([
+      { name: "a-large", path: `${root}/a-large/SKILL.md`, scope: "project", enabled: true },
+      { name: "b-small", path: `${root}/b-small/SKILL.md`, scope: "project", enabled: true },
+    ]);
+  });
+
+  it("stops a scan of a huge file tree instead of statting every file", async () => {
+    const root = "/workspace/.cursor/skills";
+    let stats = 0;
+    const fileSystem = FileSystem.layerNoop({
+      realPath: (path) => Effect.succeed(path),
+      readDirectory: (path) =>
+        path === root
+          ? Effect.succeed(Array.from({ length: 200_000 }, (_, index) => `file-${index}`))
+          : Effect.succeed([]),
+      stat: (path) => {
+        stats += 1;
+        if (path === root) return Effect.succeed({ type: "Directory" } as FileSystem.File.Info);
+        if (path.startsWith(`${root}/file-`)) {
+          return Effect.succeed({ type: "File" } as FileSystem.File.Info);
+        }
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "stat" }),
+        );
+      },
+    });
+
+    const result = await probeCursorSkills("/workspace", { HOME: "/home" }).pipe(
+      Effect.result,
+      Effect.provide(Layer.mergeAll(fileSystem, Path.layer)),
+      Effect.runPromise,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "scan-budget-exhausted" },
+    });
+    expect(stats).toBeGreaterThanOrEqual(100_000);
+    expect(stats).toBeLessThanOrEqual(100_000);
+  });
 
   it.skipIf(!symlinksSupported)(
     "scans a skills root linked to another root only once",

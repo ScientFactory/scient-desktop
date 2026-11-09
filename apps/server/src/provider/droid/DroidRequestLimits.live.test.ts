@@ -3,10 +3,13 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Clock, Effect, FileSystem, Redacted, Schema, Stream } from "effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
@@ -81,7 +84,7 @@ const startDroid = Effect.fn("startDroid")(function* (input: {
     cwd,
     clientInfo: { name: "scient-droid-request-limit-test", version: "0" },
     environment: {
-      PATH: process.env.PATH,
+      PATH: (yield* HostProcess.Environment).PATH,
       HOME: home,
       TMPDIR: `${tmp}/`,
       FACTORY_PROFILE_DIR: NodePath.join(home, "profile"),
@@ -174,7 +177,11 @@ it.effect.skipIf(!binary)(
       // delayed truncation retry would have to arrive first.
       yield* Effect.promise(() => titleRequest.promise);
       expect(agentRequests).toBe(settled);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );
 
@@ -200,6 +207,10 @@ it.effect.skipIf(!binary)(
       expect(failure._tag === "AcpRequestError" && droidRequestFailureDetail(failure)).toBe(
         `400 Scient could not connect to ${new URL(stopped).host}: connection refused.`,
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   60_000,
 );

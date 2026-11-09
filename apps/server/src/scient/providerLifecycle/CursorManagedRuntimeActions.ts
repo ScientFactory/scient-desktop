@@ -1,24 +1,22 @@
 import {
   MANAGED_RUNTIME_POLICY,
   ManagedCursorRuntime,
-  detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
   resolveReviewedCursorArtifact,
 } from "@scientfactory/provider-runtime";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderConnectionMethod } from "@t3tools/contracts";
 import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { cursorRuntimeEnvironment } from "../../provider/CursorCli.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderMaintenanceCapabilitiesResolver } from "@t3tools/provider-core/server/maintenanceResolver";
-import { assistedCursorConnectionMethods } from "./CursorConnectionActions.ts";
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ManagedProviderRuntimeResolution,
@@ -27,12 +25,11 @@ import {
 const DEFAULT_CURSOR_BINARY = "cursor-agent";
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
 
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
+function assistedCursorConnectionMethods(
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<ProviderConnectionMethod> {
+  // CLI endpoints and tokens do not own the SDK's account.
+  return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
 }
 
 export interface CursorManagedRuntimeResolution extends ManagedProviderRuntimeResolution {}
@@ -124,7 +121,6 @@ export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
     enabled,
     binaryPath: managedRuntime.effectiveBinaryPath,
   } satisfies CursorSettings;
-  const effectiveProcessEnv = cursorRuntimeEnvironment(processEnv, managedRuntime.usesManagedPath);
   const connectionMethods = assistedCursorConnectionMethods(processEnv);
   // The bundled SDK has no CLI update target. Explicit CLI targets retain
   // their maintenance controls; managed installs are replaced by Scient.
@@ -143,7 +139,7 @@ export const makeCursorInstanceRuntime = Effect.fnUntraced(function* (input: {
   return {
     managedRuntime,
     effectiveConfig,
-    effectiveProcessEnv,
+    effectiveProcessEnv: processEnv,
     connectionMethods,
     maintenanceResolver,
   };

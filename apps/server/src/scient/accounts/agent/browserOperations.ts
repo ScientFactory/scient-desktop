@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { sessionCookieFromCdp } from "@t3tools/shared/scientSessionCookies";
 import type { CDPSession, Page } from "playwright-core";
 
 const TypeInput = Schema.Struct({
@@ -66,15 +67,11 @@ export async function readAccountCookies(cdp: CDPSession, input: unknown) {
     )
       throw new Error();
     const result = await cdp.send("Network.getCookies", { urls: [...urls] });
-    return result.cookies.map(({ name, value, domain, path, secure, httpOnly, expires }) => ({
-      name,
-      value,
-      domain,
-      path,
-      secure,
-      httpOnly,
-      expires,
-    }));
+    // Every attribute travels; a cookie whose partition can't be carried exactly is left out.
+    return result.cookies.flatMap((cookie) => {
+      const converted = sessionCookieFromCdp(cookie);
+      return "unsupported" in converted ? [] : [converted];
+    });
   } catch {
     throw new Error("The browser session could not be read.");
   }

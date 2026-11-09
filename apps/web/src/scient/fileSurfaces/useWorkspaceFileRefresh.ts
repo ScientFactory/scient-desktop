@@ -128,6 +128,8 @@ export function useWorkspaceFileRefresh(input: {
     saveResolutionRef.current = saveResolution;
   });
   const [viewerRefreshKey, setViewerRefreshKey] = useState(0);
+  // Advances only when the reader asks to reload: a preview that checks revisions reloads anyway.
+  const [manualReloadKey, setManualReloadKey] = useState(0);
   const lastObservedChangeRef = useRef<object | null>(null);
   const publicationBlocked =
     saveError?.attention !== undefined ||
@@ -320,6 +322,7 @@ export function useWorkspaceFileRefresh(input: {
 
   const requestManualReload = () => {
     if (input.relativePath === null) return;
+    setManualReloadKey((current) => current + 1);
     fileChanges.refresh();
     if (publicationBlocked) {
       refreshViewer();
@@ -393,5 +396,6 @@ export function useWorkspaceFileRefresh(input: {
     saveError,
     saveRetryReady: file.authoritativeData !== null && !publicationBlocked,
     viewerRefreshKey,
+    manualReloadKey,
   };
 }

@@ -1,4 +1,4 @@
-// @effect-diagnostics globalConsole:off globalConsoleInEffect:off preferSchemaOverJson:off
+// @effect-diagnostics globalConsole:off globalConsoleInEffect:off globalJsonInEffect:off
 // @effect-diagnostics nodeBuiltinImport:off -- Installed-artifact qualification entry; no network listener.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";

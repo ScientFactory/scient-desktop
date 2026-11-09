@@ -46,22 +46,6 @@ export type PiRpcAvailableModels = typeof PiRpcAvailableModels.Type;
 
 export const PiRpcThinkingLevels = Schema.Struct({ levels: Schema.Array(PiThinkingLevel) });
 
-export const PiRpcSessionStats = Schema.Struct({
-  sessionId: Schema.String,
-  sessionFile: Schema.optional(Schema.String),
-  toolCalls: Schema.Number,
-  tokens: Schema.Struct({
-    input: Schema.Number,
-    output: Schema.Number,
-    cacheRead: Schema.Number,
-    cacheWrite: Schema.Number,
-    total: Schema.Number,
-  }),
-  contextUsage: Schema.optional(
-    Schema.Struct({ tokens: Schema.NullOr(Schema.Number), contextWindow: Schema.Number }),
-  ),
-});
-
 export const PiRpcCommand = Schema.Struct({
   name: Schema.String,
   description: Schema.optional(Schema.String),

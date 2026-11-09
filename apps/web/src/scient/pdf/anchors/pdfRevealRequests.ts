@@ -140,8 +140,3 @@ export function usePdfRevealClaim(documentKey: string): object {
   useEffect(() => () => releasePdfReveal(documentKey, owner), [documentKey, owner]);
   return owner;
 }
-
-/** Test seam: forget every pending request. */
-export function resetPdfRevealRequests(): void {
-  clearPdfReveals();
-}

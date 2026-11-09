@@ -26,6 +26,19 @@ import { decodeRelativePath, type ResolvedAsset } from "./AssetAccess.ts";
 import { optionOnNotFound } from "../project/ProjectFaviconResolver.ts";
 import type { ScientAssetClaims } from "./ScientAssetClaims.ts";
 
+/**
+ * Names the file's bytes apart from its signed URL, like statFingerprint does for media: a
+ * replacement under the same name is a new revision. A reader keeps a loaded PDF while a renewed
+ * URL reports the same revision.
+ */
+export const fileInfoRevision = (info: FileSystem.File.Info) =>
+  [
+    info.dev,
+    Option.getOrElse(info.ino, () => ""),
+    info.size,
+    Option.match(info.mtime, { onNone: () => "", onSome: (mtime) => mtime.getTime() }),
+  ].join(":");
+
 const ENVIRONMENT_HTML_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ENVIRONMENT_HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
 
@@ -128,6 +141,7 @@ export const issueScientAssetClaims = Effect.fnUntraced(function* (
   let claims: ScientAssetClaims;
   let fileName: string;
   let sourcePath: string | undefined;
+  let fileRevision: string | undefined;
 
   switch (input.resource._tag) {
     case "generated-document": {
@@ -324,10 +338,11 @@ export const issueScientAssetClaims = Effect.fnUntraced(function* (
           }),
         };
       }
+      if (claims.kind === "environment-file-exact") fileRevision = fileInfoRevision(info.value);
       break;
     }
   }
-  return { claims, fileName, sourcePath, expiresAt };
+  return { claims, fileName, sourcePath, expiresAt, fileRevision };
 });
 
 /** Resolves a Scient claim to the file it grants, or null when the request does not match. */

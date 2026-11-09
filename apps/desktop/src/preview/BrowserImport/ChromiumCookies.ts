@@ -62,6 +62,9 @@ const CookieRow = Schema.Struct({
   is_httponly: Schema.Number,
   samesite: Schema.Number,
   top_frame_site_key: Schema.String,
+  // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+  has_cross_site_ancestor: Schema.NullOr(Schema.Number),
+  // SCIENT-FORK:END
 });
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
 const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -185,14 +188,21 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
       );
+      // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+      const ancestorColumns = yield* sql<{ readonly found: number }>`select count(*) as found
+          from pragma_table_info('cookies') where name = 'has_cross_site_ancestor'`;
+      const ancestor = sql.literal(
+        ancestorColumns[0]?.found ? "has_cross_site_ancestor" : "null as has_cross_site_ancestor",
+      );
       const raw =
         schemaVersion >= 15
           ? yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
-                samesite, top_frame_site_key from cookies`
+                samesite, top_frame_site_key, ${ancestor} from cookies`
           : yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
-                samesite, '' as top_frame_site_key from cookies`;
+                samesite, '' as top_frame_site_key, ${ancestor} from cookies`;
+      // SCIENT-FORK:END
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
@@ -200,7 +210,10 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
     for (const row of result.rows) {
-      if (row.top_frame_site_key !== "") {
+      // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+      // Without the stored bit the key can't be rebuilt; guessing it would make a different cookie.
+      if (row.top_frame_site_key !== "" && row.has_cross_site_ancestor === null) {
+        // SCIENT-FORK:END
         undecryptable += 1;
         undecryptableHosts.add(bareHost(row.host_key));
         continue;
@@ -232,6 +245,16 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         httpOnly: row.is_httponly === 1,
         expirationDate: toUnixSeconds(row.expires_seconds),
         sameSite: sameSiteFromColumn(row.samesite),
+        // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
+        ...(row.top_frame_site_key === "" || row.has_cross_site_ancestor === null
+          ? {}
+          : {
+              partitionKey: {
+                topLevelSite: row.top_frame_site_key,
+                hasCrossSiteAncestor: row.has_cross_site_ancestor === 1,
+              },
+            }),
+        // SCIENT-FORK:END
       });
     }
     if (

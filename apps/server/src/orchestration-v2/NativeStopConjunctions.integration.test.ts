@@ -1,5 +1,7 @@
-import * as Crypto from "effect/Crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -65,7 +67,12 @@ const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
 const threadId = ThreadId.make("stop:source");
 const peerId = ThreadId.make("stop:peer");
 const projectId = ProjectId.make("stop:project");
-const outer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer);
+const outer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  idAllocatorLayer,
+  McpProviderSessions.layer,
+);
 const sourceReply = "Exact unfinished source reply α.\n\n";
 const peerReply = "Untouched peer reply β.\n\n";
 const hasOwnedReply = (p: OrchestrationV2ThreadProjection, text: string) => {
@@ -133,7 +140,7 @@ const makeFixture = Effect.fn("stopConjunction.fixture")(function* (
   );
   const cwd = yield* checkpointWorkspace(scenario.name);
   const artifactDir =
-    process.env.SCIENT_STOP_PROOF_ARTIFACT_DIR ??
+    (yield* HostProcess.Environment).SCIENT_STOP_PROOF_ARTIFACT_DIR ??
     (yield* fs.makeTempDirectoryScoped({ prefix: "t3-stop-receipts-" }));
   assert.isDefined(artifactDir, "causal receipts need an explicit private artifact directory");
   const artifactPath = path.join(artifactDir!, scenario.name);
@@ -155,7 +162,7 @@ const makeFixture = Effect.fn("stopConjunction.fixture")(function* (
   >();
 
   const nativeAdapter = yield* makeClaudeAdapterV2({
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     instanceId,
     settings: yield* decodeStopSettings({}),
     environment: {},
@@ -313,6 +320,10 @@ emit({ kind: "ready" });
           return {
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
             backgroundTasks: () => Effect.succeed(false),
+            mcpServerStatus: Effect.succeed([]),
+            readMcpResource: () => Effect.die("unexpected MCP resource read"),
+            callMcpTool: () => Effect.die("unexpected MCP tool call"),
+            listPermissionRules: Effect.die("unexpected permission rules read"),
             setPermissionMode: () =>
               Effect.die("Permission-mode mutation is outside this fixture."),
             messages: Stream.fromQueue(messages).pipe(

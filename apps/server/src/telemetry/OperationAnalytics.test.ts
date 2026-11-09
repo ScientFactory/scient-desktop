@@ -17,15 +17,13 @@ function fixture() {
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
   });
-  return { events, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, service, setConsent };
 }
 
 describe("semantic operation analytics", () => {
@@ -100,8 +98,8 @@ describe("semantic operation analytics", () => {
           "opaque-id",
         );
         yield* observe({ ...operation, key: "consent", status: "active" });
-        yield* f.service.setConsent("off");
-        yield* f.service.setConsent("product");
+        yield* f.setConsent("off");
+        yield* f.setConsent("product");
         yield* observe({ ...operation, key: "consent", status: "completed" });
         expect(f.events).toHaveLength(3);
       }).pipe(Effect.provideService(AnalyticsService, f.service));
@@ -132,7 +130,7 @@ describe("semantic operation analytics", () => {
         "app.health",
         "app.health",
       ]);
-      yield* f.service.setConsent("off");
+      yield* f.setConsent("off");
       yield* observeAnalyticsEffect(Effect.succeed(result), {
         kind: "pdf-export",
         trigger: "agent",

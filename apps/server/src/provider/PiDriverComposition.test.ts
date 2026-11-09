@@ -97,7 +97,7 @@ const encoder = new TextEncoder();
 function makePiCompositionDiscoverySpawner(input: {
   readonly onRpcSpawn: (launch: {
     readonly args: ReadonlyArray<string>;
-    readonly env: NodeJS.ProcessEnv;
+    readonly env: NonNullable<ChildProcess.CommandOptions["env"]>;
   }) => void;
   readonly catalogs: Array<unknown>;
 }) {
@@ -123,9 +123,9 @@ function makePiCompositionDiscoverySpawner(input: {
         });
 
       const env = options.env ?? {};
-      input.onRpcSpawn({ args, env });
-      const catalogUrl = env["SCIENT_PI_MODELS_URL"];
-      const catalogToken = env["SCIENT_PI_MODELS_TOKEN"];
+      input.onRpcSpawn({ args: args.map(String), env });
+      const catalogUrl = env["SCIENT_PI_MODELS_URL"]?.toString();
+      const catalogToken = env["SCIENT_PI_MODELS_TOKEN"]?.toString();
       if (catalogUrl === undefined || catalogToken === undefined)
         return yield* Effect.die("Pi custom-model extension bootstrap was not configured");
 
@@ -393,7 +393,10 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
           }),
           resolveCustomModels: () => Effect.succeed([resolvedConnection]),
         };
-        const launches: Array<{ args: ReadonlyArray<string>; env: NodeJS.ProcessEnv }> = [];
+        const launches: Array<{
+          args: ReadonlyArray<string>;
+          env: NonNullable<ChildProcess.CommandOptions["env"]>;
+        }> = [];
         const catalogs: Array<unknown> = [];
         const instance = yield* PiDriver.create({
           instanceId,
@@ -434,6 +437,7 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
           "model with space",
           "--thinking",
           "high",
+          "--offline",
           "--no-extensions",
           "--extension",
           path.join(host.paths.stateDir, "pi", "extensions", "scient-custom-models.mjs"),

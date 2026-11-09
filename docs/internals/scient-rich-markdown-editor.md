@@ -615,7 +615,6 @@ apps/web/src/scient/keyboard/
   presentation.ts  How a shortcut is shown next to a command
 
 apps/server/src/scient/markdown/
-  WorkspaceMarkdownFiles.ts  Atomic create, rename, binary asset operations
   http.ts                    Typed HTTP handlers for remote-ready clients
 
 packages/contracts/src/scientMarkdown.ts

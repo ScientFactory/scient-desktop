@@ -1,8 +1,10 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DocumentText from "../provider/DocumentText.ts";
 // Native and issued-token evidence uses digests, never bearer values.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous wire observation records digests without exposing bearer tokens.
 import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import {
@@ -22,7 +24,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -41,6 +43,7 @@ import {
   storeAttachmentUpload,
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
 } from "../assets/AttachmentUpload.ts";
+import * as AssetSigner from "../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath, parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
@@ -100,6 +103,7 @@ const skillRegistryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodePlatformCrypto.layer,
       Layer.succeed(
         HttpServer.HttpServer,
         HttpServer.HttpServer.of({
@@ -161,7 +165,7 @@ const runConjunction = () =>
       const selection = { instanceId, model: "gpt-5.4" };
       const allocator = yield* IdAllocatorV2;
       const offered = yield* Queue.unbounded<{
-        params: typeof CodexSchema.V2TurnStartParams.Type;
+        params: CodexSchema.V2TurnStartParams;
         scope: McpInvocationScope;
         token: string;
       }>();
@@ -170,7 +174,7 @@ const runConjunction = () =>
       const decoder = new TextDecoder();
       let buffered = "";
       const methods: string[] = [];
-      const nativeOffers: Array<typeof CodexSchema.V2TurnStartParams.Type> = [];
+      const nativeOffers: Array<CodexSchema.V2TurnStartParams> = [];
       const nativeThread = "controlled-native-thread";
       const nativeTurn = {
         id: "controlled-native-turn",
@@ -284,7 +288,7 @@ const runConjunction = () =>
         path,
         idAllocator: allocator,
         serverConfig: config,
-        crypto: yield* Crypto.Crypto,
+        digest: yield* Digest.Digest,
         clientFactory: {
           open: () =>
             CodexClient.make(
@@ -375,7 +379,8 @@ const runConjunction = () =>
           }),
         ).pipe(
           Effect.provide(
-            ServerSecretStore.layer.pipe(
+            AssetSigner.layer.pipe(
+              Layer.provideMerge(ServerSecretStore.layer),
               Layer.provideMerge(configLayer),
               Layer.provideMerge(NodeServices.layer),
             ),
@@ -773,7 +778,7 @@ const runConjunction = () =>
           "Scient selected skills",
         ];
         const positions = orderedSections.map((section) => text.indexOf(section));
-        const evidenceDir = process.env.SCIENT_C718_EVIDENCE_DIR;
+        const evidenceDir = (yield* HostProcess.Environment).SCIENT_C718_EVIDENCE_DIR;
         if (evidenceDir) {
           const evidenceRoot =
             "/Users/yaacov/REPOs/ScientFactory/reviews/v1-removal-20261004/control/";
@@ -875,7 +880,9 @@ const runConjunction = () =>
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+          ),
           idAllocatorLayer,
         ),
       ),

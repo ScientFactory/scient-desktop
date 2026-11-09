@@ -3,7 +3,6 @@ import { EnvironmentFilePath, EnvironmentId, ThreadId } from "@t3tools/contracts
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  sameTrackedHtmlSource,
   trackedHtmlAssetResource,
   trackedHtmlLogicalDocumentKey,
   type TrackedHtmlSource,
@@ -46,7 +45,6 @@ describe("tracked HTML source identity", () => {
       environmentId: EnvironmentId.make("environment-2"),
     };
 
-    expect(sameTrackedHtmlSource(first, second)).toBe(false);
     expect(trackedHtmlLogicalDocumentKey(first)).not.toBe(trackedHtmlLogicalDocumentKey(second));
   });
 

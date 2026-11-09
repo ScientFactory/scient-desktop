@@ -4,7 +4,6 @@ import {
   plotlyFileBaseName,
   plotlyMarkdownCopySource,
   plotlyPngBlob,
-  plotlyPngScale,
   plotlySvgBlob,
 } from "./plotlyExport";
 import type { PlotlyViewController } from "./PlotlyView";
@@ -16,12 +15,6 @@ describe("Plotly exports", () => {
     expect(plotlyMarkdownCopySource('{"data":[]}', "plotly", 'title="Dose"')).toBe(
       '```plotly title="Dose"\n{"data":[]}\n```\n\n',
     );
-  });
-
-  it("bounds PNG exports by dimension and pixel count", () => {
-    expect(plotlyPngScale(640, 360)).toBe(2);
-    expect(plotlyPngScale(10_000, 10_000)).toBeCloseTo(Math.sqrt(16_777_216 / 100_000_000));
-    expect(() => plotlyPngScale(0, 100)).toThrow("no measurable size");
   });
 
   it("decodes Plotly's PNG and SVG data URLs without rerendering source", async () => {

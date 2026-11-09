@@ -20,6 +20,15 @@ const encodeServers = Schema.encodeSync(
 
 const CLAUDE_CONNECTORS_URL = "https://claude.ai/settings/connectors";
 
+class ClaudeAccountServersError extends Schema.TaggedError<ClaudeAccountServersError>()(
+  "ClaudeAccountServersError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Claude did not report its account connectors.";
+  }
+}
+
 export function accountConnectorOptions(
   executable: string,
   env: NodeJS.ProcessEnv,
@@ -88,7 +97,12 @@ export const probeClaudeAccountServers = Effect.fn("probeClaudeAccountServers")(
           active.close();
         }),
     );
-    return yield* pollClaudeAccountServers(() => Effect.tryPromise(() => q.mcpServerStatus()));
+    return yield* pollClaudeAccountServers(() =>
+      Effect.tryPromise({
+        try: () => q.mcpServerStatus(),
+        catch: (cause) => new ClaudeAccountServersError({ cause }),
+      }),
+    );
   },
   Effect.timeout("15 seconds"),
   Effect.scoped,

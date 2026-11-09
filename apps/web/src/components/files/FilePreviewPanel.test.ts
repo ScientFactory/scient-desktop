@@ -9,11 +9,8 @@ import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   resolveMarkdownTaskPreviewUpdate,
-  resolveFilePreviewKind,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
-  setMarkdownTaskChecked,
-  shouldLoadFileAsText,
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
@@ -68,25 +65,6 @@ describe("file comment annotations", () => {
   });
 });
 
-describe("PDF file routing", () => {
-  it.each(["paper.pdf", "sources/PAPER.PDF", "paper.pdf?download=1"])(
-    "bypasses projects.readFile for %s",
-    (path) => {
-      expect(resolveFilePreviewKind(path)).toBe("pdf");
-      expect(shouldLoadFileAsText(path)).toBe(false);
-    },
-  );
-
-  it("keeps binary-image and text routing distinct", () => {
-    expect(resolveFilePreviewKind("figure.png")).toBe("image");
-    expect(shouldLoadFileAsText("figure.png")).toBe(false);
-    expect(resolveFilePreviewKind("clip.mp4")).toBe("video");
-    expect(shouldLoadFileAsText("clip.mp4")).toBe(false);
-    expect(resolveFilePreviewKind("notes.md")).toBe("text");
-    expect(shouldLoadFileAsText("notes.md")).toBe(true);
-  });
-});
-
 describe("isMarkdownPreviewFile", () => {
   it("recognizes markdown and MDX files case-insensitively", () => {
     expect(isMarkdownPreviewFile("README.md")).toBe(true);
@@ -97,19 +75,8 @@ describe("isMarkdownPreviewFile", () => {
   });
 });
 
-describe("setMarkdownTaskChecked", () => {
+describe("resolveMarkdownTaskPreviewUpdate", () => {
   const markdown = "- [ ] First\n- [x] Second\n";
-
-  it("checks and unchecks the task marker at the supplied offset", () => {
-    expect(setMarkdownTaskChecked(markdown, 2, true)).toBe("- [x] First\n- [x] Second\n");
-    expect(setMarkdownTaskChecked(markdown, 14, false)).toBe("- [ ] First\n- [ ] Second\n");
-    expect(setMarkdownTaskChecked("1. [X] Ordered\n", 3, false)).toBe("1. [ ] Ordered\n");
-  });
-
-  it("leaves the document unchanged for a stale or invalid marker offset", () => {
-    expect(setMarkdownTaskChecked(markdown, 0, true)).toBe(markdown);
-    expect(setMarkdownTaskChecked(markdown, 200, true)).toBe(markdown);
-  });
 
   it("refuses rendered task-list mutations for a truncated Markdown read", () => {
     const fullMarkdown = `- [ ] Keep the complete file\n${"x".repeat(1024 * 1024)}`;

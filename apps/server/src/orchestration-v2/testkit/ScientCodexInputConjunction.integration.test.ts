@@ -1,7 +1,8 @@
 import * as DocumentText from "../../provider/DocumentText.ts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import { vi } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
@@ -41,6 +42,7 @@ import {
   storeAttachmentUpload,
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
 } from "../../assets/AttachmentUpload.ts";
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import {
@@ -101,6 +103,7 @@ const skillRegistryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       Layer.succeed(
         HttpServer.HttpServer,
         HttpServer.HttpServer.of({
@@ -160,13 +163,13 @@ const runConjunction = (refusal = false) =>
       const allocator = yield* IdAllocatorV2;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       let offeredScope: McpInvocationScope | undefined;
-      const offered = yield* Deferred.make<typeof CodexSchema.V2TurnStartParams.Type>();
+      const offered = yield* Deferred.make<CodexSchema.V2TurnStartParams>();
       const peerInput = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
       let buffered = "";
       const methods: string[] = [];
-      const nativeOffers: Array<typeof CodexSchema.V2TurnStartParams.Type> = [];
+      const nativeOffers: Array<CodexSchema.V2TurnStartParams> = [];
       const nativeThread = "controlled-native-thread";
       const nativeTurn = {
         id: "controlled-native-turn",
@@ -269,7 +272,7 @@ const runConjunction = (refusal = false) =>
         binaryPath: process.execPath,
       });
       const adapter = yield* makeCodexAdapterV2({
-        crypto: yield* Crypto.Crypto,
+        digest: yield* Digest.Digest,
         instanceId,
         settings,
         environment: {},
@@ -367,7 +370,8 @@ const runConjunction = (refusal = false) =>
           }),
         ).pipe(
           Effect.provide(
-            ServerSecretStore.layer.pipe(
+            AssetSigner.layer.pipe(
+              Layer.provideMerge(ServerSecretStore.layer),
               Layer.provideMerge(configLayer),
               Layer.provideMerge(NodeServices.layer),
             ),
@@ -877,7 +881,9 @@ const runConjunction = (refusal = false) =>
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
           idAllocatorLayer,
           McpProviderSessions.layer,
         ),

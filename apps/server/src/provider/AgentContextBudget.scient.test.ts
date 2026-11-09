@@ -13,12 +13,20 @@ const ALL_AWARENESS_CAPABILITIES: ReadonlySet<McpCapability> = new Set([
   "device",
   "documents:build",
   "skills:read",
+  "accounts",
 ]);
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
-// The agent-context-budget workflow compares these values with main's as well.
+// The agent-context-budget workflow compares this file with main's. AgentContextBudget.test.ts
+// measures its first three values; this test measures the rest.
 it("Scient agent context matches the committed budget", () => {
+  const {
+    claudeSystemAppendBytes: _claude,
+    codexAdditionalContextBytes: _codex,
+    mcpToolListJsonBytes: _tools,
+    ...own
+  } = budget;
   const measured = {
     scientAwarenessAllCapabilitiesBytes: utf8Bytes(
       buildScientAwareness(ALL_AWARENESS_CAPABILITIES),
@@ -36,5 +44,5 @@ it("Scient agent context matches the committed budget", () => {
     ),
   };
 
-  expect(measured).toEqual(budget);
+  expect(measured).toEqual(own);
 });

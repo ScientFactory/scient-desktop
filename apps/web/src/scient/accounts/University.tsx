@@ -1,4 +1,3 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   type AccountId,
@@ -14,14 +13,12 @@ import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
-import { useClientSettings } from "~/hooks/useSettings";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { libraryLinkTemplate, signedIntoUniversity } from "./accountsView";
 import { accountsState } from "./accountsState";
 import { SiteFavicon } from "./AccountLogo";
 import { useAccountCommand, useAccounts } from "./useAccounts";
-import { useScratchThread } from "./useScratchThread";
+import { useSignIn } from "./useSignIn";
 
 const SEARCH_DELAY_MS = 300;
 const HIDDEN_KEY = "scient:university-row-hidden";
@@ -46,19 +43,6 @@ export function UniversityIcon({ site, className }: { site: string; className?: 
   );
 }
 
-/** Signing in to a university from anywhere: beside the conversation, or in a new one. */
-export function useUniversitySignIn(environmentId: EnvironmentId) {
-  const signIn = useAccountCommand(accountsState.universitySignIn, environmentId);
-  const scratchThread = useScratchThread(environmentId);
-  return async (accountId: AccountId, threadId?: ThreadId) => {
-    const thread = threadId ? scopeThreadRef(environmentId, threadId) : await scratchThread();
-    if (!thread) return;
-    if (!threadId) useRightPanelStore.getState().requestMaximize(thread);
-    const started = await signIn({ accountId, threadId: thread.threadId });
-    if (started.ok) useRightPanelStore.getState().openBrowser(thread, started.value.tabId);
-  };
-}
-
 /**
  * Finds the user's university and goes straight to its sign-in. A university that isn't listed, or
  * only gives its people a library link, connects by that link.
@@ -78,9 +62,9 @@ export function UniversityPicker({
   const { data, canWrite } = useAccounts(environmentId);
   const search = useAccountCommand(accountsState.searchUniversities, environmentId);
   const save = useAccountCommand(accountsState.save, environmentId);
-  const startSignIn = useUniversitySignIn(environmentId);
-  const profileId =
-    useClientSettings((settings) => settings.browserDefaultProfileId) ?? DEFAULT_BROWSER_PROFILE_ID;
+  const startSignIn = useSignIn(environmentId);
+  // A university sign-in lives in Main, so every conversation and profile choice reaches it.
+  const profileId = DEFAULT_BROWSER_PROFILE_ID;
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<ReadonlyArray<Institution>>([]);
   const [showLink, setShowLink] = useState(false);
@@ -120,7 +104,7 @@ export function UniversityPicker({
     const accountId = known?.accountId ?? (saved?.ok ? saved.value.accountId : undefined);
     if (!accountId) return;
     onChosen?.();
-    await startSignIn(accountId, threadId);
+    await startSignIn(accountId, threadId ? { threadId } : {});
   };
 
   const addLink = async () => {
@@ -137,7 +121,7 @@ export function UniversityPicker({
     });
     if (!saved.ok) return;
     onChosen?.();
-    await startSignIn(saved.value.accountId, threadId);
+    await startSignIn(saved.value.accountId, threadId ? { threadId } : {});
   };
 
   return (
@@ -155,6 +139,9 @@ export function UniversityPicker({
           if (!query && guess) find(guess);
         }}
       />
+      <p className="px-2 text-xs text-muted-foreground">
+        You sign in in Main, so every conversation can use it.
+      </p>
       {found.map((university) => (
         <button
           key={university.entityId}
@@ -275,7 +262,7 @@ export function UniversityCrest({
   threadId: ThreadId;
 }) {
   const { data, canWrite } = useAccounts(environmentId);
-  const startSignIn = useStableCallback(useUniversitySignIn(environmentId));
+  const startSignIn = useStableCallback(useSignIn(environmentId));
   const check = useAccountCommand(accountsState.check, environmentId);
   const navigate = useNavigate();
   const [checking, setChecking] = useState<ReadonlySet<AccountId>>(new Set());
@@ -305,7 +292,7 @@ export function UniversityCrest({
   const waiting = universities.some((account) => !signedIntoUniversity(account));
   const signIn = (accountId: AccountId) => {
     setSigningIn((current) => new Set(current).add(accountId));
-    void startSignIn(accountId, threadId);
+    void startSignIn(accountId, { threadId });
   };
   return (
     <Menu onOpenChange={askAgain}>

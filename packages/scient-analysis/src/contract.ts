@@ -11,7 +11,7 @@ export { ExecutionRunId as AnalysisRunId };
 const Identifier = Schema.NonEmptyString.check(Schema.isMaxLength(128));
 const PathString = Schema.NonEmptyString.check(Schema.isMaxLength(32 * 1024));
 
-export const ANALYSIS_CONTRACT_VERSION = 1 as const;
+const ANALYSIS_CONTRACT_VERSION = 1 as const;
 
 export const AnalysisRuntimeId = Identifier.pipe(Schema.brand("AnalysisRuntimeId"));
 export type AnalysisRuntimeId = typeof AnalysisRuntimeId.Type;
@@ -299,20 +299,6 @@ export const AnalysisInspectRuntimesInput = Schema.Struct({
 });
 export type AnalysisInspectRuntimesInput = typeof AnalysisInspectRuntimesInput.Type;
 
-export const AnalysisConfigureRuntimeInput = Schema.Struct({
-  cwd: PathString,
-  runtimeKind: AnalysisRuntimeKind,
-  executablePath: Schema.NullOr(PathString),
-});
-export type AnalysisConfigureRuntimeInput = typeof AnalysisConfigureRuntimeInput.Type;
-
-export const AnalysisVerifyRuntimeInput = Schema.Struct({
-  cwd: PathString,
-  runtimeId: AnalysisRuntimeId,
-  refresh: Schema.optional(Schema.Boolean),
-});
-export type AnalysisVerifyRuntimeInput = typeof AnalysisVerifyRuntimeInput.Type;
-
 export const AnalysisStartRunInput = Schema.Struct({
   /** Caller-owned identity permits retries without starting another native process. */
   runId: Schema.optional(ExecutionRunId),
@@ -455,8 +441,6 @@ export class AnalysisOperationError extends Schema.TaggedError<AnalysisOperation
   {
     operation: Schema.Literals([
       "inspect",
-      "configure",
-      "verify",
       "start",
       "cancel",
       "list",
@@ -497,26 +481,6 @@ export interface AnalysisRunContext {
   readonly artifactStagingDirectory: string;
 }
 
-export interface AnalysisRuntimeVerificationPreparation {
-  readonly executableIdentity: string;
-  readonly executable: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd: string;
-  readonly environment: Readonly<Record<string, string>>;
-  readonly timeoutMs: number;
-  readonly collect: (input: {
-    readonly exitCode: number | null;
-    readonly timedOut: boolean;
-    readonly output: ReadonlyArray<{
-      readonly stream: "stdout" | "stderr";
-      readonly text: string;
-    }>;
-    readonly verifiedAt: string;
-    readonly durationMs: number;
-  }) => Promise<AnalysisRuntimeVerification>;
-  readonly cleanup: () => Promise<void>;
-}
-
 export interface AnalysisArtifactRepresentationCandidate {
   readonly representationId: AnalysisArtifactRepresentationId;
   readonly fileName: AnalysisArtifactFileName;
@@ -552,9 +516,6 @@ export interface AnalysisRuntimeAdapter {
     readonly platform: string;
     readonly environment: Readonly<Record<string, string | undefined>>;
   }) => Promise<AnalysisRuntimeProfile>;
-  readonly prepareVerification?: (
-    profile: AnalysisRuntimeProfile,
-  ) => Promise<AnalysisRuntimeVerificationPreparation>;
   readonly validateSource?: (source: AnalysisRunSource) => string | null;
   readonly prepareRun?: (context: AnalysisRunContext) => Promise<void>;
   readonly prepare: (context: AnalysisRunContext) => {

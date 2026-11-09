@@ -1,7 +1,6 @@
 import {
   MANAGED_RUNTIME_POLICY,
   ManagedClaudeRuntime,
-  detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
   resolveReviewedClaudeArtifact,
 } from "@scientfactory/provider-runtime";
@@ -11,20 +10,13 @@ import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_CLAUDE_BINARY = "claude";
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 export interface ClaudeManagedRuntimeResolution extends ManagedProviderRuntimeResolution {}
 

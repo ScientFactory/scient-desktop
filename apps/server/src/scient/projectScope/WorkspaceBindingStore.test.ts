@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -50,7 +51,7 @@ const observed = (
 
 const storeLayer = layer.pipe(
   Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 describe("WorkspaceBindingStore", () => {
@@ -274,7 +275,7 @@ describe("WorkspaceBindingStore", () => {
     const databasePath = NodePath.join(temporaryDirectory, "state.sqlite");
     const restartLayer = layer.pipe(
       Layer.provide(makeSqlitePersistenceLive(databasePath)),
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
     return Effect.gen(function* () {

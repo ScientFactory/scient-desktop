@@ -1,6 +1,6 @@
 import { ChildProcess } from "effect/process";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -25,12 +25,10 @@ const PROCESS_TREE_GRACE_ATTEMPTS = 50;
 const PROCESS_TREE_FORCE_EXIT_ATTEMPTS = 100;
 const PROCESS_TREE_EXIT_POLL = "20 millis";
 
-export class LocalOwnedProcessTreeExitError extends Data.TaggedError(
+export class LocalOwnedProcessTreeExitError extends Schema.TaggedError<LocalOwnedProcessTreeExitError>()(
   "LocalOwnedProcessTreeExitError",
-)<{
-  readonly pid: number;
-  readonly message: string;
-}> {}
+  { pid: Schema.Number, message: Schema.String },
+) {}
 
 /** Cached cancellation shared by owned execution and account-command adapters. */
 export const makeLocalOwnedProcessCleanup = Effect.fnUntraced(function* (

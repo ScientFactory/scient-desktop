@@ -1,5 +1,6 @@
 /** Controlled OMP process, production RPC/adapter/worker and file-backed SQL. */
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -10,7 +11,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -131,7 +132,7 @@ it.live(
             (yield* fs.readFileString(auditPath)).split("\n").filter(Boolean),
           );
         });
-        const yieldCrypto = yield* Crypto.Crypto;
+        const yieldRandom = yield* SecureRandom.SecureRandom;
         const yieldSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const yieldAllocator = yield* IdAllocatorV2;
         const makeRuntime = (recoverOnStartup: boolean) =>
@@ -150,7 +151,7 @@ it.live(
                 },
                 fileSystem: fs,
                 path,
-                crypto: yieldCrypto,
+                random: yieldRandom,
                 spawner: yieldSpawner,
                 serverConfig: config,
                 idAllocator: yieldAllocator,
@@ -351,6 +352,7 @@ it.live(
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             idAllocatorLayer,
             gateLayer,
             ServerSettings.layerTest(),

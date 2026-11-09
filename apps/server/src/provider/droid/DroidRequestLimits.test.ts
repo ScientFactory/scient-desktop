@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import * as NodeHttp from "node:http";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -182,7 +183,7 @@ describe("Droid per-turn request limits", () => {
       const next = yield* runtime.prompt({ prompt: [{ type: "text", text: "again" }] });
       expect(next.stopReason).toBe("end_turn");
       expect(runtime.requestLimitBreach?.()).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reports the first retryable upstream error of a turn, once per turn", () =>
@@ -239,7 +240,7 @@ describe("Droid per-turn request limits", () => {
       expect((yield* Effect.promise(() => requestModel(overlay!))).status).toBe(200);
       yield* Effect.yieldNow;
       expect(next.pollUnsafe()).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("keeps a breached budget for the rest of its turn, including a steer", () =>
@@ -268,7 +269,7 @@ describe("Droid per-turn request limits", () => {
       expect((yield* runtime.prompt({ prompt: [{ type: "text", text: "next" }] })).stopReason).toBe(
         "end_turn",
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("authorizes each request from the committed catalog, reading no keys", () =>
@@ -302,7 +303,7 @@ describe("Droid per-turn request limits", () => {
       expect(api.requests()).toBe(3);
       expect(reads).toMatchObject({ keys: 1, settings: 0 });
       expect(reads.catalog).toBeGreaterThanOrEqual(3);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -380,7 +381,7 @@ describe("Droid per-turn request limits", () => {
           ),
         ).toEqual([]);
         expect(committed).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("authorizes requests without waiting on a settings reload or reading keys", () =>
@@ -476,7 +477,11 @@ describe("Droid per-turn request limits", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      TestClock.withLive,
+    ),
   );
 
   it.effect("refuses a request made after a key rotation committed, before any change event", () =>
@@ -515,7 +520,7 @@ describe("Droid per-turn request limits", () => {
       yield* runtime.prompt({ prompt: [{ type: "text", text: "go" }] }).pipe(Effect.exit);
       expect(api.authorizations).not.toContain("Bearer limits-real-key-0123456789");
       expect(runtime.isConfigurationRetired?.()).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("routes custom-model requests through the Droid instance's proxy", () =>
@@ -535,7 +540,7 @@ describe("Droid per-turn request limits", () => {
       const result = yield* runtime.prompt({ prompt: [{ type: "text", text: "go" }] });
       expect(result.stopReason).toBe("end_turn");
       expect(proxy.requests()).toBe(1);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("leaves long turns that keep finishing their responses alone", () =>
@@ -554,6 +559,6 @@ describe("Droid per-turn request limits", () => {
       expect(api.requests()).toBe(150);
       expect(droid.cancels()).toBe(0);
       expect(runtime.requestLimitBreach?.()).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

@@ -5,10 +5,11 @@ import {
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
@@ -52,7 +53,7 @@ import {
   makeManualOnlyProviderMaintenanceCapabilities,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-import { droidMaintenance, withDroidReleaseVersion } from "../piDroidMaintenance.ts";
+import { droidMaintenance, withDroidReleaseVersion } from "../droidMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   type ProviderSnapshotSettings,
@@ -71,7 +72,8 @@ import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProv
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
 import { makeDroidProviderStatus } from "../droid/DroidProviderStatus.ts";
-import { discoverDroidSkills, setDroidSkillEnabled } from "./DroidSkills.ts";
+import { discoverDroidInventory, setDroidSkillEnabled } from "./DroidSkills.ts";
+import type { ProviderNativeInventory } from "../ScientProviderInstanceSeams.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 
@@ -93,7 +95,7 @@ export type DroidDriverEnv =
   | ProviderHost
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
@@ -159,7 +161,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
     enabled,
     config,
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -235,12 +237,17 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
     });
     const makeAcpRuntime = yield* makeDroidCustomModelsRuntimeFactory(serverSettings, instanceId);
 
-    const discoverSkillsForCwd = (
+    // Scient Extensions lists the MCP servers Droid configures itself, from each full probe.
+    const nativeInventory = yield* Effect.acquireRelease(
+      PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
+      PubSub.shutdown,
+    );
+    const discoverInventoryForCwd = (
       cwd: string,
       fallback: ServerProvider["skills"] = [],
       sessionId?: string,
-    ): Effect.Effect<ServerProvider["skills"]> =>
-      discoverDroidSkills({
+    ) =>
+      discoverDroidInventory({
         binaryPath: effectiveConfig.binaryPath,
         cwd,
         environment: processEnv,
@@ -251,7 +258,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
           Effect.logWarning("Droid native skill discovery was unavailable.", {
             cwd,
             cause,
-          }).pipe(Effect.as(fallback)),
+          }).pipe(Effect.as({ skills: fallback, mcpServers: undefined })),
         ),
       );
 
@@ -316,8 +323,13 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
       Effect.filterOrElse(
         (result) => !canDiscoverDroidSkills(result.snapshot),
         (result) =>
-          discoverSkillsForCwd(serverConfig.cwd, [], result.sessionId).pipe(
-            Effect.map((skills) => ({
+          discoverInventoryForCwd(serverConfig.cwd, [], result.sessionId).pipe(
+            Effect.tap(({ mcpServers }) =>
+              mcpServers === undefined
+                ? Effect.void
+                : PubSub.publish(nativeInventory, { mcpServers }),
+            ),
+            Effect.map(({ skills }) => ({
               ...result,
               snapshot: { ...result.snapshot, skills },
             })),
@@ -327,7 +339,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
         stampIdentity(checkedSnapshot, accountCapabilities),
       ),
       Effect.tap((checked) => Effect.suspend(() => status?.observeProbe(checked) ?? Effect.void)),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
@@ -443,13 +455,14 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
               snapshot.getSnapshot,
               (machineSnapshot): boolean => !canDiscoverDroidSkills(machineSnapshot),
               (machineSnapshot: ServerProvider) =>
-                discoverSkillsForCwd(cwd, machineSnapshot.skills).pipe(
-                  Effect.map((skills) => ({ ...machineSnapshot, skills })),
+                discoverInventoryForCwd(cwd, machineSnapshot.skills).pipe(
+                  Effect.map(({ skills }) => ({ ...machineSnapshot, skills })),
                 ),
             ),
       orchestrationAdapter,
       textGeneration,
       skillActions,
+      nativeInventoryChanges: Stream.fromPubSub(nativeInventory),
       ...(connectionActions ? { connectionActions } : {}),
       managedRuntimeActions: managedRuntime.actions,
     } satisfies ScientProviderInstance;

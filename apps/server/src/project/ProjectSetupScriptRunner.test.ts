@@ -69,6 +69,7 @@ const makeHarness = Effect.fn(function* (options: {
       }),
     write: (input) => Queue.offer(writes, input.data).pipe(Effect.asVoid),
     closeIdle: () => Effect.void,
+    closeOnSettle: () => Effect.void,
   });
   const runner = yield* ProjectSetupScriptRunner.make.pipe(
     Effect.provide(
@@ -245,6 +246,7 @@ const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
     clear: () => Effect.void,
     close: () => Effect.void,
     hasRunningSessionsForThread: () => Effect.succeed(false),
+    closeOnSettle: () => Effect.void,
     closeIdle: () => Effect.void,
     subscribe: () => Effect.succeed(() => undefined),
     subscribeMetadata: () => Effect.succeed(() => undefined),
@@ -331,6 +333,7 @@ describe("ProjectSetupScriptRunner", () => {
             NO_COLOR: "1",
             FORCE_COLOR: "0",
           },
+          stopOnSettle: false,
         });
         expect(write).toHaveBeenCalledWith({
           threadId: "thread-1",
@@ -450,6 +453,7 @@ describe("ProjectSetupScriptRunner", () => {
           NO_COLOR: "1",
           FORCE_COLOR: "0",
         },
+        stopOnSettle: false,
       });
       expect(write).toHaveBeenCalledWith({
         threadId: "thread-1",

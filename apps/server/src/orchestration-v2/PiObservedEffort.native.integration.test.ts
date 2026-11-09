@@ -1,4 +1,5 @@
 /** Controlled native Pi JSONL peer; real adapter, manager, worker and file-backed V2 SQL. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -25,7 +26,7 @@ import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProjectStore from "./ProjectStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
@@ -145,7 +146,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
           settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
           environment: {
             HOME: profile,
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             PI_EFFORT_CONTROL: control,
             PI_EFFORT_WIRE: wire,
           },
@@ -265,7 +266,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
     const reopened = yield* Effect.gen(function* () {
       const projection = yield* ProjectionStore.ProjectionStoreV2;
       const before = yield* projection.getThreadProjection(threadId);
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       assert.isTrue((yield* maintenance.rebuild).valid);
       const after = yield* projection.getThreadProjection(threadId);
       assert.deepEqual(after.providerTurns, before.providerTurns);
@@ -273,7 +274,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        ProjectionMaintenance.layer.pipe(
+        ProjectionReplay.layer.pipe(
           Layer.provideMerge(
             Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
               Layer.provideMerge(

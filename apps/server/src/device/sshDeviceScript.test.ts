@@ -53,6 +53,7 @@ describe("remote helper lifecycle", () => {
   it.effect("reuses its own healthy helpers and stops only its own runtime", () =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) === "win32") return;
+      const env = yield* HostProcess.Environment;
       yield* Effect.promise(async () => {
         const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
         const bin = NodePath.join(home, "bin");
@@ -249,7 +250,7 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
             originalScript.replace(AGENT_DEVICE_VERSION, "999.0.0"),
           );
           await exec(process.execPath, [upgradedStop], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: { ...env, HOME: home, PATH: `${bin}:${env.PATH}` },
           });
           const daemon = JSON.parse(
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/daemon.json"), "utf8"),

@@ -22,7 +22,7 @@ import type {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTurnStartError } from "../ProviderTurnStartService.ts";
 import type { ContextHandoffItem } from "./ContextHistoryCandidates.ts";
-import { frozenForkPortableReason } from "./ConversationForkNativeSource.ts";
+import { frozenForkPortableReason, frozenForkSourceTurns } from "./ConversationForkNativeSource.ts";
 
 /** Read turn-start history without rolled-back runs. A failed read on the last start
  * attempt settles the run and yields undefined; an earlier attempt fails for retry. */
@@ -87,6 +87,7 @@ export const startFrozenConversationFork = Effect.fn(
     RHistory
   >;
   readonly startError: (cause: string) => ProviderTurnStartError;
+  readonly projectionStore: ProjectionStoreV2Shape;
   readonly contextHandoffService: ContextHandoffServiceV2Shape;
   readonly eventSink: EventSinkV2Shape;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -114,10 +115,14 @@ export const startFrozenConversationFork = Effect.fn(
     capabilities: session.providerSession.capabilities,
   });
   if (portableReason === undefined && frozen !== undefined) {
+    // Without the live source (deleted or unreadable) the frozen turns are all there is.
+    const liveSource = yield* input.projectionStore
+      .getThreadRecords(frozen.sourceThreadId, ["runs", "attempts", "providerTurns"])
+      .pipe(Effect.orElseSucceed(() => ({ runs: [], attempts: [], providerTurns: [] })));
     const forked = yield* Effect.result(
       session.forkThread({
         sourceProviderThread: frozen.sourceProviderThread,
-        sourceProviderTurns: frozen.sourceProviderTurns,
+        sourceProviderTurns: frozenForkSourceTurns(frozen, liveSource),
         providerTurnId: frozen.providerTurnId,
         targetThreadId: input.threadId,
         modelSelection: run.modelSelection,

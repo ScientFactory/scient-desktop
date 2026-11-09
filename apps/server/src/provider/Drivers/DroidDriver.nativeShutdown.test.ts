@@ -2,6 +2,7 @@ import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExec
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -27,6 +28,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -97,10 +99,10 @@ const mcp = Layer.effect(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("droid-native-shutdown")),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "droid-native-shutdown-" }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
   Layer.provideMerge(ThreadCommandExecutor.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -122,7 +124,9 @@ const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "droid-native-
   ),
   Layer.provideMerge(Layer.mergeAll(stores, sink, mcp)),
   Layer.provideMerge(
-    TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+    TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   ),
 );
 
@@ -188,7 +192,13 @@ const harness = Effect.fn("DroidShutdown.harness")(function* () {
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand" || !command.args.includes("acp"))
         return yield* spawner.spawn(command);
-      const instanceId = command.options.env?.DROID_SHUTDOWN_INSTANCE;
+      const environment = Object.fromEntries(
+        Object.entries(command.options.env ?? {}).map(([name, value]) => [
+          name,
+          Redacted.isRedacted(value) ? Redacted.value(value) : value,
+        ]),
+      );
+      const instanceId = environment.DROID_SHUTDOWN_INSTANCE;
       if (instanceId === first) {
         const gate = controls.beforeTargetSpawn;
         controls.beforeTargetSpawn = Effect.void;
@@ -197,7 +207,7 @@ const harness = Effect.fn("DroidShutdown.harness")(function* () {
       const handle = yield* spawner.spawn(command);
       launches.push({
         instanceId: instanceId ?? "unknown",
-        environment: command.options.env ?? {},
+        environment,
         handle,
       });
       return handle;
@@ -408,7 +418,7 @@ const managerLayer = Effect.fn("DroidShutdown.managerLayer")(function* (h: Harne
         ),
       ),
     ),
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   );
   return {
     revoked,

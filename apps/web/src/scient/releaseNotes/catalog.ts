@@ -9,6 +9,64 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.27",
+    publishedAt: "2026-11-03",
+    format: "paragraphs",
+    headline: "Notebooks, side chats, and more room for your work.",
+    highlights: [
+      {
+        id: "compute-0627",
+        title: "Run your analysis inside Scient",
+        description:
+          "Open and edit Jupyter notebooks, run cells, and keep results with the file. Try code in the new Console, then save it as a notebook. Run scripts in more languages using tools already on your computer, inspect figures and tables, and send a failed run to your agent for help.",
+      },
+      {
+        id: "multiple-windows-0627",
+        title: "Open your work in separate windows",
+        description:
+          "Keep two conversations side by side, or give a paper, document or analysis its own window. Choose Open in new window from a conversation or tab, or drag a side-panel tab out. Your windows share the same projects and conversations.",
+      },
+      {
+        id: "side-chats-0627",
+        title: "Explore a detail in a side chat",
+        description:
+          "Ask a follow-up beside your main conversation without adding to it. Select text in an answer, PDF, document or code file and choose Ask in side chat; the quote goes with your question. Bring the discussion back to the main conversation when you’re ready.",
+      },
+      {
+        id: "university-papers-0627",
+        title: "Reach papers through your university",
+        description:
+          "Connect your university from Sources to use its journal subscriptions inside Scient. Open articles through your library, choose Get PDF to attach an available copy to a source, or ask your agent to fetch papers for you.",
+      },
+      {
+        id: "browser-0627",
+        title: "A browser that remembers your way around",
+        description:
+          "New tabs bring search, apps and your own shortcuts together. Find past pages in History and get address suggestions as you type. Each browser profile keeps its own history and shortcuts, sign-ins survive restarts, and saved accounts can fill login forms for you. More sites now open correctly inside Scient.",
+      },
+      {
+        id: "file-management-0627",
+        title: "Organize files without leaving Scient",
+        description:
+          "Create, rename, duplicate, move and trash files and folders from the Files panel. Drag items between folders, or bring files in from Finder or Explorer. Name clashes offer Keep Both or Replace, and Undo lets you reverse the last file change.",
+      },
+      {
+        id: "document-saving-0627",
+        title: "Save your documents with fewer interruptions",
+        description:
+          "Markdown and LaTeX saves retry temporary failures automatically and keep earlier versions in file history. If saving still fails, Scient shows the reason and offers Save a copy. A recovered draft that differs from the file waits for you to choose which one to keep.",
+      },
+      {
+        id: "scient-agent-0627",
+        title: "Improvements to Scient Agent",
+        description:
+          "Scient Agent can ask you questions directly in the composer, with choices and room for your own answer. Supported models offer Fast mode, compaction shows its progress, and usage-limit messages explain why work stopped. Use /stats and /trace to explore usage and the current conversation.",
+      },
+    ],
+    alsoIncluded:
+      "PDFs reopen faster, Overleaf sync is quicker, and math rendering and chat scrolling receive fixes. You can keep your computer awake while agents work. Conversation forks, provider switching and resuming imported Claude sessions are more reliable.",
+  },
+  {
     version: "0.6.26",
     publishedAt: "2026-10-28",
     format: "paragraphs",

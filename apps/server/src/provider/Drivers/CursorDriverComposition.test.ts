@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -9,7 +10,6 @@ import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgen
 import type { CursorDriverEnv } from "@t3tools/provider-cursor/server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -31,19 +31,19 @@ const apiKeyId = ProviderInstanceId.make("cursor-api-key");
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-cursor-composition-" }).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
-  TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
   ManagedRuntimeCatalog.layerTest,
   IdAllocator.layer,
   ModelManifest.layerTest,
   ProviderLatestVersions.layer,
   McpProviderSessions.layer,
   Layer.mock(SecretResolver.SecretResolver)({}),
-  Layer.succeed(CursorKeychain.CursorKeychain, {
-    accessToken: Effect.die("Cursor composition must not read real Keychain credentials"),
-  }),
   Layer.succeed(CursorSdk.CursorSdk, {
     load: () => {
       throw new Error("Cursor composition must not load the real SDK");

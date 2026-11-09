@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -60,7 +60,6 @@ import { readCursorUsageLimits } from "./usageLimits.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import * as CursorSdk from "./CursorSdk.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
 import * as CursorUsageAccounts from "./CursorUsageAccounts.ts";
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -75,12 +74,11 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 export type CursorDriverEnv =
   | CursorAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
   | CursorSdk.CursorSdk
-  | CursorKeychain.CursorKeychain
   | ProviderHost.ProviderHost;
 
 export interface CursorRuntimeResolverInput extends ProviderDriverCreateInput<CursorSettings> {
@@ -157,12 +155,11 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
     usage: {
       kind: "scan",
       provider: "cursor",
-      scan: ({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
+      scan: ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
         CursorUsageAccounts.CursorUsageAccounts.pipe(
           Effect.flatMap((accounts) =>
             accounts.scan({
               instances,
-              keychainUsageEnabled: settings.cursorKeychainUsageEnabled,
               windowStartMs,
               retentionCutoffMs,
               awaitRefresh,
@@ -176,7 +173,6 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const keychain = yield* CursorKeychain.CursorKeychain;
       const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const hostEnvironment = yield* HostProcess.Environment;
       const processEnv = yield* mergeProviderInstanceEnvironment(
@@ -346,15 +342,10 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
                   const skills = yield* readMachineSkills;
                   const usageLimits =
                     providerSnapshot.auth.status === "authenticated"
-                      ? yield* host.settings.get.pipe(
-                          Effect.flatMap((settings) =>
-                            readCursorUsageLimits(
-                              effectiveConfig,
-                              { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
-                              settings.cursorKeychainUsageEnabled,
-                            ),
-                          ),
-                        )
+                      ? yield* readCursorUsageLimits(effectiveConfig, {
+                          ...effectiveEnvironment,
+                          CURSOR_API_KEY: apiKey,
+                        })
                       : undefined;
                   return {
                     ...providerSnapshot,
@@ -367,7 +358,6 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
         ),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(CursorKeychain.CursorKeychain, keychain),
         Effect.map(stampSnapshot),
         Effect.tap((provider) =>
           Effect.sync(() => {

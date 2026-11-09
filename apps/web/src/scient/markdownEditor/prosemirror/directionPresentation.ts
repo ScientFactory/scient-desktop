@@ -6,7 +6,6 @@ import {
   countStrongScripts,
   countTableStrongScripts,
   findRtlFlowArrowSpans,
-  resolveAggregateDirectionFromCounts,
   resolveDominantDirectionFromCounts,
   resolveHeadingSectionDirectionFromCounts,
   resolveProseBlockDirectionFromCounts,
@@ -280,7 +279,7 @@ function addNodeDecorations(
     resolved =
       context.inheritedDirection ??
       context.tableContentDirection ??
-      resolveAggregateDirectionFromCounts(proseCounts(node), direction);
+      resolveProseBlockDirectionFromCounts(proseCounts(node), direction);
     childContext = { ...context, domDirection: resolved, inheritedDirection: resolved };
   } else if (tableRole === "cell" || tableRole === "header_cell") {
     resolved = resolveTableCellDirectionFromCounts(

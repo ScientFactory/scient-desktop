@@ -41,6 +41,7 @@ export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
+export * from "./speech.ts";
 export * from "./pullRequest.ts";
 // SCIENT-ORCHESTRATION:START — historical data keeps its canonical codecs
 // after the V1 execution facade retires.
@@ -165,4 +166,7 @@ export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient chat-only rewind without a file snapshot (new file, no upstream edits).
+export * from "./scient/checkpointRewind.ts";
 // SCIENT-FORK:END

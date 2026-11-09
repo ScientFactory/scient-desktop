@@ -5,7 +5,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -56,8 +56,6 @@ const DROID_PRESENTATION = {
   displayName: "Droid",
   showInteractionModeToggle: true,
   requiresNewThreadForModelChange: false,
-  // Droid's ACP surface has no conversation rewind.
-  supportsConversationRollback: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -261,7 +259,7 @@ const probeAndDiscoverDroidViaAcp = (
 ): Effect.Effect<
   DroidAcpProbeOutcome,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -274,10 +272,8 @@ const probeAndDiscoverDroidViaAcp = (
         environment,
         makeAcpRuntime,
         cwd,
-      ).pipe(Effect.catch((error) => Effect.die(error)));
-      const initializeResult = yield* acp
-        .initialize()
-        .pipe(Effect.catch((error) => Effect.die(error)));
+      ).pipe(Effect.orDie);
+      const initializeResult = yield* acp.initialize().pipe(Effect.orDie);
       const accountCapabilities = droidAccountCapabilitiesFromInitializeResult(initializeResult);
       // `null` = the agent refused startup with the scoped Droid
       // authentication signal (CLI not signed in). Any other failure is a
@@ -412,7 +408,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
 ): Effect.fn.Return<
   DroidProviderStatusResult,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = droidModelsFromSettings(droidSettings.customModels);
@@ -620,17 +616,6 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
     probeOutcome.accountCapabilities,
     probeOutcome.sessionId,
   );
-});
-
-export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(function* (
-  droidSettings: DroidSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
-> {
-  return (yield* checkDroidProviderStatusWithCapabilities(droidSettings, environment)).snapshot;
 });
 
 export const enrichDroidSnapshot = (input: {

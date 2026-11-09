@@ -1,7 +1,7 @@
 import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
@@ -34,13 +34,10 @@ export class ScientSkillToolError extends Schema.TaggedError<ScientSkillToolErro
   },
 ) {}
 
-const skillOperation = (id: string): OperationMetadata => ({
+const skillOperation = (id: string): OperationDefinition => ({
   id,
-  family: "skills",
   scope: "skill-release",
   requiredCapabilities: ["skills:read"],
-  approval: "session-grant",
-  documentation: "docs/internals/scient-skills.md",
 });
 
 export const ScientSkillSummary = Schema.Struct({

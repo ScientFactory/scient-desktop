@@ -1,6 +1,7 @@
 import { extensionIconData } from "./ExtensionIconData.ts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   makeConnectorFetch,
   STRICT_EGRESS_POLICY,
@@ -8,6 +9,15 @@ import {
 } from "./connectors/ConnectorOutbound.ts";
 
 const MAX_ICON_BYTES = 64 * 1024;
+
+class CodexStoreIconError extends Schema.TaggedError<CodexStoreIconError>()("CodexStoreIconError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "Could not fetch a plugin store icon.";
+  }
+}
+
 const fetchIcon = makeConnectorFetch({
   policy: STRICT_EGRESS_POLICY,
   redirect: "error",
@@ -36,19 +46,22 @@ export function makeCodexStoreIcons(fetch: ConnectorFetch = fetchIcon) {
     const now = yield* Clock.currentTimeMillis;
     const cached = cache.get(key);
     if (cached && now - cached.at < 3_600_000) return cached.value;
-    const value = yield* Effect.tryPromise(async (signal) => {
-      const response = await fetch(key, {
-        signal,
-        headers: { accept: "image/png,image/jpeg,image/webp,image/svg+xml" },
-      });
-      if (!response.ok) {
-        await response.body?.cancel();
-        return undefined;
-      }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.length === 0 || bytes.length > MAX_ICON_BYTES) return undefined;
-      const mime = response.headers.get("content-type")?.split(";")[0]?.trim();
-      return extensionIconData(bytes, mime ?? "");
+    const value = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const response = await fetch(key, {
+          signal,
+          headers: { accept: "image/png,image/jpeg,image/webp,image/svg+xml" },
+        });
+        if (!response.ok) {
+          await response.body?.cancel();
+          return undefined;
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length === 0 || bytes.length > MAX_ICON_BYTES) return undefined;
+        const mime = response.headers.get("content-type")?.split(";")[0]?.trim();
+        return extensionIconData(bytes, mime ?? "");
+      },
+      catch: (cause) => new CodexStoreIconError({ cause }),
     }).pipe(Effect.orElseSucceed(() => undefined));
     cache.delete(key);
     cache.set(key, { value, at: now });

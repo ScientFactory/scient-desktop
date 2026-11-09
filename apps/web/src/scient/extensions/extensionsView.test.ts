@@ -1,18 +1,13 @@
 import { validateCuratedAddress } from "./extensionsView";
-import {
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-  type DiscoverEntry,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
   audienceReaches,
   connectorActions,
+  connectorFacts,
   providerServerDisplayName,
   audienceSupport,
   collectProviderExtensionGroups,
-  preferCuratedStoreEntries,
   providerExtensionAudience,
   worksWithCardAgents,
 } from "./extensionsView";
@@ -62,12 +57,6 @@ describe("extension audiences", () => {
     expect(groups[0]?.mcpServers).toEqual([]);
     expect(audienceReaches(providerExtensionAudience(claude, plugin), codex)).toBe(false);
   });
-  it("prefers explicit curated aliases without hiding unrelated store entries", () => {
-    const curated = [{ agentStores: { codex: "notion" } }] as DiscoverEntry[];
-    expect(preferCuratedStoreEntries([{ name: "notion" }, { name: "gmail" }], curated)).toEqual([
-      { name: "gmail" },
-    ]);
-  });
 });
 
 it("keeps standalone Claude MCP servers private and retains a Scient-owned shared plugin when source sharing is off", () => {
@@ -101,6 +90,30 @@ it("offers sign-in only when the grant is needed and keeps account connector ide
   expect(providerServerDisplayName(server)).toBe("Gmail");
   expect(server.name).toBe("claude.ai Gmail");
   expect(providerServerDisplayName({ ...server, scope: "user" })).toBe(server.name);
+});
+
+it("drops the catalog's access words from a connector once its sign-in works", () => {
+  const entry = {
+    name: "io.github.github/github-mcp-server",
+    version: "2.0.2",
+    hosting: "Official",
+    accountRequired: true,
+    remotes: [],
+    installable: true,
+    categories: [],
+  } satisfies Parameters<typeof connectorFacts>[0];
+  const borrowed = { type: "source-control", host: "github.com", account: "octo" } as const;
+  expect(connectorFacts(entry, { status: "connected", auth: borrowed })).toEqual([
+    "Official",
+    "Signed in as octo",
+  ]);
+  expect(
+    connectorFacts(entry, { status: "connected", auth: { type: "oauth", usesOwnClient: false } }),
+  ).toEqual(["Official"]);
+  expect(connectorFacts(entry, { status: "needs-credential", auth: borrowed })).toEqual([
+    "Official",
+    "Account needed",
+  ]);
 });
 
 // Tenant endpoints must never accept an alternate host, credentials or query parameters.

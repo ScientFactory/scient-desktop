@@ -23,6 +23,8 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
+  // SCIENT-FORK: T3 voice setup is dormant; Scient's comment control never opens it.
+  onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
   const [voiceBusy, setVoiceBusy] = useState(false);

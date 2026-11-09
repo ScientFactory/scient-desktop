@@ -14,17 +14,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { layerMemory as SqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
+import { dispatchScientOperation } from "../../../scient/operations/AgentOperationDispatcher.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { readHandoffSummaryForInvocation } from "./handlers.ts";
-import {
-  HANDOFF_SUMMARY_PAGE_CHARS,
-  ScientHandoffSummaryReadToolError,
-  type ScientHandoffSummaryReadInput,
-} from "./tools.ts";
+import { HANDOFF_SUMMARY_PAGE_CHARS, type ScientHandoffSummaryReadInput } from "./tools.ts";
 
 const callerId = ThreadId.make("thread-read-caller");
 const siblingId = ThreadId.make("thread-read-sibling");
 const foreignId = ThreadId.make("thread-read-foreign");
+const deletedId = ThreadId.make("thread-read-deleted");
+const missingId = ThreadId.make("thread-read-missing");
 const projectId = ProjectId.make("project-thread-read");
 const instanceId = ProviderInstanceId.make("codex");
 const now = DateTime.makeUnsafe("2026-10-04T10:00:00.000Z");
@@ -46,13 +45,16 @@ const read = (
   input: ScientHandoffSummaryReadInput,
   capabilities?: AgentInvocationContext.AgentInvocationScope["capabilities"],
 ) =>
-  readHandoffSummaryForInvocation(input).pipe(
+  dispatchScientOperation(
+    "threads.handoff-summary.read",
+    readHandoffSummaryForInvocation(input),
+  ).pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, invocation(capabilities)),
   );
 
 const seedThread = Effect.fn("seedThreadReadFixture")(function* (
   id: ThreadId,
-  options: { projectId?: ProjectId } = {},
+  options: { projectId?: ProjectId; deleted?: boolean } = {},
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   yield* store.apply({
@@ -81,7 +83,7 @@ const seedThread = Effect.fn("seedThreadReadFixture")(function* (
       settledOverride: null,
       settledAt: null,
       lastVisitedAt: null,
-      deletedAt: null,
+      deletedAt: options.deleted === true ? now : null,
     },
   });
 });
@@ -93,7 +95,6 @@ describe("scient_handoff_summary_read", () => {
       Effect.gen(function* () {
         yield* seedThread(callerId);
         yield* seedThread(siblingId);
-        yield* seedThread(foreignId, { projectId: ProjectId.make("other-project") });
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const handoffId = ContextHandoffId.make("read-summary");
         const summary = 'Original summary 🧪\n\\" ' + "retained ".repeat(3_000);
@@ -139,15 +140,42 @@ describe("scient_handoff_summary_read", () => {
           yield* read({ threadId: siblingId, contextHandoffId: handoffId }).pipe(Effect.flip),
         ).toMatchObject({ code: "thread_not_found" });
         expect(
-          yield* read({ threadId: foreignId, contextHandoffId: handoffId }).pipe(Effect.flip),
-        ).toMatchObject({ code: "thread_outside_project" });
-        expect(
           yield* read(
             { threadId: callerId, contextHandoffId: handoffId },
             new Set(["sources:read"]),
           ).pipe(Effect.flip),
-        ).toMatchObject({ code: "capability_denied" });
+        ).toMatchObject({ _tag: "AgentOperationUnavailable" });
       }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "answers a missing, deleted and another project's thread alike, as upstream's reader does",
+    () =>
+      Effect.gen(function* () {
+        yield* seedThread(callerId);
+        yield* seedThread(deletedId, { deleted: true });
+        yield* seedThread(foreignId, { projectId: ProjectId.make("other-project") });
+        const handoffId = ContextHandoffId.make("read-summary");
+        const failures = yield* Effect.forEach([missingId, deletedId, foreignId], (threadId) =>
+          read({ threadId, contextHandoffId: handoffId }).pipe(Effect.flip),
+        );
+        for (const failure of failures)
+          expect(failure).toMatchObject({
+            code: "thread_not_found",
+            message: "The thread was not found.",
+          });
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("refuses a deleted calling thread", () =>
+    Effect.gen(function* () {
+      yield* seedThread(callerId, { deleted: true });
+      expect(
+        yield* read({ threadId: callerId, contextHandoffId: ContextHandoffId.make("any") }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({ code: "thread_not_found", message: "The calling thread was not found." });
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("denies ungranted access before requiring persistence services", () =>
@@ -157,7 +185,7 @@ describe("scient_handoff_summary_read", () => {
           { threadId: callerId, contextHandoffId: ContextHandoffId.make("any") },
           new Set(["sources:read"]),
         ).pipe(Effect.flip),
-      ).toBeInstanceOf(ScientHandoffSummaryReadToolError);
+      ).toMatchObject({ _tag: "AgentOperationUnavailable" });
     }).pipe(Effect.provide(Layer.mock(ProjectionStore.ProjectionStoreV2)({}))),
   );
 });

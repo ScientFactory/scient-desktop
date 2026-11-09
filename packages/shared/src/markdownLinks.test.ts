@@ -2,6 +2,7 @@
 import { workspaceRelativeFilePath, collapseAbsoluteFilePath } from "./path.ts";
 // SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
+import { serializeComposerFileLink } from "./composerTrigger.ts";
 import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
 import {
@@ -36,11 +37,18 @@ describe("inlineCodeFilePathCandidate", () => {
     ["docs/סיכום.md", null],
     ["Recorded evidence here: /tmp/image.png", null],
     // SCIENT-FORK:END
+    ["allocator.cc:217", "allocator.cc:217"],
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
+    // regression: #30757 an agent's shortened path is not a file
+    ["/tmp/claude-1000/...", null],
+    ["/tmp/claude-1000/...:12", null],
+    ["/tmp/.../scratchpad/notes.md", null],
+    ["~/projects/…/notes.md", null],
+    ["src/.../main.ts", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -63,6 +71,12 @@ describe("parseMarkdownFileLink", () => {
     ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
     ["</D:/Programme/t3code/ChatMarkdown.tsx:1>", "D:/Programme/t3code/ChatMarkdown.tsx"],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md"],
+    ["app/routes/posts.$postId.tsx", "app/routes/posts.$postId.tsx"],
+    ["src/routes/+page.svelte", "src/routes/+page.svelte"],
+    ["app/(marketing)/page.tsx:12", "app/(marketing)/page.tsx"],
+    ["pages/posts/%5Bid%5D.tsx", "pages/posts/[id].tsx"],
+    ["+page.svelte", "+page.svelte"],
+    ["[id].tsx", "[id].tsx"],
     // SCIENT-FORK:START
     ["apps/mobile/src/index.ts:10", "apps/mobile/src/index.ts"],
     ["docs/My%20Folder/checklist.xml", "docs/My Folder/checklist.xml"],
@@ -85,12 +99,29 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
 
-  // SCIENT-FORK:START
   it.each([
+    "app/routes/posts.$postId.tsx",
+    "pages/posts/[id].tsx",
+    "docs/My File (draft).md",
+    "@scope/package.json",
+    "$postId.tsx",
+  ])("reads back the composer's link to %s", (path) => {
+    const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
+    expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
+  });
+
+  it.each([
+    "https://example.com/docs",
+    "/chat/settings#L3",
+    "TODO:12",
+    "patches",
+    "me@example.com",
+    "foo(bar)",
+    "$HOME",
+    // SCIENT-FORK:START
     "",
     "#anchor",
     "//cdn.example.com/clip.mp4",
-    "https://example.com/docs",
     "mailto:someone@example.com",
     "javascript:alert(1)",
     "sandbox:/mnt/data/Report%20(readable).md",
@@ -99,15 +130,12 @@ describe("parseMarkdownFileLink", () => {
     "Report%09draft.md",
     "Folder/Report%0Adraft.md",
     "/chat/settings",
-    "/chat/settings#L3",
     "/app#L1",
     "readme",
-    "TODO:12",
-    "patches",
+    // SCIENT-FORK:END
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });
-  // SCIENT-FORK:END
 
   it("recognizes a relative folder that ends in a slash", () => {
     expect(parseMarkdownFileLink("patches/")).toEqual({ path: "patches/" });

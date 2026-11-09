@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -67,7 +67,7 @@ export type ScientAgentDriverEnv =
   | ProviderHost
   | BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
@@ -193,7 +193,7 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       spawner,
       fileSystem: fs,
       path,
-      crypto: yield* Crypto.Crypto,
+      random: yield* SecureRandom.SecureRandom,
       serverConfig,
       makeProcess: makeRpcClient,
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),

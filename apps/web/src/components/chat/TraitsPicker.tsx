@@ -304,20 +304,6 @@ export function getReasoningTraitStep(input: {
   return change?.modelOptions ? { prompt: change.prompt, modelOptions: change.modelOptions } : null;
 }
 
-// SCIENT-FORK:START — the composer no longer asks, but its regression test still does.
-export function shouldRenderTraitsControls(input: {
-  provider: ProviderDriverKind;
-  models: ReadonlyArray<ServerProviderModel>;
-  model: string | null | undefined;
-  promptUltrathink?: PromptUltrathink | undefined;
-  modelOptions: ProviderOptions | null | undefined;
-  allowPromptInjectedEffort?: boolean;
-  planModeEnabled: boolean;
-}): boolean {
-  return getTraitsSectionVisibility(input).hasAnyControls;
-}
-// SCIENT-FORK:END
-
 export interface TraitsMenuContentProps {
   // SCIENT-FORK:START — native-model selection from the traits menu.
   onNativeModelChange?: ((model: string) => void) | undefined;

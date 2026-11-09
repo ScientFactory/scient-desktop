@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import { ChildProcessSpawner } from "effect/process";
 import * as Redacted from "effect/Redacted";
@@ -31,7 +33,6 @@ import {
   makeDroidAcpRuntime,
   requestedDroidEffortFromSelection,
   resolveAdvertisedDroidAuthMethodId,
-  resolveDroidAuthMethodId,
   resolveDroidCliBinaryPath,
 } from "./DroidAcpSupport.ts";
 
@@ -200,7 +201,7 @@ describe("makeDroidAcpRuntime", () => {
         expect(Exit.isFailure(exit) && String(exit.cause)).toContain(
           "cannot run Droid without tools in this process",
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
@@ -261,8 +262,6 @@ describe("auth resolution", () => {
     expect(hasDroidApiKeyEnvironment({ FACTORY_API_KEY: "k" })).toBe(true);
     expect(hasDroidApiKeyEnvironment({ FACTORY_API_KEY: "  " })).toBe(false);
     expect(hasDroidApiKeyEnvironment({})).toBe(false);
-    expect(resolveDroidAuthMethodId({ FACTORY_API_KEY: "k" })).toBe("factory-api-key");
-    expect(resolveDroidAuthMethodId({})).toBe("device-pairing");
   });
 
   it("resolves against the advertised list and degrades honestly", () => {

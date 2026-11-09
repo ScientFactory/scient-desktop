@@ -6,6 +6,7 @@ import {
   type AnalysisRunSummary as AnalysisRunSummaryType,
   type AnalysisStorageSummary,
 } from "@scientfactory/analysis";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -247,10 +248,10 @@ const make = Effect.gen(function* () {
             { concurrency: 16 },
           );
           yield* sql`DELETE FROM scient_analysis_run_index WHERE project_id = ${projectId}`;
-          for (let offset = 0; offset < rows.length; offset += rebuildBatchSize) {
+          for (const batch of Arr.chunksOf(rows, rebuildBatchSize)) {
             yield* sql`
             INSERT INTO scient_analysis_run_index
-            ${sql.insert(rows.slice(offset, offset + rebuildBatchSize))}
+            ${sql.insert(batch)}
           `;
           }
           yield* sql`

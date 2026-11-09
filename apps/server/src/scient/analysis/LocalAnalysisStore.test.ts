@@ -85,11 +85,17 @@ describe("LocalAnalysisStore", () => {
           Layer.provide(ServerConfig.ServerConfig.layerTest(process.cwd(), baseDir)),
           Layer.provideMerge(NodeServices.layer),
         );
+        // Written by earlier versions; current settings live in Scientific Computing.
+        const settingsPath = `${baseDir}/userdata/analysis/runtime-settings.json`;
+        yield* fs.makeDirectory(`${baseDir}/userdata/analysis`, { recursive: true });
+        yield* fs.writeFileString(
+          settingsPath,
+          JSON.stringify({ version: 1, executablePaths: { matlab: "/opt/matlab/bin/matlab" } }),
+        );
 
         yield* Effect.scoped(
           Effect.gen(function* () {
             const store = yield* LocalAnalysisStore;
-            yield* store.writeRuntimeExecutablePath("matlab", "/opt/matlab/bin/matlab");
             yield* store.persistRun(run);
             yield* store.appendOutput(run.projectId, run.receipt.runId, {
               sequence: 0,
@@ -245,7 +251,7 @@ describe("LocalAnalysisStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("surfaces unreadable runtime settings and lets configuration repair them", () =>
+  it.effect("surfaces unreadable runtime settings", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -266,11 +272,6 @@ describe("LocalAnalysisStore", () => {
           const unreadable = yield* store.readRuntimeExecutablePath("matlab");
           expect(unreadable.executablePath).toBeNull();
           expect(unreadable.warning).toContain("unreadable");
-          yield* store.writeRuntimeExecutablePath("matlab", "/Applications/MATLAB.app/bin/matlab");
-          expect(yield* store.readRuntimeExecutablePath("matlab")).toEqual({
-            executablePath: "/Applications/MATLAB.app/bin/matlab",
-            warning: null,
-          });
         }).pipe(Effect.provide(storeLayer)),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

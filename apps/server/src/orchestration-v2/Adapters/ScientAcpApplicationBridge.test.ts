@@ -6,22 +6,46 @@ import {
   scientAcpApplicationBridge,
   scientAcpAwarenessBridge,
   scientAcpProviderBridge,
+  scientAntigravityBridge,
 } from "./ScientAcpApplicationBridge.ts";
 
 describe("Scient ACP application bridge", () => {
-  it("keeps Scient prompt and runtime copy on the shared non-awareness bridge", () => {
-    const prompt = scientAcpProviderBridge.composePrompt?.({
+  it("puts the session's awareness in the first prompt of providers with no private seam", () => {
+    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true } as const;
+    const granted = scientAcpProviderBridge.composePrompt({
       prompt: "Continue.",
-      state: { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true },
+      state: { ...state, capabilities: new Set(["preview", "device", "compute"]) },
     });
     const runtime = scientAcpProviderBridge.runtimeInstructions?.({ harness: "ACP" });
 
-    assert.include(prompt, "Scient interaction mode: Default");
-    assert.include(prompt, "## Scient browser");
-    assert.include(prompt, "Scient orchestration");
-    assert.include(prompt, "## Scient devices");
+    assert.include(granted, "Scient interaction mode: Default");
+    assert.include(granted, "## Scient\nYou are in Scient");
+    assert.include(granted, "## Scient Compute");
+    assert.include(granted, "Scient orchestration");
+    // Each block once: the device text keeps upstream's own prompt delivery.
+    assert.equal(granted.split("## Scient browser").length, 2);
+    assert.equal(granted.split("## Scient devices").length, 2);
+    const noBrowser = scientAcpProviderBridge.composePrompt({
+      prompt: "Continue.",
+      state: { ...state, capabilities: new Set(["device"]) },
+    });
+    assert.notInclude(noBrowser, "## Scient browser");
     assert.include(runtime, "running in Scient through the ACP harness");
     assert.notInclude(runtime, "T3 Code");
+  });
+
+  it("tells Antigravity to write project files with workspace tools", () => {
+    const prompt = scientAntigravityBridge.composePrompt({
+      prompt: "Continue.",
+      state: {
+        interactionMode: "default",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        capabilities: new Set(),
+      },
+    });
+    assert.include(prompt, "## Scient\nYou are in Scient");
+    assert.include(prompt, "Do not use Antigravity's `write_to_file` tool for project files");
   });
 
   it("leaves the device block to awareness on the awareness bridge", () => {
@@ -30,6 +54,7 @@ describe("Scient ACP application bridge", () => {
     const awareness = scientAcpApplicationBridge.scientAwareness(new Set(["device"]));
 
     assert.notInclude(prompt, "## Scient devices");
+    assert.notInclude(prompt, "## Scient\nYou are in Scient");
     assert.include(prompt, "Scient orchestration");
     assert.include(awareness, "## Scient devices");
     assert.equal(

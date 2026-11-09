@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -10,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -70,7 +72,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       const result = yield* Fiber.join(prompt);
       expect(Exit.isSuccess(result) && result.value).toEqual({ stopReason: "cancelled" });
     }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("ACP prompt teardown", () => {
   it.live("preserves process failure when teardown interrupts a prompt before its write", () =>
