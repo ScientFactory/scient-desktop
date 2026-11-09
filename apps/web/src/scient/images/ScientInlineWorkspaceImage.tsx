@@ -44,7 +44,7 @@ import {
   type ScientImageContextMenuHandler,
 } from "./ScientImageControls";
 
-import { copyStaticImage, downloadStaticImage } from "../artifacts/staticImageActions";
+import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import {
   inlineImageFormatLabel,
   inlineWorkspaceImageResource,

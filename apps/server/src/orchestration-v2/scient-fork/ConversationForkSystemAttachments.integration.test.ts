@@ -1,4 +1,5 @@
 import * as Hex from "effect/encoding/Hex";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -15,7 +16,7 @@ import {
   Sha256Digest,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -86,7 +87,7 @@ const testLayer = Exports.layer.pipe(
   Layer.provideMerge(EventStore.layer),
   Layer.provideMerge(runtime),
   Layer.provideMerge(SqlitePersistenceMemory),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.live(
@@ -222,7 +223,7 @@ it.live(
         });
         assert.ok(archive.output._tag === "file");
         const bytes = yield* fs.readFile(archive.output.path);
-        const sha256 = yield* (yield* Crypto.Crypto).digest("SHA-256", bytes);
+        const sha256 = yield* (yield* Digest.Digest).digest(Digest.sha256, bytes);
         const importDirectory = yield* fs.makeTempDirectoryScoped({
           prefix: "fork-system-package-",
         });

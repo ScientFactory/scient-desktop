@@ -8,7 +8,6 @@ import {
   AnalysisRuntimeId,
   AnalysisSourceRevision,
   type AnalysisRunContext,
-  type AnalysisRuntimeProfile,
 } from "@scientfactory/analysis";
 import { ExecutionRunId } from "@scientfactory/execution";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -23,7 +22,6 @@ import {
   matlabRuntimeAdapter,
   prepareMatlabCommand,
   prepareMatlabRun,
-  prepareMatlabVerification,
 } from "./MatlabAdapter.ts";
 
 const tempDirectories: string[] = [];
@@ -67,22 +65,6 @@ async function runContext(executablePath = "/opt/matlab/bin/matlab") {
     absoluteSourcePath: sourcePath,
     artifactStagingDirectory,
   } satisfies AnalysisRunContext;
-}
-
-function runtimeProfile(executablePath: string): AnalysisRuntimeProfile {
-  return {
-    id: AnalysisRuntimeId.make("matlab:local"),
-    kind: "matlab",
-    label: "MATLAB",
-    availability: "available",
-    source: "custom",
-    executablePath,
-    version: null,
-    detail: null,
-    capabilities: ["run-file", "stream-output", "cancel-process-tree", "capture-artifacts"],
-    inspectedAt: "2026-08-12T00:00:00.000Z",
-    verification: null,
-  };
 }
 
 afterEach(async () => {
@@ -270,109 +252,6 @@ describe("MATLAB runtime adapter", () => {
     });
   });
 
-  it("verifies startup through a private result file and records reproducible runtime details", async () => {
-    const executable = await executableFixture();
-    const prepared = await prepareMatlabVerification(runtimeProfile(executable));
-    try {
-      expect(prepared.args).toEqual([
-        "-batch",
-        "cd(matlabroot);run(getenv('SCIENT_MATLAB_VERIFY'))",
-      ]);
-      expect(prepared.executableIdentity).toContain(await NodeFSP.realpath(executable));
-      await NodeFSP.writeFile(
-        prepared.environment.SCIENT_MATLAB_VERIFY_RESULT,
-        JSON.stringify({
-          release: "R2026a",
-          version: "26.1.0.123456",
-          architecture: "maca64",
-          installationRoot: "/Applications/MATLAB_R2026a.app",
-          javaAvailable: true,
-          javaVersion: "Java 21",
-          toolboxes: [
-            { name: "MATLAB", version: "26.1" },
-            { name: "Image Processing Toolbox", version: "26.1" },
-          ],
-        }),
-        "utf8",
-      );
-      await expect(
-        prepared.collect({
-          exitCode: 0,
-          timedOut: false,
-          output: [],
-          verifiedAt: "2026-08-12T00:00:05.000Z",
-          durationMs: 5_000,
-        }),
-      ).resolves.toMatchObject({
-        status: "ready",
-        release: "R2026a",
-        architecture: "maca64",
-        javaAvailable: true,
-        toolboxes: [
-          { name: "MATLAB", version: "26.1" },
-          { name: "Image Processing Toolbox", version: "26.1" },
-        ],
-      });
-    } finally {
-      await prepared.cleanup();
-    }
-  });
-
-  it("classifies sign-in, license, dependency, startup, and timeout failures honestly", async () => {
-    const cases = [
-      ["Please sign in to your MathWorks Account", "needs-sign-in"],
-      ["License Manager Error - checkout failed", "license-unavailable"],
-      ["Unable to find a Java runtime", "missing-dependency"],
-      ["MATLAB failed to start", "startup-failed"],
-    ] as const;
-    for (const [output, status] of cases) {
-      const prepared = await prepareMatlabVerification(runtimeProfile(await executableFixture()));
-      try {
-        await expect(
-          prepared.collect({
-            exitCode: 1,
-            timedOut: false,
-            output: [{ stream: "stderr", text: output }],
-            verifiedAt: "2026-08-12T00:00:05.000Z",
-            durationMs: 500,
-          }),
-        ).resolves.toMatchObject({ status });
-      } finally {
-        await prepared.cleanup();
-      }
-    }
-
-    const ambiguous = await prepareMatlabVerification(runtimeProfile(await executableFixture()));
-    try {
-      await expect(
-        ambiguous.collect({
-          exitCode: 1,
-          timedOut: false,
-          output: [{ stream: "stderr", text: "Unexpected exit 17" }],
-          verifiedAt: "2026-08-12T00:00:05.000Z",
-          durationMs: 500,
-        }),
-      ).resolves.toMatchObject({ status: "unknown", detail: expect.stringContaining("exit 17") });
-    } finally {
-      await ambiguous.cleanup();
-    }
-
-    const timedOut = await prepareMatlabVerification(runtimeProfile(await executableFixture()));
-    try {
-      await expect(
-        timedOut.collect({
-          exitCode: null,
-          timedOut: true,
-          output: [],
-          verifiedAt: "2026-08-12T00:01:30.000Z",
-          durationMs: 90_000,
-        }),
-      ).resolves.toMatchObject({ status: "timed-out" });
-    } finally {
-      await timedOut.cleanup();
-    }
-  });
-
   it("collects a MATLAB MException side channel without making outside paths clickable", async () => {
     const context = await runContext();
     await prepareMatlabRun(context);
@@ -441,46 +320,6 @@ describe("MATLAB runtime adapter", () => {
 });
 
 describe.runIf(process.env.SCIENT_REAL_MATLAB === "1")("MATLAB runtime adapter integration", () => {
-  it("verifies the installed MATLAB release, architecture, Java, and toolbox inventory", async () => {
-    const executablePath =
-      process.env.SCIENT_REAL_MATLAB_EXECUTABLE ?? "/Applications/MATLAB_R2026a.app/bin/matlab";
-    const prepared = await prepareMatlabVerification(runtimeProfile(executablePath));
-    try {
-      const result = await new Promise<{
-        code: number | null;
-        output: Array<{ stream: "stdout" | "stderr"; text: string }>;
-      }>((resolve, reject) => {
-        const child = NodeChildProcess.spawn(prepared.executable, prepared.args, {
-          cwd: prepared.cwd,
-          env: { ...process.env, ...prepared.environment },
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 300_000,
-        });
-        const output: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
-        child.stdout.on("data", (chunk) => output.push({ stream: "stdout", text: String(chunk) }));
-        child.stderr.on("data", (chunk) => output.push({ stream: "stderr", text: String(chunk) }));
-        child.on("error", reject);
-        child.on("close", (code) => resolve({ code, output }));
-      });
-      const verification = await prepared.collect({
-        exitCode: result.code,
-        timedOut: false,
-        output: result.output,
-        verifiedAt: "2026-08-12T00:00:00.000Z",
-        durationMs: 0,
-      });
-      expect(verification, result.output.map((chunk) => chunk.text).join("\n")).toMatchObject({
-        status: "ready",
-        release: "R2026a",
-      });
-      expect(verification.architecture).not.toBeNull();
-      expect(verification.installationRoot).toContain("MATLAB_R2026a.app");
-      expect(verification.toolboxes.some((toolbox) => toolbox.name === "MATLAB")).toBe(true);
-    } finally {
-      await prepared.cleanup();
-    }
-  });
-
   it("captures the fast static preview and native continuation formats by default", async () => {
     const executablePath =
       process.env.SCIENT_REAL_MATLAB_EXECUTABLE ?? "/Applications/MATLAB_R2026a.app/bin/matlab";

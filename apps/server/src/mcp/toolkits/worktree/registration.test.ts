@@ -8,6 +8,7 @@ import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ServerConfig from "../../../config.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskServ
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -47,7 +49,6 @@ import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { DeviceToolkit } from "../device/tools.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
 import * as ComputeMcpGateway from "../compute/ComputeMcpGateway.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
@@ -101,6 +102,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  Layer.mock(AssetSigner.AssetSigner)({}),
   layerRepositories,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
@@ -226,7 +228,9 @@ it.effect.each(
       const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
-      const deviceNames = new Set(Object.keys(DeviceToolkit.tools));
+      // The credential holds worktree, orchestration and preview: only the device
+      // tools, whose every call needs a grant it lacks, are not listed.
+      const unlisted = new Set(McpHttpServer.hostMcpToolGrants.device.map((tool) => tool.name));
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
       expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,
@@ -244,9 +248,7 @@ it.effect.each(
       expect(new Set(toolNames).size).toBe(toolNames.length);
       for (const name of hostNames) {
         expect(scientOperationCatalog.forTool(name), `${name} must have one owner`).toBeUndefined();
-        expect(toolNames.includes(name), `registered host tool ${name}`).toBe(
-          !deviceNames.has(name),
-        );
+        expect(toolNames.includes(name), `registered host tool ${name}`).toBe(!unlisted.has(name));
       }
       for (const name of toolNames) {
         expect(
@@ -278,6 +280,7 @@ it.effect.each(
     Effect.provide(
       Layer.mergeAll(
         NodeHttpServer.layerTest,
+        NodeCrypto.layer,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-worktree-mcp-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),

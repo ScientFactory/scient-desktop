@@ -4,12 +4,15 @@ import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
@@ -19,9 +22,10 @@ import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 
-class NativeForkFixtureError extends Error {
-  readonly _tag = "NativeForkFixtureError";
-}
+class NativeForkFixtureError extends Schema.TaggedError<NativeForkFixtureError>()(
+  "NativeForkFixtureError",
+  { message: Schema.String },
+) {}
 
 /** Real RPC and native tools; only the model is a loopback stub. */
 describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
@@ -36,7 +40,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
           );
           const { environment, homePath } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           // One long JSON line, like an actual fork handoff. Reading a preview of
           // this line is insufficient: the stub requests every byte range in order.
@@ -90,7 +94,9 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
                     )
                     .find((path) => path.length > 0);
                   if (!encodedPath)
-                    throw new NativeForkFixtureError("Missing context file in native model input");
+                    throw new NativeForkFixtureError({
+                      message: "Missing context file in native model input",
+                    });
                   contextPath = JSON.parse(encodedPath) as string;
                 } else {
                   const last = body.messages.filter((message) => message.role === "tool").at(-1);
@@ -103,9 +109,9 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
                     .filter((line) => /^[A-Za-z0-9+/=]+$/u.test(line))
                     .join("");
                   if (Buffer.from(encoded, "base64").toString("utf8") !== chunks[delivered])
-                    throw new NativeForkFixtureError(
-                      `Native tool did not deliver complete chunk ${delivered}: ${output.length} bytes: ${output.slice(0, 400)} ... ${output.slice(-200)}`,
-                    );
+                    throw new NativeForkFixtureError({
+                      message: `Native tool did not deliver complete chunk ${delivered}: ${output.length} bytes: ${output.slice(0, 400)} ... ${output.slice(-200)}`,
+                    });
                   delivered += 1;
                 }
                 response.writeHead(200, { "content-type": "text/event-stream" });
@@ -161,7 +167,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
           );
           const address = server.address();
           if (!address || typeof address === "string")
-            throw new NativeForkFixtureError("Stub did not listen");
+            throw new NativeForkFixtureError({ message: "Stub did not listen" });
           const instanceId = ProviderInstanceId.make("omp-fork-live");
           const connection: ResolvedModelConnection = {
             id: "stub",
@@ -253,7 +259,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     180_000,

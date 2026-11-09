@@ -42,13 +42,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../../auth/utils.ts";
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as AssetSigner from "../../assets/AssetSigner.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "../../auth/utils.ts";
 import * as ServerConfig from "../../config.ts";
 import { readScicPackage, stagedAttachmentFile } from "../conversationFile/ScicReader.ts";
 import { copyVerified, sha256File } from "./stagedAttachmentCopy.ts";
@@ -81,7 +76,6 @@ import {
 } from "./ConversationImporter.ts";
 
 export const CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX = SCIENT_CONVERSATION_IMPORT_UPLOAD_PATH;
-const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const COMPLETIONS_DIRECTORY = "completions";
 const PACKAGE_FILE = "package.scic";
 const SNAPSHOT_FILE = "conversation.json";
@@ -302,7 +296,8 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  // Upload URLs share the asset signing key, as T3's attachment uploads do.
+  const signer = yield* AssetSigner.AssetSigner;
   const importer = yield* ConversationImporter;
   const scope = yield* Effect.scope;
   const ttlMs = options.ttlMs ?? CONVERSATION_IMPORT_STAGING_TTL_MS;
@@ -489,8 +484,6 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
     }
   }
 
-  const signingSecret = secrets.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
-
   const createUpload: ConversationImportStaging["Service"]["createUpload"] = Effect.fn(
     "ConversationImportStaging.createUpload",
   )(function* (request) {
@@ -510,13 +503,22 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
     if (request.sizeBytes > SCIENT_CONVERSATION_IMPORT_MAX_PACKAGE_BYTES) {
       return yield* importError("package-too-large", "This file is larger than Scient imports.");
     }
-    const secret = yield* signingSecret.pipe(
-      Effect.mapError(failure("Could not load the upload signing key.")),
-    );
     const importId = `cimp_${NodeCrypto.randomUUID()}` as ConversationImportId;
     const at = yield* now;
     const expiresAt = at + ATTACHMENT_UPLOAD_URL_TTL_MS;
     const directory = NodePath.join(root, importId);
+    const payload = base64UrlEncode(
+      encodeUploadClaims({
+        version: 1,
+        kind: "conversation-import-upload",
+        importId,
+        sizeBytes: request.sizeBytes,
+        expiresAt,
+      }),
+    );
+    const signature = yield* signer
+      .sign(payload)
+      .pipe(Effect.mapError(failure("Could not load the upload signing key.")));
     yield* locked(
       Effect.gen(function* () {
         if (records.size >= maxLive) {
@@ -555,18 +557,9 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
         });
       }),
     );
-    const payload = base64UrlEncode(
-      encodeUploadClaims({
-        version: 1,
-        kind: "conversation-import-upload",
-        importId,
-        sizeBytes: request.sizeBytes,
-        expiresAt,
-      }),
-    );
     return {
       importId,
-      relativeUrl: `${CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX}/${payload}.${signPayload(payload, secret)}`,
+      relativeUrl: `${CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX}/${payload}.${signature}`,
       expiresAt,
     };
   });
@@ -575,10 +568,10 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
     Effect.fn("ConversationImportStaging.validateUploadToken")(function* (token) {
       const [payload, signature, unexpected] = token.split(".");
       if (!payload || !signature || unexpected !== undefined) return null;
-      const secret = yield* signingSecret.pipe(Effect.orElseSucceed(() => null));
-      if (!secret || !timingSafeEqualBase64Url(signature, signPayload(payload, secret))) {
-        return null;
-      }
+      const verified = yield* signer
+        .verify(payload, signature)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (!verified) return null;
       const decoded = Result.try(() => decodeUploadClaims(base64UrlDecodeUtf8(payload)));
       if (Result.isFailure(decoded)) return null;
       const claims = decoded.success;

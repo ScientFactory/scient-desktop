@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -15,7 +16,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -36,6 +37,7 @@ import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
 
 const TestLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   Layer.succeed(HostProcess.Platform, "darwin"),
   IdAllocator.layer,
   McpProviderSessions.layer,
@@ -79,7 +81,7 @@ const harness = Effect.fnUntraced(function* (
     spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
     fileSystem: fs,
     path,
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     serverConfig: config,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
     continuations: {

@@ -6,11 +6,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -178,7 +180,7 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
           );
           const { environment, homePath } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const attachments = NodePath.join(root, "attachments");
           NodeFS.mkdirSync(attachments, { recursive: true });
@@ -280,7 +282,11 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
         }),
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+            OmpExecutableGate.layer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     180_000,

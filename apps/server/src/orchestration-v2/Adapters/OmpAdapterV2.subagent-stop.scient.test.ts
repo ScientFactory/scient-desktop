@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CommandId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   allocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-child-stop-" }).pipe(
@@ -97,8 +99,12 @@ it.live.each([scientAgentTarget, ompTarget])(
               subagentId: task.id,
             });
             yield* completed(commandId);
-            const stopped = yield* waitFor((p) =>
-              p.subagents.some((s) => s.id === task.id && s.status === "cancelled"),
+            // Provider writes are batched, so the node and item can commit just after the subagent.
+            const stopped = yield* waitFor(
+              (p) =>
+                p.subagents.some((s) => s.id === task.id && s.status === "cancelled") &&
+                p.nodes.some((n) => n.id === task.id && n.status === "cancelled") &&
+                p.turnItems.some((i) => i.nodeId === task.id && i.status === "cancelled"),
             );
             assert.equal(stopped.nodes.find((n) => n.id === task.id)?.status, "cancelled");
             assert.equal(stopped.turnItems.find((i) => i.nodeId === task.id)?.status, "cancelled");

@@ -8,7 +8,6 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  markdownFileLinkRelativeCopyPath,
   markdownLinkLookupKey,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
@@ -177,12 +176,9 @@ describe("a POSIX workspace whose name ends in a backslash", () => {
 });
 
 // regression: d75449ca1d fix(files): reliable copy paths and calm file-failure states (#400)
-describe("markdownFileLinkRelativeCopyPath", () => {
-  const relativeCopyPath = (href: string, cwd: string) => {
-    const meta = resolveMarkdownFileLinkMeta(href, cwd);
-    if (!meta) throw new Error(`unresolved link ${href}`);
-    return markdownFileLinkRelativeCopyPath(meta);
-  };
+describe("workspace-relative file link paths", () => {
+  const relativeCopyPath = (href: string, cwd: string) =>
+    resolveMarkdownFileLinkMeta(href, cwd)?.workspaceRelativePath;
 
   it("copies the workspace-relative path, not the workspace-prefixed label", () => {
     expect(relativeCopyPath("docs/report.md", "/workspace/project")).toBe("docs/report.md");
@@ -195,13 +191,17 @@ describe("markdownFileLinkRelativeCopyPath", () => {
   });
 
   it("keeps the link's line and column", () => {
-    expect(relativeCopyPath("src/main.ts:12:4", "/workspace/project")).toBe("src/main.ts:12:4");
+    expect(resolveMarkdownFileLinkMeta("src/main.ts:12:4", "/workspace/project")).toMatchObject({
+      workspaceRelativePath: "src/main.ts",
+      line: 12,
+      column: 4,
+    });
     expect(
-      relativeCopyPath(
+      resolveMarkdownFileLinkMeta(
         "file:///C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts#L501",
         "C:/Users/mike/dev-stuff/t3code",
       ),
-    ).toBe("apps/web/src/session-logic.ts:501");
+    ).toMatchObject({ workspaceRelativePath: "apps/web/src/session-logic.ts", line: 501 });
   });
 
   it("has no relative path for a file outside the workspace", () => {
@@ -212,9 +212,9 @@ describe("markdownFileLinkRelativeCopyPath", () => {
   });
 
   it("collapses dot segments that stay inside the workspace", () => {
-    expect(relativeCopyPath("../project/report.md:12", "/workspace/project")).toBe("report.md:12");
+    expect(relativeCopyPath("../project/report.md:12", "/workspace/project")).toBe("report.md");
     expect(relativeCopyPath("C:/repo/../repo/src/a.ts", "C:/repo")).toBe("src/a.ts");
-    expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts:3");
+    expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts");
     expect(relativeCopyPath("./docs/report.md", "/workspace/project")).toBe("docs/report.md");
   });
 });

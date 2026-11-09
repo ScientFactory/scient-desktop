@@ -56,3 +56,10 @@ before it replaces it.
 Scient removes characters you cannot see, such as zero-width and hidden tag characters, because
 they can hide instructions for the agent. When a prompt had them, Scient warns you that it may be
 malicious.
+
+## Share a thread
+
+**Copy thread** copies the thread for Scient: paste it into a composer and it becomes the thread's
+chip, which opens the thread when selected. The copy is not a web link, so it does not open the
+thread from a browser or another app. Only someone connected to the machine that runs the thread
+can see it.

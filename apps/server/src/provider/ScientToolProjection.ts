@@ -5,8 +5,9 @@ import type { ScientToolName } from "../mcp/ScientOperationCatalog.ts";
  * them into the exact name their runtime exposes to the model.
  */
 export interface ScientToolProjection {
-  readonly name: (name: ScientToolName) => string;
+  readonly name: (name: ScientToolName | `preview_${string}`) => string;
   readonly providerNativeSkillTool: boolean;
+  /** The provider loads MCP tools on demand, so the text says how to load them. */
   readonly deferred: boolean;
 }
 
@@ -16,10 +17,11 @@ export const CANONICAL_SCIENT_TOOL_PROJECTION: ScientToolProjection = {
   deferred: false,
 };
 
+/** Claude Code defers MCP tools behind ToolSearch. */
 export const CLAUDE_SCIENT_TOOL_PROJECTION: ScientToolProjection = {
   name: (name) => `mcp__scient__${name}`,
   providerNativeSkillTool: true,
-  deferred: false,
+  deferred: true,
 };
 
 export function scientToolProjectionForProvider(provider: string): ScientToolProjection {

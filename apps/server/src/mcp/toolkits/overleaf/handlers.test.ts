@@ -4,7 +4,13 @@ import { OverleafFilesystemError } from "../../../scient/overleaf/overleafHostPa
  * what an editor that could not save says, errors as fixed categories, and the token
  * flow through a secretRef. The real service runs in handlers.git.test.ts.
  */
-import { EnvironmentId, SecretRef, SecretRequestError, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  SecretRef,
+  SecretRequestError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -41,7 +47,8 @@ const THREAD = ThreadId.make("thread-overleaf-tools");
 const SECRET = "olp_super-secret-token-value";
 
 const invocation = AgentInvocationContext.AgentInvocationContext.of({
-  nativeSessionId: "overleaf-tools",
+  providerSessionId: "overleaf-tools",
+  providerInstanceId: ProviderInstanceId.make("codex"),
   environmentId: ENVIRONMENT,
   threadId: THREAD,
   issuedAt: 1,
@@ -564,6 +571,7 @@ describe("Overleaf tool handlers", () => {
         answer: () => Effect.die("unused"),
         savedRef: () => Effect.die("unused"),
         saveToFile: () => Effect.die("unused"),
+        savePasted: () => Effect.die("unused"),
         consume: (input) =>
           Effect.suspend(() => {
             consumed.push(input);

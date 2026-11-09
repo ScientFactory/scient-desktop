@@ -1,5 +1,6 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -65,7 +66,7 @@ it.live(
         const childSession = "00000000-0000-4000-8000-000000000972";
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const adapter = yield* Claude.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
           settings,
           environment: {},
@@ -83,6 +84,10 @@ it.live(
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(frames),
@@ -449,7 +454,12 @@ it.live(
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
         ),
         Effect.timeout("25 seconds"),
       ),

@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
@@ -31,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import {
@@ -93,9 +95,12 @@ const FakeImporterLive = Layer.succeed(ConversationImporter, {
     }),
 });
 
-const TestLayer = Layer.mergeAll(ServerSecretStore.layer, FakeImporterLive).pipe(
+const TestLayer = Layer.mergeAll(
+  AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
+  FakeImporterLive,
+).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-import-staging-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const principal: EnvironmentSessionPrincipalShape = {

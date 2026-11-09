@@ -22,6 +22,7 @@ describe("provider ordering consumers", () => {
     expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([
       ...existingOrder,
       "fx",
+      "kiro",
       "acpRegistry",
       "muse",
     ]);

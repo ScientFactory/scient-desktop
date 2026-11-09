@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -82,7 +83,7 @@ const gitLayer = GitWorkflow.layer.pipe(
     ),
   ),
   Layer.provide(vcsLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const makeRuntime = (
   workflow = gitLayer,
@@ -1018,6 +1019,8 @@ it.live(
           const absent = yield* checkpoints.materializeBaselineCheckpoint({
             scope,
             ordinalWithinScope: 0,
+            nodeId: scope.nodeId,
+            capturedAt: scope.createdAt,
           });
           assert.equal(absent.status, "missing");
           assert.equal(

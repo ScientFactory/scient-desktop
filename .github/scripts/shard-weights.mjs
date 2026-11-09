@@ -1,7 +1,3 @@
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
-
 // Reports may come from different runner roots. Normalize to the owning package,
 // and use medians when several complete CI runs supply samples for one file.
 export function weightsFromReports(reports, suite = "web") {
@@ -48,30 +44,5 @@ export function weightsFromReports(reports, suite = "web") {
           values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
         return [key, Math.max(0.001, Math.round(median * 1_000) / 1_000)];
       }),
-  );
-}
-
-if (
-  process.argv[1] &&
-  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
-) {
-  const args = process.argv.slice(2);
-  const suite = args[0] === "--suite" ? args.splice(0, 2)[1] : "web";
-  const paths = args;
-  if (!paths.length)
-    throw new Error(
-      "Usage: node .github/scripts/shard-weights.mjs [--suite web|server] <report.json>...",
-    );
-  const weights = weightsFromReports(
-    paths.map((path) => JSON.parse(NodeFS.readFileSync(path, "utf8"))),
-    suite,
-  );
-  if (!Object.keys(weights).length) throw new Error("Reports contain no executed tests");
-  NodeFS.writeFileSync(
-    new URL(`../../apps/${suite}/src/testUtils/shardWeights.json`, import.meta.url),
-    `${JSON.stringify(weights, null, 2)}\n`,
-  );
-  console.log(
-    `Recorded ${Object.keys(weights).length} ${suite} test files from ${paths.length} reports.`,
   );
 }

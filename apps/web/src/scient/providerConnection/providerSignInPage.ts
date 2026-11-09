@@ -2,11 +2,18 @@
  * Opens a provider's sign-in URL: through the desktop shell, or in a browser
  * popup that sends no referrer and is detected when the browser blocks it.
  */
+import * as Schema from "effect/Schema";
+
 import { ensureLocalApi } from "../../localApi";
 import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation";
 
 /** A browser refused to open a window that no click of the user's asked for. */
-export class SignInPageBlocked extends Error {}
+export class SignInPageBlocked extends Schema.TaggedError<SignInPageBlocked>()(
+  "SignInPageBlocked",
+  {},
+) {}
+
+export const isSignInPageBlocked = Schema.is(SignInPageBlocked);
 
 export async function openProviderAuthorizationPage(url: string): Promise<void> {
   if (!isSafeProviderAuthorizationUrl(url)) {

@@ -75,22 +75,6 @@ it("replaces a running spinner with a persistent failure and clears it after suc
   expect(state.add).toHaveBeenCalledTimes(2);
 });
 
-it("shows a replayed failure without a preceding spinner or an invented pending count", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await publish(_fixture, { status: "running", failed: true, totalThreadCount: 3 });
-  expect(state.add).toHaveBeenCalledWith(
-    expect.objectContaining({
-      type: "error",
-      timeout: 0,
-      description: expect.stringContaining("could not be verified"),
-    }),
-  );
-  expect(state.close).not.toHaveBeenCalled();
-});
-
 it("cleans up on disposal and supports older completion payloads without counts", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

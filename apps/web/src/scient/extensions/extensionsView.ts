@@ -108,6 +108,8 @@ export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
             : `Header ${auth.headerName ?? ""}`.trim();
       return auth.storage === "bound" ? `${kind} from Accounts` : kind;
     }
+    case "source-control":
+      return `${auth.account} from Source Control`;
   }
 }
 
@@ -466,16 +468,6 @@ export function worksWithCardAgents(
     : support.filter((entry) => entry.status !== "unsupported");
 }
 
-export function preferCuratedStoreEntries<T extends { readonly name: string }>(
-  entries: ReadonlyArray<T>,
-  curated: ReadonlyArray<DiscoverEntry>,
-): ReadonlyArray<T> {
-  const aliases = new Set(
-    curated.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
-  );
-  return entries.filter((entry) => !aliases.has(entry.name));
-}
-
 export function providerServerDisplayName(
   server: Pick<ServerProviderMcpServer, "name" | "scope">,
 ): string {
@@ -534,6 +526,24 @@ export function entryFacts(
     ...(entry.address ? [["Setup", "Your address needed"] as const] : []),
     ...(entry.accessNote ? [["Requirements", entry.accessNote] as const] : []),
   ];
+}
+
+/**
+ * A connector's card facts: once its sign-in works, the catalog's access words give way to
+ * whose account it uses, or to nothing when the service does not say.
+ */
+export function connectorFacts(
+  entry: DiscoverEntry | undefined,
+  connector: Pick<ConnectorSummary, "status" | "auth">,
+): ReadonlyArray<string> {
+  const signedIn = connector.status === "connected" && connector.auth.type !== "none";
+  return entryFacts(entry).flatMap(([label, value]) =>
+    !signedIn || label !== "Access"
+      ? [value]
+      : connector.auth.type === "source-control"
+        ? [`Signed in as ${connector.auth.account}`]
+        : [],
+  );
 }
 
 export function validateCuratedAddress(value: string, template: string): string | null {

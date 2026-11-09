@@ -8,7 +8,7 @@ export function AutomaticThreadPlacementSettings() {
   return (
     <SettingsRow
       {...searchableSetting("automatic-thread-placement")}
-      description="Move working, monitoring, unread, and attention-needed threads near the top of the sidebar and each section. Your manual moves are respected. In the default sidebar, Working section (beta) uses its own ordering."
+      description="Move working, monitoring, unread, and attention-needed threads near the top of the sidebar and each section. Your manual moves are respected. The Working section (beta) keeps its own order."
       resetAction={
         !enabled ? (
           <SettingResetButton label="automatic thread placement" onClick={() => setEnabled(true)} />

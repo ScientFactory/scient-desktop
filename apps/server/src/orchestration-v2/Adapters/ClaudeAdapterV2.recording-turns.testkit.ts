@@ -1,5 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import {
   type CanUseTool,
@@ -154,7 +154,7 @@ async function recordClaudeStreamingQuery(input: {
     for (const [index, prompt] of input.prompts.entries()) {
       // Like the adapter, give each prompt a uuid Claude echoes on its turn.
       const promptUuid = await Effect.runPromise(
-        Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4()).pipe(
+        Effect.flatMap(SecureRandom.SecureRandom, (random) => random.uuidV4()).pipe(
           Effect.provide(NodeCrypto.layer),
         ),
       );

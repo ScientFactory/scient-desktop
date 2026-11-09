@@ -12,11 +12,12 @@ import {
   ProjectFilePublicationOutcome,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/ai";
-import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
+import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -39,7 +40,6 @@ export class ScientPdfBuildToolError extends Schema.TaggedError<ScientPdfBuildTo
   "ScientPdfBuildToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-source-path",
@@ -66,7 +66,6 @@ export class ScientDocumentExportToolError extends Schema.TaggedError<ScientDocu
   "ScientDocumentExportToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-source-path",
@@ -95,7 +94,6 @@ export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBui
   "ScientLatexBuildToolError",
   {
     code: Schema.Literals([
-      "capability-unavailable",
       "project-required",
       "project-changed",
       "invalid-source-path",
@@ -137,7 +135,8 @@ const sharedDocumentDependencies = [
 
 const htmlDocumentDependencies = [
   ...sharedDocumentDependencies,
-  Crypto.Crypto,
+  Digest.Digest,
+  SecureRandom.SecureRandom,
   ProjectFaviconResolver.ProjectFaviconResolver,
   ServerConfig.ServerConfig,
   ServerSecretStore.ServerSecretStore,
@@ -146,18 +145,10 @@ const htmlDocumentDependencies = [
 
 const latexDependencies = [...sharedDocumentDependencies, LatexBuildService.LatexBuildService];
 
-const documentOperation = (id: string): OperationMetadata => ({
+const documentOperation = (id: string): OperationDefinition => ({
   id,
-  family: "documents",
   scope: "workspace",
   requiredCapabilities: ["documents:build"],
-  approval: "explicit-user-request-guidance",
-  documentation:
-    id === "documents.latex.build"
-      ? "docs/internals/scient-latex.md"
-      : id === "documents.export"
-        ? "docs/internals/scient-document-pdf-export.md"
-        : "docs/internals/scient-browser-pdf-export.md",
 });
 
 export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {

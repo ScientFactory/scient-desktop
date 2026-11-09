@@ -17,6 +17,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  isPackageInstallFailure,
   pinnedRuntimePaths,
   prunePinnedRuntimes,
   windowsShimTarget,
@@ -211,6 +212,55 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       assert.isFalse(yield* fs.exists(path.join(finalPaths.versionDir, "partial")));
       assert.isTrue(yield* fs.exists(finalPaths.entryPath));
+    }),
+  );
+
+  it.effect("installs the server package from a policy mirror laid out as a release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-mirror-" });
+      const installs: Array<ReadonlyArray<string>> = [];
+      const install = successfulRunner(fs, path);
+      const runner = (code: number) =>
+        ProcessRunner.ProcessRunner.of({
+          run: (input) => {
+            installs.push(input.args);
+            return code === 0
+              ? install.run(input)
+              : Effect.succeed({
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(code),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                });
+          },
+        });
+      const ensure = (code: number) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version: "1.2.3",
+          fs,
+          path,
+          // A signed mirror URL keeps its query on the file it serves.
+          releaseBaseUrl: "https://updates.example.com/scient/?token=abc",
+          runner: runner(code),
+          validate: () => Effect.void,
+        });
+
+      assert.isTrue(isPackageInstallFailure(yield* ensure(1).pipe(Effect.flip)));
+      yield* ensure(0);
+      assert.deepEqual(
+        installs.map((args) => args.at(-1)),
+        [
+          "https://updates.example.com/scient/v1.2.3/scient-server-1.2.3.tgz?token=abc",
+          "https://updates.example.com/scient/v1.2.3/scient-server-1.2.3.tgz?token=abc",
+        ],
+      );
     }),
   );
 

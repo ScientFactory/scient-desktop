@@ -3,6 +3,7 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { ProviderDriverKind, ProviderSessionId } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -645,8 +646,7 @@ it.live(
               RuntimeLayer.layerProviderEventIngestorProvided.pipe(
                 Layer.provide(
                   Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                    // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-                    getInstance: () => Effect.succeed(undefined),
+                    getInstance: () => Effect.undefined,
                   }),
                 ),
                 Layer.provideMerge(services),
@@ -655,5 +655,11 @@ it.live(
           ),
         );
       }),
-    ).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+    ).pipe(
+      Effect.provide(
+        DocumentText.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );

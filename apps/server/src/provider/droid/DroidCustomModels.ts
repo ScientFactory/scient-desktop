@@ -31,7 +31,6 @@ import type { SessionConfigOption } from "effect-acp/compat";
 import { droidCanUseKey, type ResolvedModelConnection } from "../../customModels.ts";
 import { assessModelConnections } from "../../customModelReadiness.ts";
 import {
-  customModelDiscoverySnapshot,
   customModelRuntimeChange,
   effectiveCustomModelReasoning,
   type CustomModelReasoning,
@@ -51,20 +50,6 @@ const DROID_PROVIDER_BY_PROTOCOL = {
   "openai-responses": "openai",
   "anthropic-messages": "anthropic",
 } as const satisfies Record<CustomModelProtocol, string>;
-
-/** Only configuration visible to this instance participates in invalidation. No secrets. */
-export function droidCustomModelsSnapshot(
-  connections: ReadonlyArray<CustomModelConnection>,
-  instanceId: ProviderInstanceId,
-) {
-  return customModelDiscoverySnapshot(connections, instanceId).map(
-    ({ name: _connectionName, models, ...connection }) => ({
-      ...connection,
-      // Labels and next-turn preferences do not change an in-flight API request.
-      models: models.map(({ name: _name, defaultReasoningLevel: _preference, ...model }) => model),
-    }),
-  );
-}
 
 const DROID_CUSTOM_MODEL_PREFIX = "custom:scient-";
 
@@ -438,7 +423,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
           const sessionStartMarker = path.join(directory, "session-started");
           yield* fs.writeFileString(
             overlayPath,
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            // @effect-diagnostics-next-line globalJsonInEffect:off
             JSON.stringify({
               // Off stops Droid uploading messages and titles to Factory for the
               // whole process (verified against Droid 0.213.0 and 0.230.0).

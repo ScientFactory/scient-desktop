@@ -8,7 +8,7 @@ import {
 
 describe("PullRequestFilterOptions", () => {
   it("round-trips hosted labels and authors through the RPC JSON codec", () => {
-    const options: typeof PullRequestFilterOptions.Type = {
+    const options: PullRequestFilterOptions = {
       labels: [{ name: "bug", color: "d73a4a" }],
       authors: [
         {
@@ -17,6 +17,7 @@ describe("PullRequestFilterOptions", () => {
           avatarUrl: "https://avatars.example/octocat.png",
         },
       ],
+      references: [],
       truncated: true,
     };
     const codec = Schema.toCodecJson(PullRequestFilterOptions);

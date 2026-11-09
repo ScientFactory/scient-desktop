@@ -1,6 +1,7 @@
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, type OrchestrationV2AppThread, type ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -57,7 +58,7 @@ const mcpLayer = Layer.effect(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("registry-native-lifetime")),
     }),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const testLayer = Layer.mergeAll(
   storesLayer,
@@ -66,7 +67,7 @@ const testLayer = Layer.mergeAll(
   IdAllocator.layer,
   McpProviderSessions.layer,
   ThreadCommandExecutor.layer,
-  NodeServices.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SecretResolver.SecretResolver)({}),
 );
 
@@ -107,7 +108,7 @@ const managerLayer = Effect.fnUntraced(function* (h: NativeHarness) {
         ),
       ),
     ),
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   );
   return {
     revoked,

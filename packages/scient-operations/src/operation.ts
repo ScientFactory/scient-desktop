@@ -1,18 +1,3 @@
-import type * as Schema from "effect/Schema";
-
-/** Caller identity is host-issued; it is not a credential or a tool argument. */
-export type AgentCaller<ExternalProviderId extends string = string> =
-  | {
-      readonly providerSessionId: string;
-      readonly providerInstanceId: ExternalProviderId;
-      readonly nativeSessionId?: never;
-    }
-  | {
-      readonly nativeSessionId: string;
-      readonly providerSessionId?: never;
-      readonly providerInstanceId?: never;
-    };
-
 /** Existing session grants. Finer settings policy is a separate migration. */
 export type OperationCapability =
   // SCIENT-FORK:START — Scient Accounts: declare the account operation grant.
@@ -27,27 +12,11 @@ export type OperationCapability =
   /** Read-only access to threads in the calling thread's project. */
   | "threads:read";
 
-/** Behavior and ownership, independent of MCP names or provider runtimes. */
+/** Admission for one Scient tool: what the session must hold and what it acts on. */
 export interface OperationDefinition {
   readonly id: string;
-  readonly version: number;
-  readonly family: string;
-  readonly title: string;
-  readonly description: string;
-  readonly input: Schema.Top;
-  readonly output: Schema.Top;
-  readonly failure: Schema.Top;
   readonly scope: "thread" | "workspace" | "skill-release";
   readonly requiredCapabilities: ReadonlyArray<OperationCapability>;
-  readonly effects: {
-    readonly readOnly: boolean;
-    readonly destructive: boolean;
-    readonly idempotent: boolean;
-    readonly openWorld: boolean;
-  };
-  /** Descriptive only; never evidence of a host-confirmed approval. */
-  readonly approval: "session-grant" | "explicit-user-request-guidance";
-  readonly documentation: string;
 }
 
 export function hasOperationCapabilities(
@@ -61,9 +30,7 @@ export function hasOperationCapabilities(
 export function makeOperationRegistry(definitions: ReadonlyArray<OperationDefinition>) {
   const operations = new Map<string, OperationDefinition>();
   for (const definition of definitions) {
-    if (!definition.id || !Number.isSafeInteger(definition.version) || definition.version < 1) {
-      throw new Error("Scient operation definitions require an ID and positive integer version.");
-    }
+    if (!definition.id) throw new Error("Scient operation definitions require an ID.");
     if (operations.has(definition.id)) {
       throw new Error(`Duplicate Scient operation: ${definition.id}`);
     }

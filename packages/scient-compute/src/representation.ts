@@ -2,9 +2,9 @@ import * as Schema from "effect/Schema";
 
 import { ByteLength, ContentHash, Count, ObservedAt, Sequence } from "./primitives.ts";
 
-export const MAXIMUM_COMPUTE_REPRESENTATIONS_PER_BUNDLE = 32;
+const MAXIMUM_COMPUTE_REPRESENTATIONS_PER_BUNDLE = 32;
 export const MAXIMUM_COMPUTE_INLINE_REPRESENTATION_BYTES = 1024 * 1024;
-export const MAXIMUM_COMPUTE_REPRESENTATION_METADATA_BYTES = 256 * 1024;
+const MAXIMUM_COMPUTE_REPRESENTATION_METADATA_BYTES = 256 * 1024;
 export const MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES = 8 * 1024 * 1024;
 
 const utf8 = new TextEncoder();
@@ -74,7 +74,7 @@ export const ComputeRepresentation = Schema.Struct({
 });
 export type ComputeRepresentation = typeof ComputeRepresentation.Type;
 
-export function computeRepresentationByteLength(representation: ComputeRepresentation): number {
+function computeRepresentationByteLength(representation: ComputeRepresentation): number {
   switch (representation.data._tag) {
     case "text":
       return utf8.encode(representation.data.text).byteLength;
@@ -85,7 +85,7 @@ export function computeRepresentationByteLength(representation: ComputeRepresent
   }
 }
 
-function computeBundlePayloadByteLength(bundle: {
+export function computeRepresentationBundleByteLength(bundle: {
   readonly representations: ReadonlyArray<ComputeRepresentation>;
   readonly metadataJson: string | null;
 }): number {
@@ -118,16 +118,12 @@ export const ComputeRepresentationBundle = Schema.Struct({
   metadataJson: Schema.NullOr(RepresentationMetadataJson),
 }).check(
   Schema.makeFilter((bundle) =>
-    computeBundlePayloadByteLength(bundle) <= MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES
+    computeRepresentationBundleByteLength(bundle) <= MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES
       ? true
       : `Representation bundle exceeded ${MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES} bytes.`,
   ),
 );
 export type ComputeRepresentationBundle = typeof ComputeRepresentationBundle.Type;
-
-export function computeRepresentationBundleByteLength(bundle: ComputeRepresentationBundle): number {
-  return computeBundlePayloadByteLength(bundle);
-}
 
 export function sameComputeRepresentationBundle(
   left: ComputeRepresentationBundle,
@@ -197,29 +193,3 @@ export const ComputeDisplayOutput = Schema.Union([
   }),
 ]);
 export type ComputeDisplayOutput = typeof ComputeDisplayOutput.Type;
-
-export type ComputeRepresentationSelection =
-  | { readonly _tag: "supported"; readonly representation: ComputeRepresentation }
-  | { readonly _tag: "unsupported"; readonly availableMediaTypes: ReadonlyArray<ComputeMediaType> };
-
-/**
- * Selects the first representation supported by a caller-owned renderer list.
- * No global registry or hidden fallback decides that active HTML is safer than
- * a static image; each product surface supplies its reviewed priority order.
- */
-export function selectComputeRepresentation(
-  bundle: ComputeRepresentationBundle,
-  supportedMediaTypes: ReadonlyArray<string>,
-): ComputeRepresentationSelection {
-  const byMediaType = new Map(
-    bundle.representations.map((representation) => [representation.mediaType, representation]),
-  );
-  for (const mediaType of supportedMediaTypes) {
-    const representation = byMediaType.get(mediaType);
-    if (representation !== undefined) return { _tag: "supported", representation };
-  }
-  return {
-    _tag: "unsupported",
-    availableMediaTypes: bundle.representations.map(({ mediaType }) => mediaType),
-  };
-}

@@ -1,5 +1,5 @@
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -215,7 +215,7 @@ const samePhysicalRoot = (
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   yield* runScientMigrations(sql);
 
   const selectColumns = `
@@ -501,7 +501,7 @@ const make = Effect.gen(function* () {
             evidence: input.evidence,
           });
 
-          const bindingId = WorkspaceBindingIdSchema.make(yield* crypto.randomUUIDv4());
+          const bindingId = WorkspaceBindingIdSchema.make(yield* random.uuidV4());
           const authorityGeneration = WorkspaceAuthorityGeneration.make(
             existing ? existing.authorityGeneration + 1 : 1,
           );
@@ -578,7 +578,7 @@ const make = Effect.gen(function* () {
             });
           }
 
-          const bindingId = WorkspaceBindingIdSchema.make(yield* crypto.randomUUIDv4());
+          const bindingId = WorkspaceBindingIdSchema.make(yield* random.uuidV4());
           const authorityGeneration = WorkspaceAuthorityGeneration.make(
             current.authorityGeneration + 1,
           );

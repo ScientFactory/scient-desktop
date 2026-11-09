@@ -79,9 +79,6 @@
 .scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar > .scient-latex-select {
   width: 100%;
 }
-.scient-latex-context-tools[data-inspector] .scient-latex-context-label {
-  display: none;
-}
 .scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar label {
   display: grid;
   gap: 4px;
@@ -130,7 +127,6 @@
   font: inherit;
   cursor: pointer;
 }
-.scient-latex-context-note,
 .scient-latex-context-tools[data-inspector] .scient-latex-context-toolbar p {
   margin: 0;
   color: var(--muted-foreground);
@@ -144,10 +140,6 @@
   border: 0;
   box-shadow: none;
 }
-.scient-latex-context-tools[data-inspector] .scient-latex-shortcut-hint:not(:empty) {
-  display: block;
-  white-space: normal;
-}
 .scient-latex-property-row {
   display: flex;
   gap: 6px;
@@ -156,14 +148,6 @@
 .scient-latex-property-row input {
   flex: 1;
   min-width: 0;
-}
-.scient-latex-context-fieldset {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-width: 0;
-  display: grid;
-  gap: 8px;
 }
 
 .scient-latex-context-tools[data-inspector][data-inline] > .scient-latex-context-inspector {

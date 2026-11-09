@@ -142,7 +142,9 @@ export function DraftHeroHeadline({
           ),
         ) ?? null);
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
+  // The selected checkout's title leads; the group name covers a resolved
+  // project whose title has not arrived yet.
+  const activeProjectDisplayName = activeProjectTitle ?? activeProjectGroup?.displayName ?? null;
   const hasResolvedProject =
     activeProjectRef?.projectId != null &&
     (activeProjectGroup !== null || activeProjectTitle !== null);
@@ -350,19 +352,19 @@ export function DraftHeroHeadline({
                   </TooltipTrigger>
                   <TooltipPopup side="top">{item.label}</TooltipPopup>
                 </Tooltip>
-                {entry && showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={entry.group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
                 {entry && canPinProjectGroup(entry.group) ? (
                   <ProjectPinButton
                     name={entry.group.displayName}
                     pinned={entry.group.pinned}
                     shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
                     onToggle={() => toggleProjectGroupPin(entry.group)}
+                  />
+                ) : null}
+                {entry && showProjectEnvironments ? (
+                  <ProjectEnvironmentBadge
+                    group={entry.group}
+                    primaryEnvironmentId={primaryEnvironmentId}
+                    machineByEnvironmentId={environmentMachineById}
                   />
                 ) : null}
               </ComboboxItem>

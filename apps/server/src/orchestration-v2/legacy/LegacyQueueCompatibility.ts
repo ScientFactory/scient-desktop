@@ -1,50 +1,31 @@
 import {
   CommandId,
-  SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD,
   ScientThreadQueueOperationError,
   type ScientThreadQueueListRequest,
-  type ScientThreadQueueEnqueueRequest,
-  type ScientThreadQueueRemoveRequest,
-  type ScientThreadQueueReorderRequest,
   type ScientThreadQueueControlRequest,
-  type ScientThreadQueueUpdateRequest,
   type ScientThreadQueueSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { listScientThreadQueue } from "../../scient/threadQueue/Store.ts";
-import { readQueue, writeQueue } from "./LegacyQueueLedger.ts";
-import { enqueueQueue } from "../../scient/threadQueue/admission.ts";
+import { readQueue } from "./LegacyQueueLedger.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";
 import { EventSinkV2 } from "../EventSink.ts";
-import type { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
-import type { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
-import { cutOverLegacyQueue } from "./LegacyQueueCutover.ts";
 
 type Request =
   | { readonly method: "list"; readonly payload: ScientThreadQueueListRequest }
-  | { readonly method: "enqueue"; readonly payload: ScientThreadQueueEnqueueRequest }
-  | { readonly method: "remove"; readonly payload: ScientThreadQueueRemoveRequest }
-  | { readonly method: "reorder"; readonly payload: ScientThreadQueueReorderRequest }
-  | { readonly method: "control"; readonly payload: ScientThreadQueueControlRequest }
-  | { readonly method: "update"; readonly payload: ScientThreadQueueUpdateRequest };
+  | { readonly method: "control"; readonly payload: ScientThreadQueueControlRequest };
 
 type Dependencies =
   | OrchestratorV2
   | ThreadManagementService
   | EventSinkV2
-  | CommandReceiptStoreV2
   | SqlClient.SqlClient
-  | LegacyV1ThreadImporter
-  | ServerConfig
-  | FileSystem.FileSystem
-  | Path.Path;
+  | ServerConfig;
 
 /** Old queue transports read native runs. SQL documents are admission staging only. */
 export const makeLegacyQueueCompatibility = Effect.gen(function* () {
@@ -52,7 +33,6 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const threads = yield* ThreadManagementService;
   const sink = yield* EventSinkV2;
-  const sql = yield* SqlClient.SqlClient;
   const execute = Effect.fn("LegacyQueueCompatibility.execute")(function* (request: Request) {
     const { threadId } = request.payload;
     const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -72,37 +52,22 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
       if (document.items.length > 0) return yield* recoveryError();
       if (!document.migrated) {
         const config = yield* ServerConfig;
-        const legacy = yield* Effect.tryPromise(() =>
-          listScientThreadQueue({
-            stateDir: config.stateDir,
-            threadId,
-          }),
-        ).pipe(Effect.mapError(() => recoveryError()));
+        const legacy = yield* Effect.tryPromise({
+          try: () =>
+            listScientThreadQueue({
+              stateDir: config.stateDir,
+              threadId,
+            }),
+          catch: () => recoveryError(),
+        });
         if (legacy.items.length > 0) return yield* recoveryError();
       }
     }
     const commandId = CommandId.make(`legacy-queue-api:${yield* randomUuidV4}`);
     const ownedRuns = projection.runs.filter((run) => run.legacyQueue !== undefined);
-    if (request.method === "enqueue") {
-      if (
-        ownedRuns.filter((run) => run.status === "queued").length >=
-          SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD &&
-        !ownedRuns.some((run) => run.legacyQueue?.queueItemId === request.payload.queueItemId)
-      )
-        return yield* new ScientThreadQueueOperationError({
-          message: "The queue already holds 20 messages.",
-        });
-      // Persist before native acceptance so a failed admission remains recoverable.
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const document = yield* readQueue(threadId);
-          yield* writeQueue(threadId, yield* enqueueQueue(request.payload, document));
-        }),
-      );
-      yield* cutOverLegacyQueue(threadId);
-    } else if (request.method === "remove" || request.method === "control") {
+    if (request.method === "control") {
       const payload = request.payload;
-      const action = request.method === "remove" ? "remove" : request.payload.action;
+      const action = payload.action;
       if (action === "resume") {
         yield* threads.dispatch({ type: "queue.resume", commandId, threadId });
       } else {
@@ -111,22 +76,21 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
           return yield* new ScientThreadQueueOperationError({
             message: "The queued message has already started or was removed.",
           });
-        if (action === "extract" || action === "stash" || action === "remove") {
-          const extraction = request.method === "control" && action !== "remove";
-          const editToken = request.method === "control" ? request.payload.editToken : undefined;
-          if (extraction && !editToken)
+        if (action === "extract" || action === "stash") {
+          const editToken = payload.editToken;
+          if (!editToken)
             return yield* new ScientThreadQueueOperationError({
               message: "An edit identity is required.",
             });
           yield* orchestrator.dispatch({
             type: "queued-run.cancel",
-            commandId: extraction
-              ? CommandId.make(`legacy-extract:${threadId}:${payload.queueItemId}:${editToken}`)
-              : commandId,
+            commandId: CommandId.make(
+              `legacy-extract:${threadId}:${payload.queueItemId}:${editToken}`,
+            ),
             threadId,
             runId: run.id,
-            ...(request.method === "control" && request.payload.expectedUpdatedAt !== undefined
-              ? { expectedUpdatedAt: DateTime.makeUnsafe(request.payload.expectedUpdatedAt) }
+            ...(payload.expectedUpdatedAt !== undefined
+              ? { expectedUpdatedAt: DateTime.makeUnsafe(payload.expectedUpdatedAt) }
               : {}),
           });
         } else if (action === "send") {
@@ -157,28 +121,6 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
           });
         }
       }
-    } else if (request.method === "reorder") {
-      const queued = ownedRuns.filter((run) => run.status === "queued");
-      const ids = new Set(request.payload.queueItemIds);
-      if (
-        ids.size !== queued.length ||
-        ids.size !== request.payload.queueItemIds.length ||
-        queued.some((run) => !ids.has(run.legacyQueue!.queueItemId))
-      )
-        return yield* new ScientThreadQueueOperationError({
-          message: "The queue changed. Refresh before reordering it.",
-        });
-      yield* orchestrator.dispatch({
-        type: "legacy-queue.reorder",
-        commandId,
-        threadId,
-        queueItemIds: request.payload.queueItemIds,
-      });
-    } else if (request.method === "update") {
-      return yield* new ScientThreadQueueOperationError({
-        message:
-          "This edit reservation ended at migration. Recover the edited text as an ordinary draft.",
-      });
     }
 
     const current = yield* orchestrator.getThreadProjection(threadId);

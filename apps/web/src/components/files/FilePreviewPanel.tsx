@@ -57,6 +57,7 @@ import {
   type EditorId,
   type EnvironmentId,
   type ProjectFilePublicationAttention,
+  type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -158,9 +159,10 @@ import {
 } from "~/scient/fileOpening/fileOpeningPolicy";
 // SCIENT-FORK:START
 import { usePanelFilesOpen } from "~/scient/rightPanel/PanelFilesColumn";
+import { OfficeFileContext } from "~/scient/office/officeQuote"; // SCIENT-FORK
 import { TabHistoryButtons } from "~/scient/rightPanel/tabHistory";
 // SCIENT-FORK:END
-import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { FileRenameButton } from "./FileRenameButton";
@@ -186,6 +188,7 @@ import {
   ScientFileFreshnessStatus,
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
+import { ScientFileRevisionBoundary } from "~/scient/fileSurfaces/ScientFileRevisionBoundary"; // SCIENT-FORK
 import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersionHistory";
 // SCIENT-FORK:START — Overleaf sync state beside "Saved"
 import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
@@ -256,6 +259,7 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  projectId?: ProjectId | undefined;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
@@ -837,6 +841,7 @@ interface EditableFileSurfaceProps {
   citationBaseline?: string | undefined;
   citationRootRelativePath?: string | undefined;
   environmentId: EnvironmentId;
+  projectId?: ProjectId | undefined;
   cwd: string;
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -909,6 +914,7 @@ export function EditableFileEditor({
   citationBaseline,
   citationRootRelativePath,
   environmentId,
+  projectId,
   cwd,
   relativePath,
   composerDraftTarget,
@@ -1409,6 +1415,14 @@ export function EditableFileEditor({
                 {annotation.metadata.entries.map((entry) => (
                   <DiffCommentAnnotation
                     key={entry.id}
+                    environmentId={environmentId}
+                    projectId={projectId}
+                    ownerKey={JSON.stringify([
+                      environmentId,
+                      composerDraftTarget,
+                      relativePath,
+                      entry.id,
+                    ])}
                     kind={entry.kind}
                     rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
                     text={entry.text}
@@ -1533,6 +1547,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
+  projectId,
   relativePath: requestedPath,
   attachment,
   threadRef,
@@ -1639,6 +1654,7 @@ export default function FilePreviewPanel({
     saveResolution,
     saveRetryReady,
     viewerRefreshKey,
+    manualReloadKey,
   } = useWorkspaceFileRefresh({
     environmentId,
     cwd,
@@ -2083,6 +2099,25 @@ export default function FilePreviewPanel({
     threadId: threadRef.threadId,
     workspaceRoot: cwd,
   });
+  // SCIENT-FORK:START — what a document or binary preview loads; ScientFileRevisionBoundary checks it.
+  const documentAsset =
+    relativePath && absolutePath
+      ? {
+          environmentId,
+          resource: isDocument
+            ? workspaceViewerAssetResource(
+                { draft, threadRef, workspaceRoot: cwd, absolutePath, relativePath },
+                "workspace-file",
+              )
+            : {
+                _tag: "media-file" as const,
+                threadId: threadRef.threadId,
+                path: absolutePath,
+                disposition: "attachment" as const,
+              },
+        }
+      : null;
+  // SCIENT-FORK:END
   const handlePendingChange = (path: string, pending: boolean) => {
     setPendingPaths((current) => {
       const next = new Set(current);
@@ -2689,36 +2724,30 @@ export default function FilePreviewPanel({
             />
           ) : relativePath &&
             absolutePath &&
+            documentAsset &&
             (isDocument || file.readError?.failure === "binary_file") ? (
-            <AttachmentFilePreview
-              key={`${environmentId}:${absolutePath}:${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
-              name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-              mimeType="application/octet-stream"
-              sizeBytes={0}
-              asset={{
-                environmentId,
-                resource: isDocument
-                  ? workspaceViewerAssetResource(
-                      {
-                        draft,
-                        threadRef,
-                        workspaceRoot: cwd,
-                        absolutePath,
-                        relativePath,
-                      },
-                      "workspace-file",
-                    )
-                  : {
-                      _tag: "media-file",
-                      threadId: threadRef.threadId,
-                      path: absolutePath,
-                      disposition: "attachment",
-                    },
-              }}
-              origin="File"
-              embedded
-              onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
-            />
+            // SCIENT-FORK: an Office reader quotes this file into the panel's conversation.
+            <OfficeFileContext value={{ citeThread: threadRef, cwd, path: relativePath }}>
+              {/* SCIENT-FORK: a possible change remounts the preview only when the file changed;
+                  a reload the reader asks for always does, so a failed preview can retry. */}
+              <ScientFileRevisionBoundary
+                key={`${environmentId}:${absolutePath}:${manualReloadKey}:${fileRefreshRevision}`}
+                environmentId={environmentId}
+                resource={documentAsset.resource}
+                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
+              >
+                <AttachmentFilePreview
+                  name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+                  mimeType="application/octet-stream"
+                  sizeBytes={0}
+                  asset={documentAsset}
+                  origin="File"
+                  embedded
+                  onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
+                />
+              </ScientFileRevisionBoundary>
+              {/* SCIENT-FORK: the end of the Office file context. */}
+            </OfficeFileContext>
           ) : relativePath && file.error && file.data === null ? (
             readFailure
           ) : relativePath && file.data === null ? (
@@ -2945,6 +2974,7 @@ export default function FilePreviewPanel({
                 citationBaseline={file.authoritativeData?.contents}
                 key={`${relativePath}:${resolvedTheme}`}
                 environmentId={environmentId}
+                projectId={projectId}
                 cwd={cwd}
                 relativePath={relativePath}
                 composerDraftTarget={composerDraftTarget}

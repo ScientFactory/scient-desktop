@@ -4,6 +4,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -122,6 +125,15 @@ export async function startDevLaunchControlServer(input: {
   };
 }
 
+class DevLaunchControlStartError extends Schema.TaggedError<DevLaunchControlStartError>()(
+  "DevLaunchControlStartError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "The development launch control channel could not start.";
+  }
+}
+
 const readyRendererIds = new Set<number>();
 
 /** Called beside DesktopAppActivation.setRendererReady for each app window. */
@@ -132,7 +144,7 @@ export function noteDevLaunchRendererReady(ready: boolean, senderId: number | un
 }
 
 export const start = Effect.gen(function* () {
-  const config = readDevLaunchControlConfig(process.env);
+  const config = readDevLaunchControlConfig(yield* HostProcess.Environment);
   if (config === null) return;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -146,14 +158,16 @@ export const start = Effect.gen(function* () {
       readyRendererIds.has(window.webContents.id),
     );
   yield* Effect.acquireRelease(
-    Effect.tryPromise(() =>
-      startDevLaunchControlServer({
-        config,
-        isReady: isRendererReady,
-        activate: () => void runPromise(desktopWindow.activate.pipe(Effect.ignoreCause)),
-        quit: () => void runPromise(electronApp.quit),
-      }),
-    ),
+    Effect.tryPromise({
+      try: () =>
+        startDevLaunchControlServer({
+          config,
+          isReady: isRendererReady,
+          activate: () => void runPromise(desktopWindow.activate.pipe(Effect.ignoreCause)),
+          quit: () => void runPromise(electronApp.quit),
+        }),
+      catch: (cause) => new DevLaunchControlStartError({ cause }),
+    }),
     (server) => Effect.promise(() => server.close()),
   ).pipe(
     Effect.tap(() => Effect.logInfo("development launch control ready")),

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -24,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -53,6 +55,7 @@ import {
   usesLegacyAntigravityBackend,
 } from "./AntigravityDriver.ts";
 import { bundledAntigravityAcpAsset } from "../../scient/providerLifecycle/antigravityAcpCatalog.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const hostPlatform = HostProcess.Platform.defaultValue();
 const windowsHost = hostPlatform === "win32";
@@ -146,8 +149,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
-    loginRequired = false,
-    stalled = false,
+    options: {
+      readonly loginRequired?: boolean;
+      readonly stalled?: boolean;
+      /** `data` of the agent's "Internal error" response to `session/new`. */
+      readonly newSessionErrorData?: unknown;
+    } = {},
   ) {
     const directory = path.join(root, name);
     const executablePath = path.join(directory, "agy_acp_server.par");
@@ -159,10 +166,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       executablePath,
       [
         "#!/bin/sh",
-        ...(loginRequired
+        ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
-        stalled
+        ...(options.newSessionErrorData === undefined
+          ? []
+          : [
+              `export T3_ACP_NEW_SESSION_ERROR_DATA=${shellQuote(JSON.stringify(options.newSessionErrorData))}`,
+            ]),
+        options.stalled
           ? `exec ${shellQuote(nodePath)} -e 'process.stdin.resume()'`
           : `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
@@ -182,9 +194,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
-  const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const waiting = yield* makeExecutable("runtime waiting", true, true);
-  const stalled = yield* makeExecutable("runtime stalled", false, true);
+  const signedOut = yield* makeExecutable("runtime signed-out", { loginRequired: true });
+  const waiting = yield* makeExecutable("runtime waiting", { loginRequired: true, stalled: true });
+  const stalled = yield* makeExecutable("runtime stalled", { stalled: true });
   const controls = {
     selected: first,
     failResolution: false,
@@ -262,20 +274,24 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       yield* controls.beforeSpawn;
       const handle = yield* spawner.spawn(command);
       const environment = command.options.env ?? {};
+      const env = (name: string) => {
+        const value = environment[name];
+        return Redacted.isRedacted(value) ? Redacted.value(value) : value;
+      };
       launches.push({
         command: command.command,
-        args: command.args,
+        args: command.args.map(String),
         cwd: command.options.cwd,
         extendEnv: command.options.extendEnv,
-        profileDirectory: environment.GEMINI_HOME,
-        harnessPath: environment.ANTIGRAVITY_HARNESS_PATH,
-        forceFileStorage: environment.AGY_ACP_FORCE_FILE_STORAGE,
+        profileDirectory: env("GEMINI_HOME"),
+        harnessPath: env("ANTIGRAVITY_HARNESS_PATH"),
+        forceFileStorage: env("AGY_ACP_FORCE_FILE_STORAGE"),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
-        geminiApiKey: environment.GEMINI_API_KEY,
+        geminiApiKey: env("GEMINI_API_KEY"),
         tempDirectory:
-          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : environment.TMPDIR,
+          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
         handle,
       });
       if (environment.ANTIGRAVITY_HARNESS_PATH !== undefined) yield* controls.afterSpawn;
@@ -323,6 +339,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   return {
     instance,
     refresh,
+    makeExecutable,
     fs,
     path,
     profileDirectory,
@@ -462,7 +479,7 @@ const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-antigravity-driver-config-",
 }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,
@@ -864,7 +881,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "refreshes through the selected executable and personal Google ACP",
+    "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
@@ -926,6 +943,50 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
             .map((request) => request.params?.mcpServers),
         ).toEqual([[], []]);
         yield* h.assertClosed;
+        yield* h.instance.textGeneration
+          .generateThreadTitle({
+            cwd: h.profileDirectory,
+            message: "Name this thread",
+            modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
+          })
+          .pipe(Effect.ignore);
+        const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-chat-" });
+        const threadId = ThreadId.make("thread-antigravity-capabilities");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        const session = yield* h.instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-capabilities"),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+        const helper = {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+          session: { notices: {} },
+        };
+        expect(
+          (yield* h.readRequests)
+            .filter((request) => request.method === "initialize")
+            .map((request) => request.params?.clientCapabilities),
+        ).toEqual([
+          // Two model refreshes, then thread title generation.
+          helper,
+          helper,
+          helper,
+          {
+            fs: { readTextFile: true, writeTextFile: false },
+            terminal: false,
+            session: { notices: {} },
+            elicitation: { form: {} },
+          },
+        ]);
       }).pipe(Effect.scoped),
   );
 
@@ -964,6 +1025,64 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reports the missing SOCKS dependency when session creation fails and keeps the catalog",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const before = yield* h.instance.snapshot.getSnapshot;
+        h.controls.selected = yield* h.makeExecutable("runtime socks", {
+          newSessionErrorData: { details: "python-socks is required to use a SOCKS proxy" },
+        });
+        const error = yield* h.refresh().pipe(Effect.flip);
+        expect(error.detail).toBe(
+          "Could not refresh Antigravity models. The previous model list is unchanged. Antigravity reported: python-socks is required to use a SOCKS proxy",
+        );
+        const after = yield* h.instance.snapshot.getSnapshot;
+        expect(after.models).toEqual(before.models);
+        expect(after.auth).toEqual(before.auth);
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "never copies unrecognized agent error details into the refresh error",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const before = yield* h.instance.snapshot.getSnapshot;
+        const generic =
+          "Could not refresh Antigravity models. The previous model list is unchanged.";
+        const secret = "https://accounts.example.test/o/oauth2?code=sk-secret-123";
+        h.controls.selected = yield* h.makeExecutable("runtime socks with extra", {
+          newSessionErrorData: {
+            details: `Traceback (most recent call last):\n  proxy ${secret}\npython-socks is required to use a SOCKS proxy`,
+          },
+        });
+        const known = yield* h.refresh().pipe(Effect.flip);
+        expect(known.detail).toBe(
+          `${generic} Antigravity reported: python-socks is required to use a SOCKS proxy`,
+        );
+
+        for (const [name, data] of [
+          ["runtime unknown details", { details: `Token refresh failed for ${secret}` }],
+          ["runtime object details", { details: { stack: "secret frame", env: { HOME: "/" } } }],
+          ["runtime no details", ["python-socks is required to use a SOCKS proxy"]],
+        ] as const) {
+          h.controls.selected = yield* h.makeExecutable(name, { newSessionErrorData: data });
+          const error = yield* h.refresh().pipe(Effect.flip);
+          expect(error.detail).toBe(generic);
+        }
+        const after = yield* h.instance.snapshot.getSnapshot;
+        expect(after.models).toEqual(before.models);
+        expect(after.auth).toEqual(before.auth);
+        expect(JSON.stringify(after)).not.toContain("sk-secret-123");
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)(

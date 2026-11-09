@@ -9,7 +9,7 @@ import { accountsState } from "./accountsState";
 import { agentMayUse, automaticSignIn, fillableAccounts } from "./accountsView";
 
 /** Runtime tab ids are `[environmentId, threadId, serverEpoch, tabId]` (`previewRuntimeTabId`). */
-function runtimeTab(id: string) {
+export function runtimeTab(id: string) {
   try {
     const [environmentId, threadId, , tabId] = JSON.parse(id) as unknown[];
     return typeof environmentId === "string" &&

@@ -32,13 +32,13 @@ import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 
 const stores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
 );
-const testLayer = Layer.merge(EventSink.layer, ProjectionMaintenance.layer).pipe(
+const testLayer = Layer.merge(EventSink.layer, ProjectionReplay.layer).pipe(
   Layer.provideMerge(stores),
 );
 const instanceId = ProviderInstanceId.make("controlled-plan-owner");
@@ -288,7 +288,7 @@ it.effect(
       const { sink, run, attempt, plan, receipt, now } = yield* seed();
       const projection = yield* ProjectionStore.ProjectionStoreV2;
       const events = yield* EventStore.EventStoreV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       const written = yield* sink.write({ events: [receipt] });
       assert.deepEqual(
         written.map((entry) => entry.event.type),

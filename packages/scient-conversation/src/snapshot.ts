@@ -19,7 +19,6 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
-import * as Data from "effect/Data";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -54,9 +53,10 @@ export type ConversationSnapshotThread = Pick<
 };
 
 /** The range's last message is not a completed user or assistant message of the thread. */
-export class SnapshotRangeError extends Data.TaggedError("SnapshotRangeError")<{
-  readonly messageId: MessageId;
-}> {}
+export class SnapshotRangeError extends Schema.TaggedError<SnapshotRangeError>()(
+  "SnapshotRangeError",
+  { messageId: MessageId },
+) {}
 
 function toAttachment(
   attachment: ChatAttachment,
@@ -91,7 +91,7 @@ function isChatAttachment(value: unknown): value is ChatAttachment {
  * The turn that is still in progress, if any: the session's active turn while
  * it runs, otherwise a latest turn that has not recorded its completion.
  */
-export function runningTurnId(thread: ConversationSnapshotThread): TurnId | null {
+function runningTurnId(thread: ConversationSnapshotThread): TurnId | null {
   if (thread.activeTurn !== undefined) return thread.activeTurn?.turnId ?? null;
   const sessionTurn =
     thread.session?.status === "running" ? (thread.session.activeTurnId ?? null) : null;

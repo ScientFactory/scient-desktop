@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import { type CustomModel, DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -26,7 +28,6 @@ import type { SessionConfigOption } from "effect-acp/compat";
 // SCIENT-FORK:END
 import {
   buildDroidCustomModelsSettings,
-  droidCustomModelsSnapshot,
   droidCustomModelId,
   makeDroidCustomModelsRuntimeFactory,
   resolveDroidCustomReasoningOptions,
@@ -177,7 +178,7 @@ describe("Droid custom model settings", () => {
       yield* fixture.update([]);
       yield* Deferred.await(closed);
       expect(runtime.isConfigurationRetired?.()).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   it("reuses automatic metadata without IO and preserves manual and legacy limits", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
@@ -400,7 +401,7 @@ describe("Droid custom model settings", () => {
         yield* runtime.setModel(legacyId);
         yield* runtime.setModel("native-model");
         expect(selected).toEqual([automaticId, legacyId, "native-model"]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("corrects only the selected managed completions ladder and excludes remapped efforts", () => {
@@ -642,7 +643,7 @@ describe("Droid custom model settings", () => {
         mode: "adaptive",
         levels: ["low", "medium", "high", "max"],
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resumes into a new overlay when the user's default level changes", () =>
@@ -678,7 +679,7 @@ describe("Droid custom model settings", () => {
       yield* runtime.checkConfiguration!();
       expect(runtime.isConfigurationCurrent?.()).toBe(false);
       expect(runtime.isConfigurationRetired?.()).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -798,7 +799,7 @@ describe("Droid custom model settings", () => {
           true,
         );
         expect(after.snapshot.models.some((model) => slugs.includes(model.slug))).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("projects every Scient protocol onto Droid's native BYOK providers through the broker", () => {
@@ -896,12 +897,15 @@ describe("Droid custom model settings", () => {
       );
       expect(yield* fs.exists(overlayPath)).toBe(false);
       // The broker's listener ends with the runtime scope.
-      const afterClose = yield* Effect.tryPromise(() =>
+      const rejected = yield* Effect.promise(() =>
         // @effect-diagnostics-next-line globalFetchInEffect:off
-        fetch(`${brokerUrl}/responses`, { method: "POST", body: "{}" }),
-      ).pipe(Effect.exit);
-      expect(afterClose._tag).toBe("Failure");
-    }).pipe(Effect.provide(NodeServices.layer));
+        fetch(`${brokerUrl}/responses`, { method: "POST", body: "{}" }).then(
+          () => false,
+          () => true,
+        ),
+      );
+      expect(rejected).toBe(true);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   });
 
   it.effect("stops Droid's Factory conversation sync only when the setting is off", () =>
@@ -933,7 +937,7 @@ describe("Droid custom model settings", () => {
       // Droid's default (sync on) is left to Droid; off is written explicitly.
       expect(syncSetting).toEqual([undefined, undefined, false]);
       expect(decodeDroidSettings({}).cloudSessionSync).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("confirms tool refusal for background generation only where Droid enforces it", () =>
@@ -981,7 +985,7 @@ describe("Droid custom model settings", () => {
       // No policy source says so, but Droid did not run the overlay's hook.
       expect(yield* guard("overlay-hooks-allowed", false)).toBe("unconfirmed");
       expect(yield* guard("overlay-hooks-allowed", true)).toBe("enforced");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("refuses every Droid tool call only in processes started without tools", () =>
@@ -1020,31 +1024,8 @@ describe("Droid custom model settings", () => {
         ],
       });
       expect(withTools?.hooks).toBeUndefined();
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
-
-  it("ignores other agents' attachments and connections when comparing process configuration", () => {
-    const original = connection("openai-responses", "original");
-    const unrelated = { ...connection("openai-responses", "other"), models: [] };
-    expect(droidCustomModelsSnapshot([original], instanceId)).toEqual(
-      droidCustomModelsSnapshot(
-        [
-          {
-            ...original,
-            models: original.models.map((model) => ({
-              ...model,
-              instanceIds: [...model.instanceIds, ProviderInstanceId.make("pi")],
-            })),
-          },
-          unrelated,
-        ],
-        instanceId,
-      ),
-    );
-    expect(droidCustomModelsSnapshot([original], instanceId)).not.toEqual(
-      droidCustomModelsSnapshot([{ ...original, credentialId: "rotated" }], instanceId),
-    );
-  });
 
   it.effect("defers capability updates without retiring the current runtime", () =>
     Effect.gen(function* () {
@@ -1108,7 +1089,7 @@ describe("Droid custom model settings", () => {
       expect(runtime.isConfigurationCurrent?.()).toBe(false);
       expect(runtime.isConfigurationRetired?.()).toBe(false);
       yield* runtime.prompt({ prompt: [] });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("keeps a runtime current when a connection's saved key is unavailable", () =>
@@ -1142,7 +1123,7 @@ describe("Droid custom model settings", () => {
       expect(runtime.isConfigurationCurrent?.()).toBe(false);
       expect(runtime.isConfigurationRetired?.()).toBe(false);
       expect(yield* Deferred.isDone(closed)).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("says why Droid does not list a Scient model instead of its model list", () =>
@@ -1180,7 +1161,7 @@ describe("Droid custom model settings", () => {
         "This custom model was removed from Custom models. Pick another model.",
       );
       expect(describe("claude-opus-4-6")).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("does not broker a key the broker could not recognize when an endpoint echoes it", () =>
@@ -1209,7 +1190,7 @@ describe("Droid custom model settings", () => {
       );
       // Only the usable connection reaches Droid.
       expect(decodeOverlay(yield* fs.readFileString(overlayPath)).customModels).toHaveLength(1);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reports the context window each loaded custom model was given", () =>
@@ -1224,7 +1205,7 @@ describe("Droid custom model settings", () => {
         128_000,
       );
       expect(runtime.getContextWindow?.("native-model")).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("leaves thinking to Droid when manual limits are saved with reasoning on Automatic", () => {
@@ -1300,7 +1281,7 @@ describe("Droid custom model settings", () => {
         "AcpProcessExitedError",
       );
       expect(yield* fs.exists(file)).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("does not miss a model removal while the runtime is being constructed", () =>
@@ -1323,7 +1304,7 @@ describe("Droid custom model settings", () => {
       yield* Deferred.await(closed);
       yield* Deferred.succeed(release, undefined);
       expect((yield* Fiber.join(pending))._tag).toBe("AcpProcessExitedError");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -1348,7 +1329,7 @@ describe("Droid custom model settings", () => {
         );
         expect(yield* factory(runtimeInput).pipe(Effect.flip)).toBe(expected);
         expect(yield* fs.exists(file)).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("cleans up a cancelled construction while its caller scope is still alive", () =>
@@ -1367,6 +1348,6 @@ describe("Droid custom model settings", () => {
       expect(yield* fs.exists(file)).toBe(true);
       yield* Fiber.interrupt(pending);
       expect(yield* fs.exists(file)).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

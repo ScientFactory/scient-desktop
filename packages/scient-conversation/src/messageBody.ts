@@ -16,7 +16,7 @@ import {
   type SourceEdit,
 } from "./markdownAst.ts";
 
-export const STRUCTURE_MARKER_PREFIX = "<!-- scient:";
+const STRUCTURE_MARKER_PREFIX = "<!-- scient:";
 
 /** How chat renders raw HTML for this kind of message. */
 export type RawHtmlMode =

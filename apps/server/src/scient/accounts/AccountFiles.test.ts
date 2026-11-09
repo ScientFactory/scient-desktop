@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect, it } from "@effect/vitest";
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Context, Effect, Layer, Option, Redacted } from "effect";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -48,7 +48,7 @@ it.effect("persists encrypted account files and a fallback key with owner-only p
     Effect.provide(
       ServerSecretStore.layer.pipe(
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-accounts-" })),
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
   ),

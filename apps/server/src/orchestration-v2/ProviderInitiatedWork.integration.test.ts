@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { awaitThreadProjection } from "./testkit/awaitThreadProjection.testkit.ts";
 import {
@@ -144,8 +145,7 @@ const withInitiatedWork = <A, E, R>(
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-              getInstance: () => Effect.succeed(undefined),
+              getInstance: () => Effect.undefined,
             }),
           ),
         ),
@@ -542,7 +542,7 @@ const withInitiatedWork = <A, E, R>(
           waitFor,
         });
       }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(runtimePolicyLayer))));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
 it.live(

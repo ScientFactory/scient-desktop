@@ -15,7 +15,7 @@ import {
 import type * as DateTime from "effect/DateTime";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -145,8 +145,13 @@ export function makeAcpReplayCompletenessAssertion(
     Effect.flatMap((status) => {
       if (
         status.failure === undefined &&
-        status.cursor === transcript.entries.length &&
-        status.total === transcript.entries.length
+        status.total === transcript.entries.length &&
+        // SCIENT-FORK:START — a runtime released mid-transcript (idle release) has replayed its
+        // whole segment when the cursor sits just past its recorded exit; the next runtime resumes.
+        // Scient keeps a session whose close failed, so this check must not fail that release.
+        (status.cursor === transcript.entries.length ||
+          transcript.entries[status.cursor - 1]?.type === "runtime_exit")
+        // SCIENT-FORK:END
       ) {
         return Effect.void;
       }
@@ -202,7 +207,7 @@ export function makeAcpReplayRuntime(input: {
 ) => Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
   // Transcripts exceed the kernel's 128 KiB per-environment-variable limit.
   const transcriptPath = `${input.statusPath}.transcript.json`;

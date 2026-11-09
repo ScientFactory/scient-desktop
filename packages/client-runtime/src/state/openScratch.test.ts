@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, type ScopedProjectRef, WS_METHODS } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
+import { BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -24,7 +25,11 @@ const PROJECT = {
 
 const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {
@@ -40,11 +45,8 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
           Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
       Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => new Uint8Array(size),
-          digest: (_algorithm, data) => Effect.succeed(data),
-        }),
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size)),
       ),
     ),
   );

@@ -11,8 +11,9 @@ agent can use this endpoint to:
 - create one or more ordinary top-level Scient threads;
 - list a project's threads and incrementally read authorized threads;
 - rename threads, regenerate titles, and link or unlink pull requests;
-- send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- send or steer follow-up messages;
+- wait for or interrupt ordinary thread runs; and
+- schedule recurring work that runs without an active turn.
 
 These are Scient orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a Scient child thread and run. The child receives
@@ -206,7 +207,12 @@ provider selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+`OrchestratorToolkit` in
+[`toolkits/orchestrator/tools.ts`](../../apps/server/src/mcp/toolkits/orchestrator/tools.ts)
+is the authoritative list of orchestration tools. The sections below cover
+delegation and thread tools. `t3_thread_launch` is documented with them but
+registered by the project toolkit in
+[`toolkits/project/tools.ts`](../../apps/server/src/mcp/toolkits/project/tools.ts).
 
 ### `orchestrator_capabilities`
 
@@ -420,8 +426,10 @@ know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
 then by a unique match in another enabled environment. An outside OAuth client,
 one that is not a linked environment, cannot render `t3-thread://` links, so it
-gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
-for threads in this environment.
+gets a web URL for threads in this environment, `<origin>/threads/<environmentId>/<threadId>`.
+The origin is Scient's hosted thread origin (`scientHostedThreadOrigin` in
+`packages/shared/src/scientThreadLinks.ts`) once it has one, and until then the
+origin the client reached, whose web app opens the thread.
 
 An explicitly environment-qualified historical link stays bound to that
 environment; it must not silently resolve to the same thread ID elsewhere.
@@ -477,6 +485,22 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### Scheduled tasks
+
+`schedule_task`, `list_scheduled_tasks`, and `delete_scheduled_task` manage
+recurring work in the app scheduler; `schedule_task` with a `scheduledTaskId`
+updates an existing task. A schedule
+runs its prompt on an interval, at a fixed time in the server's local time
+zone, or on each qualifying webhook request, even when no turn is active.
+Without a signature, anyone with the webhook URL can trigger a run.
+Signature checks, filters, and dedupe can skip a webhook request.
+`bindToCurrentThread` defaults to `true` only when the caller has a thread in
+the task's project; otherwise it defaults to `false`. Bound runs post into
+that thread; unbound runs each launch a fresh thread in the task's project.
+Explicit `bindToCurrentThread: true` without a caller thread in that project
+is rejected. Pausing uses `schedule_task` with `scheduledTaskId` and `enabled: false`;
+deletion is permanent.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -512,8 +536,12 @@ Users rarely watch child threads, so a child question would otherwise go
 unanswered. When a child opens a pending `user_input` request, the parent gets
 a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
-async question, still working. If the question is answered or dismissed before
-the notification starts a turn, that queued turn is cancelled. Approvals are not
+async question, still working. If the parent's turn is running and its provider
+can steer without interrupting tools, the notification steers into that turn,
+like a background task's completion. A queued notice would wait behind a
+long-running orchestrator turn that may never end. Otherwise it queues. If the
+question is answered or dismissed before a queued notification starts a turn,
+that queued turn is cancelled. Approvals are not
 routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.

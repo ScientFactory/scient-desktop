@@ -219,9 +219,9 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                       assert.lengthOf(args, 4);
                       const source = args[2]!;
                       const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination).pipe(Effect.orDie));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")).pipe(Effect.orDie));
-                      yield* fs.rename(source, destination).pipe(Effect.orDie);
+                      assert.isFalse(yield* fs.exists(destination));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      yield* fs.rename(source, destination);
                       moves.push(args);
                     } else {
                       const isolatedPath = moves[0]![3]!;
@@ -233,12 +233,10 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                         "--",
                         isolatedPath,
                       ]);
-                      assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));
-                      assert.isTrue(
-                        yield* fs.exists(path.join(isolatedPath, ".git")).pipe(Effect.orDie),
-                      );
+                      assert.isFalse(yield* fs.exists(worktreePath));
+                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
                       removals.push(isolatedPath);
-                      yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
+                      yield* fs.remove(isolatedPath, { recursive: true });
                     }
                   }
                   return {
@@ -253,7 +251,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                     stdoutTruncated: false,
                     stderrTruncated: false,
                   };
-                }),
+                }).pipe(Effect.orDie),
             }),
           ),
         ),

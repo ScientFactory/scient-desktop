@@ -11,10 +11,11 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
-import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import { BrowserSettingsReadError, isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 // SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { activeProfileId } from "~/scient/accounts/activeProfiles";
 import { openProfileId } from "~/scient/accounts/openProfile";
 // SCIENT-FORK:END
 
@@ -40,11 +41,14 @@ export async function openPreviewSession<E>(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
   input.assertCurrent?.();
-  if (defaults instanceof BrowserSettingsReadError) {
+  if (isBrowserSettingsReadError(defaults)) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
   // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
-  const profileId = input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults));
+  const profileId =
+    input.profileId === undefined
+      ? await openProfileId(input.threadRef, input.url, defaults)
+      : await activeProfileId(input.profileId);
   input.assertCurrent?.();
   // SCIENT-FORK:END
   const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);

@@ -1,6 +1,6 @@
 import type { SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -254,7 +254,7 @@ const makeWakeHarnessWithOptions = (options?: {
       attachmentsDir,
       fileSystem,
       path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
+      random: yield* SecureRandom.SecureRandom,
       idAllocator,
       continuationRequests: {
         offer: (request) =>
@@ -285,6 +285,10 @@ const makeWakeHarnessWithOptions = (options?: {
                 applyFlagSettings: () => Effect.void,
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 setPermissionMode: () => Effect.void,
                 interrupt: Effect.void,
                 close: Queue.shutdown(processMessages),
@@ -328,10 +332,11 @@ const makeWakeHarnessWithOptions = (options?: {
               interrupt: options?.interrupt ?? Effect.void,
               close: options?.close?.(sdkMessages) ?? Effect.void,
               // SCIENT-FORK:START Scient Extensions native inventory
-              ...(options?.mcpServerStatus === undefined
-                ? {}
-                : { mcpServerStatus: options.mcpServerStatus }),
+              mcpServerStatus: options?.mcpServerStatus ?? Effect.succeed([]),
               // SCIENT-FORK:END
+              readMcpResource: () => Effect.die("unexpected MCP resource read in wake fixture"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call in wake fixture"),
+              listPermissionRules: Effect.die("unexpected permission rules read in wake fixture"),
             };
           }),
         forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),

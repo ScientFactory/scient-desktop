@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { BindingGeneration, type PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -21,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -91,8 +93,10 @@ const assetLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
-  ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
-).pipe(Layer.provideMerge(NodeServices.layer));
+  AssetSigner.layer.pipe(
+    Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(configLayer))),
+  ),
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 async function fixture(prefix: string): Promise<string> {
   const root = await NodeFSP.realpath(
@@ -556,7 +560,7 @@ describe("Scient PDF build handler", () => {
       }),
   );
 
-  it.effect("rejects missing authority and projectless invocations before rendering", () =>
+  it.effect("rejects projectless invocations before rendering", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-authority-"));
       yield* Effect.promise(() => writeHtml(root));
@@ -565,17 +569,6 @@ describe("Scient PDF build handler", () => {
       const query = makeQuery({ project: null, thread });
       const store = makeStore();
       const broker = makeBroker();
-
-      const missingCapability = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
-        invocation: makeInvocation(threadId, new Set()),
-        query,
-        store: store.store,
-        broker: broker.broker,
-      }).pipe(Effect.result);
-      expect(missingCapability).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "ScientPdfBuildToolError", code: "capability-unavailable" },
-      });
 
       const projectless = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
         invocation: makeInvocation(threadId),

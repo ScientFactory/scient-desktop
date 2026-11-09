@@ -37,7 +37,7 @@ import { MermaidBlockedResourcesNote } from "./MermaidBlockedResourcesNote";
 import { MermaidDiagramDialog } from "./MermaidDiagramDialog";
 import {
   renderMermaidDiagram,
-  MermaidRenderError,
+  isMermaidRenderError,
   type MermaidTheme,
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
@@ -191,8 +191,7 @@ export function MermaidDiagramCard({
           setDiagramState({
             status: "error",
             message: diagramErrorMessage(cause),
-            diagnostic:
-              cause instanceof MermaidRenderError ? cause.details : diagramErrorMessage(cause),
+            diagnostic: isMermaidRenderError(cause) ? cause.details : diagramErrorMessage(cause),
             source,
             theme,
             retryVersion,

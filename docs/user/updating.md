@@ -203,10 +203,12 @@ chose **Update**, it waits in the circle instead.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Two kinds are left
-out on purpose: providers that only offer a manual update command, and
-Scient-managed runtimes, which update from their own actions or the sidebar
-circle.
+at once. Hover it to see which providers it will update. A provider is left out
+when any of its enabled, outdated instances offers only a manual update command,
+or when its instances use different update commands, such as two instances that
+run different CLI installs. Update those by hand, or point every instance of the
+provider at the same CLI. Scient-managed runtimes are also left out; they update
+from their own actions or the sidebar circle.
 
 After a successful provider CLI update, Scient refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected

@@ -1,9 +1,11 @@
 import * as Predicate from "effect/Predicate";
 import {
+  droidSubagentOutlivesTurn,
   endDroidSubagents,
   makeDroidSubagentTracker,
   observeDroidSubagentToolCall,
   type DroidSubagentEvent,
+  type DroidSubagentTracker,
 } from "../../provider/droid/DroidSubagents.ts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import type {
@@ -11,12 +13,15 @@ import type {
   AcpAdapterV2ToolPresentation,
 } from "@t3tools/provider-acp/server/adapter";
 
-/** Fold Droid's Task/TaskOutput protocol into this native turn's presentation. */
+/**
+ * Fold Droid's Task/TaskOutput protocol into this native turn's presentation. A background
+ * sub-agent that outlives the turn stays tracked into the next one, where Droid reports its end.
+ */
 export function makeDroidToolPresentation(
   input: ProviderAdapterV2TurnInput,
+  tracker: DroidSubagentTracker = makeDroidSubagentTracker(),
+  prompts = new Map<string, string>(),
 ): AcpAdapterV2ToolPresentation {
-  const tracker = makeDroidSubagentTracker();
-  const prompts = new Map<string, string>();
   const project = (event: DroidSubagentEvent): AcpAdapterV2SubagentUpdate => {
     const payload = event.payload;
     const result =
@@ -60,5 +65,12 @@ export function makeDroidToolPresentation(
         tracker,
         status === "completed" ? "turn-ended" : status === "failed" ? "session-ended" : "stop",
       ).map(project),
+    outlivesTurn: (toolCallId) => droidSubagentOutlivesTurn(tracker, toolCallId),
+    continueInto: (next) =>
+      makeDroidToolPresentation(
+        next,
+        tracker,
+        new Map([...prompts].filter(([id]) => tracker.subagents.has(id))),
+      ),
   };
 }

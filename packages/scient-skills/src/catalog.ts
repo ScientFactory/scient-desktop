@@ -1,10 +1,4 @@
-import {
-  skillReleaseKey,
-  toSkillReleaseSummary,
-  type SkillRelease,
-  type SkillReleaseRef,
-  type SkillReleaseSummary,
-} from "./model.ts";
+import { skillReleaseKey, type SkillRelease, type SkillReleaseRef } from "./model.ts";
 import { loadSkillRelease } from "./release.ts";
 
 const compareStrings = (left: string, right: string): number =>
@@ -92,12 +86,6 @@ export function resolveExactSkillRelease(
       release.digest === reference.digest &&
       release.origin === reference.origin,
   );
-}
-
-export function listSkillReleaseSummaries(
-  catalog: SkillCatalog,
-): ReadonlyArray<SkillReleaseSummary> {
-  return catalog.releases.map(toSkillReleaseSummary);
 }
 
 export function catalogByReleaseKey(catalog: SkillCatalog): ReadonlyMap<string, SkillRelease> {

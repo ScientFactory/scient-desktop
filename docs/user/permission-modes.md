@@ -93,6 +93,9 @@ Codex, for example, translates the mode into its approval policy and sandbox lev
 similarly use ask mode for **Supervised** and always-approve for **Full access**, regardless of a
 different default in the standalone Grok CLI configuration.
 
+Kiro offers only **Supervised** and **Full access**. In **Supervised** Kiro also asks you to
+review a turn's file changes. See [Kiro permissions](./providers-kiro.md#permission-modes).
+
 Mobile offers the same four modes with the same labels and descriptions.
 
 Antigravity's native `/plan` command requests a plan. It does not change the permission mode.

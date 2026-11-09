@@ -4,6 +4,10 @@ import type * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { assert, type Vitest } from "@effect/vitest";
 import { ScientMarkdownImageUploadResult, WS_METHODS } from "@t3tools/contracts";
+import type * as Digest from "effect/crypto/Digest";
+import type * as Mac from "effect/crypto/Mac";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -32,7 +36,13 @@ function imageForm(cwd: string, fileName = "result.png") {
 
 // Use the production registration/auth stack and real sockets, not handler mocks.
 export function registerMarkdownTransportTests(
-  it: Vitest.MethodsNonLive<NodeServices.NodeServices>,
+  it: Vitest.MethodsNonLive<
+    | NodeServices.NodeServices
+    | SecureRandom.SecureRandom
+    | Digest.Digest
+    | Mac.Mac
+    | Signature.Signature
+  >,
   harness: ScientRpcServerTestHarness,
 ): void {
   const { buildAppUnderTest, exchangeAccessToken, getWsServerUrl, withWsRpcClient } = harness;

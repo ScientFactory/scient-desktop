@@ -37,6 +37,7 @@ import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 
 const PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
+const QUALIFICATION_REPORT_PATH = NodeProcess.env.SCIENT_COMPUTE_QUALIFICATION_REPORT;
 const PROJECT = ComputeProjectId.make("native-concurrent-compute");
 const encodeQualificationMeasurement = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -195,10 +196,9 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
             })),
           };
           yield* Effect.logInfo("Native Compute baseline", measurement);
-          const reportPath = NodeProcess.env.SCIENT_COMPUTE_QUALIFICATION_REPORT;
-          if (reportPath)
+          if (QUALIFICATION_REPORT_PATH)
             yield* fs.writeFileString(
-              reportPath,
+              QUALIFICATION_REPORT_PATH,
               yield* encodeQualificationMeasurement(measurement),
             );
           const submit = (session: ComputeSessionRecord, suffix: string, code: string) =>

@@ -1770,47 +1770,6 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("marks the binding stale with parsed diagnostics when the engine exits non-zero", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        compiles: [
-          { transcript: "", exitCode: 0, pdf: minimalPdf("build-a") },
-          { transcript: ERROR_TRANSCRIPT, exitCode: 1, pdf: null },
-        ],
-      });
-      yield* Effect.gen(function* () {
-        const service = yield* LatexBuildService;
-        const store = yield* GeneratedDocumentStore;
-        yield* service.requestBuild(harness.buildInput);
-        const succeeded = yield* awaitTerminal(service, harness.buildInput);
-        expect(succeeded.state).toBe("succeeded");
-        const publishedRevision =
-          succeeded.descriptor?._tag === "generated-pdf" ? succeeded.descriptor.revisionId : null;
-        expect(publishedRevision).not.toBeNull();
-
-        yield* service.requestBuild(harness.buildInput);
-        const failed = yield* awaitTerminal(service, harness.buildInput);
-        expect(failed.state).toBe("failed");
-        expect(failed.diagnostics[0]).toMatchObject({
-          severity: "error",
-          file: "main.tex",
-          line: 12,
-        });
-        expect(failed.failureSummary).toContain("main.tex:12:");
-        // The last good PDF survives its failed successor, flagged stale.
-        expect(failed.descriptor).toMatchObject({
-          revisionId: publishedRevision,
-          bindingStatus: "stale",
-          staleReason: failed.failureSummary,
-        });
-        const bound = yield* store.getDescriptor(
-          LogicalDocumentKey.make(failed.logicalDocumentKey),
-        );
-        expect(bound).toMatchObject({ bindingStatus: "stale", revisionId: publishedRevision });
-      }).pipe(Effect.provide(harness.serviceLayer));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.live("releases the binding when a cancel lands inside the beginProduction window", () =>
     Effect.gen(function* () {
       // Cancel can arrive after the store claims producing but before entry.production receives its

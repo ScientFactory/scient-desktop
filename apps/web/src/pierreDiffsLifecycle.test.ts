@@ -14,10 +14,6 @@ const instanceHooks = [
 ] as const;
 
 // Guards that patches/@pierre%2Fdiffs@1.5.2.patch is still applied to the installed package.
-const filePreviewSource = NodeFS.readFileSync(
-  new URL("./components/files/FilePreviewPanel.tsx", import.meta.url),
-  "utf8",
-);
 
 describe("Pierre file instance lifecycle", () => {
   it.each(instanceHooks)("makes %s detach idempotent and reentrancy-safe", (hookName) => {
@@ -36,10 +32,4 @@ describe("Pierre file instance lifecycle", () => {
     expect(releaseOwnership).toBeGreaterThan(tolerateRepeatedDetach);
     expect(cleanUp).toBeGreaterThan(releaseOwnership);
   });
-});
-
-// regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
-it("leaves editor cleanup with the shared EditProvider", () => {
-  expect(filePreviewSource).not.toContain("editor.cleanUp();");
-  expect(filePreviewSource).toContain("<EditProvider createEditor={createFileEditor}>");
 });

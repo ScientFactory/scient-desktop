@@ -328,6 +328,46 @@ export function freezeConversationForkNativeSource(input: {
   };
 }
 
+/** Provider turns still in a source conversation. An undo rolls back whole runs, and
+ * their turns are no longer in the conversation, so they cannot bound or extend a fork. */
+export function providerTurnsOutsideRolledBackRuns(
+  source: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
+): ReadonlyArray<OrchestrationV2ProviderTurn> {
+  const rolledBackRunIds = new Set(
+    source.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
+  const rolledBackAttemptIds = new Set(
+    source.attempts
+      .filter((attempt) => rolledBackRunIds.has(attempt.runId))
+      .map((attempt) => attempt.id),
+  );
+  return source.providerTurns.filter(
+    (turn) => turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId),
+  );
+}
+
+/** Turns handed to the adapter's native clone. Adapters find a turn boundary from the
+ * turns after it (Kiro forks the head when none follows, Pi cuts at the next turn), but
+ * the frozen prefix holds only retained turns, so the source's later live turns are added,
+ * without the turns of runs an undo rolled back after the fork was frozen. */
+export function frozenForkSourceTurns(
+  frozen: FrozenConversationForkNativeSource,
+  liveSource: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
+): ReadonlyArray<OrchestrationV2ProviderTurn> {
+  const boundary = frozen.sourceProviderTurns.find((turn) => turn.id === frozen.providerTurnId);
+  if (boundary === undefined) return frozen.sourceProviderTurns;
+  const frozenIds = new Set(frozen.sourceProviderTurns.map((turn) => turn.id));
+  return [
+    ...frozen.sourceProviderTurns,
+    ...providerTurnsOutsideRolledBackRuns(liveSource).filter(
+      (turn) =>
+        turn.providerThreadId === frozen.sourceProviderThread.id &&
+        turn.ordinal > boundary.ordinal &&
+        !frozenIds.has(turn.id),
+    ),
+  ];
+}
+
 /** A completed clone owns the inherited prefix even if its first local
  * turn failed. Reusing that exact native owner must recover only the
  * rejected local turn, without injecting the cloned source a second time. */

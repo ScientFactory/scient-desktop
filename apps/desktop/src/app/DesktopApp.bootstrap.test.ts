@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -132,16 +132,10 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       NodeServices.layer,
       Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
       DesktopState.layer,
-      Layer.effect(
-        Crypto.Crypto,
-        Effect.map(Crypto.Crypto, (crypto) => ({
-          ...crypto,
-          randomUUIDv4: (() =>
-            Effect.succeed(
-              "00000000-0000-4000-8000-000000000000",
-            )) as Crypto.Crypto["randomUUIDv4"],
-        })),
-      ).pipe(Layer.provide(NodeServices.layer)),
+      Layer.succeed(
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size)),
+      ),
       DesktopAppSettings.layerTest(environment.defaultDesktopSettings),
       Layer.mock(DesktopAppIdentity.DesktopAppIdentity, {
         resolveUserDataPath: Effect.succeed(userDataPath),

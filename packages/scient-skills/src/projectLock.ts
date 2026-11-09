@@ -84,7 +84,7 @@ function parseReleaseRef(value: unknown): SkillReleaseRef | undefined {
   };
 }
 
-export function parseProjectSkillLock(contents: string): ProjectSkillLock | undefined {
+function parseProjectSkillLock(contents: string): ProjectSkillLock | undefined {
   let value: unknown;
   try {
     value = JSON.parse(contents);

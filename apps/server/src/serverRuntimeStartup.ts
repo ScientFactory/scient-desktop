@@ -14,7 +14,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -307,7 +307,7 @@ const resolveWelcomeBase = Effect.gen(function* () {
 });
 
 export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const projects = yield* ProjectService.ProjectService;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -315,11 +315,9 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   const path = yield* Path.Path;
   if (!serverConfig.autoBootstrapProjectFromCwd) return {};
 
-  // Allocate outside the recoverable bootstrap work: a failed platform UUID
-  // source remains a typed error for callers of this resolver.
-  const commandId = CommandId.make(yield* crypto.randomUUIDv4());
-  const projectId = ProjectId.make(yield* crypto.randomUUIDv4());
-  const threadCommandId = CommandId.make(yield* crypto.randomUUIDv4());
+  const commandId = CommandId.make(yield* random.uuidV4());
+  const projectId = ProjectId.make(yield* random.uuidV4());
+  const threadCommandId = CommandId.make(yield* random.uuidV4());
   const targets: {
     bootstrapProjectId?: ProjectId;
     bootstrapThreadId?: ThreadId;
@@ -520,7 +518,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
 
   const commandGate = yield* makeCommandGate;
@@ -547,6 +545,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
       yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
     }).pipe(
+      Effect.withSpan("server.shutdown"),
       Effect.catchCause((cause) =>
         Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
           cause: Cause.pretty(cause),
@@ -640,7 +639,9 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         serverConfig.autoBootstrapProjectFromCwd
           ? runStartupPhase(
               "welcome.autobootstrap",
-              resolveAutoBootstrapWelcomeTargets.pipe(Effect.provideService(Crypto.Crypto, crypto)),
+              resolveAutoBootstrapWelcomeTargets.pipe(
+                Effect.provideService(SecureRandom.SecureRandom, random),
+              ),
             )
           : Effect.succeed({}),
       ),

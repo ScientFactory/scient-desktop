@@ -11,9 +11,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { cursorSdkParameterPriority, cursorSdkProviderOptionId } from "./sdkModel.ts";
 import {
@@ -21,22 +18,12 @@ import {
   buildSelectOptionDescriptor,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
-  collectStreamAsString,
   providerModelsFromSettings,
-  type CommandResult,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
-export type CursorCliArgumentResolver = (
-  args: ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
-) => ReadonlyArray<string>;
-import {
-  isCursorAboutJsonFormatUnsupported,
-  toTitleCaseWords,
-  type CursorAboutResult,
-} from "./about.ts";
+import { toTitleCaseWords, type CursorAboutResult } from "./about.ts";
 
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
@@ -217,53 +204,6 @@ function joinProviderMessages(...messages: ReadonlyArray<string | undefined>): s
   }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
-
-const runCursorCommand = Effect.fn("status.runCursorCommand")(function* (
-  cursorSettings: CursorSettings,
-  args: ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
-  resolveArgs: CursorCliArgumentResolver = (value) => value,
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const spawnCommand = yield* resolveSpawnCommand(
-    cursorSettings.binaryPath || "cursor-agent",
-    resolveArgs(args, environment),
-    environment ? { env: environment } : {},
-  );
-  const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-    ...(environment ? { env: environment, extendEnv: false } : { extendEnv: true }),
-    shell: spawnCommand.shell,
-  });
-
-  const child = yield* spawner.spawn(command);
-  const [stdout, stderr, exitCode] = yield* Effect.all(
-    [
-      collectStreamAsString(child.stdout),
-      collectStreamAsString(child.stderr),
-      child.exitCode.pipe(Effect.map(Number)),
-    ],
-    { concurrency: "unbounded" },
-  );
-
-  return { stdout, stderr, code: exitCode } satisfies CommandResult;
-}, Effect.scoped);
-
-export const runCursorAboutCommand = Effect.fn("status.runCursorAboutCommand")(function* (
-  cursorSettings: CursorSettings,
-  environment?: NodeJS.ProcessEnv,
-  resolveArgs?: CursorCliArgumentResolver,
-) {
-  const jsonResult = yield* runCursorCommand(
-    cursorSettings,
-    ["about", "--format", "json"],
-    environment,
-    resolveArgs,
-  );
-  if (!isCursorAboutJsonFormatUnsupported(jsonResult)) {
-    return jsonResult;
-  }
-  return yield* runCursorCommand(cursorSettings, ["about"], environment, resolveArgs);
-});
 
 export function buildCursorProviderSnapshot(input: {
   readonly checkedAt: string;

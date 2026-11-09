@@ -206,8 +206,11 @@ in Full access.
 
 ## Behavior notes and limitations
 
-- **Checkpoints / rollback is not supported.** Droid's ACP surface does not expose a revert
-  operation, so the rollback action is unavailable in Droid threads.
+- **Rewinding a conversation** restores the files from Scient's checkpoint and continues in a
+  copy of the Droid conversation that ends at the kept turn; the original stays in Droid's
+  session history. Rewind is refused, with nothing changed, while background work is running or
+  when Droid's history no longer matches (for example after compaction). It needs a Droid that
+  supports rewind, such as the Scient-managed 1.2.0.
 - **Follow-ups during a turn** become the next prompt of the same turn. Droid's protocol has one
   way to do that: stop the current step and send the message, after which Droid sees the earlier
   request as interrupted and continues from your message. (Droid would also accept a second
@@ -217,8 +220,10 @@ in Full access.
   command, another tool call or a sub-agent of the turn is still running, the follow-up waits and
   the thread says "Your message will be delivered when the current step finishes. Stop interrupts
   now." Scient delivers it as soon as that work is done, or when Droid finishes the step by
-  itself, whichever comes first. A background sub-agent counts until Droid reports it finished. A
-  newer follow-up takes the place of one that is waiting.
+  itself, whichever comes first. A background sub-agent counts until Droid reports it finished.
+  While Droid works on by itself after a background sub-agent finishes (see Sub-agents below), a
+  follow-up waits until that work ends and is then sent as the next prompt. Another follow-up sent while one is waiting joins the thread's queue, where you can edit or
+  remove it; it is sent after the turn.
 - **Stop** ends the turn and keeps what Droid had produced: Scient cancels the step, takes what
   Droid still sends for it (the answer so far and the final state of a running command; Droid
   answers within a fraction of a second and Scient waits two seconds at most), then closes that
@@ -232,8 +237,13 @@ in Full access.
   ended. Droid reports a sub-agent's steps only when it finishes, so while it works the row shows
   that it is running and for how long, not what it is doing. When Droid runs a sub-agent in the
   background, the main agent's checks on it read "Checked sub-agent · …" and "Waiting for
-  sub-agent · … (up to 10 min)". A background sub-agent Droid has not reported on when the turn
-  ends shows as idle (stopped, in the mobile app), with that reason.
+  sub-agent · … (up to 10 min)". When the main agent stops a sub-agent and Droid confirms it, the
+  row reads "Stopped sub-agent · …" and the sub-agent shows as cancelled. From Droid 1.2.0, a
+  background sub-agent stays running after the turn ends. When it finishes, Droid reports on it and
+  often keeps working by itself; Scient shows that as a new run of the thread. Droid marks no end
+  to that work, so the run ends once Droid has been quiet for 20 seconds after its last text (40
+  seconds otherwise). With an older Droid, a background sub-agent Droid has not reported on when
+  the turn ends shows as idle (stopped, in the mobile app), with that reason.
 - **If Droid exits** unexpectedly, the running turn fails with Droid's error and the next message
   starts a fresh Droid process that resumes the conversation.
 - **If Droid does not report a settings change** (model, reasoning effort or autonomy) within a
@@ -275,7 +285,11 @@ in Full access.
   not replace the environment's key.
 - **Quota**: Droid usage draws on your Factory plan. If the CLI reports an out-of-quota or
   payment-required error, the turn fails with that message and you can retry after topping up or
-  waiting for the quota window.
+  waiting for the quota window. Droid does not report Factory credits while a conversation runs, so
+  Scient does not show them; the account name on Droid's ready status opens Factory's billing
+  page, where usage and credits are listed.
+- **MCP servers configured in Droid itself** appear in **Extensions** with their status after each
+  full status check. Scient's own MCP servers reach Droid separately and are not listed there.
 - **Runtime updates:** Scient can update recognized system package installations and standard
   macOS/Linux standalone installations when you choose **Update**. Other installations remain
   manual-only. Native update restrictions are respected. Repair and remove affect only Scient's

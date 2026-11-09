@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { siteIdentities } from "@t3tools/shared/scientBrowserProfileChoice";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import type { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
@@ -51,7 +52,14 @@ export const findProfiles = Effect.fn("AccountsAgent.findProfiles")(function* (
     result: typeof ProfileResult.Type;
   }> = [];
   const skipped: string[] = [];
-  for (const profile of status.profiles ?? []) {
+  // The site's identities go first, oldest first; the rest keep the browser's order.
+  const identities = siteIdentities(session.accounts, url).map((identity) => identity.profileId);
+  const rank = (id: string) => {
+    const index = identities.indexOf(id);
+    return index === -1 ? identities.length : index;
+  };
+  const candidates = [...(status.profiles ?? [])].sort((a, b) => rank(a.id) - rank(b.id));
+  for (const profile of candidates) {
     const record = session.profiles.find((item) => item.profileId === profile.id);
     if (!record || profile.id === options.exclude) continue;
     if (

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
@@ -12,7 +13,7 @@ import { Command } from "effect/cli";
 import { cli, makeCli } from "./binCli.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(
-  NodeServices.layer,
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   NetService.layer,
   ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
 );
@@ -29,7 +30,7 @@ const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     return { result, output };
   }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer)));
 
-it.layer(NodeServices.layer)("bin cli parsing", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("bin cli parsing", (it) => {
   it.effect("uses scient in root and nested help, version, and parser errors", () =>
     Effect.gen(function* () {
       for (const args of [["--help"], ["app", "--help"], ["browser", "--help"]]) {

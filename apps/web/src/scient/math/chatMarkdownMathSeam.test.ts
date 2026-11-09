@@ -24,17 +24,6 @@ const chatMarkdownSource = NodeFS.readFileSync(
 );
 
 describe("ChatMarkdown math seam", () => {
-  it("mounts the Scient math modules through the declared imports", () => {
-    expect(chatMarkdownSource).toContain('} from "../scient/math/remarkScientMath";');
-    expect(chatMarkdownSource).toContain('} from "../scient/math/scientMathText";');
-    expect(chatMarkdownSource).toContain('} from "../scient/markdown/scientMarkdownPipeline";');
-    expect(chatMarkdownSource).toContain("scientMathMarkdownText,");
-    expect(chatMarkdownSource).toMatch(/\bscientMathRemarkPluginsForMessage[\s,]*\}/u);
-    expect(chatMarkdownSource).toContain(
-      'import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";',
-    );
-  });
-
   it("registers the math plugins and refinements in both remark plugin arrays", () => {
     for (const plugins of [
       CHAT_MARKDOWN_REMARK_PLUGINS,

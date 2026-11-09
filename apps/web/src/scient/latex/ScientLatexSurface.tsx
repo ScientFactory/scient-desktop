@@ -50,7 +50,7 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { cn } from "~/lib/utils";
 import { countOverleafConflictBlocks } from "~/scient/overleaf/overleafModel";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
-import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { registerShortcutClaim } from "~/scient/keyboard/ownership";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { documentWasSaved } from "~/scient/markdownEditor/persistence/documentPublication";

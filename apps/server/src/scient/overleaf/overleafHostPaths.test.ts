@@ -26,7 +26,7 @@ it.effect(
     Effect.gen(function* () {
       using _identity = vi
         .spyOn(platformFileIdentity, "directory")
-        .mockRejectedValue(new WindowsNativeFileError("network-filesystem"));
+        .mockRejectedValue(new WindowsNativeFileError({ reason: "network-filesystem" }));
       const error = yield* Effect.flip(overleafDirectoryIdentity("network"));
       expect(error).toMatchObject({
         _tag: "OverleafFilesystemError",

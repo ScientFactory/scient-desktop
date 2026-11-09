@@ -12,9 +12,9 @@ import {
 import type { SkillRelease } from "./model.ts";
 import { loadProjectSkillRelease } from "./release.ts";
 
-export const SCIENT_PROJECT_SKILLS_DIRECTORY = ".scient/skills";
+const SCIENT_PROJECT_SKILLS_DIRECTORY = ".scient/skills";
 export const MAX_PROJECT_SKILLS = 64;
-export const MAX_PROJECT_SKILL_BYTES = 25 * 1024 * 1024;
+const MAX_PROJECT_SKILL_BYTES = 25 * 1024 * 1024;
 
 export interface ProjectSkillDiagnostic {
   readonly code:

@@ -50,10 +50,6 @@ export function computeQueuePositionOf(
   return state.active === null ? index : index + 1;
 }
 
-export function computeQueueDepth(state: ComputeQueueState): number {
-  return (state.active === null ? 0 : 1) + state.pending.length;
-}
-
 /**
  * Accepts an execution, or refuses because too many are already waiting.
  *

@@ -33,7 +33,7 @@ it("restricts the optional analytics QA destination to literal loopback ingestio
   }
 });
 
-it.effect("the disabled adapter retains Scient consent controls without collecting events", () =>
+it.effect("the disabled adapter reports Off without collecting events", () =>
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;
     yield* analytics.record("server.boot.heartbeat");

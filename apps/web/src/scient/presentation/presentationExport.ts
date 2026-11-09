@@ -1,3 +1,20 @@
+const MAX_PNG_DIMENSION = 8_192;
+const MAX_PNG_PIXELS = 16_777_216;
+const DEFAULT_PNG_SCALE = 2;
+
+/** PNG scale: twice the rendered size, bounded by canvas dimension and pixel limits. */
+export function presentationPngScale(width: number, height: number, subject: string): number {
+  if (!(width > 0 && height > 0)) {
+    throw new Error(`The rendered ${subject} has no measurable size.`);
+  }
+  return Math.min(
+    DEFAULT_PNG_SCALE,
+    MAX_PNG_DIMENSION / width,
+    MAX_PNG_DIMENSION / height,
+    Math.sqrt(MAX_PNG_PIXELS / (width * height)),
+  );
+}
+
 export function presentationFileBaseName(title: string | null, fallback: string): string {
   const withoutExtension = title?.replace(/\.[^.]+$/, "") ?? fallback;
   const slug = withoutExtension

@@ -36,6 +36,11 @@ export const makeNativeTextGeneration = (
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function () {
       return Effect.die("Unexpected review guide generation");
     }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function () {
+      return Effect.die("Unexpected transcript cleanup");
+    }),
     ...overrides,
   });
   const instance: ProviderInstance = {

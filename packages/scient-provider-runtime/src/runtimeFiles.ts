@@ -32,6 +32,7 @@ const DEFAULT_EXTRACTION_LIMITS: ManagedRuntimeExtractionLimits = {
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30 * 1_000;
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedRuntimeFileError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -200,13 +201,6 @@ export async function verifyManagedRuntimeChecksum(
   if (hash.digest("hex") !== expected) {
     throw new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.");
   }
-}
-
-export async function verifySha256(filePath: string, expectedDigest: string): Promise<void> {
-  return verifyManagedRuntimeChecksum(filePath, {
-    algorithm: "sha256",
-    digest: expectedDigest,
-  });
 }
 
 function validatedExtractionLimits(

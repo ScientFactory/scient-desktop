@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -55,7 +56,7 @@ const makeTestLayer = (settings: Parameters<typeof ServerSettingsService.layerTe
     ServerConfig.layerTest(process.cwd(), {
       prefix: "scient-droid-driver-test-",
     }).pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provideMerge(IdAllocator.layer),
       Layer.provideMerge(ProviderContinuationRequests.layer),
       Layer.provideMerge(ModelManifest.layerTest),
@@ -106,7 +107,9 @@ const makeTestLayer = (settings: Parameters<typeof ServerSettingsService.layerTe
         ),
       ),
     ),
-    TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+    TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
   );
 const testLayer = makeTestLayer();
 
@@ -376,7 +379,7 @@ it.live("checks Droid periodically without starting Droid sessions", () =>
     // Each periodic check spawns the recording binary for `--version`; three
     // more version spawns are the receipt of several checks at the interval.
     yield* Effect.acquireUseRelease(
-      Effect.try(() => NodeFS.watch(directory)),
+      Effect.sync(() => NodeFS.watch(directory)),
       (watcher) =>
         Effect.callback<void>((resume) => {
           let settled = false;

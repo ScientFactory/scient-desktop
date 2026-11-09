@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- MATLAB discovery is an operating-system adapter.
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -12,7 +11,6 @@ import {
   type AnalysisDiagnostic,
   type AnalysisRuntimeAdapter,
   type AnalysisRuntimeProfile,
-  type AnalysisRuntimeVerification,
   type AnalysisRunContext,
   type AnalysisRunSource,
 } from "@scientfactory/analysis";
@@ -28,8 +26,6 @@ const MATLAB_CAPTURE_DIRECTORY_NAME = "files";
 const MATLAB_RUNNER_FILE_NAME = "scient_run_file.m";
 const MATLAB_DIAGNOSTIC_FILE_NAME = "scient-diagnostic.json";
 export const MATLAB_CAPTURE_FAILURE_FILE_NAME = "scient-capture-failed.txt";
-const MATLAB_VERIFY_FILE_NAME = "scient_verify_runtime.m";
-const MATLAB_VERIFY_RESULT_FILE_NAME = "scient-runtime.json";
 const MATLAB_CAPTURE_FILE = /^figure-(\d{3})\.(fig|png)$/u;
 const MATLAB_MAXIMUM_CAPTURED_FIGURES = 50;
 
@@ -154,53 +150,6 @@ function scientPayloads = scient_flatten_causes(scientError, scientDepth)
 end
 `;
 
-const MATLAB_VERIFY_BATCH_EXPRESSION = "cd(matlabroot);run(getenv('SCIENT_MATLAB_VERIFY'))";
-
-const MATLAB_VERIFY_SOURCE = `scientResultPath = getenv('SCIENT_MATLAB_VERIFY_RESULT');
-scientTemporaryPath = [scientResultPath '.partial'];
-scientPayload = struct;
-scientPayload.release = version('-release');
-scientPayload.version = version;
-scientPayload.architecture = computer('arch');
-scientPayload.installationRoot = matlabroot;
-scientPayload.javaAvailable = usejava('jvm');
-scientPayload.javaVersion = '';
-if scientPayload.javaAvailable
-    scientPayload.javaVersion = version('-java');
-end
-scientInstalled = ver;
-scientToolboxes = repmat(struct('name', '', 'version', ''), 1, numel(scientInstalled));
-for scientIndex = 1:numel(scientInstalled)
-    scientToolboxes(scientIndex).name = scientInstalled(scientIndex).Name;
-    scientToolboxes(scientIndex).version = scientInstalled(scientIndex).Version;
-end
-scientPayload.toolboxes = scientToolboxes;
-scientFile = fopen(scientTemporaryPath, 'w');
-if scientFile < 0
-    error('Scient:RuntimeProbeWriteFailed', 'Unable to write the Scient runtime probe result.');
-end
-scientCleanup = onCleanup(@() fclose(scientFile));
-fwrite(scientFile, jsonencode(scientPayload), 'char');
-clear scientCleanup;
-movefile(scientTemporaryPath, scientResultPath, 'f');
-`;
-
-const MatlabVerificationPayload = Schema.Struct({
-  release: Schema.String,
-  version: Schema.String,
-  architecture: Schema.String,
-  installationRoot: Schema.String,
-  javaAvailable: Schema.Boolean,
-  javaVersion: Schema.String,
-  toolboxes: Schema.Array(
-    Schema.Struct({
-      name: Schema.String,
-      version: Schema.String,
-    }),
-  ),
-});
-const decodeMatlabVerificationPayload = Schema.decodeUnknownOption(MatlabVerificationPayload);
-
 const MatlabDiagnosticPayload = Schema.Struct({
   identifier: Schema.String,
   message: Schema.String,
@@ -231,12 +180,6 @@ function bounded(value: string, maximum: number): string {
   return value.length <= maximum ? value : `${value.slice(0, maximum - 1)}…`;
 }
 
-function normalizedMatlabRelease(value: string): string | null {
-  const release = value.trim();
-  if (release.length === 0) return null;
-  return bounded(/^\d{4}[ab]$/iu.test(release) ? `R${release}` : release, 256);
-}
-
 function projectRelativePath(cwd: string, filePath: string): string | null {
   const relative = NodePath.relative(cwd, filePath);
   if (
@@ -248,38 +191,6 @@ function projectRelativePath(cwd: string, filePath: string): string | null {
     return null;
   }
   return relative.split(NodePath.sep).join("/");
-}
-
-function verificationFailureStatus(
-  output: string,
-): Extract<
-  AnalysisRuntimeVerification["status"],
-  "needs-sign-in" | "license-unavailable" | "missing-dependency" | "startup-failed"
-> | null {
-  const normalized = output.toLowerCase();
-  if (/sign[ -]?in|mathworks account|log[ -]?in/u.test(normalized)) return "needs-sign-in";
-  if (
-    /license manager|licen[sc](?:e|ing).*(?:error|failed|unavailable)|checkout failed/u.test(
-      normalized,
-    )
-  ) {
-    return "license-unavailable";
-  }
-  if (
-    /(?:java|jre|jvm).*(?:not found|missing|unable|failed)|unable.*(?:java|jre|jvm)/u.test(
-      normalized,
-    )
-  ) {
-    return "missing-dependency";
-  }
-  if (
-    /segmentation fault|fatal startup|failed to start matlab|unable to start matlab|matlab.*failed to start/u.test(
-      normalized,
-    )
-  ) {
-    return "startup-failed";
-  }
-  return null;
 }
 
 function matlabFrames(
@@ -359,116 +270,6 @@ export async function collectMatlabDiagnostics(
       })),
     },
   ];
-}
-
-export async function prepareMatlabVerification(profile: AnalysisRuntimeProfile) {
-  if (profile.executablePath === null) throw new Error("MATLAB executable is unavailable.");
-  const executablePath = await NodeFSP.realpath(profile.executablePath);
-  const executableInfo = await NodeFSP.stat(executablePath);
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-verify-"));
-  const probePath = NodePath.join(directory, MATLAB_VERIFY_FILE_NAME);
-  const resultPath = NodePath.join(directory, MATLAB_VERIFY_RESULT_FILE_NAME);
-  await NodeFSP.writeFile(probePath, MATLAB_VERIFY_SOURCE, { encoding: "utf8", flag: "wx" });
-  const executableIdentity = [
-    executablePath,
-    String(executableInfo.size),
-    String(executableInfo.mtimeMs),
-  ].join(":");
-  return {
-    executableIdentity,
-    executable: profile.executablePath,
-    args: ["-batch", MATLAB_VERIFY_BATCH_EXPRESSION],
-    cwd: NodePath.dirname(profile.executablePath),
-    environment: {
-      SCIENT_MATLAB_VERIFY: probePath,
-      SCIENT_MATLAB_VERIFY_RESULT: resultPath,
-    },
-    timeoutMs: 90_000,
-    collect: async (input: {
-      readonly exitCode: number | null;
-      readonly timedOut: boolean;
-      readonly output: ReadonlyArray<{
-        readonly stream: "stdout" | "stderr";
-        readonly text: string;
-      }>;
-      readonly verifiedAt: string;
-      readonly durationMs: number;
-    }): Promise<AnalysisRuntimeVerification> => {
-      if (input.timedOut) {
-        return {
-          status: "timed-out",
-          verifiedAt: input.verifiedAt,
-          durationMs: input.durationMs,
-          executableIdentity,
-          release: null,
-          version: null,
-          architecture: null,
-          installationRoot: null,
-          javaAvailable: null,
-          javaVersion: null,
-          toolboxes: [],
-          detail: "MATLAB did not finish its startup check within 90 seconds.",
-        };
-      }
-      let decoded = Option.none<typeof MatlabVerificationPayload.Type>();
-      try {
-        decoded = decodeMatlabVerificationPayload(
-          JSON.parse(await NodeFSP.readFile(resultPath, "utf8")),
-        );
-      } catch {
-        // Startup failures commonly happen before the private result file exists.
-      }
-      if (input.exitCode === 0 && Option.isSome(decoded)) {
-        const payload = decoded.value;
-        return {
-          status: "ready",
-          verifiedAt: input.verifiedAt,
-          durationMs: input.durationMs,
-          executableIdentity,
-          release: normalizedMatlabRelease(payload.release),
-          version: bounded(payload.version, 256) || null,
-          architecture: bounded(payload.architecture, 128) || null,
-          installationRoot: payload.installationRoot || null,
-          javaAvailable: payload.javaAvailable,
-          javaVersion: bounded(payload.javaVersion, 1024) || null,
-          toolboxes: payload.toolboxes.slice(0, 500).flatMap((toolbox) => {
-            const name = bounded(toolbox.name.trim(), 256);
-            return name.length === 0
-              ? []
-              : [{ name, version: bounded(toolbox.version.trim(), 128) || null }];
-          }),
-          detail: `MATLAB ${payload.release || payload.version} started successfully.`,
-        };
-      }
-      const output = bounded(input.output.map((chunk) => chunk.text).join("\n"), 2048);
-      const classifiedStatus = verificationFailureStatus(output);
-      const status = classifiedStatus ?? "unknown";
-      const detailByStatus = {
-        "needs-sign-in": "MATLAB needs a MathWorks sign-in before Scient can run files.",
-        "license-unavailable": "MATLAB started, but no usable license was available.",
-        "missing-dependency":
-          "MATLAB could not start because a required local dependency is missing.",
-        "startup-failed": "MATLAB did not complete its startup check.",
-        unknown:
-          "MATLAB did not complete its startup check, and Scient could not identify a reliable cause.",
-      } as const;
-      return {
-        status,
-        verifiedAt: input.verifiedAt,
-        durationMs: input.durationMs,
-        executableIdentity,
-        release: null,
-        version: null,
-        architecture: null,
-        installationRoot: null,
-        javaAvailable: null,
-        javaVersion: null,
-        toolboxes: [],
-        detail: output.length > 0 ? `${detailByStatus[status]} ${output}` : detailByStatus[status],
-      };
-    },
-    cleanup: () => NodeFSP.rm(directory, { recursive: true, force: true }),
-  };
 }
 
 export async function collectMatlabArtifacts(
@@ -720,7 +521,6 @@ export const matlabRuntimeAdapter: AnalysisRuntimeAdapter = {
   kind: MATLAB_RUNTIME_KIND,
   fileExtensions: [".m"],
   inspect: inspectMatlabRuntime,
-  prepareVerification: prepareMatlabVerification,
   validateSource: (source) => {
     const stem = NodePath.basename(source.relativePath, NodePath.extname(source.relativePath));
     return /^[\p{L}][\p{L}\p{N}_]*$/u.test(stem)

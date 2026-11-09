@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CodexSettings,
@@ -140,7 +141,7 @@ export function layer(input: {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   // SCIENT-FORK:START — replay can register several configured Codex instances.
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.forEach(input.instanceIds ?? [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID], (instanceId) =>
@@ -159,6 +160,7 @@ export function layer(input: {
         layerReplayClientFactory,
         layerServerConfig,
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
       ),
     ),

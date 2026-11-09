@@ -8,7 +8,6 @@ import {
   AnalysisCleanupProjectInput,
   AnalysisCleanupResult,
   AnalysisCleanupRunInput,
-  AnalysisConfigureRuntimeInput,
   AnalysisGetRunInput,
   AnalysisInspectRuntimesInput,
   AnalysisListRunsInput,
@@ -19,12 +18,10 @@ import {
   AnalysisRunSnapshot,
   AnalysisRunStreamEvent,
   AnalysisRuntimeInspection,
-  AnalysisRuntimeProfile,
   AnalysisStartRunInput,
   AnalysisStorageSummary,
   AnalysisStorageSummaryInput,
   AnalysisSubscribeRunsInput,
-  AnalysisVerifyRuntimeInput,
 } from "../scientAnalysis.ts";
 import {
   ComputeExecutionRecord,
@@ -85,8 +82,6 @@ import {
 export const SCIENT_SCIENTIFIC_WS_METHODS = {
   // Scient-owned scientific analysis runtime methods
   analysisInspectRuntimes: "analysis.inspectRuntimes",
-  analysisConfigureRuntime: "analysis.configureRuntime",
-  analysisVerifyRuntime: "analysis.verifyRuntime",
   analysisStartRun: "analysis.startRun",
   analysisCancelRun: "analysis.cancelRun",
   analysisListRuns: "analysis.listRuns",
@@ -144,21 +139,6 @@ export const WsAnalysisInspectRuntimesRpc = Rpc.make(
     error: AnalysisRpcError,
   },
 );
-
-const WsAnalysisConfigureRuntimeRpc = Rpc.make(
-  SCIENT_SCIENTIFIC_WS_METHODS.analysisConfigureRuntime,
-  {
-    payload: AnalysisConfigureRuntimeInput,
-    success: AnalysisRuntimeInspection,
-    error: AnalysisRpcError,
-  },
-);
-
-const WsAnalysisVerifyRuntimeRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.analysisVerifyRuntime, {
-  payload: AnalysisVerifyRuntimeInput,
-  success: AnalysisRuntimeProfile,
-  error: AnalysisRpcError,
-});
 
 const WsAnalysisStartRunRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.analysisStartRun, {
   payload: AnalysisStartRunInput,
@@ -417,8 +397,6 @@ const WsSubscribeComputeSessionsRpc = Rpc.make(
 );
 
 export const WsScientificRpcGroup = RpcGroup.make(
-  WsAnalysisConfigureRuntimeRpc,
-  WsAnalysisVerifyRuntimeRpc,
   WsAnalysisStartRunRpc,
   WsAnalysisCancelRunRpc,
   WsAnalysisListRunsRpc,

@@ -8,7 +8,6 @@ import { operationDefinitionForTool } from "./ScientOperationTool.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
-import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
@@ -36,7 +35,6 @@ export const scientTools = [
   // SCIENT-FORK:START — Scient Accounts: include account tools in discovery.
   ...Object.values(ScientAccountsToolkit.tools),
   // SCIENT-FORK:END
-  ...Object.values(PreviewToolkit.tools),
   ...Object.values(ScientSourcesToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),

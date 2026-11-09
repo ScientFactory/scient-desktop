@@ -8,7 +8,7 @@ reliability and delivery counters), like T3: there is no in-app switch, and a
 preference saved by an older build no longer applies.
 Native and WSL backend configuration receive the same bounded release metadata.
 An explicit `SCIENT_ANALYTICS_ENABLED=false` is the off switch.
-For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can expose the controls
+For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can turn analytics on
 in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
 credentials, paths and query strings are rejected. Use only synthetic state;
@@ -32,9 +32,8 @@ path, link or email address. Such fields are dropped before queueing; the gatewa
 Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
-The Settings privacy section, including its switch, “What’s shared?” panel and
-“Delete data” request, is hidden: `AnalyticsPrivacySettings` is not mounted. The
-service's consent and deletion controls remain so the section can return.
+The Settings privacy section, with its switch and “Delete data” request, was
+removed, along with the server's consent and deletion routes.
 
 The notification is implemented but disabled by default at its component boundary
 pending an approved audience and timing policy. This gate does not change analytics
@@ -130,12 +129,8 @@ The renderer keeps per-connection consent discovery coalesced and at most 20
 event requests in flight. Unknown/Off consent does not queue or replay feature
 history. Positive status is lazily refreshed after 60 seconds of activity;
 the server remains the authoritative consent filter. There is no status poller.
-Changing consent fences deferred requests and clears surface coalescing.
-Failed discovery or an uncertain consent/deletion control can retry on later
-activity at most once a minute. A verified
-Off response stays cached until explicit settings refresh or a new connection;
-changing consent from a different client therefore does not silently wake this
-renderer. No missed actions are replayed.
+Failed discovery can retry on later activity at most once a minute. A verified
+Off response stays cached until a new connection. No missed actions are replayed.
 
 Provider send and completion counts need not match. `provider.turn.completed`
 is one provider turn, and `segment` says what started it: the run's first
@@ -208,8 +203,8 @@ fields unknown; a missing origin is never a person.
 
 UI export operations require a cached, positive status with an ephemeral
 `collectionContext`. The server derives that context from its current consent
-epoch and a random value; consent controls, deletion and a new server/HTTP
-lifetime invalidate it. The UI carries it outside event properties, and the
+epoch and a random value; a new server/HTTP lifetime invalidates it. Consent is
+fixed for a server's lifetime, so the epoch stays 0. The UI carries it outside event properties, and the
 HTTP adapter verifies and removes it before recording. It never enters the
 outbox or gateway and is not an installation identity. Old status responses
 remain compatible, but without a context the new UI-operation observers stay
@@ -231,13 +226,8 @@ privacy check. Local raw events expire after 180 days, diagnostics after 30 days
 and dead-letter metadata after 30 days when maintenance runs. An app that is
 not running cannot execute cleanup; old events are filtered before delivery.
 
-Off makes no per-event HTTP, SQLite, or worker call. A saved invalid preference
-fails closed rather than accepting a more permissive environment default.
-Consent/deletion controls abort and await in-flight delivery before altering the
-local queue. Parent-side draining pauses during deletion so old buffered events
-cannot survive identity rotation. Consent controls queue before worker readiness;
-an unacknowledged control terminates the worker rather than leaving higher
-consent active. The worker schedules delivery only while eligible events remain;
+Off makes no per-event HTTP, SQLite, or worker call. The server sets consent once,
+when the worker starts, and sends no later consent or deletion controls. The worker schedules delivery only while eligible events remain;
 diagnostic summaries do not create an endless diagnostic-only feedback loop.
 Shutdown gets 300 ms for local persistence and does not await remote delivery.
 These are implementation bounds, not a claim of zero CPU cost or universally
@@ -259,7 +249,7 @@ environment; panel observations belong to the panel's environment.
 The view observer reads current visibility after coalesced consent discovery;
 leaving before discovery does not replay the abandoned view. At most 16 view
 observers are retained per connection. These events carry the existing ephemeral
-collection context and are rejected after consent changes/deletion. They use the
+collection context and are rejected after the server restarts. They use the
 existing bounded transport, not a clickstream SDK, scan, poller or shutdown-only
 summary. `usage.refresh.requested` is an explicit refresh request, not success;
 `usage.availability` describes a settled non-Limits view's summary availability,
@@ -289,14 +279,12 @@ Progress updates, queued-to-steer promotions, retries, restart continuations,
 restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
 uses the canonical run event or configured instance's driver, never the instance
 name. Consent/identity changes clear the bounded observation state and never
-backfill earlier admissions. Consent/deletion controls establish the sequenced
-event tail's committed watermark before acknowledging the new collection period;
-recording checks the captured epoch again synchronously. Buffered earlier-period
-events are excluded without dropping the first fresh prompt after acknowledgement.
+backfill earlier admissions. Consent is fixed for the server's lifetime, so
+the collection period set at start (epoch 0) never changes.
 Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
 held Droid re-delivery and queue promotion are not first admissions, even after
 local correlation state resets. Unknown legacy provenance is not counted.
-An unavailable watermark fails closed without preventing Off or erasure.
+An unavailable watermark fails closed.
 The event subscription waits for the first valid watermark and can initialize
 after a later successful boundary; the fail-closed sentinel never becomes a
 permanent upstream stream cursor.
@@ -396,14 +384,28 @@ Interactive compute uses `ComputeOutputAnalytics` to summarize retained rich
 output at **one capture workflow per newly admitted execution**. Images,
 non-plain-text MIME bundles and display updates use the existing persistence
 result; generated project figures use that same path after collection. The
-observer stores only retained/rejected flags, coalesces repeated updates, and
-emits a terminal summary when the execution ends. A rejection, persistence
-failure or project-collection warning makes capture failed, including partial
-capture. Retained output without a capture failure completes even when the
+observer stores bounded retained/rejected counts and structured coverage facts,
+and emits one terminal summary when the execution ends. A known rejection or
+persistence failure makes capture failed, including partial retention.
+Project-scan warnings describe incomplete coverage independently: reaching a
+depth, entry or time limit does not establish that an artifact was lost.
+Retained output without a known rejection completes even when the
 code later fails or is interrupted. No rich output or capture failure means
 skipped, regardless of the execution outcome; execution failure and cancellation
 remain separately recorded as `compute-run` outcomes. Plain text and
 clear-output controls alone are not artifacts.
+
+Capture schema version 2 distinguishes `retained`, `partial`, `none`, `failed`,
+and `unobserved`, alongside `complete`, `partial`, or `unavailable` project-scan
+coverage and a closed reason category. Empty output with incomplete coverage is
+`unobserved`, not evidence that no figures existed. Counts are bounded and bucketed;
+interactive counts include retained display updates, not unique files or figures.
+Starts identify the schema and capture source; outcome, coverage, reason and counts
+are terminal observations. Capture reasons stay separate from operation failure classes.
+Run File uses its saved receipt and identifies its separate publication owner;
+when that receipt does not enumerate rejected candidates, their count is unknown.
+Historical events without the version marker retain their older, coarser meaning.
+Do not combine them into a version-2 capture failure rate.
 
 The summary does not read transcripts, files, chart contents or warning text,
 and adds no network or persistence request. At most 1,000 active executions
@@ -414,6 +416,28 @@ capture. Existing output storage and execution ownership are unchanged.
 Durations include queueing/execution, not just persistence. Completion proves
 technical retention, not that a chart rendered or a researcher accepted it;
 a failed capture is not proof that no partial write occurred.
+
+Voice schema version 2 measures one committed dictation job, beginning when the
+user stops recording (including the final audio flush), with exactly one local
+completed, failed or cancelled outcome. Empty clips close as audio failures;
+cancelling correction closes as cancelled and bypassing correction delivers the
+original transcript once. Microphone/recorder failures and recording cancellation
+use separate `voice.recording.*` events, outside the transcription denominator.
+Total job, transcription and correction timings are separate buckets. Correction
+can be disabled, corrected, fallback, bypassed or cancelled; fallback remains a
+successful usable local transcript. Completion measures the delivery callback,
+not proof that the user submitted or accepted the transcript.
+
+The UI binds the job to its original connection and collection context. A
+previously verified context does not expire mid-job; the server validates it on
+every voice event and strips it before queueing. Unknown/Off work is never replayed,
+and consent changes, deletion or a server restart invalidate old outcomes. A
+server must advertise lifecycle version 2 before the UI sends these job events.
+Essential permits failure metadata only; recording and successful-use events
+remain Product. Audio, transcripts, correction requests, document contents and
+raw error text are never analytics properties. These additive bounded properties
+use the existing revision-10 gateway wire contract; no new ingestion endpoint or
+gateway deployment is required.
 
 Browser PDF export emits `pdf-export` once for the initiating coalesced render/
 publication operation. Completion waits until its existing source checks,
@@ -478,6 +502,9 @@ consenting installation pseudonyms are not unique people. Durations are buckets,
 not exact percentile measurements.
 
 ## Deletion and activation gates
+
+The desktop no longer sends deletion requests. The rest of this section describes the
+analytics worker and gateway, which keep their deletion handling.
 
 When the analytics runtime is enabled, an explicit deletion can authenticate
 while consent is Off; it does not temporarily enable Essential collection.

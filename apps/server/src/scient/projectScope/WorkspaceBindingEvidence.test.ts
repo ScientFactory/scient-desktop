@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { describe, expect, it } from "@effect/vitest";
@@ -32,19 +33,19 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
 
 const vcsRegistryLayer = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const repositoryEvidenceLayer = Layer.merge(
   RepositoryIdentityResolver.layer,
   vcsRegistryLayer,
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const liveLayer = workspaceBindingEvidenceLayer.pipe(
   Layer.provide(repositoryEvidenceLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-const testLayer = Layer.merge(liveLayer, NodeServices.layer);
+const testLayer = Layer.merge(liveLayer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer));
 
 describe("WorkspaceBindingEvidence", () => {
   it.effect.each(["spawn", "unavailable"] as const)(
@@ -82,8 +83,10 @@ describe("WorkspaceBindingEvidence", () => {
         const fixture = workspaceBindingEvidenceLayer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              NodeServices.layer,
-              ServerConfig.layerTest(baseDir, baseDir).pipe(Layer.provide(NodeServices.layer)),
+              Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+              ServerConfig.layerTest(baseDir, baseDir).pipe(
+                Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              ),
               Layer.effect(
                 VcsDriverRegistry.VcsDriverRegistry,
                 VcsDriverRegistry.VcsDriverRegistry.pipe(
@@ -132,7 +135,7 @@ describe("WorkspaceBindingEvidence", () => {
             (yield* evidence.inspect(path.join(root, "conversation")).pipe(Effect.flip)).kind,
           ).toBe("repository-inspection-failed");
         }).pipe(Effect.provide(fixture));
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.each(
@@ -197,7 +200,13 @@ describe("WorkspaceBindingEvidence", () => {
         expect(after.worktreeIdentity).toEqual(before.worktreeIdentity);
         expect(after.rootFileSystemIdentity).toEqual(before.rootFileSystemIdentity);
       }).pipe(Effect.provide(fixture));
-    }).pipe(Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+    }).pipe(
+      Effect.provide(
+        VcsProcess.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
   );
   it.effect("canonicalizes an ordinary folder without writing project metadata", () =>
     Effect.gen(function* () {

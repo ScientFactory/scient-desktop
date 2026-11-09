@@ -1653,42 +1653,43 @@ const analyticsFixture = () => {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
   });
-  return { events, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, service, setConsent };
 };
 
 describe("interactive capture analytics", () => {
   it.effect.each(
     (
       [
-        ["figure", "succeeded", "completed"],
-        ["rich-figure", "succeeded", "completed"],
-        ["chart", "succeeded", "completed"],
-        ["chart-updates", "succeeded", "completed"],
-        ["chart-then-failure", "failed", "completed"],
-        ["chart-then-missing", "succeeded", "failed"],
-        ["phantom-figure", "succeeded", "failed"],
-        ["phantom-rich-figure", "succeeded", "failed"],
-        ["print(1)", "succeeded", "skipped"],
-        ["empty-display-flood", "succeeded", "skipped"],
-        ["boom", "failed", "skipped"],
-        ["die", "lost", "skipped"],
+        ["figure", "succeeded", "completed", 1, 0, "observation-unavailable"],
+        ["rich-figure", "succeeded", "completed", 1, 0, "observation-unavailable"],
+        ["chart", "succeeded", "completed", 1, 0, "observation-unavailable"],
+        ["chart-updates", "succeeded", "completed", 50, 0, "observation-unavailable"],
+        ["chart-then-failure", "failed", "completed", 1, 0, "observation-unavailable"],
+        ["chart-then-missing", "succeeded", "failed", 1, 1, "missing-resource"],
+        ["phantom-figure", "succeeded", "failed", 0, 1, "missing-resource"],
+        ["phantom-rich-figure", "succeeded", "failed", 0, 1, "resource-mismatch"],
+        ["print(1)", "succeeded", "skipped", 0, 0, "observation-unavailable"],
+        ["empty-display-flood", "succeeded", "skipped", 0, 0, "observation-unavailable"],
+        ["boom", "failed", "skipped", 0, 0, "observation-unavailable"],
+        ["die", "lost", "skipped", 0, 0, "observation-unavailable"],
       ] as const
-    ).map(([code, outcome, expected]) => ({
+    ).map(([code, outcome, expected, retained, rejected, reason]) => ({
       caseTitle: `captures ${code} as ${expected} independently of ${outcome} execution`,
       code,
       outcome,
       expected,
+      retained,
+      rejected,
+      reason,
     })),
-  )("$caseTitle", ({ code, outcome, expected }) =>
+  )("$caseTitle", ({ code, outcome, expected, retained, rejected, reason }) =>
     Effect.gen(function* () {
       const f = analyticsFixture();
       const test = yield* harness({ analytics: f.service });
@@ -1711,6 +1712,20 @@ describe("interactive capture analytics", () => {
         trigger: "other",
         durationMs: expect.any(Number),
         failureClass: "unknown",
+        captureSchemaVersion: 2,
+        captureSource: "interactive",
+        captureOutcome:
+          rejected > 0
+            ? retained > 0
+              ? "partial"
+              : "failed"
+            : retained > 0
+              ? "retained"
+              : "unobserved",
+        captureCoverage: "unavailable",
+        captureReason: reason,
+        retainedOutputCount: retained,
+        rejectedOutputCount: rejected,
       });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(
         /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
@@ -1742,6 +1757,10 @@ describe("interactive capture analytics", () => {
           .filter((event) => event.properties?.operationKind === "compute-artifact")
           .map((event) => event.name),
       ).toEqual(["scient.operation.started", "scient.operation.failed"]);
+      expect(f.events.at(-1)?.properties).toMatchObject({
+        captureReason: "output-limit",
+        rejectedOutputCount: 1,
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -1871,9 +1890,64 @@ describe("interactive capture analytics", () => {
         f.events
           .filter((event) => event.properties?.operationKind === "compute-artifact")
           .map((event) => event.name),
-      ).toEqual(["scient.operation.started", "scient.operation.failed"]);
+      ).toEqual(["scient.operation.started", "scient.operation.completed"]);
+      expect(f.events.at(-1)?.properties).toMatchObject({
+        captureOutcome: "retained",
+        captureCoverage: "unavailable",
+        captureReason: "observation-unavailable",
+      });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(/private|project-warning|synthetic/u);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect.each(["print(1)", "chart"])(
+    "separates known retained output from partial scan coverage for %s",
+    (code) =>
+      Effect.gen(function* () {
+        const f = analyticsFixture();
+        const test = yield* harness({
+          analytics: f.service,
+          projectOutputs: {
+            begin: () =>
+              Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
+            collect: () =>
+              Effect.succeed({
+                images: [],
+                tables: [],
+                warnings: ["private scan detail /private/path"],
+                capture: {
+                  coverage: "partial",
+                  coverageReason: "scan-entry-limit",
+                  rejectedCount: 0,
+                },
+              }),
+          },
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            yield* start;
+            yield* submit(code, "partial-scan");
+            const result = yield* waitForExecution(
+              ComputeExecutionId.make("partial-scan"),
+              "succeeded",
+            );
+            expect(result.result?.status).toBe("succeeded");
+          }),
+        );
+        const capture = f.events
+          .filter((event) => event.properties?.operationKind === "compute-artifact")
+          .at(-1);
+        expect(capture).toMatchObject({
+          name: code === "chart" ? "scient.operation.completed" : "scient.operation.skipped",
+          properties: {
+            captureOutcome: code === "chart" ? "retained" : "unobserved",
+            captureCoverage: "partial",
+            captureReason: "scan-entry-limit",
+            rejectedOutputCount: 0,
+          },
+        });
+        expect(yield* encodeUnknownJson(f.events)).not.toMatch(/private|partial-scan|synthetic/u);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect.each(
@@ -1884,7 +1958,7 @@ describe("interactive capture analytics", () => {
   )("$caseTitle", ({ mode }) =>
     Effect.gen(function* () {
       const f = analyticsFixture();
-      if (mode === "off") yield* f.service.setConsent("off");
+      if (mode === "off") yield* f.setConsent("off");
       const test = yield* harness({
         analytics:
           mode === "broken"
@@ -1932,15 +2006,13 @@ describe("compute outcome analytics", () => {
           }),
         status: Effect.sync(() => status),
         collectionEpoch: Effect.sync(() => epoch),
-        setConsent: (consent) =>
-          Effect.sync(() => {
-            status = { available: true, consent };
-            epoch += 1;
-            return status;
-          }),
         flush: Effect.void,
-        deleteData: Effect.succeed(true),
       });
+      const setConsent = (consent: AnalyticsStatus["consent"]) =>
+        Effect.sync(() => {
+          status = { available: true, consent };
+          epoch += 1;
+        });
       const test = yield* harness({ analytics });
       yield* test.use(
         Effect.gen(function* () {
@@ -1950,8 +2022,8 @@ describe("compute outcome analytics", () => {
           yield* waitForExecution(ComputeExecutionId.make("active-before-consent"), "running");
           yield* submit("hold", "queued-cancel");
           yield* submit("print(1)", "queued-complete");
-          yield* analytics.setConsent("off");
-          yield* analytics.setConsent("product");
+          yield* setConsent("off");
+          yield* setConsent("product");
           yield* service.cancelExecution({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,

@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointScopeId,
@@ -26,7 +27,7 @@ import * as Checkpoints from "../orchestration-v2/CheckpointService.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -54,7 +55,7 @@ it.live.each(["historical", "workspace-bound"] as const)(
         );
         const databaseLayer = makeSqlitePersistenceLive(
           path.join(config.stateDir, "cbc.sqlite"),
-        ).pipe(Layer.provide(NodeServices.layer));
+        ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
         const stores = Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
           Layer.provideMerge(databaseLayer),
         );
@@ -62,13 +63,13 @@ it.live.each(["historical", "workspace-bound"] as const)(
           Layer.provide(
             VcsDriverRegistry.layer.pipe(
               Layer.provide(Layer.mergeAll(VcsProcess.layer, Layer.succeed(ServerConfig, config))),
-              Layer.provide(NodeServices.layer),
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           ),
         );
         const services = Layer.mergeAll(
           EventSink.layer.pipe(Layer.provideMerge(stores)),
-          ProjectionMaintenance.layer.pipe(Layer.provideMerge(stores)),
+          ProjectionReplay.layer.pipe(Layer.provideMerge(stores)),
           Checkpoints.layer.pipe(
             Layer.provideMerge(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
           ),
@@ -129,6 +130,8 @@ it.live.each(["historical", "workspace-bound"] as const)(
             const laterBaseline = yield* checkpoints.materializeBaselineCheckpoint({
               scope: laterScope,
               ordinalWithinScope: 1,
+              nodeId: laterScope.nodeId,
+              capturedAt: laterScope.createdAt,
             });
             assert.equal(laterBaseline.status, "ready");
             yield* fs.writeFileString(`${cwd}/after-two.txt`, "Endpoint two\n");
@@ -346,9 +349,7 @@ it.live.each(["historical", "workspace-bound"] as const)(
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* verify();
-            assert.isTrue(
-              (yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid,
-            );
+            assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
             yield* verify();
             const projections = yield* ProjectionStore.ProjectionStoreV2;
             assert.lengthOf(
@@ -359,6 +360,6 @@ it.live.each(["historical", "workspace-bound"] as const)(
             );
           }).pipe(Effect.provide(services)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     ),
 );

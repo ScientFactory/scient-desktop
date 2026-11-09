@@ -14,7 +14,6 @@ import {
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
   verifyManagedRuntimeChecksum,
-  verifySha256,
 } from "./runtimeFiles.ts";
 
 const temporaryRoots: string[] = [];
@@ -101,8 +100,12 @@ describe("managed runtime files", () => {
     await NodeFSP.writeFile(file, content);
     const digest = NodeCrypto.createHash("sha256").update(content).digest("hex");
 
-    await expect(verifySha256(file, digest)).resolves.toBeUndefined();
-    await expect(verifySha256(file, "0".repeat(64))).rejects.toThrow("checksum mismatch");
+    await expect(
+      verifyManagedRuntimeChecksum(file, { algorithm: "sha256", digest }),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyManagedRuntimeChecksum(file, { algorithm: "sha256", digest: "0".repeat(64) }),
+    ).rejects.toThrow("checksum mismatch");
   });
 
   it("verifies exact SHA-512 digests", async () => {

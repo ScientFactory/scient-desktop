@@ -95,7 +95,7 @@ export function applyEdits(source: string, edits: ReadonlyArray<SourceEdit>): st
 }
 
 /** Node types whose content is literal: nothing inside them is Markdown. */
-export const LITERAL_NODE_TYPES: ReadonlySet<string> = new Set([
+const LITERAL_NODE_TYPES: ReadonlySet<string> = new Set([
   "code",
   "inlineCode",
   "math",

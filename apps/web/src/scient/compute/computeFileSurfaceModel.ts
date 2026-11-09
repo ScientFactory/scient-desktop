@@ -167,12 +167,7 @@ export function computeRuntimeBlocker(
   return { mode: selection.mode, problem: selection.problem ?? "" };
 }
 
-import {
-  clampScientSplitFraction,
-  nudgeScientSplitFraction,
-  scientSplitFractionFromPointer,
-  type ScientSplitAxis,
-} from "~/scient/layout/scientSplitFraction";
+import { clampScientSplitFraction } from "~/scient/layout/scientSplitFraction";
 
 // Keep the existing key for compatibility. It now remembers only the layout to
 // reveal after Run; opening a source file itself always starts in Code.
@@ -290,28 +285,6 @@ export function normalizeComputeFileSplit(value: number | null | undefined): num
   return value === null || value === undefined
     ? DEFAULT_COMPUTE_FILE_SPLIT
     : clampComputeFileSplit(value);
-}
-
-export function computeFileSplitFromPointer(input: {
-  readonly pointerX: number;
-  readonly left: number;
-  readonly width: number;
-}): number {
-  return scientSplitFractionFromPointer(input, COMPUTE_FILE_SPLIT_BOUNDS);
-}
-
-export function nudgeComputeFileSplit(
-  current: number,
-  key: string,
-  axis: ScientSplitAxis = "x",
-): number | null {
-  return nudgeScientSplitFraction(
-    current,
-    key,
-    COMPUTE_FILE_SPLIT_BOUNDS,
-    COMPUTE_FILE_SPLIT_KEYBOARD_STEP,
-    axis,
-  );
 }
 
 /** "Python 3.14": the language and version, never the install source or session identity. */

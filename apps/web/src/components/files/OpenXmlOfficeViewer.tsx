@@ -38,6 +38,9 @@ export default function OfficeViewer(props: {
   const [error, setError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>();
   const [details, setDetails] = useState("");
+  // SCIENT-FORK: the viewer left out pages past its limit.
+  const [limited, setLimited] = useState(false);
+  const showLimited = useStableCallback(() => setLimited(true));
   const fail = useStableCallback((cause: unknown) =>
     setError(cause instanceof Error ? cause.message : "Could not render this Office document."),
   );
@@ -111,13 +114,19 @@ export default function OfficeViewer(props: {
         </span>
       ) : null}
       {/* SCIENT-FORK:END */}
-      {prepared.truncated ? (
+      {prepared.truncated || limited ? (
         <FileSurfaceNotice>
           Preview limited. Save it or open it in another app to read the full document.
         </FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>
-        <Viewer bytes={prepared.bytes} onDetails={setDetails} onError={fail} />
+        <Viewer
+          bytes={prepared.bytes}
+          onDetails={setDetails}
+          onError={fail}
+          // SCIENT-FORK: a stable callback, as the viewer's effect depends on it.
+          onLimited={showLimited}
+        />
       </Suspense>
     </div>
   );

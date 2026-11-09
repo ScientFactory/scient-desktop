@@ -20,6 +20,7 @@ import { parseManagedCursorVersion } from "./managedRuntimeVersion.ts";
 import { parseManagedMuseVersion } from "./museVersion.ts";
 import { runtimeFilesystem } from "./runtimeFilesystem.ts";
 import {
+  isProcessAlive,
   ManagedRuntimeMutationLockLostError,
   tryAcquireManagedRuntimeMutationLock,
   type ManagedRuntimeMutationLock,
@@ -107,6 +108,7 @@ interface ManagedProviderRuntimeActivation {
   readonly replacedRelativePath: string | null;
 }
 
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/provider-runtime has no Effect runtime; callers catch it as a native error.
 export class ManagedProviderRuntimeError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -462,6 +464,19 @@ function decodeActivation(value: unknown): ManagedProviderRuntimeActivation | un
   return activation as unknown as ManagedProviderRuntimeActivation;
 }
 
+/** A superseded version renamed aside under the prune lock, deleted outside it. */
+const PARKED_PREFIX = ".pruning-";
+const PRUNE_LOCK_ATTEMPTS = 200;
+const PRUNE_LOCK_RETRY_MS = 50;
+
+function decodeVersion(encoded: string): string | undefined {
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return undefined;
+  }
+}
+
 export class ManagedProviderRuntime {
   readonly #root: string;
   readonly #statePath: string;
@@ -469,6 +484,8 @@ export class ManagedProviderRuntime {
   readonly #mutationLockPath: string;
   readonly #versionsDir: string;
   readonly #stagingDir: string;
+  readonly #leasesDir: string;
+  readonly #pruneLockPath: string;
   readonly #dependencies: ManagedProviderRuntimeDependencies;
   readonly #displayName: string;
 
@@ -483,6 +500,14 @@ export class ManagedProviderRuntime {
     this.#mutationLockPath = NodePath.join(this.#root, "mutation.lock");
     this.#versionsDir = NodePath.join(this.#root, "versions");
     this.#stagingDir = NodePath.join(this.#root, "staging");
+    // Outside the runtime folder, so inspecting never recreates one that Remove has moved away.
+    this.#leasesDir = NodePath.join(
+      baseDir,
+      "provider-runtimes",
+      ".leases",
+      identity.providerDirectory,
+    );
+    this.#pruneLockPath = NodePath.join(this.#leasesDir, "prune.lock");
     this.#dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies };
     this.#displayName = identity.displayName;
   }
@@ -514,10 +539,31 @@ export class ManagedProviderRuntime {
     const launchPath = activeState
       ? NodePath.resolve(this.#root, activeState.executableRelativePath)
       : this.launchPath(artifact);
-    const installed = await NodeFSP.access(launchPath).then(
-      () => true,
-      () => false,
-    );
+    // A caller may keep either path, the active one or the requested one if that is missing.
+    const versions = [
+      ...new Set([activeState?.activeVersion ?? artifact.version, artifact.version]),
+    ];
+    const unleased: Array<string> = [];
+    for (const version of versions) {
+      const leased = await NodeFSP.access(this.#leasePath(version)).then(
+        () => true,
+        () => false,
+      );
+      if (!leased) unleased.push(version);
+    }
+    const isInstalled = () =>
+      NodeFSP.access(launchPath).then(
+        () => true,
+        () => false,
+      );
+    // A new lease and the look that follows it are atomic with a prune's scan.
+    const installed =
+      unleased.length === 0
+        ? await isInstalled()
+        : await this.#withPruneLock(async () => {
+            for (const version of unleased) await this.#lease(version);
+            return isInstalled();
+          });
     return {
       launchPath,
       installed,
@@ -577,6 +623,8 @@ export class ManagedProviderRuntime {
     await this.#reconcileActivation();
     this.#throwIfOwnershipLost(signal);
     if (artifact) await this.#reconcileReplacement(artifact);
+    this.#throwIfOwnershipLost(signal);
+    await this.#pruneSupersededVersions();
   }
 
   async install(input: ManagedProviderRuntimeInstallInput): Promise<ManagedProviderRuntimeStatus> {
@@ -602,6 +650,8 @@ export class ManagedProviderRuntime {
   ): Promise<ManagedProviderRuntimeStatus> {
     const { artifact, signal, onProgress, qualify, beforeActivate } = input;
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
+    // This process launches what it installs. Pruning needs the mutation lock held here.
+    await this.#lease(artifact.version);
     await this.#reconcileOwned(signal, artifact);
     await this.#cleanStaging();
     onProgress?.({ stage: "preparing" });
@@ -754,6 +804,7 @@ export class ManagedProviderRuntime {
       if (hadExisting) {
         await this.#dependencies.filesystem.remove(replaced).catch(() => undefined);
       }
+      await this.#pruneSupersededVersions();
       return await this.status(artifact);
     } catch (cause) {
       // Whatever step the lost lock interrupted, say why the change stopped.
@@ -871,6 +922,99 @@ export class ManagedProviderRuntime {
       await this.#dependencies.filesystem.remove(destination);
     }
     await NodeFSP.rm(this.#activationPath, { force: true });
+  }
+
+  #leasePath(version: string): string {
+    return NodePath.join(this.#leasesDir, `${process.pid}-${encodeURIComponent(version)}`);
+  }
+
+  /**
+   * Records, for as long as this process lives, that it may launch `version`: Scient servers
+   * sharing a home can each keep using a version the others have since replaced. An empty
+   * file named `<pid>-<version>`, complete the moment it exists.
+   */
+  async #lease(version: string): Promise<void> {
+    try {
+      await NodeFSP.mkdir(this.#leasesDir, { recursive: true, mode: 0o700 });
+      await NodeFSP.writeFile(this.#leasePath(version), "", { mode: 0o600, flag: "wx" });
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "EEXIST") return;
+      throw new ManagedProviderRuntimeError(
+        `Scient could not record that it uses ${this.#displayName} ${version}.`,
+        { cause },
+      );
+    }
+  }
+
+  /** Versions live processes lease; undefined when the leases cannot be read. Drops dead ones. */
+  async #leasedVersions(): Promise<ReadonlySet<string> | undefined> {
+    let names: ReadonlyArray<string>;
+    try {
+      names = await NodeFSP.readdir(this.#leasesDir);
+    } catch (cause) {
+      return (cause as NodeJS.ErrnoException).code === "ENOENT" ? new Set() : undefined;
+    }
+    const leased = new Set<string>();
+    for (const name of names) {
+      const lease = /^(\d+)-(.+)$/u.exec(name);
+      const version = lease ? decodeVersion(lease[2]!) : undefined;
+      if (!lease || version === undefined) continue;
+      if (isProcessAlive(Number(lease[1]))) leased.add(version);
+      else await NodeFSP.rm(NodePath.join(this.#leasesDir, name), { force: true }).catch(() => {});
+    }
+    return leased;
+  }
+
+  /** Holds the prune lock, which a pruner keeps only while it scans and parks (milliseconds). */
+  async #withPruneLock<A>(use: () => Promise<A>): Promise<A> {
+    await NodeFSP.mkdir(this.#leasesDir, { recursive: true, mode: 0o700 });
+    for (let attempt = 1; ; attempt += 1) {
+      const lock = await this.#dependencies.acquireMutationLock(this.#pruneLockPath);
+      if (lock) {
+        try {
+          return await use();
+        } finally {
+          await lock.release();
+        }
+      }
+      if (attempt >= PRUNE_LOCK_ATTEMPTS)
+        throw new ManagedProviderRuntimeBusyError(this.#displayName);
+      await new Promise((resolve) => setTimeout(resolve, PRUNE_LOCK_RETRY_MS));
+    }
+  }
+
+  /**
+   * Removes versions neither active, previous, nor leased by a live process: parks them under
+   * the prune lock, then deletes every park outside it. Keeps everything without a managed state
+   * or readable leases; a folder Windows still holds open waits for the next run.
+   */
+  async #pruneSupersededVersions(): Promise<void> {
+    const state = await this.readState();
+    if (!state) return;
+    await this.#withPruneLock(async () => {
+      const leased = await this.#leasedVersions();
+      if (!leased) return;
+      const kept = new Set([state.activeVersion, state.previousVersion, ...leased]);
+      const entries = await NodeFSP.readdir(this.#versionsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(PARKED_PREFIX) || kept.has(entry.name))
+          continue;
+        await NodeFSP.rename(
+          NodePath.join(this.#versionsDir, entry.name),
+          NodePath.join(
+            this.#versionsDir,
+            `${PARKED_PREFIX}${this.#dependencies.now()}-${entry.name}`,
+          ),
+        ).catch(() => {});
+      }
+    }).catch(() => {});
+    const entries = await NodeFSP.readdir(this.#versionsDir).catch(() => []);
+    for (const name of entries.filter((entry) => entry.startsWith(PARKED_PREFIX))) {
+      await NodeFSP.rm(NodePath.join(this.#versionsDir, name), {
+        recursive: true,
+        force: true,
+      }).catch(() => {});
+    }
   }
 
   async #cleanStaging(): Promise<void> {

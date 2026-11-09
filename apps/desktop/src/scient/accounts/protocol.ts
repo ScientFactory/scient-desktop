@@ -17,3 +17,11 @@ export const QUIET_VISIT = "scient:accounts:quiet-visit";
 export const READ_BROWSER_PASSWORDS = "scient:accounts:read-browser-passwords";
 
 export const SITE_ICON = "scient:accounts:site-icon";
+
+export const QUALIFY_SESSION_COPY = "scient:accounts:qualify-session-copy";
+export const FILL_MAIN = "scient:accounts:fill-main";
+export const SIGN_OUT_MAIN_SITE = "scient:accounts:sign-out-main-site";
+export const WITHDRAW_FROM_MAIN = "scient:accounts:withdraw-from-main";
+export const ACCOUNTS_OWNER = "scient:accounts:owner";
+export const ACCOUNTS_OWNER_CHANGED = "scient:accounts:owner-changed";
+export const READ_SESSIONS = "scient:accounts:read-sessions";

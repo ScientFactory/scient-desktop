@@ -12,7 +12,7 @@ export const Label = Schema.String.check(Schema.isMaxLength(256));
 export const ShortText = Schema.String.check(Schema.isMaxLength(4096));
 export const RuntimeErrorText = Schema.String.check(Schema.isMaxLength(16 * 1024));
 const utf8 = new TextEncoder();
-export const MAXIMUM_STREAM_TEXT_BYTES = 1024 * 1024;
+const MAXIMUM_STREAM_TEXT_BYTES = 1024 * 1024;
 export const StreamText = Schema.String.check(
   Schema.isMaxLength(MAXIMUM_STREAM_TEXT_BYTES),
   Schema.makeFilter((value: string) =>

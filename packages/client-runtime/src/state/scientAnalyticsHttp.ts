@@ -1,4 +1,4 @@
-import type { ScientAnalyticsConsent, ScientAnalyticsUiEvent } from "@t3tools/contracts";
+import type { ScientAnalyticsUiEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type { PreparedConnection } from "../connection/model.ts";
@@ -26,27 +26,6 @@ export const getEnvironmentScientAnalyticsStatus = Effect.fn(
   });
 });
 
-export const updateEnvironmentScientAnalyticsPreference = Effect.fn(
-  "clientRuntime.state.updateEnvironmentScientAnalyticsPreference",
-)(function* (input: {
-  readonly prepared: PreparedConnection;
-  readonly consent: ScientAnalyticsConsent;
-}) {
-  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared: input.prepared,
-    signer,
-    remoteAuthorization,
-    method: "POST",
-    url: (urls) => urls.preferences(),
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    group: "scientAnalytics",
-    request: ({ client, headers }) =>
-      client.preferences({ headers, payload: { consent: input.consent } }),
-  });
-});
-
 export const recordEnvironmentScientAnalyticsEvent = Effect.fn(
   "clientRuntime.state.recordEnvironmentScientAnalyticsEvent",
 )(function* (input: {
@@ -64,22 +43,5 @@ export const recordEnvironmentScientAnalyticsEvent = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientAnalytics",
     request: ({ client, headers }) => client.record({ headers, payload: input.event }),
-  });
-});
-
-export const deleteEnvironmentScientAnalyticsData = Effect.fn(
-  "clientRuntime.state.deleteEnvironmentScientAnalyticsData",
-)(function* (prepared: PreparedConnection) {
-  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared: prepared,
-    signer,
-    remoteAuthorization,
-    method: "POST",
-    url: (urls) => urls.deleteData(),
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    group: "scientAnalytics",
-    request: ({ client, headers }) => client.deleteData({ headers }),
   });
 });

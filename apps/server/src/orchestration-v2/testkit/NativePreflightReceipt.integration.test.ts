@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -13,7 +14,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -39,7 +40,7 @@ import {
   layer as idAllocatorLayer,
 } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "./ProjectionReplay.ts";
 import type { ProviderAdapterV2Error } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
@@ -88,7 +89,7 @@ it.live(
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           fileSystem: fs,
           path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           serverConfig: config,
           idAllocator: yield* IdAllocatorV2,
           continuations: { offer: () => Effect.die("No unsolicited work in preflight fixture") },
@@ -277,7 +278,7 @@ it.live(
                 event.payload.nativeAcceptance === "pending",
             ),
           );
-          yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+          yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
           const rebuilt = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(
             rebuilt.providerTurns.find((turn) => turn.id === receipt.id),
@@ -286,7 +287,7 @@ it.live(
           assert.lengthOf(peer.state.prompts, 0);
         }).pipe(
           Effect.provide(
-            ProjectionMaintenance.layer.pipe(
+            ProjectionReplay.layer.pipe(
               Layer.provideMerge(
                 ProviderReplayHarness.layerWithRegistry(
                   { name, runtimePolicyOverride: { cwd } },
@@ -305,7 +306,12 @@ it.live(
         );
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            idAllocatorLayer,
+            McpProviderSessions.layer,
+          ),
         ),
       ),
     ),

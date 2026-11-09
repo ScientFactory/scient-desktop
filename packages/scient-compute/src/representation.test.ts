@@ -7,7 +7,6 @@ import {
   MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES,
   computeRepresentationBundleByteLength,
   sameComputeRepresentationBundle,
-  selectComputeRepresentation,
 } from "./representation.ts";
 
 const decodeBundle = Schema.decodeUnknownSync(ComputeRepresentationBundle);
@@ -119,28 +118,6 @@ describe("compute representation bundle", () => {
         metadataJson: null,
       }),
     ).toThrow();
-  });
-
-  it("selects only through the caller's reviewed priority order", () => {
-    const bundle = decodeBundle({
-      representations: [
-        { mediaType: "text/plain", data: { _tag: "text", text: "fallback" } },
-        {
-          mediaType: "image/png",
-          data: { _tag: "resource", contentHash: "sha256:figure", byteLength: 128 },
-        },
-      ],
-      metadataJson: null,
-    });
-
-    expect(selectComputeRepresentation(bundle, ["image/svg+xml", "image/png"])).toMatchObject({
-      _tag: "supported",
-      representation: { mediaType: "image/png" },
-    });
-    expect(selectComputeRepresentation(bundle, ["text/html"])).toEqual({
-      _tag: "unsupported",
-      availableMediaTypes: ["text/plain", "image/png"],
-    });
   });
 
   it("compares the complete ordered bundle rather than only its media keys", () => {

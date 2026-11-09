@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Checkpoints from "./CheckpointService.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -44,8 +45,7 @@ const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.mergeAll(
       projectsLayer,
       Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.undefined,
       }),
     ),
   ),
@@ -233,6 +233,8 @@ it.live(
         const baseline = yield* checkpoints.materializeBaselineCheckpoint({
           scope: executionScope,
           ordinalWithinScope: 0,
+          nodeId: executionScope.nodeId,
+          capturedAt: executionScope.createdAt,
         });
         yield* fs.writeFileString(
           `${afterRoot}/README.md`,
@@ -327,7 +329,13 @@ it.live(
         assert.equal(yield* fs.readFileString(`${beforeRoot}/README.md`), beforeBytes);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(testLayer, policyLayer, database, NodeServices.layer).pipe(
+          Layer.mergeAll(
+            testLayer,
+            policyLayer,
+            database,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ).pipe(
             Layer.provide(
               Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
             ),

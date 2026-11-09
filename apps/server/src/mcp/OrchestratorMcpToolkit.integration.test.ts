@@ -43,6 +43,7 @@ import { HttpServer } from "effect/http";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { describe, expect, it } from "@effect/vitest";
@@ -85,6 +86,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 import {
@@ -161,6 +163,7 @@ const makeCredentialRegistryLayer = (environmentId: EnvironmentId) =>
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         Layer.succeed(
           HttpServer.HttpServer,
           HttpServer.HttpServer.of({
@@ -199,22 +202,23 @@ const delegatedTaskStatusTranscriptFile = new URL(
   import.meta.url,
 );
 
-const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(function* (
-  followupResult: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
-  const transcript = yield* decodeProviderReplayNdjson(
-    text.replaceAll(queuedFollowupResult, followupResult),
-  );
-  // The recording ends when the recorder closes the app-server while the parent
-  // turn is still open. This test keeps acting as that parent afterwards, and
-  // replaying the exit would kill the shared process and fail the parent run.
-  return {
-    ...transcript,
-    entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
-  };
-}, Effect.provide(NodeServices.layer));
+const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
+  function* (followupResult: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
+    const transcript = yield* decodeProviderReplayNdjson(
+      text.replaceAll(queuedFollowupResult, followupResult),
+    );
+    // The recording ends when the recorder closes the app-server while the parent
+    // turn is still open. This test keeps acting as that parent afterwards, and
+    // replaying the exit would kill the shared process and fail the parent run.
+    return {
+      ...transcript,
+      entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
+    };
+  },
+  Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 function makeProviderSnapshot(input: {
   readonly instanceId: ProviderInstanceId;
@@ -993,7 +997,7 @@ describe("orchestrator MCP toolkit", () => {
             McpHttpServer.layerThreadToolkit,
             projectGuardRegistration,
           ).pipe(
-            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provideMerge(layerOrchestration),
             Layer.provideMerge(credentialRegistryLayer),
             Layer.provide(layerRegistry),
@@ -1019,10 +1023,15 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provideMerge(
               SecretRequests.layer.pipe(
                 Layer.provide(layerMemorySecretStore),
+                Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
                 Layer.provide(layerOrchestration),
               ),
             ),
-            Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+            Layer.provide(
+              DocumentText.layer.pipe(
+                Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              ),
+            ),
             Layer.provideMerge(McpProviderSessions.layer),
           );
 
@@ -5558,11 +5567,12 @@ describe("orchestrator MCP toolkit", () => {
               Layer.mock(ProjectService.ProjectService)({}),
               SecretRequests.layer.pipe(
                 Layer.provide(layerMemorySecretStore),
+                Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
                 Layer.provide(layerOrchestration),
               ),
             ),
           ),
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(IdAllocator.layer),
           Layer.provideMerge(layerOrchestration),
           Layer.provideMerge(credentialRegistryLayer),
@@ -5574,7 +5584,7 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
           Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           Layer.provideMerge(McpProviderSessions.layer),
         );
 

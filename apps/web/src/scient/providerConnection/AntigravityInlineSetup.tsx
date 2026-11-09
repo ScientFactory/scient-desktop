@@ -23,6 +23,7 @@ import {
   AssistedSetupActions,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
+  AssistedSetupStatusFrame,
   AssistedSetupStatus,
   AssistedSetupUpdateButton,
   AssistedSetupUpdateStatus,
@@ -363,7 +364,7 @@ export function AntigravityInlineSetup(props: {
   ) {
     const action = activeRuntimeOperation?.action ?? pendingAction;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -396,13 +397,13 @@ export function AntigravityInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (externalUpdateProgress) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           name="Antigravity"
           provider={props.provider}
@@ -410,13 +411,13 @@ export function AntigravityInlineSetup(props: {
           update={externalProviderUpdate(props.provider)}
           working={externalUpdateProgress}
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRuntimeRepair) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={localError ?? managedRuntimeRepairMessage(props.provider, "Antigravity")}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -434,7 +435,7 @@ export function AntigravityInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -444,7 +445,7 @@ export function AntigravityInlineSetup(props: {
     !isProviderRuntimePresentedAsInstalled(props.provider)
   ) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={runtimeOperation.message}
           icon={<CheckCircle2Icon className="size-5 text-success" />}
@@ -463,7 +464,7 @@ export function AntigravityInlineSetup(props: {
             </Button>
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -472,7 +473,7 @@ export function AntigravityInlineSetup(props: {
     !isProviderRuntimePresentedAsInstalled(props.provider)
   ) {
     return isAuthenticated ? (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         body={
           usesCredentials ? (
@@ -498,7 +499,7 @@ export function AntigravityInlineSetup(props: {
     const installationError =
       localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             installationError ??
@@ -551,7 +552,7 @@ export function AntigravityInlineSetup(props: {
           </button>
         )}
         {installationError ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -583,7 +584,7 @@ export function AntigravityInlineSetup(props: {
           activeConnectionOperation.authorizationUrlKind === "primary")) &&
       !verifying;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             starting
@@ -676,13 +677,13 @@ export function AntigravityInlineSetup(props: {
             ) : null}
           </AssistedSetupActions>
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (props.provider.auth.status === "unknown" && !canStartUncheckedAuth) {
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         body={
           props.provider.message ??
           "Scient could not confirm the Google account state. Check the provider again before signing in."
@@ -723,7 +724,7 @@ export function AntigravityInlineSetup(props: {
     const canInstallManaged =
       !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={signInGuidance}
           icon={
@@ -784,13 +785,13 @@ export function AntigravityInlineSetup(props: {
             provider={props.provider}
           />
         ) : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (!isReady) {
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         body={
           props.provider.message ??
@@ -806,7 +807,7 @@ export function AntigravityInlineSetup(props: {
   if (updateOffer) {
     const issue = providerUpdateIssue(props.provider, updateOffer, localError);
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           issue={issue}
           name="Antigravity"
@@ -824,12 +825,12 @@ export function AntigravityInlineSetup(props: {
           />
         </AssistedSetupActions>
         {issue ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   return (
-    <StatusFrame
+    <AssistedSetupStatusFrame
       accountAction={props.accountAction}
       body={
         <>
@@ -849,35 +850,4 @@ export function AntigravityInlineSetup(props: {
       title="Antigravity is ready"
     />
   );
-}
-
-function StatusFrame(props: {
-  readonly accountAction?: ReactNode;
-  /** Runtime diagnostics, shown only for a warning. */
-  readonly diagnostics?: ReactNode;
-  readonly title: string;
-  readonly body: ReactNode;
-  readonly warning?: boolean;
-}) {
-  return (
-    <SetupFrame>
-      <AssistedSetupStatus
-        body={props.body}
-        icon={
-          props.warning ? (
-            <TriangleAlertIcon className="size-5 text-warning" />
-          ) : (
-            <CheckCircle2Icon className="size-5 text-success" />
-          )
-        }
-        title={props.title}
-        trailing={props.accountAction}
-      />
-      {props.diagnostics}
-    </SetupFrame>
-  );
-}
-
-function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }

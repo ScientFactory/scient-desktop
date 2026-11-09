@@ -1,7 +1,7 @@
 import { ompProcessEnvironment } from "../omp/OmpEnvironment.ts";
 import { OmpSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -53,7 +53,7 @@ export type OmpDriverEnv =
   | ProviderHost
   | BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
@@ -170,7 +170,7 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
       spawner,
       fileSystem: fs,
       path,
-      crypto: yield* Crypto.Crypto,
+      random: yield* SecureRandom.SecureRandom,
       serverConfig,
       makeProcess: makeRpcClient,
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),

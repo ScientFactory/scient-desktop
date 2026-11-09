@@ -18,6 +18,7 @@ import { threadPullRequestsOf } from "@t3tools/client-runtime/thread-pull-reques
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { EMPTY_THREAD_HISTORY_META } from "@t3tools/client-runtime/state/threads";
+import { flushSync } from "react-dom";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render, stubGlobal } from "../../test/render";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../test-fixtures";
@@ -205,13 +206,16 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
   await expect
     .element(screen.getByRole("button", { name: "Attach files", exact: true }))
     .toBeVisible();
-  const before = quiet.mock.calls.length;
   const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
     row.item.type === "assistant_message" && row.item.streaming
       ? { ...row, item: { ...row.item, text: "The live answer has advanced" } }
       : row,
   );
-  await act(() =>
+  // Counted inside one synchronous flush: the composer is still settling from the cancelled
+  // recording, and the renders its own size and the timeline's end bring would otherwise land
+  // here whenever the runner is slow.
+  const before = quiet.mock.calls.length;
+  flushSync(() =>
     lab.registry.set(
       lab.state,
       AsyncResult.success({
@@ -227,11 +231,10 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
       }),
     ),
   );
-  await expect
-    .element(screen.getByText("The live answer has advanced", { exact: true }))
-    .toBeVisible();
+  const streamedRenders = quiet.mock.calls.length - before;
+  expect(screen.container.textContent).toContain("The live answer has advanced");
   await expect.element(screen.getByText("Done", { exact: true })).toBeVisible();
-  expect(quiet.mock.calls.length).toBe(before);
+  expect(streamedRenders).toBe(0);
 });
 
 it("does not replay a pending question the shell already showed once the thread detail loads", async () => {

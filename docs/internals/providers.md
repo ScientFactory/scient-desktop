@@ -492,28 +492,44 @@ update snapshot enrichment. Other providers retain their existing refresh policy
 Interactive agents receive one compact, Scient-owned awareness contract from
 [`ScientAwareness.ts`][awareness]. The always-on block identifies Scient as a project workspace,
 states what the user can inspect, and names the rich Markdown representations the chat actually
-renders. A separate browser block is composed only when the exact MCP credential for that session
-grants `preview`; the same capability decision drives both authorization and awareness. Sources
-mechanics remain in tool descriptions rather than consuming every turn's instruction context.
-The Compute block is likewise included only with the exact `compute` grant, which lets the
-agent run code in Compute sessions and read their results.
+renders. Every other block names tools, so it is composed only when the session's tool list can
+show them:
 
-Each built-in driver has an explicit native delivery decision, guarded against `BUILT_IN_DRIVERS`:
+- browser (upstream's browser rules in Scient's copy) with `preview`;
+- Compute with `compute`, and PDF builds plus Overleaf with `documents:build`, each only while the
+  thread's project workspace verifies, the same rule tool discovery uses;
+- devices with `device`; skills with `skills:read`;
+- papers and sign-ins with `accounts`; its `preview_open` sign-in sentence also needs `preview`.
+
+The session manager writes these grants into the provider-facing manifest that adapters read,
+leaving out the project grants when the workspace does not verify; the credential itself keeps
+them, and every call is still checked. Claude's text names tools as `mcp__scient__*` and says how
+to load them through ToolSearch, because Claude Code defers MCP tools. Sources mechanics remain in
+tool descriptions rather than consuming every turn's instruction context.
+
+Each built-in driver has an explicit delivery decision, kept in `ScientAwareness.test.ts` and
+guarded against `BUILT_IN_DRIVERS`:
 
 - Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
   per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`; Pi appends
   awareness through its session-local `before_agent_start` extension hook. Oh My Pi and Scient Agent use that
   hook from their own generated extension; its hook receives the prompt as `string[]` and treats a
   returned value as the whole replacement, so awareness is appended as one more element.
-- Cursor accepts a documented `--plugin-dir`, but live CLI and ACP verification found that
-  session-local plugin rules were not applied. Antigravity likewise has no verified
-  application-private system extension. Both integrations are therefore marked unsupported for
-  Scient awareness instead of rewriting the user's first message, writing rules into the project,
-  or modifying global configuration.
+- Antigravity, Cursor, ACP registry agents, fx and Kiro have no verified private system seam, so
+  their awareness rides the same wrapped first-prompt instructions that already carry upstream's
+  orchestration text (`<scient_instructions>` for ACP, `<scient_orchestration_instructions>` for
+  Cursor), sent again when those are. The device text keeps upstream's own prompt delivery there.
+  Antigravity's prompt also says its `write_to_file` tool writes outside the project.
+- Muse has no private seam and sends runtime text with every turn. Its awareness rides the first
+  turn of a session, wrapped in `<scient_instructions>`, and is sent again only when the session's
+  awareness changes, so ordinary turns carry none.
+- ACP prompts, Cursor's first-run text and Muse turns compare the session's grant manifest, so a
+  session that gains a verified project or browser access receives the new blocks on its next
+  turn. After a compaction each sends the awareness again.
 
-Adding a provider requires adding a tested delivery decision. System awareness never comes from
-hidden user-message prefixes, project instruction files, credentials copied into a synthetic home,
-or undocumented ACP metadata.
+Adding a provider requires adding a tested delivery decision. Awareness never comes from
+unmarked user-message prefixes, project instruction files, credentials copied into a synthetic
+home, or undocumented ACP metadata.
 
 ### Droid (Factory) driver
 

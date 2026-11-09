@@ -90,14 +90,37 @@ it("captures trusted submit controls and Enter once, after guest permission and 
   expect(captured[0]?.username === username && captured[0]?.password === password).toBe(true);
   time.mockReturnValue(5_000);
   f.inputs[1]!.value = "";
+  // A username step on its own, which the desktop carries to the password step.
   dispatch(form, new Event("submit", { bubbles: true }));
-  expect(captured).toHaveLength(1);
+  expect(captured).toHaveLength(2);
+  expect(captured[1]).toMatchObject({ step: "username", password: "" });
   f.inputs[1]!.value = password;
   dispatch(f.inputs[1]!, new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  expect(captured).toHaveLength(2);
+  expect(captured).toHaveLength(3);
+  expect(captured[2]).toMatchObject({ step: "password", path: location.pathname });
   time.mockReturnValue(10_000);
   dispatch(form, new Event("submit", { bubbles: true, cancelable: true }));
-  expect(captured).toHaveLength(3);
+  expect(captured).toHaveLength(4);
+});
+
+it("never takes a code field masked as a password for the password", () => {
+  document.body.innerHTML =
+    '<form><input type="password" autocomplete="one-time-code"><button type="submit">Go</button></form>';
+  const input = document.querySelector("input")!;
+  using _rect = vi.spyOn(input, "getClientRects").mockReturnValue({ length: 1 } as DOMRectList);
+  const captured: unknown[] = [];
+  using _capture = {
+    [Symbol.dispose]: installSignInCapture(
+      () => true,
+      (value) => captured.push(value),
+    ),
+  };
+  input.value = NodeCrypto.randomBytes(3).toString("hex");
+  const submit = new Event("submit", { bubbles: true });
+  Object.defineProperty(submit, "isTrusted", { value: true });
+  document.querySelector("form")!.dispatchEvent(submit);
+  expect(captured).toEqual([]);
+  document.body.replaceChildren();
 });
 
 it("automatically fills one untouched document only and rejects typed values or a stale same-origin page", () => {

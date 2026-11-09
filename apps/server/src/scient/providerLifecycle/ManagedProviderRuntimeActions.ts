@@ -1,6 +1,8 @@
 import {
   ManagedProviderRuntimeError,
   compareManagedRuntimeReleases,
+  compareManagedRuntimeVersions,
+  detectManagedRuntimeTarget,
   parseManagedMuseVersion,
   type ManagedRuntimeArtifactReceipt,
   hydrateManagedRuntimeArtifact,
@@ -34,19 +36,32 @@ import {
   parseGenericCliVersion,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  isProviderConnectionActionError,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
 } from "./ManagedRuntimeCatalog.ts";
-import { compareManagedRuntimeVersions } from "./managedRuntimeVersion.ts";
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
     message,
     ...(cause === undefined ? {} : { cause }),
   });
+
+export function detectTargetSafely(input: {
+  readonly platform: NodeJS.Platform;
+  readonly arch: string;
+}) {
+  try {
+    return detectManagedRuntimeTarget(input);
+  } catch {
+    return undefined;
+  }
+}
 
 export function managedRuntimeInstallationFailureMessage(
   providerName: string,
@@ -658,7 +673,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
           },
         }),
       catch: (cause) =>
-        cause instanceof ProviderConnectionActionError
+        isProviderConnectionActionError(cause)
           ? cause
           : runtimeError(managedRuntimeInstallationFailureMessage(providerName, cause), cause),
     });

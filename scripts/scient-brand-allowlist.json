@@ -520,13 +520,6 @@
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
   },
   {
-    "path": "packages/provider-cursor/src/server/accountUsage.ts",
-    "line": "? `Allow Keychain access on the Mac running ${options?.productName ?? \"T3 Code\"}, then refresh.`",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "overridden-default",
-    "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
     "path": "packages/shared/src/promptLinks.ts",
     "line": "appName = \"T3 Code\",",
     "rules": ["inherited-brand", "bare-t3"],
@@ -577,7 +570,7 @@
   },
   {
     "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
-    "line": "description=\"Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
+    "line": "description=\"Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
@@ -646,13 +639,6 @@
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "unmounted-upstream",
     "reason": "Scient's SidebarUpdatePill replaces this upstream dialog and never mounts it; the file is kept unchanged for alignment."
-  },
-  {
-    "path": "packages/source-control-github/src/shared/definition.ts",
-    "line": "appName: \"T3 Code for GitHub\",",
-    "rules": ["inherited-brand", "bare-t3"],
-    "kind": "external-name",
-    "reason": "The registered name of T3's GitHub App. App sign-in stays off unless the operator sets T3CODE_GITHUB_APP_CLIENT_ID, which Scient builds do not ship."
   },
   {
     "path": "apps/server/src/cloud/selfUpdate.ts",

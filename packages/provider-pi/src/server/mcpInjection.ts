@@ -38,7 +38,7 @@ const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
   "-v",
 ]);
 
-const PI_ARGUMENTS_WITH_VALUES = new Set([
+export const PI_ARGUMENTS_WITH_VALUES = new Set([
   "--api-key",
   "--append-system-prompt",
   "--exclude-tools",
@@ -246,7 +246,16 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
       : makePiMcpExtensionSource(orchestrationInstructions);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
   if (existing !== source) {
-    yield* fs.writeFileString(dest, source);
+    // Concurrent pi launches read this file: stage it in a per-call directory
+    // and rename so readers and other writers never see a partial file.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stagingDir = yield* fs.makeTempDirectoryScoped({ directory: cacheDir });
+        const staging = `${stagingDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
+        yield* fs.writeFileString(staging, source);
+        yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
+      }),
+    );
   }
   // SCIENT-FORK:END
   return dest;
@@ -259,6 +268,9 @@ export function buildPiRpcLaunch(input: {
   readonly extensionPath: string | undefined;
   readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
+  // T3 stops these processes as soon as they answer. They run --offline because Pi's startup
+  // catalog refresh renews expired OAuth tokens, and a stop mid-request loses the rotated one.
+  readonly shortLived?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -283,6 +295,7 @@ export function buildPiRpcLaunch(input: {
         ? ["--session", input.sessionPath]
         : []),
     ...launchArgs,
+    ...(input.shortLived === true && !launchArgs.includes("--offline") ? ["--offline"] : []),
     // Restrictions must follow launch args so user flags cannot re-enable unattended tools/extensions.
     ...(input.disableExtensions === true ? ["--no-extensions"] : []),
     ...(input.disableTools === true ? ["--no-tools"] : []),

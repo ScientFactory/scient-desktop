@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import * as NodeFS from "node:fs";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -49,7 +50,7 @@ function shellSingleQuote(value: string): string {
 
 const DroidTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-droid-text-generation-test-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 function makeAcpDroidWrapper(dir: string, requested: Record<string, string>): string {
   // Droid offers autonomy_level; start where this user's default would.

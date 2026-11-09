@@ -12,7 +12,7 @@ import {
   type CursorRuntimeResolverInput,
   type CursorRuntimeResolution,
 } from "@t3tools/provider-cursor/server";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Effect from "effect/Effect";
 
@@ -22,6 +22,7 @@ import { makeCursorSdkConnectionActions } from "../../scient/providerLifecycle/C
 import { turnStartErrorKeepingReceipt } from "../../orchestration-v2/scient-provider/NativeTurnReceipts.ts";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import type { ScientProviderInstance } from "../ScientProviderInstance.ts";
+import { buildScientPromptAwareness } from "../ScientAwareness.ts";
 import { buildScientOrchestrationPrompt } from "../ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../ScientRuntimeInstructions.ts";
 
@@ -29,7 +30,7 @@ import { buildScientRuntimeInstructions } from "../ScientRuntimeInstructions.ts"
 export type CursorDriverCompositionEnv =
   | ServerConfig.ServerConfig
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto;
+  | SecureRandom.SecureRandom;
 
 type CursorDriverCompositionExtension = Pick<
   ScientProviderInstance,
@@ -75,7 +76,14 @@ const resolveRuntime = Effect.fn("CursorDriverComposition.resolveRuntime")(funct
     effectiveConfig: cursorRuntime.effectiveConfig,
     effectiveEnvironment: cursorRuntime.effectiveProcessEnv,
     maintenanceResolver: cursorRuntime.maintenanceResolver,
-    orchestrationPromptForFirstRun: buildScientOrchestrationPrompt,
+    // Scient's awareness rides the first prompt, as upstream's orchestration text does.
+    orchestrationPromptForFirstRun: (prompt) =>
+      buildScientOrchestrationPrompt({
+        ...prompt,
+        ...(prompt.capabilities === undefined
+          ? {}
+          : { awareness: buildScientPromptAwareness(prompt.capabilities) }),
+      }),
     runtimeInstructions: buildScientRuntimeInstructions,
     decorateSnapshot: (snapshot) =>
       decorateCursorSnapshot(

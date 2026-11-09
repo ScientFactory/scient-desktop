@@ -3,6 +3,7 @@ import {
   AnnotationMode,
   GlobalWorkerOptions,
   PasswordResponses,
+  PDFWorker,
   getDocument,
   type PDFDocumentLoadingTask,
   type PDFDocumentProxy,
@@ -22,6 +23,25 @@ import { observeResize } from "~/lib/observeResize";
 import { createPdfResizeSettlement } from "./pdfResizeSettlement";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+// Without a shared worker, pdf.js starts a worker and recompiles its 1.3 MB
+// script for every document, about 80 ms per open. Destroying a document
+// leaves a worker the caller supplied running.
+let sharedWorker: PDFWorker | undefined;
+
+// pdf.js tracks worker failures only while the worker starts, so a worker that later reports an
+// error is retired here: the next PDF opens on a fresh worker instead of one that cannot answer.
+function acquireSharedWorker(): PDFWorker {
+  if (sharedWorker !== undefined && !sharedWorker.destroyed) return sharedWorker;
+  const worker = new PDFWorker();
+  sharedWorker = worker;
+  const retire = () => {
+    if (sharedWorker === worker) sharedWorker = undefined;
+    worker.destroy();
+  };
+  worker.promise.then(() => worker.port?.addEventListener("error", retire), retire);
+  return worker;
+}
 
 export type PdfPasswordReason = "required" | "incorrect";
 
@@ -58,8 +78,6 @@ export interface ScientPdfRuntime {
   refreshForContainerSize: () => void;
 }
 
-export type PdfJsFindState = (typeof FindState)[keyof typeof FindState];
-
 function pdfAssetRoot(): string {
   return new URL(`${import.meta.env.BASE_URL}pdfjs-assets/`, window.location.href).toString();
 }
@@ -71,11 +89,15 @@ export function startPdfDocumentLoad(
   const assetRoot = pdfAssetRoot();
   const loadingTask = getDocument({
     url,
+    worker: acquireSharedWorker(),
     cMapPacked: true,
     cMapUrl: `${assetRoot}cmaps/`,
     standardFontDataUrl: `${assetRoot}standard_fonts/`,
     wasmUrl: `${assetRoot}wasm/`,
     enableXfa: true,
+    // Without this, pdf.js asks for canvases it can read back, which Chromium keeps in
+    // software: every page then draws on the CPU.
+    enableHWA: true,
     useSystemFonts: true,
     disableAutoFetch: false,
     disableRange: false,
@@ -129,13 +151,11 @@ export function createPdfRuntime(input: {
     annotationEditorMode: AnnotationEditorType.NONE,
     enableAutoLinking: true,
     enableDetailCanvas: true,
-    enableOptimizedPartialRendering: true,
     enablePermissions: true,
     enablePrintAutoRotate: true,
     enableSelectionRendering: true,
     imageResourcesPath: `${pdfAssetRoot()}images/`,
     maxCanvasDim: 8_192,
-    maxCanvasPixels: 16_777_216,
     // Page margins come from the container's border; see scientPdfReader.css.
     removePageBorders: true,
     supportsPinchToZoom: true,

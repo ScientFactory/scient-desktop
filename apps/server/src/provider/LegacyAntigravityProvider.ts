@@ -13,7 +13,6 @@ import {
   type ServerProviderState,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -353,11 +352,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
   function* (
     antigravitySettings: LegacyAntigravitySettings,
     environment: NodeJS.ProcessEnv = process.env,
-  ): Effect.fn.Return<
-    ServerProviderDraft,
-    never,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
-  > {
+  ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const fallbackModels = antigravityModelsFromSettings(antigravitySettings.customModels);
 
@@ -548,9 +543,7 @@ export const enrichAntigravitySnapshot = (input: {
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, input.latestVersions),
-    Effect.flatMap((enrichedSnapshot) =>
-      publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
-    ),
+    Effect.tap((enrichedSnapshot) => publishSnapshot(stampIdentity(enrichedSnapshot))),
     Effect.catchCause((cause) =>
       Effect.logWarning("Antigravity version advisory enrichment failed", {
         errorTag: causeErrorTag(cause),

@@ -15,13 +15,10 @@ export const ScientAnalyticsStatus = Schema.Struct({
   consent: ScientAnalyticsConsent,
   /** Ephemeral consent fence for UI operations; never an analytics property. */
   collectionContext: Schema.optional(CollectionContext),
+  /** The server can fence a complete voice job, including delayed outcomes. */
+  voiceLifecycleVersion: Schema.optional(Schema.Literal(2)),
 });
 export type ScientAnalyticsStatus = typeof ScientAnalyticsStatus.Type;
-
-export const ScientAnalyticsPreferenceUpdate = Schema.Struct({
-  consent: ScientAnalyticsConsent,
-});
-export type ScientAnalyticsPreferenceUpdate = typeof ScientAnalyticsPreferenceUpdate.Type;
 
 /** Any event name, as in T3; the server checks only an event's shape and size. */
 export const ScientAnalyticsUiEventName = Schema.String.check(
@@ -41,8 +38,3 @@ export type ScientAnalyticsUiEvent = typeof ScientAnalyticsUiEvent.Type;
 
 export const ScientAnalyticsRecordResult = Schema.Struct({ accepted: Schema.Boolean });
 export type ScientAnalyticsRecordResult = typeof ScientAnalyticsRecordResult.Type;
-
-export const ScientAnalyticsDeletionResult = Schema.Struct({
-  deleted: Schema.Boolean,
-});
-export type ScientAnalyticsDeletionResult = typeof ScientAnalyticsDeletionResult.Type;

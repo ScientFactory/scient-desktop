@@ -1,7 +1,9 @@
 import { expect, it } from "@effect/vitest";
 import {
+  AuthOrchestrationReadScope,
   EnvironmentId,
   WS_METHODS,
+  type AuthSessionState,
   type ServerConfigStreamEvent,
   type ServerProvider,
   type ServerProviderUpdatedPayload,
@@ -15,6 +17,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { vi } from "vite-plus/test";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -44,6 +47,25 @@ import {
 import { createServerEnvironmentAtoms } from "./server.ts";
 
 type RefreshInput = EnvironmentRpcInput<typeof WS_METHODS.serverRefreshProviders>;
+
+// Refreshing providers needs the destination's orchestration read grant.
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: () => readSession }),
+}));
+const readGrant: AuthSessionState = {
+  authenticated: true,
+  auth: {
+    policy: "remote-reachable",
+    bootstrapMethods: [],
+    sessionMethods: [],
+    sessionCookieName: "test",
+  },
+  scopes: [AuthOrchestrationReadScope],
+  permissions: [AuthOrchestrationReadScope],
+};
+const readSession = Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(
+  AsyncResult.success(readGrant),
+);
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("inventory-environment"),
   label: "Inventory environment",

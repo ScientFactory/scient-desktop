@@ -3,14 +3,11 @@ import {
   downloadPresentationBlob,
   markdownFenceCopySource,
   presentationFileBaseName,
+  presentationPngScale,
 } from "../presentation/presentationExport";
 import { copyPngBlobToClipboard } from "../presentation/imageClipboard";
 import { loadCanvasImage } from "../presentation/loadCanvasImage";
 import { FETCHING_ELEMENTS, RESOURCE_ATTRIBUTES } from "./svgExternalResources";
-
-const MAX_PNG_DIMENSION = 8_192;
-const MAX_PNG_PIXELS = 16_777_216;
-const DEFAULT_PNG_SCALE = 2;
 
 export function diagramFileBaseName(title: string | null): string {
   return presentationFileBaseName(title, "diagram");
@@ -157,20 +154,10 @@ export async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Pro
   );
   const sourceWidth = dimensions?.width ?? image.naturalWidth;
   const sourceHeight = dimensions?.height ?? image.naturalHeight;
-  if (
-    !Number.isFinite(sourceWidth) ||
-    !Number.isFinite(sourceHeight) ||
-    !(sourceWidth > 0 && sourceHeight > 0)
-  ) {
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight)) {
     throw new Error("The rendered diagram has no measurable size.");
   }
-
-  const scale = Math.min(
-    DEFAULT_PNG_SCALE,
-    MAX_PNG_DIMENSION / sourceWidth,
-    MAX_PNG_DIMENSION / sourceHeight,
-    Math.sqrt(MAX_PNG_PIXELS / (sourceWidth * sourceHeight)),
-  );
+  const scale = presentationPngScale(sourceWidth, sourceHeight, "diagram");
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
   const canvas = document.createElement("canvas");

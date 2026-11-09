@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,7 +13,6 @@ import type { DroidAcpRuntime, DroidAcpRuntimeFactory } from "./acp/DroidAcpSupp
 
 import {
   buildInitialDroidProviderSnapshot,
-  checkDroidProviderStatus,
   checkDroidProviderStatusWithCapabilities,
   isDroidAuthenticationRequiredError,
 } from "./DroidProvider.ts";
@@ -78,7 +79,7 @@ const versionOnlyDroid = Effect.gen(function* () {
   return binaryPath;
 });
 
-it.layer(NodeServices.layer)("Droid catalog ownership", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Droid catalog ownership", (it) => {
   it.effect("keeps native and Scient BYOK discovery distinct from legacy custom entries", () =>
     Effect.gen(function* () {
       const binaryPath = yield* versionOnlyDroid;
@@ -199,15 +200,6 @@ describe("buildInitialDroidProviderSnapshot", () => {
     }),
   );
 
-  it.effect("never offers conversation rewind for Droid", () =>
-    Effect.gen(function* () {
-      for (const enabled of [true, false]) {
-        const snapshot = yield* buildInitialDroidProviderSnapshot(decodeDroidSettings({ enabled }));
-        expect(snapshot.supportsConversationRollback).toBe(false);
-      }
-    }),
-  );
-
   it.effect("returns a pending snapshot when enabled", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialDroidProviderSnapshot(
@@ -232,15 +224,15 @@ describe("buildInitialDroidProviderSnapshot", () => {
   );
 });
 
-it.layer(NodeServices.layer)("checkDroidProviderStatus", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkDroidProviderStatus", (it) => {
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
-      const snapshot = yield* checkDroidProviderStatus(
+      const snapshot = (yield* checkDroidProviderStatusWithCapabilities(
         decodeDroidSettings({
           enabled: true,
           binaryPath: "/definitely/not/installed/droid-binary",
         }),
-      );
+      )).snapshot;
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(false);
       expect(snapshot.status).toBe("error");
@@ -263,9 +255,9 @@ it.layer(NodeServices.layer)("checkDroidProviderStatus", (it) => {
           );
           yield* fs.chmod(droidPath, 0o755);
 
-          return yield* checkDroidProviderStatus(
+          return (yield* checkDroidProviderStatusWithCapabilities(
             decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
-          );
+          )).snapshot;
         }),
       );
 
@@ -298,9 +290,9 @@ it.layer(NodeServices.layer)("checkDroidProviderStatus", (it) => {
             ].join("\n"),
           );
           yield* fs.chmod(droidPath, 0o755);
-          return yield* checkDroidProviderStatus(
+          return (yield* checkDroidProviderStatusWithCapabilities(
             decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
-          );
+          )).snapshot;
         }),
       );
       expect(exited.status).toBe("error");
@@ -358,9 +350,9 @@ it.layer(NodeServices.layer)("checkDroidProviderStatus", (it) => {
           );
           yield* fs.chmod(droidPath, 0o755);
 
-          return yield* checkDroidProviderStatus(
+          return (yield* checkDroidProviderStatusWithCapabilities(
             decodeDroidSettings({ enabled: true, binaryPath: droidPath }),
-          );
+          )).snapshot;
         }),
       );
 

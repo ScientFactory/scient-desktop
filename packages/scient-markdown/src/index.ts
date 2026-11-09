@@ -1,7 +1,6 @@
 export {
   applyMarkdownSourcePatches,
   createMarkdownSourceLedger,
-  replaceMarkdownSourceBlocks,
   type MarkdownSourceBlock,
   type MarkdownSourceBlockReplacement,
   type MarkdownSourceLedger,

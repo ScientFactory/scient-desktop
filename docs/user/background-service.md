@@ -60,8 +60,8 @@ credentials or the secrets directory.
 
 ## Reclaim database space
 
-Scient removes superseded internal history on its own while it runs; your
-conversations are kept. A database created before this shrank automatically
+Scient removes internal history older than a day on its own while it runs;
+your conversations are kept. A database created before this shrank automatically
 still holds the freed space on disk until a one-time offline repair returns it
 and turns on automatic shrinking. **Settings → Maintenance** suggests the repair
 when at least 1 GiB can be reclaimed and shows the exact command for that

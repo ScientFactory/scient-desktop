@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -160,7 +160,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const providerSessions = yield* ProviderSessionManagerV2;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveConnection>>(new Map());
 
   const readTarget = Effect.fn("ProviderConnectionManager.readTarget")(function* (
@@ -365,7 +365,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       return { providers: target.providers };
     }
 
-    const operationId = `connect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+    const operationId = `connect-${yield* random.uuidV4()}`;
     const startedAt = yield* nowIso;
     const scope = yield* Scope.make();
     const attemptRef = yield* Ref.make<ProviderConnectionAttempt | undefined>(undefined);
@@ -981,7 +981,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         ? disconnectAccount(account)
         : actions.disconnect;
     const runtimeSource = target.snapshot.connection?.runtime?.source ?? "unknown";
-    const operationId = `disconnect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+    const operationId = `disconnect-${yield* random.uuidV4()}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
       provider: target.provider,

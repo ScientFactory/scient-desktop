@@ -8,6 +8,8 @@ export type ScientUiOperationKind = "pdf-export" | "document-export" | "latex-vi
 export type ScientUiOperationOutcome = "completed" | "failed" | "cancelled" | null;
 export type FinishScientUiOperation = (outcome: ScientUiOperationOutcome) => void;
 const ignoreOperation: FinishScientUiOperation = () => {};
+type RecordVoiceAnalytics = (event: ScientAnalyticsUiEvent) => void;
+const ignoreVoice: RecordVoiceAnalytics = () => {};
 
 /** Best-effort UI signals: no replay before consent, no timer/polling, bounded work. */
 export function createAnalyticsClientGate<Connection extends object>(transport: {
@@ -20,7 +22,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     checkedAt: number;
     retryStatusAt: number | null;
     loading: boolean;
-    controlling: boolean;
     generation: number;
     inFlight: number;
     surfaces: Set<string>;
@@ -36,7 +37,6 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
         checkedAt: 0,
         retryStatusAt: null,
         loading: false,
-        controlling: false,
         generation: 0,
         inFlight: 0,
         surfaces: new Set(),
@@ -65,10 +65,10 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     const generation = state.generation;
     try {
       const status = await transport.status(connection);
-      if (generation === state.generation && !state.controlling) acceptStatus(state, status);
+      if (generation === state.generation) acceptStatus(state, status);
       return status;
     } catch (error) {
-      if (generation === state.generation && !state.controlling) {
+      if (generation === state.generation) {
         acceptStatus(state, UNAVAILABLE);
         // A transient discovery failure is not a durable Off preference. Retry
         // only on later activity, at most once a minute; never replay that work.
@@ -79,7 +79,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
   };
   const prime = (connection: Connection) => {
     const state = stateFor(connection);
-    if (state.loading || state.controlling) return;
+    if (state.loading) return;
     state.loading = true;
     void readStatus(connection)
       .catch(() => undefined)
@@ -87,10 +87,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
         state.loading = false;
       });
   };
-  const readyState = (connection: Connection) => {
-    const state = stateFor(connection);
-    if (state.controlling) return null;
-    // Discovery never buffers the triggering action or blocks product work.
+  const refreshIfNeeded = (connection: Connection, state: State) => {
     if (
       state.status === null ||
       (state.retryStatusAt !== null && now() >= state.retryStatusAt) ||
@@ -99,13 +96,18 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
         now() - state.checkedAt >= STATUS_MAX_AGE_MS)
     ) {
       prime(connection);
-      return null;
+      return true;
     }
-    return state.status.available && state.status.consent !== "off" ? state : null;
+    return false;
+  };
+  const readyState = (connection: Connection) => {
+    const state = stateFor(connection);
+    // Discovery never buffers the triggering action or blocks product work.
+    if (refreshIfNeeded(connection, state)) return null;
+    return state.status?.available && state.status.consent !== "off" ? state : null;
   };
   const enqueue = (connection: Connection, state: State, event: ScientAnalyticsUiEvent) => {
     if (
-      state.controlling ||
       !state.status?.available ||
       state.status.consent === "off" ||
       state.inFlight >= MAX_IN_FLIGHT
@@ -115,6 +117,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
       state.status.consent === "essential" &&
       event.name !== "project.add.failed" &&
       event.name !== "voice.transcription.failed" &&
+      event.name !== "voice.recording.failed" &&
       event.name !== "scient.operation.failed"
     )
       return false;
@@ -129,8 +132,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     // Defer even a synchronously throwing transport off the product call stack.
     void Promise.resolve()
       .then(() => {
-        if (generation === state.generation && !state.controlling)
-          return transport.record(connection, event);
+        if (generation === state.generation) return transport.record(connection, event);
         return undefined;
       })
       .catch(() => undefined)
@@ -178,25 +180,67 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     prime(connection: Connection) {
       if (stateFor(connection).status === null) prime(connection);
     },
-    beginControl(connection: Connection) {
-      const state = stateFor(connection);
-      state.generation += 1;
-      state.controlling = true;
-      state.status = null;
-      state.surfaces.clear();
-    },
-    endControl(connection: Connection, status?: ScientAnalyticsStatus) {
-      const state = stateFor(connection);
-      state.generation += 1;
-      state.controlling = false;
-      acceptStatus(state, status ?? UNAVAILABLE);
-      // An uncertain control result is not a verified Off choice. Discover its
-      // actual state on later activity without replaying the interrupted work.
-      if (status === undefined) state.retryStatusAt = now() + STATUS_MAX_AGE_MS;
-    },
     record(connection: Connection, event: ScientAnalyticsUiEvent) {
+      if (event.name.startsWith("voice.recording.")) {
+        const state = stateFor(connection);
+        refreshIfNeeded(connection, state);
+        if (
+          state.status?.voiceLifecycleVersion === 2 &&
+          state.status.collectionContext !== undefined
+        )
+          enqueue(connection, state, {
+            ...event,
+            collectionContext: state.status.collectionContext,
+          });
+        return;
+      }
       const state = readyState(connection);
       if (state) enqueue(connection, state, event);
+    },
+    beginVoiceOperation(connection: Connection): RecordVoiceAnalytics {
+      const state = stateFor(connection);
+      // Refresh on new work so a restarted server does not leave voice using an
+      // obsolete context forever. Keep a verified context usable during refresh.
+      refreshIfNeeded(connection, state);
+      const collectionContext = state.status?.collectionContext;
+      // An already verified context is checked authoritatively by the server on every
+      // event. Its cache age must not split a job. Unknown/Off work is never replayed.
+      if (
+        !state.status?.available ||
+        state.status.consent === "off" ||
+        state.status.voiceLifecycleVersion !== 2 ||
+        collectionContext === undefined
+      ) {
+        return ignoreVoice;
+      }
+      const generation = state.generation;
+      let started = false;
+      let finished = false;
+      return (event) => {
+        if (
+          finished ||
+          generation !== state.generation ||
+          !event.name.startsWith("voice.transcription.")
+        )
+          return;
+        if (event.name === "voice.transcription.started") {
+          if (started) return;
+          started = enqueue(connection, state, { ...event, collectionContext });
+          if (!started && state.status?.consent !== "essential") finished = true;
+          return;
+        }
+        if (
+          ![
+            "voice.transcription.completed",
+            "voice.transcription.failed",
+            "voice.transcription.cancelled",
+          ].includes(event.name)
+        )
+          return;
+        if (!started && state.status?.consent !== "essential") return;
+        finished = true;
+        enqueue(connection, state, { ...event, collectionContext });
+      };
     },
     beginOperation(
       connection: Connection,

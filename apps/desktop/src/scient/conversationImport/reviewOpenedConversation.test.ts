@@ -127,7 +127,11 @@ describe("focused local conversation window", () => {
   });
   it("permits full import validation when only the local preview size is exceeded", async () => {
     mocks.read.mockRejectedValue(
-      new LocalConversationPreviewError("unsupported-too-large", "Large snapshot", identity),
+      new LocalConversationPreviewError({
+        reason: "unsupported-too-large",
+        message: "Large snapshot",
+        identity,
+      }),
     );
     const result = reviewOpenedConversation(file);
     await vi.waitFor(() => expect(window().urls.at(-1)).toContain('id="continue"'));

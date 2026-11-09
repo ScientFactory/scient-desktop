@@ -5,7 +5,6 @@ import { ComputeExecutionId } from "./contract.ts";
 import {
   admitComputeExecution,
   cancelComputeExecution,
-  computeQueueDepth,
   computeQueueEntries,
   computeQueuePositionOf,
   drainComputeQueue,
@@ -88,7 +87,8 @@ describe("compute queue admission", () => {
       // One left the queue to run, so the queue has room again even though the
       // session now holds one more execution than the limit.
       const admitted = yield* admit(state, "next");
-      expect(computeQueueDepth(admitted.state)).toBe(MAXIMUM_PENDING_COMPUTE_EXECUTIONS + 1);
+      expect(admitted.state.active).not.toBeNull();
+      expect(admitted.state.pending).toHaveLength(MAXIMUM_PENDING_COMPUTE_EXECUTIONS);
     }),
   );
 });

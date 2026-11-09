@@ -1,12 +1,18 @@
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import {
+  AntigravitySettings,
+  ProviderDriverKind,
+  ProviderSetupError,
+  settingsSecretLiteral,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   NodeRuntimeUnavailableError,
   nodeRuntimeUnavailableMessage,
 } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,7 +23,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
-import type { AcpError } from "effect-acp/errors";
+import * as AcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -86,12 +92,28 @@ export const antigravityCatalogMatching: ModelCatalog.CatalogMatching = {
   family: (slug) => slug.replace(/-(low|medium|high)$/, ""),
 };
 // SCIENT-FORK:END
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
+const REFRESH_FAILED =
+  "Could not refresh Antigravity models. The previous model list is unchanged.";
+const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
+
+// Keep upstream diagnostics in cause; only recognized, fixed text reaches clients.
+function refreshFailureDetail(cause: unknown) {
+  return isAcpRequestError(cause) &&
+    cause.operation === "receive-response" &&
+    isAcpErrorDetails(cause.data) &&
+    cause.data.details.includes(PYTHON_SOCKS_REQUIRED)
+    ? `${REFRESH_FAILED} Antigravity reported: ${PYTHON_SOCKS_REQUIRED}`
+    : REFRESH_FAILED;
+}
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
@@ -127,7 +149,8 @@ export const AntigravityDriver: ScientProviderDriver<
       return yield* LegacyAntigravityDriver.create(createInput);
     }
 
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
+    const random = yield* SecureRandom.SecureRandom;
     const fileSystem = yield* FileSystem.FileSystem;
     const httpClient = yield* HttpClient.HttpClient;
     const path = yield* Path.Path;
@@ -143,7 +166,8 @@ export const AntigravityDriver: ScientProviderDriver<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const auth: AntigravityAuthConfig = {
       authMethod: settings.authMethod,
-      apiKey: settings.apiKey,
+      // The instance registry has already read a referenced key from its secret provider.
+      apiKey: settingsSecretLiteral(settings.apiKey),
       gcpProject: settings.gcpProject,
       gcpLocation: settings.gcpLocation,
     };
@@ -158,7 +182,7 @@ export const AntigravityDriver: ScientProviderDriver<
       host.paths.stateDir,
       instanceId,
     ).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
       Effect.provideService(Path.Path, path),
       Effect.mapError(
         (cause) =>
@@ -218,7 +242,7 @@ export const AntigravityDriver: ScientProviderDriver<
       input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      AcpError | ProviderSetupError,
+      AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
       if (authConfigIssue !== null) {
@@ -297,7 +321,7 @@ export const AntigravityDriver: ScientProviderDriver<
           auth,
           runtimeTempDirectory,
         }),
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
         start: () =>
@@ -444,7 +468,7 @@ export const AntigravityDriver: ScientProviderDriver<
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
     const provider = yield* makeAntigravityProvider(settings, {
@@ -520,7 +544,7 @@ export const AntigravityDriver: ScientProviderDriver<
       instanceId,
       authMethod: auth.authMethod,
       authFlow,
-      randomUUID: crypto.randomUUIDv4(),
+      randomUUID: random.uuidV4(),
     });
     // SCIENT-FORK:END
 
@@ -567,7 +591,7 @@ export const AntigravityDriver: ScientProviderDriver<
                 : cause._tag === "ProviderSetupError" &&
                     (cause.operation === "configure" || cause.operation === "start")
                   ? cause.detail
-                  : "Could not refresh Antigravity models. The previous model list is unchanged.",
+                  : refreshFailureDetail(cause),
               cause,
             }),
       ),

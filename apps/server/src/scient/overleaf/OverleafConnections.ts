@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import type { ScientOverleafUnreadableRecord } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,7 +29,7 @@ import { captureOverleafInventory } from "./OverleafInventory.ts";
 import { classifyProbeGitFailure } from "./OverleafProtocolProbe.ts";
 import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
 import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
-import { OverleafStateStore } from "./OverleafStateStore.ts";
+import { OverleafStateStore, unreadableHolds, unreadableSetAside } from "./OverleafStateStore.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 /** The workspace authority a connection is recorded under (contract rule 2). */
@@ -1075,7 +1076,57 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
   /** Readable connection records with their recorded bindings, for ownership checks. */
   const documents = connections;
 
-  return { connect, disconnect, relink, status, list, documents, followRestored };
+  /** Records no release here can read, damaged or written by a newer Scient, with what they show. */
+  const unreadableRecords = Effect.gen(function* () {
+    const records: ScientOverleafUnreadableRecord[] = [];
+    for (const recordId of yield* store.listConnections) {
+      const read = yield* store.readConnection(recordId);
+      if (read._tag === "ready" || read._tag === "missing") continue;
+      records.push({
+        recordId,
+        kind: read._tag === "unsupported" ? "newer" : "damaged",
+        folder: read.shows.folder,
+        unfinished: read.shows.unfinished,
+        holds: unreadableHolds(read),
+        setAside: unreadableSetAside(read),
+      });
+    }
+    return records;
+  });
+
+  /**
+   * An unreadable record blocks linking, and bulk changes to its checkout (or every
+   * checkout, when it doesn't say which) while it may hold an unfinished sync. Moving
+   * it aside, bytes intact, is the user's call; the store refuses what it must keep.
+   */
+  const setAsideUnreadable = Effect.fn("OverleafConnections.setAsideUnreadable")(function* (input: {
+    readonly recordId: string;
+    readonly acceptUnfinished: boolean;
+  }) {
+    return yield* store
+      .quarantineConnection(input.recordId, { acceptUnfinished: input.acceptUnfinished })
+      .pipe(
+        Effect.as("set-aside" as const),
+        Effect.catchTags({
+          OverleafConnectionUnavailableError: (error) =>
+            Effect.succeed(
+              error.condition === "unfinished" ? ("held" as const) : ("gone" as const),
+            ),
+        }),
+      );
+  });
+
+  return {
+    connect,
+    disconnect,
+    relink,
+    status,
+    list,
+    documents,
+    followRestored,
+    unreadableRecords,
+    setAsideUnreadable,
+  };
 });
 
 export type OverleafConnections = Effect.Success<ReturnType<typeof makeOverleafConnections>>;

@@ -21,11 +21,12 @@ vi.mock("../diagrams/mermaidRuntime", async (importOriginal) => {
   return {
     ...actual,
     renderMermaidDiagram: vi.fn(async (source: string) => {
-      if (source.includes("broken")) throw new actual.MermaidRenderError(new Error(PARSE_ERROR));
+      if (source.includes("broken"))
+        throw new actual.MermaidRenderError({ cause: new Error(PARSE_ERROR) });
       if (source.includes("chunk")) {
-        throw new actual.MermaidRenderError(
-          new TypeError("Failed to fetch dynamically imported module: /assets/mermaid.js"),
-        );
+        throw new actual.MermaidRenderError({
+          cause: new TypeError("Failed to fetch dynamically imported module: /assets/mermaid.js"),
+        });
       }
       if (source.includes("remote-picture")) {
         return {

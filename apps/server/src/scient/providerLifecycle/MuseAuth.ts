@@ -9,7 +9,7 @@ import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlo
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -90,7 +90,7 @@ export const makeMuseAuth = Effect.fn("MuseAuth.make")(function* (options: {
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const coordinator = yield* ProviderLifecycleCoordinator;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const platform = yield* HostProcess.Platform;
   const blocked = yield* Ref.make(false);
   const usesKey = usesMuseApiKey(options.environment, platform);
@@ -191,7 +191,7 @@ export const makeMuseAuth = Effect.fn("MuseAuth.make")(function* (options: {
         operation,
         "Enable an installed, supported Muse runtime before changing its native account.",
       );
-    yield* reserve(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+    yield* reserve(yield* random.uuidV4());
     yield* (options.beforeChange ?? Effect.void).pipe(
       Effect.catchCause(() =>
         Ref.set(blocked, true).pipe(
@@ -347,5 +347,10 @@ export function guardMuseTextGeneration(
       guard("generateThreadTitle", generation.generateThreadTitle(input)),
     generateReviewGuide: (input) =>
       guard("generateReviewGuide", generation.generateReviewGuide(input)),
+    generateTranscriptionPostProcessing: (input) =>
+      guard(
+        "generateTranscriptionPostProcessing",
+        generation.generateTranscriptionPostProcessing(input),
+      ),
   };
 }

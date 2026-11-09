@@ -1,7 +1,7 @@
 import type { Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
@@ -193,7 +193,7 @@ const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined
 
 /** @public */
 export const make = Effect.gen(function* BrowserSessionMake() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
@@ -268,7 +268,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     persistent = true,
     namespace?: BrowserSessionPartitionNamespace,
   ) {
-    const digest = yield* crypto.digest("SHA-256", encodeScopeForDigest(scope)).pipe(
+    const digest = yield* crypto.digest(Digest.sha256, encodeScopeForDigest(scope)).pipe(
       Effect.mapError(
         (cause) =>
           new BrowserSessionPartitionDerivationError({
@@ -355,6 +355,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
+          // SCIENT-FORK: Electron allows one header listener per session. Scient's site identity
+          // above already drops the Electron token for every site, Teams included.
           const next = new Map(sessions);
           next.set(partition, browserSession);
           return [browserSession, next] as const;

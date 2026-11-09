@@ -1,5 +1,7 @@
 /** Controlled ACP subprocess + public portable fork + real worker/SQLite; no vendor account. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 import {
@@ -78,6 +80,7 @@ const targetText = "LONG-DROID-TARGET: continue using that dataset.";
 const targetAnswer = "LONG-DROID-COMPLETE: retained cobalt exactly once.";
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   idAllocatorLayer,
   McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "long-droid-portable-" }).pipe(
@@ -166,7 +169,7 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
           const adapter = yield* makeDroidAdapterV2({
             instanceId,
             settings: yield* decodeDroidSettings({ enabled: true, binaryPath }),
-            environment: { PATH: process.env.PATH },
+            environment: { PATH: (yield* HostProcess.Environment).PATH },
             sensitiveEnvironmentValues: [],
             makeRuntime: makeDroidAcpRuntime,
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,

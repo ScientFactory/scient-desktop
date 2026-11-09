@@ -24,9 +24,10 @@ glibc-based Linux desktops, Scient can install a qualified private Pi runtime th
 **Install** action. Repair, update, and remove affect only that private runtime, not your system
 installation, native Pi configuration, model connections, or Pi credentials.
 
-For recognized system package installations, Scient can check for updates and run the owning
-package manager when you choose **Update**. Extensions are not updated. Unrecognized installations
-remain manual-only; use the tool that installed Pi.
+For a system installation, Scient can check for updates and, when you choose **Update**, run the
+package manager that owns Pi, or `pi update --self` for Pi's standalone install. Extensions are not
+updated. A Pi that another package installed as its own dependency remains manual-only; use the
+tool that installed it.
 The obsolete `@mariozechner/pi-coding-agent` package cannot reach the minimum supported
 version and remains manual-only. Install the current official Pi package yourself;
 Scient does not silently migrate an existing installation.

@@ -3,6 +3,7 @@ import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import type { CursorDriverEnv } from "@t3tools/provider-cursor/server";
 import type { FxDriverEnv } from "@t3tools/provider-fx/server";
+import type { KiroDriverEnv } from "@t3tools/provider-kiro/server";
 import type { AnyProviderDriver } from "@t3tools/provider-core/server/driver";
 import { compareProviderDriverKinds } from "@t3tools/contracts";
 import { DroidDriver, type DroidDriverEnv } from "./Drivers/DroidDriver.ts";
@@ -16,6 +17,7 @@ import {
   AcpRegistryDriver,
   FxDriver,
   GrokDriver,
+  KiroDriver,
   type AcpRegistryCompositionEnv,
   type GrokCompositionRequirements,
 } from "./AppProviderDriverComposition.ts";
@@ -36,6 +38,7 @@ export type BuiltInDriversEnv =
   | DroidDriverEnv
   | FxDriverEnv
   | GrokCompositionRequirements
+  | KiroDriverEnv
   | OpenCodeCompositionEnv
   | OmpDriverEnv
   | PiCompositionRequirements
@@ -54,6 +57,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   FxDriver,
   OpenCodeDriver,
+  KiroDriver,
   OmpDriver,
   PiDriver,
   ScientAgentDriver,

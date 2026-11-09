@@ -5,7 +5,6 @@ import { OmpRpcAvailableModels, type OmpRpcModel } from "effect-omp-rpc/schema";
 import {
   decodeOmpModelSlug,
   encodeOmpModelSlug,
-  ompModelSupportsImages,
   ompModelThinkingLevels,
   ompModelToServerModel,
   ompThinkingLevel,
@@ -42,14 +41,6 @@ describe("Oh My Pi model slugs", () => {
     expect(decodeOmpModelSlug("openai/gpt/5")).toBeUndefined();
     expect(decodeOmpModelSlug("openai/gpt-5 ")).toBeUndefined();
     expect(encodeOmpModelSlug(" open", "gpt-5")).toBeUndefined();
-  });
-
-  it("uses the model input capability rather than guessing image support", () => {
-    expect(ompModelSupportsImages({ provider: "ollama", id: "text", input: ["text"] })).toBe(false);
-    expect(
-      ompModelSupportsImages({ provider: "ollama", id: "image", input: ["text", "image"] }),
-    ).toBe(true);
-    expect(ompModelSupportsImages({ provider: "ollama", id: "unknown" })).toBe(false);
   });
 
   it("keeps only known thinking levels and exposes them as a reasoning option", () => {

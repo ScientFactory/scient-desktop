@@ -1,6 +1,7 @@
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 // @effect-diagnostics nodeBuiltinImport:off
 /** Only external JSONL is controlled: native adapter, manager, turn start and worker are production. */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -208,7 +209,7 @@ it.effect("keeps a fresh Codex session through startup that outlasts the idle wi
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const registry = makeLayer([
         yield* makeCodexAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          digest: yield* Digest.Digest,
           instanceId,
           settings,
           environment: {},
@@ -306,6 +307,7 @@ it.effect("keeps a fresh Codex session through startup that outlasts the idle wi
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           idAllocatorLayer,
           ServerConfig.layerTest(process.cwd(), { prefix: "codex-startup-idle-hold-" }).pipe(
             Layer.provide(NodeServices.layer),

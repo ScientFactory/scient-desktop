@@ -7,8 +7,8 @@ import { Count, Label, ShortText } from "./primitives.ts";
  * display text only: values are formatted where they live and never travel whole.
  */
 export const DATA_TABLE_MAX_COLUMNS = 1024;
-export const DATA_TABLE_MAX_PAGE_ROWS = 200;
-export const DATA_TABLE_MAX_CELL_LENGTH = 200;
+const DATA_TABLE_MAX_PAGE_ROWS = 200;
+const DATA_TABLE_MAX_CELL_LENGTH = 200;
 const DATA_TABLE_MAX_PAGE_CELLS = 16_384;
 
 /** Rows per page for a table this wide; producers and the grid page by the same rule. */

@@ -116,6 +116,7 @@ computer.
 | Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
 | Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
 | Grok        | Install [Grok CLI](https://x.ai/cli), then run `grok login`.                                                                                              |
+| Kiro        | Install [Kiro CLI](https://kiro.dev/docs/cli/), then run `kiro-cli login`.                                                                                |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
 | Antigravity | Install and sign in with Google from Scient's provider settings.                                                                                          |
 | Pi          | Use Scient's managed **Install** action or [set up Pi](./providers-pi.md#setup) with Node.js 22.19 or newer, then run `pi` and `/login`.                  |
@@ -152,8 +153,8 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [Cursor](./providers-cursor.md),
 [Grok](./providers-grok.md), [Droid](./providers-droid.md),
 [OpenCode](./providers-opencode.md), [Antigravity](./providers-antigravity.md),
-[Muse Code](./providers-muse.md), [Pi](./providers-pi.md), [Oh My Pi](./providers-omp.md),
-and [fx](./providers-fx.md).
+[Kiro](./providers-kiro.md), [Muse Code](./providers-muse.md), [Pi](./providers-pi.md),
+[Oh My Pi](./providers-omp.md), and [fx](./providers-fx.md).
 
 ## Next steps
 

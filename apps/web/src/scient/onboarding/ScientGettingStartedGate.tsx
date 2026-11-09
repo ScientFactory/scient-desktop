@@ -2,13 +2,13 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
-import { usePrimarySessionState } from "../../environments/primary";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
 } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentSessionState } from "../../state/session";
 import { primaryServerConfigAtom } from "../../state/server";
 import { ScientGettingStartedFlow } from "./ScientGettingStartedFlow";
 import { resolveScientOnboardingEntry } from "./policy";
@@ -20,7 +20,7 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
   const shellBootstrapped = useAllEnvironmentShellsBootstrapped();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryServerConfig = useAtomValue(primaryServerConfigAtom);
-  const sessionState = usePrimarySessionState();
+  const sessionState = useEnvironmentSessionState(primaryEnvironmentId);
   const { state, complete } = useScientOnboardingStorage();
   const [presentationActive, setPresentationActive] = useState(false);
   const operateAccess = resolvePrimaryOperateAccess({
@@ -28,7 +28,7 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
     hasDesktopBridge: typeof window !== "undefined" && Boolean(window.desktopBridge),
     session: sessionState.data,
     isPending: sessionState.isPending,
-    hasError: sessionState.error !== null,
+    hasError: sessionState.hasError,
   });
   const decision = resolveScientOnboardingEntry({
     status: state.status,

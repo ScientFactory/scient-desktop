@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -71,7 +72,7 @@ const devServerInput = {
 } as const;
 
 // regression: b76a0a6c91 Migrate dev runner to TypeScript and share NetService
-it.layer(NodeServices.layer)("dev-runner", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("dev-runner", (it) => {
   describe("createDevRunnerEnv", () => {
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {

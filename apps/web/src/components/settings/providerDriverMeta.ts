@@ -128,7 +128,6 @@ const providerOptionsUnordered: readonly DriverOption[] = providerClients.defini
       ...(definition.hasDefaultInstance === undefined
         ? {}
         : { hasDefaultInstance: definition.hasDefaultInstance }),
-      ...(definition.badgeLabel === undefined ? {} : { badgeLabel: definition.badgeLabel }),
       ...metadata,
     };
   },

@@ -386,7 +386,7 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
 
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, liveAnswerPreview } = use(TimelineRowActivityCtx);
   // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
   const { sendMotion } = use(TimelineRowActivityCtx);
   // SCIENT-FORK:END
@@ -395,7 +395,7 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   const live = ctx.pendingApprovals.size === 0;
   const activity = (
     <LiveActivityRow
-      label="Thinking"
+      label={liveAnswerPreview ?? "Thinking"}
       iconName="brain"
       active={live}
       // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -69,7 +70,11 @@ function layerEnvironment(baseDir: string, appVersion = "0.0.17") {
   }).pipe(
     Layer.provide(
       // SCIENT-FORK:START scient-desktop-settings
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir }),
+      ),
       // SCIENT-FORK:END scient-desktop-settings
     ),
   );
@@ -92,11 +97,11 @@ const withSettings = <A, E, R>(
       Effect.provide(
         DesktopAppSettings.layer.pipe(
           Layer.provideMerge(layerEnvironment(baseDir, options?.appVersion)),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     );
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
 
 function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
   return Effect.gen(function* () {
@@ -400,16 +405,22 @@ describe("DesktopSettings", () => {
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
-          mainWindowMaximized: true,
-          serverExposureMode: "network-accessible",
-        });
+        for (const bounds of [
+          { x: 10.5, y: 20, width: 400, height: 360 },
+          { x: 10, y: 20, width: 399, height: 360 },
+          { x: 10, y: 20, width: 400, height: 359 },
+        ]) {
+          yield* writeSettingsPatch({
+            mainWindowBounds: bounds,
+            mainWindowMaximized: true,
+            serverExposureMode: "network-accessible",
+          });
 
-        const loaded = yield* settings.load;
-        assert.isNull(loaded.mainWindowBounds);
-        assert.isFalse(loaded.mainWindowMaximized);
-        assert.equal(loaded.serverExposureMode, "network-accessible");
+          const loaded = yield* settings.load;
+          assert.isNull(loaded.mainWindowBounds);
+          assert.isFalse(loaded.mainWindowMaximized);
+          assert.equal(loaded.serverExposureMode, "network-accessible");
+        }
       }),
     ),
   );
@@ -421,20 +432,27 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 400, height: 360 }, true);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
-          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowBounds: { x: -1200, y: 40, width: 400, height: 360 },
           mainWindowMaximized: true,
           // SCIENT-FORK:START scient-desktop-settings
           mainWindowSizeIncreaseApplied: true,
           mainWindowNearFullSizeApplied: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
+
+        const restored = yield* Effect.gen(function* () {
+          const freshSettings = yield* DesktopAppSettings.DesktopAppSettings;
+          return yield* freshSettings.load;
+        }).pipe(Effect.provide(DesktopAppSettings.layer));
+        assert.deepEqual(restored.mainWindowBounds, persisted.mainWindowBounds);
+        assert.isTrue(restored.mainWindowMaximized);
       }),
     ),
   );
@@ -476,6 +494,29 @@ describe("DesktopSettings", () => {
           (yield* decodeDesktopSettingsPatch(
             yield* fileSystem.readFileString(environment.desktopSettingsPath),
           )).mainWindowSizeIncreaseApplied,
+        );
+      }),
+    ),
+  );
+
+  it.effect("removes its temporary file when replacing the settings file fails", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(`${environment.desktopSettingsPath}/occupied`, {
+          recursive: true,
+        });
+
+        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
+
+        assert.equal(error.operation, "replace-settings-file");
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+            name.endsWith(".tmp"),
+          ),
+          [],
         );
       }),
     ),

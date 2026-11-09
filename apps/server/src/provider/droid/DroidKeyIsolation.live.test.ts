@@ -4,10 +4,13 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Redacted, Schema, Stream } from "effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
@@ -198,7 +201,7 @@ it.effect.skipIf(!binary)(
         cwd,
         clientInfo: { name: "scient-droid-isolation-test", version: "0" },
         environment: {
-          PATH: process.env.PATH,
+          PATH: (yield* HostProcess.Environment).PATH,
           HOME: home,
           TMPDIR: `${tmp}/`,
           FACTORY_PROFILE_DIR: NodePath.join(home, "profile"),
@@ -258,7 +261,11 @@ it.effect.skipIf(!binary)(
       // Nothing Droid sent Scient, and nothing it wrote to disk, holds the key.
       expect(acpTraffic.join("\n")).not.toContain(realKey);
       expect(filesContaining(root, realKey)).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      TestClock.withLive,
+    ),
   120_000,
 );
 
@@ -371,7 +378,7 @@ for (const protocol of Object.keys(MODEL_PATHS) as Array<keyof typeof MODEL_PATH
           cwd,
           clientInfo: { name: "scient-droid-withheld-test", version: "0" },
           environment: {
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             HOME: home,
             TMPDIR: `${tmp}/`,
             FACTORY_PROFILE_DIR: NodePath.join(home, "profile"),
@@ -402,7 +409,11 @@ for (const protocol of Object.keys(MODEL_PATHS) as Array<keyof typeof MODEL_PATH
         );
         expect(acpTraffic.join("\n")).not.toContain(realKey);
         expect(filesContaining(root, realKey)).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+        TestClock.withLive,
+      ),
     120_000,
   );
 }

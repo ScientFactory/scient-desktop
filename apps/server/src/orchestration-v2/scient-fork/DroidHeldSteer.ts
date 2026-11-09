@@ -371,6 +371,13 @@ export const makeDroidHeldSteer = ({
         commandType: input.command.type,
         cause: "Droid has no live held-Steer owner.",
       });
+    // A newer send queues instead (see Orchestrator); only a promotion arrives here.
+    if (targetRun.heldDroidSteer !== undefined)
+      return yield* new DispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: "Droid is already waiting to deliver an earlier follow-up. This one stays queued.",
+      });
     if (session.droidSteerConsumed?.() === true)
       return yield* new DispatchError({
         commandId: input.command.commandId,

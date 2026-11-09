@@ -35,7 +35,8 @@ import {
   type ResolvedAttachmentContent,
 } from "@scientfactory/conversation";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -178,7 +179,8 @@ const make = Effect.gen(function* () {
   const files = yield* ConversationExportFiles;
   const words = yield* PandocWordConverter;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digests = yield* Digest.Digest;
   const config = yield* ServerConfig.ServerConfig;
   // Both the configured and the resolved spelling (e.g. /var vs /private/var).
   const storageRoots = [config.stateDir, config.baseDir];
@@ -273,7 +275,7 @@ const make = Effect.gen(function* () {
         throughMessageId: null,
       },
     });
-    const exportValue = Hex.encode(yield* crypto.randomBytes(6).pipe(Effect.orDie));
+    const exportValue = Hex.encode(yield* random.randomBytes(6));
     return {
       snapshot: redactSnapshotStoragePaths(captured.snapshot, storageRoots),
       attachmentFiles: captured.attachmentFiles,
@@ -337,13 +339,12 @@ const make = Effect.gen(function* () {
     );
     if (bytes._tag === "None") return "unreadable" as const;
     if (bytes.value.byteLength > remaining) return "too-large" as const;
-    const digest = yield* crypto.digest("SHA-256", bytes.value).pipe(Effect.option);
-    if (digest._tag === "None") return "unreadable" as const;
+    const digest = yield* digests.digest(Digest.sha256, bytes.value);
     return {
       _tag: "bytes" as const,
       bytes: bytes.value,
       byteLength: bytes.value.byteLength,
-      sha256: `sha256:${Hex.encode(digest.value)}` as Sha256Digest,
+      sha256: `sha256:${Hex.encode(digest)}` as Sha256Digest,
     };
   });
 
@@ -353,7 +354,10 @@ const make = Effect.gen(function* () {
 
   /** Hashes a file a conversation file streams, holding only its first bytes. */
   const inspectAttachment = (path: string, remaining: number) =>
-    Effect.tryPromise(() => inspectAttachmentFile(path, remaining, SNIFF_BYTES)).pipe(
+    Effect.tryPromise({
+      try: () => inspectAttachmentFile(path, remaining, SNIFF_BYTES),
+      catch: (cause) => new ConversationExportFileError({ cause }),
+    }).pipe(
       Effect.map((inspected) =>
         inspected === null
           ? ("too-large" as const)
@@ -662,7 +666,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
     }
-    const exportId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const exportId = yield* random.uuidV4();
     const exported = DateTime.formatIso(yield* DateTime.now);
     switch (request.format) {
       case "scic":

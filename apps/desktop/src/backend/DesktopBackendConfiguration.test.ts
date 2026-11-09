@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // SCIENT-FORK:START restored-behavior-guards
 import * as PlatformError from "effect/PlatformError";
 import * as Logger from "effect/Logger";
@@ -9,6 +10,7 @@ const isDesktopBackendObservabilitySettingsReadError = Schema.is(
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -104,6 +106,7 @@ function layerEnvironment(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         DesktopConfig.layerTest({
           // SCIENT-FORK:START scient-backend-launch
           SCIENT_NEXT_HOME: baseDir,
@@ -121,14 +124,6 @@ function layerEnvironment(
     ),
   );
 }
-
-const restoreEnv = (name: string, value: string | undefined) => {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
-};
 
 const withHarness = <A, E, R>(
   effect: Effect.Effect<
@@ -163,7 +158,7 @@ const withHarness = <A, E, R>(
         ),
       ),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 interface PackagedWslHarnessContext {
   readonly baseDir: string;
@@ -255,7 +250,7 @@ const withPackagedWslHarness = <A, E, R>(
         ),
       ),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("DesktopBackendConfiguration", () => {
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
@@ -296,10 +291,10 @@ describe("DesktopBackendConfiguration", () => {
         );
         assert.equal(
           first.bootstrap.desktopBootstrapToken,
-          currentDesktopBootstrapToken(
+          yield* currentDesktopBootstrapToken(
             first.bootstrap.desktopBootstrapSecret ?? "",
             yield* Clock.currentTimeMillis,
-          ),
+          ).pipe(Effect.provide(NodeCrypto.layerMac)),
         );
         assert.equal(
           yield* configuration.currentBootstrapToken,
@@ -352,7 +347,7 @@ describe("DesktopBackendConfiguration", () => {
         path.join(resourcesPath, "server.asar/apps/server/dist/bin.mjs"),
       );
       assert.equal(config.env.ELECTRON_RUN_AS_NODE, "1");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the guarded bootstrap fields left every other desktop test green.
@@ -443,7 +438,7 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(config.args.slice(0, 2), ["-d", "Ubuntu"]);
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl launches a packaged backend from the WSL-local runtime cache", () => {
@@ -863,67 +858,62 @@ describe("DesktopBackendConfiguration", () => {
         // SCIENT-FORK:START scient-backend-launch
         assert.equal(config.env.SCIENT_NEXT_DEVELOPMENT_STATE, "true");
         assert.isTrue(Option.isNone(config.preflightFailure));
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl does not inherit the primary desktop data directory", () =>
     Effect.gen(function* () {
-      const previousT3Home = process.env.T3CODE_HOME;
-      const previousScientNextHome = process.env.SCIENT_NEXT_HOME;
-      process.env.T3CODE_HOME = "C:/Users/alice/.t3";
-      process.env.SCIENT_NEXT_HOME = "C:/Users/alice/.scient-next";
-      try {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-desktop-backend-config-test-",
-        });
-        const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
-        yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
-        yield* fileSystem.writeFileString(entryPath, "");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
 
-        const config = yield* Effect.gen(function* () {
-          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-          return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
-        }).pipe(
-          Effect.provide(
-            layerBackendConfiguration().pipe(
-              Layer.provideMerge(layerServerExposure),
-              Layer.provideMerge(DesktopAppSettings.layerTest()),
-              Layer.provideMerge(
-                DesktopWslEnvironment.layerTest({
-                  isAvailable: true,
-                  distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-                  windowsToWslPath: () => Option.some("/tmp/server/dist/bin.mjs"),
-                  ensureNodePty: () => ({
-                    ok: true,
-                    nodePath: "/usr/bin/node",
-                    resolvedPath: "/usr/bin:/bin",
-                  }),
-                  getDistroIp: () => Option.some("172.27.0.99"),
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/tmp/server/dist/bin.mjs"),
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
                 }),
-              ),
-              Layer.provideMerge(DesktopWslServerTree.layerTest()),
-              Layer.provideMerge(
-                layerEnvironment(baseDir, {
-                  appPath: baseDir,
-                  platform: "win32",
-                  resourcesPath: baseDir,
-                }),
-              ),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              layerEnvironment(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
             ),
           ),
-        );
+        ),
+        Effect.provideService(HostProcess.Environment, {
+          T3CODE_HOME: "C:/Users/alice/.t3",
+          SCIENT_NEXT_HOME: "C:/Users/alice/.scient-next",
+        }),
+      );
 
-        assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
-        assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
-        assert.notInclude(config.env.T3CODE_HOME, ":/");
-        assert.notInclude(config.env.SCIENT_NEXT_HOME, ":/");
-      } finally {
-        restoreEnv("T3CODE_HOME", previousT3Home);
-        restoreEnv("SCIENT_NEXT_HOME", previousScientNextHome);
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
+      assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
+      assert.notInclude(config.env.T3CODE_HOME, ":/");
+      assert.notInclude(config.env.SCIENT_NEXT_HOME, ":/");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
 
@@ -1032,7 +1022,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
 
@@ -1043,50 +1033,39 @@ describe("DesktopBackendConfiguration", () => {
         prefix: "t3-desktop-backend-config-test-",
       });
 
-      const previousWslEnv = process.env.WSLENV;
-      const previousDisabled = process.env.OTEL_SDK_DISABLED;
-      const previousTelemetry = process.env.T3CODE_TELEMETRY_ENABLED;
-      const previousResourceAttributes = process.env.OTEL_RESOURCE_ATTRIBUTES;
-      try {
-        delete process.env.WSLENV;
-        process.env.OTEL_SDK_DISABLED = "true";
-        process.env.T3CODE_TELEMETRY_ENABLED = "false";
-        process.env.OTEL_RESOURCE_ATTRIBUTES = "deployment.environment.name=staging";
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
 
-        yield* Effect.gen(function* () {
-          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-          const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
-
-          assert.equal(config.env.OTEL_SDK_DISABLED, "true");
-          assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_SDK_DISABLED");
-          assert.equal(config.env.T3CODE_TELEMETRY_ENABLED, "false");
-          assert.include((config.env.WSLENV ?? "").split(":"), "T3CODE_TELEMETRY_ENABLED");
-          assert.equal(config.env.OTEL_RESOURCE_ATTRIBUTES, "deployment.environment.name=staging");
-          assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_RESOURCE_ATTRIBUTES");
-        }).pipe(
-          Effect.provide(
-            layerBackendConfiguration().pipe(
-              Layer.provideMerge(layerServerExposure),
-              Layer.provideMerge(DesktopAppSettings.layerTest()),
-              Layer.provideMerge(DesktopWslServerTree.layerTest()),
-              Layer.provideMerge(
-                DesktopWslEnvironment.layerTest({
-                  isAvailable: true,
-                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                  getDistroIp: () => Option.some("172.27.0.99"),
-                }),
-              ),
-              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+        assert.equal(config.env.OTEL_SDK_DISABLED, "true");
+        assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_SDK_DISABLED");
+        assert.equal(config.env.T3CODE_TELEMETRY_ENABLED, "false");
+        assert.include((config.env.WSLENV ?? "").split(":"), "T3CODE_TELEMETRY_ENABLED");
+        assert.equal(config.env.OTEL_RESOURCE_ATTRIBUTES, "deployment.environment.name=staging");
+        assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_RESOURCE_ATTRIBUTES");
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
             ),
+            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
           ),
-        );
-      } finally {
-        restoreEnv("WSLENV", previousWslEnv);
-        restoreEnv("OTEL_SDK_DISABLED", previousDisabled);
-        restoreEnv("T3CODE_TELEMETRY_ENABLED", previousTelemetry);
-        restoreEnv("OTEL_RESOURCE_ATTRIBUTES", previousResourceAttributes);
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+        Effect.provideService(HostProcess.Environment, {
+          OTEL_SDK_DISABLED: "true",
+          T3CODE_TELEMETRY_ENABLED: "false",
+          OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=staging",
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
@@ -1096,70 +1075,55 @@ describe("DesktopBackendConfiguration", () => {
         prefix: "t3-desktop-backend-config-test-",
       });
 
-      const previousWslEnv = process.env.WSLENV;
-      const previousOpenAiKey = process.env.OPENAI_API_KEY;
-      const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
-      const previousOtlpHeaders = process.env.T3CODE_OTLP_HEADERS;
-      const previousOtlpProtocol = process.env.T3CODE_OTLP_PROTOCOL;
-      const ambientOtel = Object.entries(process.env).filter(([name]) => name.startsWith("OTEL_"));
-      try {
-        for (const [name] of ambientOtel) delete process.env[name];
-        process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
-        process.env.OPENAI_API_KEY = "openai-key";
-        process.env.ANTHROPIC_API_KEY = "anthropic-key";
-        process.env.T3CODE_OTLP_HEADERS = 'authorization="Bearer%20my-token"';
-        process.env.T3CODE_OTLP_PROTOCOL = "http/protobuf";
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
 
-        yield* Effect.gen(function* () {
-          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-          const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
-
-          assert.equal(config.executablePath, "wsl.exe");
-          assert.equal(config.bootstrap.port, 5050);
-          assert.equal(config.bootstrap.host, "0.0.0.0");
-          assert.equal(config.bootstrap.tailscaleServeEnabled, false);
-          assert.notProperty(config.bootstrap, "desktopTelemetryFd");
-          assert.notProperty(config.bootstrap, "resourceMonitorPath");
-          // SCIENT-FORK:START scient-backend-launch
-          assert.notProperty(config.bootstrap, "syncTexNavigatorPath");
-          assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
-          assert.equal(config.env.OPENAI_API_KEY, "openai-key");
-          assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
-          assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
-          assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
-          assert.equal(config.env.SCIENT_NEXT_SAFETY_ENVELOPE, "true");
-          assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
-          assert.equal(
-            config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
-            // SCIENT-FORK:END scient-backend-launch
-          );
-        }).pipe(
-          Effect.provide(
-            layerBackendConfiguration().pipe(
-              Layer.provideMerge(layerServerExposure),
-              Layer.provideMerge(DesktopAppSettings.layerTest()),
-              Layer.provideMerge(DesktopWslServerTree.layerTest()),
-              Layer.provideMerge(
-                DesktopWslEnvironment.layerTest({
-                  isAvailable: true,
-                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                  getDistroIp: () => Option.some("172.27.0.99"),
-                }),
-              ),
-              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-            ),
-          ),
+        assert.equal(config.executablePath, "wsl.exe");
+        assert.equal(config.bootstrap.port, 5050);
+        assert.equal(config.bootstrap.host, "0.0.0.0");
+        assert.equal(config.bootstrap.tailscaleServeEnabled, false);
+        assert.notProperty(config.bootstrap, "desktopTelemetryFd");
+        assert.notProperty(config.bootstrap, "resourceMonitorPath");
+        // SCIENT-FORK:START scient-backend-launch
+        assert.notProperty(config.bootstrap, "syncTexNavigatorPath");
+        assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
+        assert.equal(config.env.OPENAI_API_KEY, "openai-key");
+        assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
+        assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
+        assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
+        assert.equal(config.env.SCIENT_NEXT_SAFETY_ENVELOPE, "true");
+        assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
+        assert.equal(
+          config.env.WSLENV,
+          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+          // SCIENT-FORK:END scient-backend-launch
         );
-      } finally {
-        restoreEnv("WSLENV", previousWslEnv);
-        restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
-        restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
-        restoreEnv("T3CODE_OTLP_HEADERS", previousOtlpHeaders);
-        restoreEnv("T3CODE_OTLP_PROTOCOL", previousOtlpProtocol);
-        for (const [name, value] of ambientOtel) restoreEnv(name, value);
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+          ),
+        ),
+        Effect.provideService(HostProcess.Environment, {
+          WSLENV: "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u",
+          OPENAI_API_KEY: "openai-key",
+          ANTHROPIC_API_KEY: "anthropic-key",
+          T3CODE_OTLP_HEADERS: 'authorization="Bearer%20my-token"',
+          T3CODE_OTLP_PROTOCOL: "http/protobuf",
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -1196,7 +1160,7 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -1239,7 +1203,7 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolveWsl marks a missing packaged server entry as fatal", () =>
@@ -1272,7 +1236,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("prefers the external packaged resource monitor over the copy inside the asar", () =>
@@ -1330,7 +1294,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // SCIENT-FORK:START scient-backend-launch
@@ -1379,7 +1343,7 @@ describe("DesktopBackendConfiguration", () => {
             ),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolves the development SyncTeX helper from the Scient-owned native tree", () =>
@@ -1415,7 +1379,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END scient-backend-launch
 
@@ -1437,7 +1401,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
         Layer.provideMerge(layerEnvironment("/tmp/t3-wsl-isavailable", { platform: "win32" })),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     );
     try {
@@ -1484,7 +1448,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1547,7 +1511,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1612,7 +1576,7 @@ describe("DesktopBackendConfiguration", () => {
         error.message,
         `Failed to read persisted backend observability settings at ${settingsPath}.`,
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1661,7 +1625,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 
@@ -1706,7 +1670,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
   // SCIENT-FORK:END restored-behavior-guards
 

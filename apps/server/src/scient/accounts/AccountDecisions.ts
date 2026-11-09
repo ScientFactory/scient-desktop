@@ -18,10 +18,9 @@ export {
   inScope,
 } from "@t3tools/shared/scientAccountAuthorization";
 export {
-  agentSignInOnHold,
   automaticSignInOnHold,
   signedInMomentsAgo,
-  signInOnHold,
+  signInHeld,
   signInRefused,
   siteLimiting,
   withSignIn,

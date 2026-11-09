@@ -57,9 +57,12 @@ order of precedence:
 
 1. A token saved in **Settings → Source control → GitHub**. It is kept in the server's secret
    store, and works without the GitHub CLI.
-2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
+2. **Sign in with GitHub** in the same place, through the Scient for GitHub app. GitHub shows
+   a code to enter; no GitHub CLI or token is needed. The app reaches only the accounts and
+   organizations it is installed on; **Install on an organization** adds one.
+3. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
    server's environment.
-3. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
+4. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
 
 If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same place to pick
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
@@ -152,6 +155,8 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
   action
 - Rewrite a pull request's title and description from the review itself, in Markdown, with a
   preview before you save
+- Where you can edit a description, tick its checkboxes from the Summary tab (the Overview tab on
+  mobile)
 - Rewrite your own comments the same way, wherever they are shown
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
@@ -289,6 +294,11 @@ are in place. A toast tracks progress and lets you cancel; if the clone fails, r
 toast or from the banner above the composer. When the host refuses the machine's SSH key, Scient
 clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
 HTTPS URL.
+
+To lay clones out like [ghq](https://github.com/x-motemen/ghq), turn on **Clone into host folders**
+under **Settings → Threads** (or **Source control** on mobile). Clones then default to
+`<host>/<owner>/<repo>` under **Add project starts in**, so set that to `~/ghq` to share ghq's
+folders. You can still change the destination before cloning.
 
 **Git is required only for source-control operations** — Ordinary folders, chat, files, terminals,
 browser tools, compute, and agents continue to work without Git. Cloning, branches, worktrees,

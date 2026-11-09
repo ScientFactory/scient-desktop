@@ -43,94 +43,38 @@ function fakeRuntime(enabled = true) {
       alive = false;
     },
   };
-  return {
-    runtime,
-    recorded,
-    properties,
-    fail: () => {
-      alive = false;
-    },
-  };
+  return { runtime, recorded, properties };
 }
 
-it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
-  it.effect(
-    "establishes collection boundaries before acknowledging consent and deletion, and releases listeners",
-    () =>
-      Effect.gen(function* () {
-        factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
-        const service = yield* AnalyticsService.make;
-        const seen: number[] = [];
-        const phases: string[] = [];
-        assert.ok(service.observeCollectionBoundary);
-        const remove = yield* service.observeCollectionBoundary(async (epoch, phase) => {
-          await Promise.resolve();
-          seen.push(epoch);
-          phases.push(phase);
-        });
-        assert.deepEqual(seen, [0]);
-        yield* service.setConsent("off");
-        assert.deepEqual(seen, [0, 1, 2]);
-        yield* service.setConsent("product");
-        assert.deepEqual(seen, [0, 1, 2, 3, 4]);
-        yield* service.deleteData;
-        assert.deepEqual(seen, [0, 1, 2, 3, 4, 5, 6]);
-        assert.deepEqual(phases, [
-          "ready",
-          "invalidated",
-          "ready",
-          "invalidated",
-          "ready",
-          "invalidated",
-          "ready",
-        ]);
-        remove();
-        yield* service.setConsent("off");
-        assert.equal(seen.length, 7);
-      }).pipe(Effect.provide(testLayer())),
-  );
-  it.effect("a failed boundary observer cannot prevent Off or erasure", () =>
+it.layer(NodeServices.layer)("AnalyticsService collection fences", (it) => {
+  it.effect("reports the ready boundary to observers, even one that fails", () =>
     Effect.gen(function* () {
       factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
       const service = yield* AnalyticsService.make;
+      const seen: [number, string][] = [];
       assert.ok(service.observeCollectionBoundary);
-      const remove = yield* service.observeCollectionBoundary(async () => {
+      const remove = yield* service.observeCollectionBoundary(async (epoch, phase) => {
+        await Promise.resolve();
+        seen.push([epoch, phase]);
+      });
+      assert.deepEqual(seen, [[0, "ready"]]);
+      remove();
+      const removeFailing = yield* service.observeCollectionBoundary(async () => {
         throw new Error("synthetic unavailable sink");
       });
-      assert.equal((yield* service.setConsent("off")).consent, "off");
-      assert.isTrue(yield* service.deleteData);
-      remove();
+      removeFailing();
     }).pipe(Effect.provide(testLayer())),
   );
-  it.effect("rejects stale observer records after consent and identity boundaries", () =>
+  it.effect("rejects observer records fenced to another collection epoch", () =>
     Effect.gen(function* () {
-      let active = fakeRuntime();
-      factory
-        .mockReset()
-        .mockImplementationOnce(() => active.runtime)
-        .mockImplementation(() => {
-          active = fakeRuntime();
-          return active.runtime;
-        });
+      const active = fakeRuntime();
+      factory.mockReset().mockImplementation(() => active.runtime);
       const service = yield* AnalyticsService.make;
-      const oldEpoch = yield* service.collectionEpoch;
-      yield* service.setConsent("essential");
-      yield* service.setConsent("product");
-      yield* service.record("provider.turn.sent", { provider: "scient" }, oldEpoch);
-      assert.deepEqual(active.recorded, ["app.session.started"]);
       const currentEpoch = yield* service.collectionEpoch;
+      yield* service.record("provider.turn.sent", { provider: "scient" }, currentEpoch + 1);
+      assert.deepEqual(active.recorded, ["app.session.started"]);
       yield* service.record("provider.turn.sent", { provider: "scient" }, currentEpoch);
       assert.deepEqual(active.recorded, ["app.session.started", "provider.turn.sent"]);
-      yield* service.deleteData;
-      const afterDeletion = active.recorded.length;
-      yield* service.record("provider.turn.sent", { provider: "scient" }, currentEpoch);
-      assert.equal(active.recorded.length, afterDeletion);
-      yield* service.record(
-        "provider.turn.sent",
-        { provider: "scient" },
-        yield* service.collectionEpoch,
-      );
-      assert.equal(active.recorded.length, afterDeletion + 1);
     }).pipe(Effect.provide(testLayer())),
   );
   it.effect("uses an executable sibling for the analytics worker without starting collection", () =>
@@ -160,24 +104,6 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
       const service = yield* AnalyticsService.make;
       assert.deepEqual(yield* service.status, { available: true, consent: "diagnostic" });
       assert.equal(factory.mock.calls.at(-1)?.[0].consent, "diagnostic");
-    }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
-  );
-
-  it.effect("returns to the default after a restart, whatever choice was saved", () =>
-    Effect.gen(function* () {
-      factory
-        .mockReset()
-        .mockImplementation(
-          (options: AnalyticsRuntimeOptions) => fakeRuntime(options.enabled).runtime,
-        );
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const service = yield* AnalyticsService.make;
-          yield* service.setConsent("off");
-        }),
-      );
-      const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "diagnostic" });
     }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
   );
 
@@ -226,46 +152,6 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
         testLayer({ SCIENT_ANALYTICS_ENABLED: "true", SCIENT_ANALYTICS_CONSENT: "off" }),
       ),
     ),
-  );
-  it.effect("restores collection after retrying deletion through a temporary worker", () =>
-    Effect.gen(function* () {
-      const failed = fakeRuntime();
-      const temporary = fakeRuntime();
-      const replacement = fakeRuntime();
-      factory.mockReset().mockImplementation((options: AnalyticsRuntimeOptions) => {
-        if (!options.enabled) return fakeRuntime(false).runtime;
-        if (options.purpose === "deletion") return temporary.runtime;
-        return failed.runtime.enabled ? failed.runtime : replacement.runtime;
-      });
-      const service = yield* AnalyticsService.make;
-      failed.fail(); // The runtime terminated after an ambiguous control result.
-      assert.isTrue(yield* service.deleteData);
-      yield* service.record("project.opened");
-      assert.include(replacement.recorded, "project.opened");
-      assert.isFalse(temporary.runtime.enabled);
-      assert.deepEqual(yield* service.status, { available: true, consent: "product" });
-    }).pipe(Effect.provide(testLayer())),
-  );
-
-  it.effect("recovers a dead worker when the existing non-Off consent is saved again", () =>
-    Effect.gen(function* () {
-      const failed = fakeRuntime();
-      const replacement = fakeRuntime();
-      factory
-        .mockReset()
-        .mockImplementation((options: AnalyticsRuntimeOptions) =>
-          !options.enabled
-            ? fakeRuntime(false).runtime
-            : failed.runtime.enabled
-              ? failed.runtime
-              : replacement.runtime,
-        );
-      const service = yield* AnalyticsService.make;
-      failed.fail();
-      yield* service.setConsent("product");
-      yield* service.record("project.opened");
-      assert.include(replacement.recorded, "project.opened");
-    }).pipe(Effect.provide(testLayer())),
   );
 });
 

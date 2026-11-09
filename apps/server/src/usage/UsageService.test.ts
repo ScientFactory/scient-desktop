@@ -9,6 +9,7 @@ import * as NodeZlib from "node:zlib";
 
 import { assert, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
@@ -42,7 +43,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -55,14 +55,20 @@ import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
-vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof MuseSdk>()),
-  createMuseSdkHostEffect: vi.fn(() =>
-    Effect.try(() => {
-      throw new Error("Muse is not installed in this test");
-    }),
-  ),
-}));
+vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof MuseSdk>();
+  return {
+    ...original,
+    createMuseSdkHostEffect: vi.fn(() =>
+      Effect.fail(
+        new original.MuseSdkError({
+          operation: "start",
+          cause: new Error("Muse is not installed in this test"),
+        }),
+      ),
+    ),
+  };
+});
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -153,18 +159,7 @@ const layerService = (input: {
   readonly hostname?: string;
   readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
 }) =>
-  layerCursorUsageAccounts(
-    Layer.effect(
-      CursorAccountReader.CursorAccountReader,
-      CursorAccountReader.make({ productName: "Scient" }),
-    ).pipe(
-      Layer.provide(
-        Layer.succeed(CursorKeychain.CursorKeychain, {
-          accessToken: Effect.die("Usage fixtures must not access the host Keychain."),
-        }),
-      ),
-    ),
-  ).pipe(
+  layerCursorUsageAccounts(CursorAccountReader.layer).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
@@ -179,7 +174,7 @@ const layerService = (input: {
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, input.home)),
     Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
@@ -294,13 +289,6 @@ function makeFakeCursor() {
     });
   return { state, read };
 }
-
-const writeCursorLogin = (home: string) =>
-  Effect.promise(async () => {
-    const authPath = NodePath.join(home, "config", "cursor", "auth.json");
-    await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-    await NodeFSP.writeFile(authPath, "{}");
-  });
 
 function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
@@ -1279,11 +1267,27 @@ describe("UsageService", () => {
   it.live("discovers Pi history in its default home and directory overrides", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
-      for (const [agentDir, sessionDir, relativeDir] of [
-        [undefined, undefined, ".pi/agent/sessions"],
-        ["~/custom-pi", undefined, "custom-pi/sessions"],
-        ["~/ignored-pi", "~/custom-sessions", "custom-sessions"],
-        ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions"],
+      for (const [agentDir, sessionDir, relativeDir, launchArgs, instanceHome, platform] of [
+        [undefined, undefined, ".pi/agent/sessions", undefined],
+        ["~/custom-pi", undefined, "custom-pi/sessions", undefined],
+        ["~/ignored-pi", "~/custom-sessions", "custom-sessions", undefined],
+        ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions", undefined],
+        ["~/ignored-pi", undefined, "launch-sessions", "--session-dir ~/launch-sessions"],
+        [
+          "~/ignored-pi",
+          undefined,
+          "instance-home /launch-sessions",
+          "--session-dir ~/launch-sessions",
+          "instance-home ",
+        ],
+        [
+          "~/ignored-pi",
+          undefined,
+          "windows-profile/launch-sessions",
+          "--session-dir ~/launch-sessions",
+          "windows-profile",
+          "win32",
+        ],
       ] as const) {
         const dir = NodePath.join(home, relativeDir);
         yield* Effect.promise(async () => {
@@ -1322,11 +1326,34 @@ describe("UsageService", () => {
             layerService({
               prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
               home,
-              settings,
+              settings:
+                launchArgs === undefined
+                  ? settings
+                  : {
+                      ...settings,
+                      providerInstances: {
+                        ...settings.providerInstances,
+                        [ProviderInstanceId.make("pi")]: {
+                          driver: ProviderDriverKind.make("pi"),
+                          config: { launchArgs },
+                          environment:
+                            instanceHome === undefined
+                              ? []
+                              : [
+                                  {
+                                    name: platform === "win32" ? "USERPROFILE" : "HOME",
+                                    value: NodePath.join(home, instanceHome),
+                                    sensitive: false,
+                                  },
+                                ],
+                        },
+                      },
+                    },
               environment: {
                 PI_CODING_AGENT_DIR: agentDir,
                 PI_CODING_AGENT_SESSION_DIR: sessionDir,
               },
+              platform: platform ?? "linux",
             }),
           ),
           Effect.provideService(HostProcess.HomeDirectory, home),
@@ -1415,29 +1442,9 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-        await NodeFSP.writeFile(authPath, "invalid json");
-      });
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({ prefix: "usage-service-cursor-invalid-login", home, settings }),
-        ),
-      );
-      const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
-    }).pipe(Effect.scoped),
-  );
-
   it.live("restores the Cursor account cache after a restart", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
-      yield* writeCursorLogin(home);
       yield* TestClock.setTime(CURSOR_NOW);
       const before = makeFakeCursor();
       before.state.events = [
@@ -1465,104 +1472,16 @@ describe("UsageService", () => {
           { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
         ]);
       }).pipe(
-        Effect.provide(layerService({ prefix: "usage-service-cursor-restart", home, settings })),
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-restart",
+            home,
+            settings,
+            environment: { CURSOR_API_KEY: "test-key" },
+          }),
+        ),
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-cursor-keychain-disabled",
-            home,
-            settings: { ...settings, cursorKeychainUsageEnabled: false },
-            platform: "darwin",
-            environment: {},
-          }),
-        ),
-      );
-      const summary = yield* service.readSummary(WINDOW);
-      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.status, "missing");
-      assert.strictEqual(cursor?.action, "enableCursorKeychain");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const cursor = makeFakeCursor();
-      cursor.state.error = "Sign in to Cursor again to read account usage.";
-      const readCursorSource = Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-        return cursorSource(summary);
-      }).pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-cursor-keychain-uninstalled",
-            home,
-            settings: { ...settings, cursorKeychainUsageEnabled: true },
-            platform: "darwin",
-            environment: {},
-          }),
-        ),
-      );
-
-      assert.isUndefined(yield* readCursorSource);
-      assert.lengthOf(cursor.state.calls, 0);
-
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
-      const installed = yield* readCursorSource;
-      assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
-      assert.lengthOf(cursor.state.calls, 1);
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("ignores stale Cursor file logins when the active credential store differs", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      for (const [index, testCase] of [
-        {
-          platform: "darwin" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: [".cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
-      ].entries()) {
-        const authPath = NodePath.join(home, ...testCase.authPath);
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-          await NodeFSP.writeFile(
-            authPath,
-            encodeUnknownJsonString({ accessToken: "stale-token" }),
-          );
-        });
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: `usage-service-cursor-store-${index}`,
-              home,
-              settings,
-              platform: testCase.platform,
-              environment: testCase.environment,
-            }),
-          ),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-        assert.strictEqual(cursor?.status, "missing");
-        assert.include(cursor?.message ?? "", "Cursor CLI login");
-        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
-      }
-    }).pipe(Effect.scoped),
   );
 
   it.live("reads the Cursor account of an API key or T3 sign-in instead of a CLI login", () =>
@@ -1576,9 +1495,17 @@ describe("UsageService", () => {
           createdAtMs: 0,
         }),
       );
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(home, ".cursor"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(home, ".cursor", "auth.json"),
+          '{"accessToken":"stale-cli-token"}',
+        );
+      });
       for (const [index, testCase] of [
         { environment: { CURSOR_API_KEY: "environment-key" }, stored: Option.none() },
         { environment: {}, stored: Option.some(signIn) },
+        { environment: {}, stored: Option.none() },
       ].entries()) {
         const cursor = makeFakeCursor();
         const summary = yield* Effect.gen(function* () {
@@ -1596,6 +1523,11 @@ describe("UsageService", () => {
             }),
           ),
         );
+        if (index === 2) {
+          assert.deepStrictEqual(cursor.state.credentials, []);
+          assert.isUndefined(cursorSource(summary));
+          continue;
+        }
         assert.deepStrictEqual(cursor.state.credentials, [
           { kind: "apiKey", apiKey: index === 0 ? "environment-key" : "signed-in-key" },
         ]);
@@ -1684,7 +1616,6 @@ describe("UsageService", () => {
                 environment: { CURSOR_API_KEY: "new-key" },
               },
             ],
-            keychainUsageEnabled: false,
             windowStartMs: 0,
             retentionCutoffMs: 0,
             awaitRefresh,
@@ -2704,7 +2635,7 @@ describe("UsageService", () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               version: number;
             };
-            assert.strictEqual(document.version, 10);
+            assert.strictEqual(document.version, 11);
             assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
             assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
           });
@@ -2824,7 +2755,7 @@ describe("UsageService", () => {
           await NodeFSP.writeFile(v4Path, v4Text);
           await NodeFSP.rm(transcript);
         });
-        for (const version of [11, "unknown", undefined]) {
+        for (const version of [12, "unknown", undefined]) {
           yield* Effect.promise(() =>
             NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
           );
@@ -2846,7 +2777,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.live.each([4, 5, 6, 7, 8])(
+  it.live.each([4, 5, 6, 7, 8, 10])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2913,7 +2844,7 @@ describe("UsageService", () => {
                 delete file.cs.lastCumulativeUsage;
                 delete file.cs.malformedRecords;
               }
-              if (version === 8 && path === livePath) {
+              if (version >= 8 && path === livePath) {
                 file.r = [];
                 file.mr = 1;
                 file.cs.malformedRecords = 1;
@@ -2945,7 +2876,7 @@ describe("UsageService", () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 10);
+              assert.strictEqual(persisted.version, 11);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );
@@ -2958,7 +2889,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v10.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -2986,6 +2917,106 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("re-parses a clean v10 Codex rollout that grew after an interrupted request", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const live = NodePath.join(sessions, "live.jsonl");
+      const usage = (input: number, output: number) => ({
+        input_tokens: input,
+        output_tokens: output,
+        total_tokens: input + output,
+      });
+      const lines = (values: readonly unknown[]) =>
+        values.map((value) => `${encodeUnknownJsonString(value)}\n`).join("");
+      const request = (second: number, last: unknown) => ({
+        type: "token_usage_record",
+        timestamp: `2026-08-01T10:00:0${second}Z`,
+        payload: { usage: last },
+      });
+      const tokenCount = (second: number, last: unknown, total: unknown) => ({
+        type: "event_msg",
+        timestamp: `2026-08-01T10:00:0${second}Z`,
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: last, total_token_usage: total },
+        },
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          live,
+          lines([
+            { type: "session_meta", payload: { id: "live" } },
+            { type: "turn_context", payload: { turn_id: "turn-1", model: "gpt-6-astra" } },
+            request(1, usage(100, 20)),
+            tokenCount(1, usage(100, 20), usage(100, 20)),
+            // Interrupted after this request finished: no token_count reports it.
+            request(2, usage(150, 10)),
+          ]),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const tokens = (summary: UsageSummary) =>
+          summary.buckets.reduce((sum, bucket) => sum + totalTokens(bucket.totals), 0);
+        const first = yield* UsageService.make;
+        assert.strictEqual(tokens(yield* first.readSummary(WINDOW)), 120);
+        yield* first.awaitPersisted;
+
+        yield* Effect.promise(async () => {
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { cs: Record<string, unknown> }>;
+          };
+          // The v10 parser ignored `token_usage_record`, so its clean state held nothing pending.
+          for (const file of Object.values(document.files)) {
+            file.cs = Object.fromEntries(
+              Object.entries(file.cs).filter(([key]) => !key.startsWith("unreported")),
+            );
+          }
+          await NodeFSP.rm(cachePath);
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-scan-cache-v10.json"),
+            encodeUnknownJsonString({ ...document, version: 10 }),
+          );
+          await NodeFSP.appendFile(
+            live,
+            lines([
+              { type: "turn_context", payload: { turn_id: "turn-2", model: "gpt-6-astra" } },
+              request(5, usage(200, 30)),
+              tokenCount(5, usage(200, 30), usage(450, 60)),
+            ]),
+          );
+        });
+
+        const upgraded = yield* UsageService.make;
+        const summary = yield* upgraded.readSummary(WINDOW);
+        assert.deepStrictEqual(
+          {
+            tokens: tokens(summary),
+            malformedRecords: summary.sources.find(
+              (source) => source.fingerprint.provider === "codex",
+            )?.malformedRecords,
+          },
+          { tokens: 510, malformedRecords: 0 },
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cache-v10-interrupted-test",
+            home,
+            settings,
+            ratesDocument: {
+              "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: 1 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>

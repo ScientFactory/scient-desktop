@@ -12,7 +12,7 @@ import {
   type ProviderTurnId,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -87,7 +87,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
         environment: input.environment,
         fileSystem: yield* FileSystem.FileSystem,
         path: yield* Path.Path,
-        crypto: yield* Crypto.Crypto,
+        random: yield* SecureRandom.SecureRandom,
         spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
         idAllocator: allocator,
         serverConfig: {

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -25,7 +26,7 @@ import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
 import { OMP_PENDING_CONNECTION_DETAIL } from "../../provider/omp/OmpModel.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -69,6 +70,7 @@ const decodeOmpSettings = Schema.decodeEffect(OmpSettings);
 
 const TestLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   Layer.succeed(HostProcess.Platform, "darwin"),
   IdAllocator.layer,
   McpProviderSessions.layer,
@@ -134,7 +136,8 @@ const harness = Effect.fnUntraced(function* (
   let model = { provider: "test", id: "initial" };
   const instanceId = ProviderInstanceId.make(scientific ? "scient-v2-test" : "omp-v2-test");
   const threadId =
-    behavior?.threadId ?? ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4()}`);
+    behavior?.threadId ??
+    ThreadId.make(`omp-v2-${yield* (yield* SecureRandom.SecureRandom).uuidV4()}`);
   const modelSelection = { instanceId, model: behavior?.model ?? "test/selected" };
   const runtimePolicy = {
     cwd: behavior?.cwd ?? config.stateDir,
@@ -154,7 +157,7 @@ const harness = Effect.fnUntraced(function* (
     spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
     fileSystem: fs,
     path,
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     serverConfig: config,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
     continuations: {
