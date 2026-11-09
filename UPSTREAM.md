@@ -2098,6 +2098,13 @@ are not kept. Seams:
   `acquirePdfDocument` and shows a kept PDF at once, without waiting for its pages to paint.
 - `DataFileTable` checks the file's revision before reading its rows again, instead of on every
   workspace mutation.
+- `FilePreviewPanel.tsx`: the preview body is `ScientDocumentShelf` (was a `div` with the same
+  props), and the PDF and Office branches are `ShelfItem`s. The shelf keeps the last left views
+  mounted but hidden while their reader parks its lease (`lease.park`): kept views and kept
+  documents share one budget, which counts a hidden view's canvases. A hidden PDF pauses pdf.js's
+  rendering queue and drops pages out of view (`pdfRuntime.ts` `park`); `OfficePages.tsx` draws
+  only pages in view while hidden (`useShelfHidden`). A reload counts for the file shown when it
+  was asked (`useChangesWhileShown`), so it does not remount another file's hidden view.
 
 When T3 changes those viewers' open or layout code, carry it into the session functions.
 

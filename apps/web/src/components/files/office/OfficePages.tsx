@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useShelfHidden } from "~/scient/documentShelf/ScientDocumentShelf"; // SCIENT-FORK
 
 export type PageSize = {
   readonly width: number;
@@ -242,16 +243,18 @@ function OfficePage(props: {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
   const [ratio, setRatio] = useState(window.devicePixelRatio || 1);
+  // SCIENT-FORK: a view kept hidden (documentShelf) keeps only the pages in view drawn.
+  const hidden = useShelfHidden();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the page's viewport proximity to limit painting and text layers to nearby pages.
   useEffect(() => {
     if (!row.current) return;
     const observer = new IntersectionObserver(
       ([entry]) => setNear(entry?.isIntersecting ?? false),
-      { root: root.current, rootMargin: "100% 0px" },
+      { root: root.current, rootMargin: hidden ? "0px" : "100% 0px" },
     );
     observer.observe(row.current);
     return () => observer.disconnect();
-  }, [root]);
+  }, [root, hidden]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to display density changes so canvas rasters match the current screen.
   useEffect(() => {
     const query = matchMedia(`(resolution: ${ratio}dppx)`);

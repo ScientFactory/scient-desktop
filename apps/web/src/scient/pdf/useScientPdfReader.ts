@@ -2,6 +2,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
+import { useShelfPlace } from "../documentShelf/ScientDocumentShelf";
 import { acquirePdfDocument } from "./pdfDocuments";
 import {
   createPdfRuntime,
@@ -138,6 +139,7 @@ export function useScientPdfReader(input: {
   readonly viewerElement: HTMLDivElement | null;
 }) {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
+  const shelfPlace = useShelfPlace();
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
   const [presentation, setPresentation] = useState<PresentedPdfSource | null>(null);
   // Mirrors presentationRef for render: the request whose PDF is painted, or null.
@@ -351,6 +353,7 @@ export function useScientPdfReader(input: {
       },
     );
     let failed = false;
+    let unkeep: (() => void) | null = null;
 
     void lease.value
       .then(async ({ document }) => {
@@ -398,6 +401,19 @@ export function useScientPdfReader(input: {
             responsiveZoomRef.current = responsiveZoom;
             presentationRef.current = nextPresentation;
             disposePresentedRef.current = dispose;
+            // Once shown it may be kept hidden (documentShelf): drawing pauses, and the pages in
+            // view count as kept. A PDF left while still opening is not kept.
+            unkeep =
+              shelfPlace?.keep({
+                hide: (evict, viewBytes) => {
+                  runtime.park();
+                  return lease.park(evict, viewBytes);
+                },
+                show: () => {
+                  lease.unpark();
+                  runtime.unpark();
+                },
+              }) ?? null;
             container.classList.remove("scient-pdf-staging");
             container.removeAttribute("aria-hidden");
             container.inert = false;
@@ -581,6 +597,7 @@ export function useScientPdfReader(input: {
       )
         return;
       failed = true;
+      unkeep?.();
       if (isChangedPdfSource(error)) {
         invalidateRef.current();
         dispose();
@@ -600,6 +617,7 @@ export function useScientPdfReader(input: {
     function dispose() {
       if (!current) return;
       current = false;
+      unkeep?.();
       abortController.abort();
       passwordRef.current = null;
       if (pinchFrame !== null) cancelAnimationFrame(pinchFrame);
@@ -638,6 +656,7 @@ export function useScientPdfReader(input: {
     input.viewerElement,
     input.candidateReady,
     input.loadAttempt,
+    shelfPlace,
   ]);
 
   const submitPassword = useStableCallback((password: string) => {

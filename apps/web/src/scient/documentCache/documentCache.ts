@@ -1,8 +1,8 @@
 /**
  * Opened documents (a parsed PDF, a laid-out Word file) cost seconds to build and little to keep,
  * while their drawn pages cost much to keep and little to redraw. A reader leases the document it
- * shows; leaving it keeps the document for a while, so coming back skips opening it again. The
- * reader still drops its drawn pages.
+ * shows; leaving it keeps the document for a while, so coming back skips opening it again. A reader
+ * kept whole but hidden (see documentShelf) parks its lease, and its drawn pages count too.
  */
 
 export interface DocumentLease<T> {
@@ -11,6 +11,14 @@ export interface DocumentLease<T> {
   readonly kept: boolean;
   /** Ends this reader's use. `discard` drops the document instead of keeping it (a failed one). */
   readonly release: (options?: { readonly discard?: boolean }) => void;
+  /**
+   * The reader is hidden but kept, holding `viewBytes()` more for its drawn pages. Its document and
+   * view then count as kept, the most recently left; past the limits `evict` asks the reader to go.
+   * False when it cannot be kept: no key, not open yet, or larger than all kept may be.
+   */
+  readonly park: (evict: () => void, viewBytes: () => number) => boolean;
+  /** The parked reader shows its document again. */
+  readonly unpark: () => void;
 }
 
 export interface DocumentKind<T> {
@@ -30,6 +38,9 @@ interface Entry {
   readonly kind: DocumentKind<unknown>;
   settled: { readonly value: unknown } | null;
   leased: boolean;
+  parked: { readonly evict: () => void; readonly viewBytes: () => number } | null;
+  /** Its parked reader was asked to go: the document goes with it. */
+  evicted: boolean;
   gone: boolean;
 }
 
@@ -56,19 +67,29 @@ export function createDocumentCache(limits: DocumentCacheLimits) {
     }
   };
 
+  const keptSize = (entry: Entry) =>
+    entry.kind.size(entry.settled!.value) + (entry.parked?.viewBytes() ?? 0);
+
   const trim = () => {
     let count = 0;
     let bytes = 0;
-    const idle = [...entries].filter(([, entry]) => !entry.leased);
-    for (const [, entry] of idle) {
+    const kept = [...entries].flatMap(([key, entry]) =>
+      !entry.leased || entry.parked ? [{ key, entry, size: keptSize(entry) }] : [],
+    );
+    for (const { size } of kept) {
       count += 1;
-      bytes += entry.kind.size(entry.settled!.value);
+      bytes += size;
     }
-    for (const [key, entry] of idle) {
+    for (const { key, entry, size } of kept) {
       if (count <= limits.count && bytes <= limits.bytes) break;
       count -= 1;
-      bytes -= entry.kind.size(entry.settled!.value);
-      drop(key, entry);
+      bytes -= size;
+      if (entry.parked) {
+        const { evict } = entry.parked;
+        entry.parked = null;
+        entry.evicted = true;
+        evict();
+      } else drop(key, entry);
     }
   };
 
@@ -84,6 +105,8 @@ export function createDocumentCache(limits: DocumentCacheLimits) {
       kind: kind as DocumentKind<unknown>,
       settled: null,
       leased: true,
+      parked: null,
+      evicted: false,
       gone: false,
     };
     entry.value.then(
@@ -110,11 +133,14 @@ export function createDocumentCache(limits: DocumentCacheLimits) {
         if (released) return;
         released = true;
         entry.leased = false;
-        // Unkept: closed cache, no key, discarded, still opening, or larger than all kept may be.
+        const wasParked = entry.parked !== null;
+        entry.parked = null;
+        // Unkept: closed cache, no key, discarded, evicted, still opening, or larger than all kept may be.
         if (
           closed ||
           key === null ||
           options?.discard ||
+          entry.evicted ||
           !entry.settled ||
           entry.kind.size(entry.settled.value) > limits.bytes
         ) {
@@ -122,10 +148,27 @@ export function createDocumentCache(limits: DocumentCacheLimits) {
           return;
         }
         if (entry.gone) return;
-        entries.delete(key);
-        entries.set(key, entry);
+        // A parked reader was left earlier: its document keeps that age.
+        if (!wasParked) {
+          entries.delete(key);
+          entries.set(key, entry);
+        }
         entry.kind.idle?.(entry.settled.value);
         trim();
+      },
+      park: (evict, viewBytes) => {
+        if (released || closed || key === null || entry.gone || !entry.settled) return false;
+        if (entry.kind.size(entry.settled.value) + viewBytes() > limits.bytes) return false;
+        entry.parked = { evict, viewBytes };
+        entry.evicted = false;
+        entries.delete(key);
+        entries.set(key, entry);
+        trim();
+        return entry.parked !== null;
+      },
+      unpark: () => {
+        entry.parked = null;
+        entry.evicted = false;
       },
     };
   };

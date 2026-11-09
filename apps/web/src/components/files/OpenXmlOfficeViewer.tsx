@@ -5,6 +5,7 @@ import { FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
 // SCIENT-FORK:START
 import { DocumentIdentityContext } from "~/scient/documentCache/documentIdentity";
+import { useShelfPlace } from "~/scient/documentShelf/ScientDocumentShelf";
 import { acquireOfficeDocument, type OfficeDocument } from "~/scient/office/officeDocuments";
 // SCIENT-FORK:END
 const WordDocument = lazy(() => import("./office/WordDocument"));
@@ -96,6 +97,7 @@ export default function OfficeViewer(props: {
   const cacheKey = identity === null ? null : JSON.stringify(["office", props.kind, identity]);
   const failed = useRef(false);
   const lease = useRef<{ release: (options?: { discard?: boolean }) => void } | null>(null);
+  const shelfPlace = useShelfPlace();
   // SCIENT-FORK:END
   const [details, setDetails] = useState("");
   // SCIENT-FORK: the viewer left out pages past its limit.
@@ -122,9 +124,17 @@ export default function OfficeViewer(props: {
       prepareOfficeFile(props.src, props.kind, signal),
     );
     lease.current = acquired;
+    let unkeep: (() => void) | null = null;
     acquired.value.then(
       (document) => {
-        if (current) setOpened(document);
+        if (!current) return;
+        setOpened(document);
+        // Hidden but kept (documentShelf), unless it failed: its drawn pages count as kept.
+        unkeep =
+          shelfPlace?.keep({
+            hide: (evict, viewBytes) => !failed.current && acquired.park(evict, viewBytes),
+            show: acquired.unpark,
+          }) ?? null;
       },
       (cause: unknown) => {
         if (current) fail(cause);
@@ -132,11 +142,12 @@ export default function OfficeViewer(props: {
     );
     return () => {
       current = false;
+      unkeep?.();
       acquired.release({ discard: failed.current });
       if (lease.current === acquired) lease.current = null;
     };
     // SCIENT-FORK:END
-  }, [props.src, props.kind, props.sizeBytes, cacheKey, fail]);
+  }, [props.src, props.kind, props.sizeBytes, cacheKey, fail, shelfPlace]);
   if (error)
     return (
       <div
