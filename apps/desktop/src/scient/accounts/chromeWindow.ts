@@ -105,11 +105,21 @@ export const readArgs = (folder: string, platform: NodeJS.Platform) => [
   "about:blank",
 ];
 
-const exited = (child: NodeChildProcess.ChildProcess) =>
-  new Promise<void>((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) resolve();
-    else child.once("exit", () => resolve());
+/**
+ * Whether the browser started, and when it has ended. Call it right after spawning: a failed start
+ * emits `error` and never `exit`, and an unwatched `error` would throw.
+ */
+function lifecycle(child: NodeChildProcess.ChildProcess) {
+  const started = new Promise<boolean>((resolve) => {
+    child.once("spawn", () => resolve(true));
+    child.once("error", () => resolve(false));
   });
+  const ended = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+    child.once("error", () => resolve());
+  });
+  return { started, ended };
+}
 
 /** The promise's value, or undefined if it fails or takes longer than `ms`. */
 const within = <A>(promise: Promise<A>, ms: number) => {
@@ -162,6 +172,9 @@ function pipeConnection(child: NodeChildProcess.ChildProcess) {
   const waiting = new Map<number, (message: { result?: unknown; error?: unknown }) => void>();
   let buffered = "";
   let next = 0;
+  // A browser that dies mid-read breaks the pipes; its end, not their errors, settles the read.
+  input.on("error", () => undefined);
+  output.on("error", () => undefined);
   output.on("data", (chunk: Buffer) => {
     buffered += chunk.toString("utf8");
     for (let end = buffered.indexOf("\0"); end !== -1; end = buffered.indexOf("\0")) {
@@ -187,12 +200,20 @@ function pipeConnection(child: NodeChildProcess.ChildProcess) {
 }
 
 /** The profile's cookies, decrypted by the browser itself from a second, headless start. */
-async function readProfile(browser: ChromiumBrowser, folder: string, platform: NodeJS.Platform) {
+async function readProfile(
+  browser: ChromiumBrowser,
+  folder: string,
+  platform: NodeJS.Platform,
+  run: Run,
+) {
   const child = NodeChildProcess.spawn(browser.executable, readArgs(folder, platform), {
     stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     windowsHide: true,
   });
+  run.reader = child;
+  const { started, ended } = lifecycle(child);
   try {
+    if (!(await started)) return null;
     const send = pipeConnection(child);
     const read = (async () => {
       const { targetInfos } = (await send("Target.getTargets")) as {
@@ -210,12 +231,12 @@ async function readProfile(browser: ChromiumBrowser, folder: string, platform: N
       const onPage: CdpSend = (method, params) => send(method, params, sessionId);
       return readJar(onPage);
     })();
-    const jar = await within(Promise.race([read, exited(child).then(() => undefined)]), 30_000);
+    const jar = await within(Promise.race([read, ended.then(() => undefined)]), 30_000);
     await within(send("Browser.close"), 5_000);
     return jar ?? null;
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    await exited(child);
+    await ended;
   }
 }
 
@@ -227,10 +248,14 @@ export function signedInCookies(jar: ReadonlyArray<SessionCookie>, nowSeconds: n
   return { units, cookies: units.flatMap((unit) => unitCookies(unit, jar)) };
 }
 
+/** True once the folder is gone; a folder that can't be removed is never signed in to again. */
 const removeFolder = (folder: string) =>
   NodeFS.promises
     .rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-    .catch(() => undefined);
+    .then(
+      () => true,
+      () => false,
+    );
 
 export type ChromeWindowOutcome =
   | { readonly outcome: "busy" | "failed" }
@@ -241,9 +266,15 @@ export type ChromeWindowOutcome =
       readonly cookies: ReadonlyArray<SessionCookie>;
     };
 
-let running:
-  | { readonly child: NodeChildProcess.ChildProcess; keep: boolean; ended: boolean }
-  | undefined;
+interface Run {
+  window?: NodeChildProcess.ChildProcess;
+  reader?: NodeChildProcess.ChildProcess;
+  keep: boolean;
+  ended: boolean;
+}
+
+/** The one sign-in in progress, held from the first step until its folder is removed. */
+let running: Run | undefined;
 
 /**
  * Opens `url` in the browser's own small window on a profile folder Scient owns, waits until the
@@ -256,28 +287,31 @@ export async function signInInWindow(input: {
   readonly platform: NodeJS.Platform;
 }): Promise<ChromeWindowOutcome> {
   if (running) return { outcome: "busy" };
+  const run: Run = { keep: true, ended: false };
+  running = run;
   const { browser, folder, url, platform } = input;
-  await removeFolder(folder);
   try {
+    // A folder left by an attempt whose clean-up failed would sign this one in as that one.
+    if (!(await removeFolder(folder))) return { outcome: "failed" };
     await NodeFS.promises.mkdir(folder, { recursive: true, mode: 0o700 });
-    const child = NodeChildProcess.spawn(browser.executable, windowArgs(folder, url, platform), {
+    const window = NodeChildProcess.spawn(browser.executable, windowArgs(folder, url, platform), {
       stdio: "ignore",
     });
-    const run = { child, keep: true, ended: false };
-    running = run;
-    const started = await new Promise<boolean>((resolve) => {
-      child.once("spawn", () => resolve(true));
-      child.once("error", () => resolve(false));
-    });
-    if (!started) return { outcome: "failed" };
-    await exited(child);
+    run.window = window;
+    const { started, ended } = lifecycle(window);
+    if (!(await started)) return { outcome: "failed" };
+    await ended;
     if (!run.keep) return { outcome: "cancelled" };
-    const jar = await readProfile(browser, folder, platform);
+    const jar = await readProfile(browser, folder, platform, run);
+    // Cancel may come while the profile is read.
+    if (!run.keep) return { outcome: "cancelled" };
     if (!jar) return { outcome: "failed" };
     return { outcome: "read", ...signedInCookies(jar.cookies, Date.now() / 1000) };
+  } catch {
+    return { outcome: "failed" };
   } finally {
-    running = undefined;
     await removeFolder(folder);
+    running = undefined;
   }
 }
 
@@ -290,7 +324,11 @@ export function endSignInWindow(keep: boolean, platform: NodeJS.Platform) {
   if (!run || run.ended || (keep && !canQuitWindow(platform))) return false;
   run.ended = true;
   run.keep = keep;
-  if (keep) quit(run.child, platform);
-  else run.child.kill("SIGKILL");
+  if (keep) {
+    if (run.window) quit(run.window, platform);
+  } else {
+    run.window?.kill("SIGKILL");
+    run.reader?.kill("SIGKILL");
+  }
   return true;
 }
