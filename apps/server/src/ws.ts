@@ -350,7 +350,7 @@ import {
   accountsUserRunsForRpc,
   makeAccountsRpcHandlers,
 } from "./scient/accounts/AccountsRpcHandlers.ts";
-import { makeAccountKeyLinks } from "./scient/accounts/keyLinks.ts";
+import { linkKeyForRpc } from "./scient/accounts/keyLinks.ts";
 import { restoreKeptKeysForRpc } from "./scient/accounts/keptAgentKeys.ts";
 import { makePlainKeys } from "./scient/accounts/plainKeys.ts";
 // SCIENT-FORK:END
@@ -1628,7 +1628,7 @@ export const layerWsRpc = (
       const accounts = yield* accountsForRpc;
       const accountUserRuns = yield* accountsUserRunsForRpc;
       const accountPlainKeys = yield* makePlainKeys(accounts);
-      const linkAccountKey = yield* makeAccountKeyLinks(accounts);
+      const linkAccountKey = yield* linkKeyForRpc;
       const restoreKeptAgentKeys = yield* restoreKeptKeysForRpc;
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient Browser: history.

@@ -7,6 +7,7 @@ import * as AccountsServiceLive from "./AccountsServiceLive.ts";
 import * as GitHubSourceControlCredential from "../extensions/connectors/GitHubSourceControlCredential.ts";
 import * as SignInAttempts from "./agent/signInAttempts.ts";
 import * as AccountAgentService from "./agent/AccountAgentService.ts";
+import * as AccountKeyLinks from "./keyLinks.ts";
 import * as KeptAgentKeys from "./keptAgentKeys.ts";
 
 export const AccountVaultLive = AccountVault.layer;
@@ -18,7 +19,8 @@ const AccountsLayerLive = AccountsServiceLive.layer.pipe(
   Layer.provideMerge(AccountVaultLive),
 );
 /** Accounts, with the person's own sign-ins built on it. */
-export const ScientAccountsLayerLive = Layer.merge(
+export const ScientAccountsLayerLive = Layer.mergeAll(
   AccountAgentService.layer,
+  AccountKeyLinks.layer,
   KeptAgentKeys.layer,
 ).pipe(Layer.provideMerge(AccountsLayerLive));

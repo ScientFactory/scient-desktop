@@ -4,11 +4,14 @@ import {
   type AccountsSnapshot,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { AccountsServiceShape } from "./AccountsService.ts";
+import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
 
 const failure = (message: string) => new AccountsError({ reason: "unavailable", message });
 
@@ -69,3 +72,26 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
     yield* accounts.setKeyLink(link, link.accountId);
   });
 });
+
+/** Server-lifetime, so a key changed in Accounts reaches its variables whenever it changes. */
+export class AccountKeyLinks extends Context.Service<
+  AccountKeyLinks,
+  { readonly link: (link: AccountKeyLink) => Effect.Effect<void, AccountsError> }
+>()("t3/scient/accounts/keyLinks/AccountKeyLinks") {}
+
+export const layer = Layer.effect(
+  AccountKeyLinks,
+  Effect.gen(function* () {
+    return { link: yield* makeAccountKeyLinks(yield* AccountsService) };
+  }),
+);
+
+/** The RPC side; a server without Accounts answers that it is unavailable. */
+export const linkKeyForRpc = Effect.serviceOption(AccountKeyLinks).pipe(
+  Effect.map(
+    Option.match({
+      onNone: () => () => Effect.fail(failure("Accounts is unavailable.")),
+      onSome: (service) => service.link,
+    }),
+  ),
+);
