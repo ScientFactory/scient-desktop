@@ -95,6 +95,9 @@ export function startPdfDocumentLoad(
     standardFontDataUrl: `${assetRoot}standard_fonts/`,
     wasmUrl: `${assetRoot}wasm/`,
     enableXfa: true,
+    // Without this, pdf.js asks for canvases it can read back, which Chromium keeps in
+    // software: every page then draws on the CPU.
+    enableHWA: true,
     useSystemFonts: true,
     disableAutoFetch: false,
     disableRange: false,
@@ -148,13 +151,11 @@ export function createPdfRuntime(input: {
     annotationEditorMode: AnnotationEditorType.NONE,
     enableAutoLinking: true,
     enableDetailCanvas: true,
-    enableOptimizedPartialRendering: true,
     enablePermissions: true,
     enablePrintAutoRotate: true,
     enableSelectionRendering: true,
     imageResourcesPath: `${pdfAssetRoot()}images/`,
     maxCanvasDim: 8_192,
-    maxCanvasPixels: 16_777_216,
     // Page margins come from the container's border; see scientPdfReader.css.
     removePageBorders: true,
     supportsPinchToZoom: true,

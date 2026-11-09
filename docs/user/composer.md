@@ -253,6 +253,13 @@ page and the exact text, and its chip reopens the PDF at the passage. See
 [PDF reader](pdf-reader.md#ask-in-chat-about-a-passage) for what can be quoted
 and what happens when the PDF has changed.
 
+## Quote a Word page or slide
+
+Select text on a Word page or a PowerPoint slide in the file viewer and choose **Ask in
+chat**. The quote keeps the file, the page or slide number and the text; its chip reopens the
+file at that page with the quote marked. The page number is the one Scient's viewer shows,
+which can differ from Word's own pagination. Text in a slide's pictures cannot be selected.
+
 ## Quote an assistant response
 
 On web and desktop, select text in an assistant response, then choose **Ask in chat** from the
