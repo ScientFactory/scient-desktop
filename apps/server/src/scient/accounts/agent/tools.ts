@@ -299,6 +299,9 @@ const connectorSetup = metadata(
         ),
       ).annotate({ description: "Plain answers by setting key." }),
       replaceKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+      signIn: Schema.optional(TrimmedNonEmptyString).annotate({
+        description: "Which Accounts sign-in to use for its site.",
+      }),
     }),
     success: Schema.Struct({
       status: Schema.Literals(["ready", "needs"]),
@@ -308,6 +311,110 @@ const connectorSetup = metadata(
   }),
   "connector-setup",
   "Set up a local connector",
+);
+const connectorDependencies = [
+  ...common.dependencies,
+  McpInvocationContext,
+  WorkspaceBindingResolver,
+];
+const ConnectorName = TrimmedNonEmptyString.check(Schema.isMaxLength(120));
+const FolderPath = TrimmedNonEmptyString.check(Schema.isMaxLength(4096)).annotate({
+  description: "Full path, or relative to this chat's folder.",
+});
+const ConnectorStatus = Schema.Literals(["ready", "needs-setup", "error", "off"]);
+const connectorCopy = metadata(
+  Tool.make("scient_connector_copy", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Make or fix a local connector (load the connector-authoring skill first). name: writes the template to connectors/<name>/ in this chat's folder. connector: copies that installed connector there, with its status, last error and error output. Then scient_connector_check, then scient_connector_save.",
+    parameters: Schema.Struct({
+      connector: Schema.optional(ConnectorName).annotate({
+        description: "Its MCP server name.",
+      }),
+      name: Schema.optional(ConnectorName).annotate({
+        description: "e.g. HUJI Moodle.",
+      }),
+    }),
+    success: Schema.Struct({
+      folder: Schema.String,
+      connector: Schema.optional(Schema.String),
+      status: Schema.optional(ConnectorStatus),
+      lastError: Schema.optional(Schema.String),
+      problem: Schema.optional(Schema.String),
+      missing: Schema.optional(Schema.Array(Schema.String)),
+      log: Schema.optional(Schema.String),
+      manifest: Schema.optional(
+        Schema.Struct({
+          name: Schema.String,
+          version: Schema.String,
+          runtime: Schema.String,
+          entryPoint: Schema.String,
+          settings: Schema.Array(Schema.String),
+          signInSite: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  }),
+  "connector-copy",
+  "Copy a connector to change",
+);
+const connectorCheck = metadata(
+  Tool.make("scient_connector_check", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Start a connector folder as Scient would, list its tools, make each call, stop it; installs nothing. connector: use its settings, keys and sign-in. signIn: an Accounts sign-in for the manifest's site. Missing keys are listed in missing; a failure returns the error and error output.",
+    parameters: Schema.Struct({
+      folder: FolderPath,
+      connector: Schema.optional(ConnectorName),
+      signIn: Schema.optional(ConnectorName),
+      calls: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            tool: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+            arguments: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ).check(Schema.isMaxLength(10)),
+      ),
+    }),
+    success: Schema.Struct({
+      ok: Schema.Boolean,
+      tools: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          description: Schema.optional(Schema.String),
+          parameters: Schema.optional(Schema.Unknown),
+        }),
+      ),
+      calls: Schema.Array(
+        Schema.Struct({ tool: Schema.String, isError: Schema.Boolean, text: Schema.String }),
+      ),
+      missing: Schema.Array(Schema.String),
+      error: Schema.optional(Schema.String),
+      log: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-check",
+  "Check a connector folder",
+);
+const connectorSave = metadata(
+  Tool.make("scient_connector_save", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Install a checked connector folder as the user's own, on for every project. connector: replace that one, keeping its settings, keys and sign-in (a vendor's bundle becomes their copy). The user can undo on its page. needs-setup: call scient_connector_setup.",
+    parameters: Schema.Struct({ folder: FolderPath, connector: Schema.optional(ConnectorName) }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: Schema.Literals(["ready", "needs-setup"]),
+      tools: Schema.Array(Schema.String),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-save",
+  "Save a connector",
 );
 const paperDependencies = [
   ...common.dependencies,
@@ -412,6 +519,9 @@ export const ScientAccountsToolkit = Toolkit.make(
   findProfile,
   add,
   connectorSetup,
+  connectorCopy,
+  connectorCheck,
+  connectorSave,
   paperGet,
   paperQueue,
   paperStatus,

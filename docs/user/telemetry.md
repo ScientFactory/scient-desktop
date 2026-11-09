@@ -29,6 +29,12 @@ it.
   built-in skills that agents load. If you add a skill from a public code host
   such as GitHub or Hugging Face, its address, so we can see which shared skills
   people use. Never the names or contents of your skills.
+- For connectors you or an agent make or fix: whether a step (copy, check, save,
+  Undo, export) worked and how long it took, whether it was a new connector, a
+  fix or your own copy of someone else's, how many tools it has and how many
+  settings it still needs, and whether a website sign-in it uses was renewed by
+  Scient, needed you, or failed. Never the connector's name, folder, site or
+  what its tools return.
 - How many threads and projects you have. Only the numbers, never their names.
 - Your app version, operating system, device type and how you connected.
 - A random identifier for this installation.
