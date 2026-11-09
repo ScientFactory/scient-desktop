@@ -431,8 +431,8 @@ async function buildIdentity(input: {
   for (const [name, value] of variables) add(`variable ${name}`, value);
   add("path", (toolchain.added ?? []).join("\n"));
   const compiler = stanCompiler(toolchain, platform, await makeCompiler(input));
-  const stats = compiler === null ? null : await NodeFSP.stat(compiler).catch(() => null);
-  add("compiler", stats === null ? "" : `${compiler} ${stats.size} ${stats.mtimeMs}`);
+  // A compiler that cannot be pinned down is never trusted to be the one an old program used.
+  add("compiler", compiler ?? `unknown ${NodeCrypto.randomBytes(16).toString("hex")}`);
   return key.digest("hex").slice(0, 32);
 }
 
@@ -468,7 +468,7 @@ async function makeCompiler(input: {
     environment: toolchain.environment,
     timeoutMs: MAKE_PRINT_TIMEOUT_MS,
   });
-  const named = /^CXX = *(\S+)/mu.exec(output)?.[1];
+  const named = /^CXX = *(.*\S)/mu.exec(output)?.[1];
   if (!("code" in result) || result.code !== 0 || named === undefined) return null;
   makeCompilers.set(key, named);
   return named;
@@ -476,7 +476,15 @@ async function makeCompiler(input: {
 
 const MAKE_PRINT_TIMEOUT_MS = 10_000;
 
-/** The compiler make named, or without it CXX or the usual default, as a real file on PATH. */
+/** Launchers that run the compiler named after them, which is then what builds. */
+const COMPILER_WRAPPERS = new Set(["ccache", "sccache", "distcc", "icecc", "buildcache"]);
+
+/**
+ * The compiler CXX names, make's answer first, then CXX or the usual default, fingerprinted by the
+ * real file's path, size and time; after a known wrapper, the compiler it runs as well. Null when
+ * that is uncertain: a quote, which make's echo strips, a word that is not a file, or words that
+ * only joined name a file, as in a path with a space.
+ */
 function stanCompiler(
   toolchain: StanToolchain,
   platform: NodeJS.Platform,
@@ -484,25 +492,54 @@ function stanCompiler(
 ): string | null {
   const path = pathModule(platform);
   const environment = toolchain.environment;
-  const named =
+  const text =
     fromMake ??
     environment[variableName(environment, "CXX")] ??
     (platform === "darwin" ? "clang++" : platform === "win32" ? "g++.exe" : "g++");
+  if (/["'\\\\]/u.test(platform === "win32" ? text.replaceAll("\\", "/") : text)) return null;
+  const words = text.split(/\s+/u).filter((word) => word.length > 0);
   const entries = (environment[variableName(environment, "PATH")] ?? "")
     .split(platform === "win32" ? ";" : ":")
     .filter((entry) => entry.length > 0);
-  const names = platform === "win32" && !/\.exe$/iu.test(named) ? [named, `${named}.exe`] : [named];
-  const found = path.isAbsolute(named)
-    ? named
-    : entries
-        .flatMap((entry) => names.map((name) => path.join(entry, name)))
-        .find((file) => NodeFS.existsSync(file));
-  if (found === undefined) return null;
-  try {
-    return NodeFS.realpathSync(found);
-  } catch {
-    return found;
-  }
+  const resolve = (name: string): string | null => {
+    const names = platform === "win32" && !/\.exe$/iu.test(name) ? [name, `${name}.exe`] : [name];
+    const found = path.isAbsolute(name)
+      ? names.find((file) => NodeFS.existsSync(file))
+      : entries
+          .flatMap((entry) => names.map((file) => path.join(entry, file)))
+          .find((file) => NodeFS.existsSync(file));
+    if (found === undefined) return null;
+    try {
+      return NodeFS.realpathSync(found);
+    } catch {
+      return null;
+    }
+  };
+  const fingerprint = (at: number): string | null => {
+    const word = words[at];
+    if (word === undefined) return null;
+    // A file named by this word and the next together would make the split reading wrong.
+    for (let end = at + 2; end <= words.length; end += 1) {
+      if (resolve(words.slice(at, end).join(" ")) !== null) return null;
+    }
+    const file = resolve(word);
+    if (file === null) return null;
+    try {
+      const stats = NodeFS.statSync(file);
+      return `${file} ${stats.size} ${stats.mtimeMs}`;
+    } catch {
+      return null;
+    }
+  };
+  const first = fingerprint(0);
+  if (first === null) return null;
+  const launcher = path
+    .basename(words[0]!)
+    .replace(/\.exe$/iu, "")
+    .toLowerCase();
+  if (!COMPILER_WRAPPERS.has(launcher)) return `${text}\n${first}`;
+  const wrapped = fingerprint(1);
+  return wrapped === null ? null : `${text}\n${first}\n${wrapped}`;
 }
 
 export type StanTranslation = { readonly folder: string } | { readonly problem: string };

@@ -534,9 +534,10 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
     const make = NodePath.join(root, "bin", "make");
     NodeFS.writeFileSync(
       make,
-      `#!/bin/sh\necho asked >> "${root}/asked.log"\ncxx=$(sed -n 's/^CXX *= *//p' make/local 2>/dev/null | tail -1)\necho "CXX = \${cxx:-clang++}"\n`,
+      `#!/bin/sh\necho asked >> "${root}/asked.log"\ncxx=$(sed -n 's/^CXX *= *//p' make/local 2>/dev/null | tail -1)\necho "CXX = \${cxx:-${root}/bin/fake-c++}"\n`,
     );
     NodeFS.chmodSync(make, 0o755);
+    NodeFS.writeFileSync(NodePath.join(root, "bin", "fake-c++"), "the usual compiler");
     const translate = (
       options: {
         readonly timeoutMs?: number;
@@ -664,6 +665,46 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
     NodeFS.writeFileSync(NodePath.join(root, "make", "local"), `CXX=${compiler}\nO=2\n`);
     expect(await folderOf()).not.toBe(upgraded);
     expect(asked()).toBe(2);
+  });
+
+  it("fingerprints the compiler a wrapper such as ccache runs, not only the wrapper", async () => {
+    const { folderOf, model, root, temporary } = computer();
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    for (const name of ["ccache", "clang++"])
+      NodeFS.writeFileSync(NodePath.join(temporary, name), name);
+    NodeFS.mkdirSync(NodePath.join(root, "make"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(root, "make", "local"),
+      `CXX = ${NodePath.join(temporary, "ccache")} ${NodePath.join(temporary, "clang++")}\n`,
+    );
+    const first = await folderOf();
+    expect(await folderOf()).toBe(first);
+    NodeFS.writeFileSync(NodePath.join(temporary, "clang++"), "clang++, replaced");
+    expect(await folderOf()).not.toBe(first);
+  });
+
+  it.each([
+    [
+      "a quoted path with a space",
+      (folder: string) => `"${folder}/compiler tools/clang++" -std=c++17`,
+    ],
+    // What make's echo prints for the quoted one: the words only joined name the file.
+    [
+      "the same path once make's echo strips its quotes",
+      (folder: string) => `${folder}/compiler tools/clang++ -std=c++17`,
+    ],
+    ["a compiler that is not there", (folder: string) => `${folder}/missing/c++`],
+  ])("never reuses a build for %s", async (_case, compilerText) => {
+    const { folderOf, model, root, temporary } = computer();
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    NodeFS.mkdirSync(NodePath.join(temporary, "compiler tools"));
+    NodeFS.writeFileSync(NodePath.join(temporary, "compiler tools", "clang++"), "clang++");
+    NodeFS.mkdirSync(NodePath.join(root, "make"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(root, "make", "local"),
+      `CXX = ${compilerText(temporary)}\n`,
+    );
+    expect(await folderOf()).not.toBe(await folderOf());
   });
 
   it("prunes only this server's builds unused for 30 days", async () => {

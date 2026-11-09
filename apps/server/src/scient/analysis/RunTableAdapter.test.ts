@@ -623,6 +623,8 @@ describe("a Stan model", () => {
       : ["bin/stanc"];
     for (const part of parts) NodeFS.writeFileSync(NodePath.join(root, part), "");
     NodeFS.writeFileSync(NodePath.join(tools, "make"), "");
+    // The compiler the build would use, so a build's identity is certain and can be reused.
+    NodeFS.writeFileSync(NodePath.join(tools, "g++"), "");
     const stanc = NodePath.join(root, "bin", "stanc");
     // Writes the model as its C++, or fails as stanc does on a model saying "error".
     NodeFS.writeFileSync(
