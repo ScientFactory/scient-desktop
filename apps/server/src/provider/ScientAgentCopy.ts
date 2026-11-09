@@ -37,12 +37,9 @@ export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, stri
   // API keys and tokens go into Scient Accounts; request_secret stays for codes used once.
   [
     "only the user can give: call `request_secret`, not a chat ask or a handoff.",
-    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for an API key or token, which keeps it in Accounts, or `request_secret` only for a code used once (2FA, pairing); not a chat ask or a handoff.",
+    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key or token, `request_secret` for a one-time code, not a chat ask or a handoff.",
   ],
-  [
-    "Asked how: call now.",
-    "Only for a code used once (2FA, pairing) or a tool that asks for a `secretRef`; an API key or token goes to `scient_account_add`, which keeps it in Accounts. Asked how: ask now.",
-  ],
+  ["Asked how: call now.", "Asked how: ask now; API keys: `scient_account_add`."],
   // Scient chat renders chart and diagram fences inline.
   [
     "show any visual the user asks for here: pass the path to an HTML file, or inline HTML to `html_preview`, then `html_render`.",

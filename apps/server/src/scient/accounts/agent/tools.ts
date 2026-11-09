@@ -213,7 +213,7 @@ const add = metadata(
       SecretRequests,
     ],
     description:
-      "Ask the user to add an account in a private card here, and wait. api-key: they paste a key, kept in Accounts; use it for every API key or token the user creates, even one you then pass on. website or university: they sign in on its own page in the card, and Scient keeps it. You only get the account's name and how to use it. A matching account is returned instead, or reported as turned off.",
+      "Ask the user to add an account in a private card, and wait. api-key: a key or token they paste, even one you pass on. website or university: they sign in on its own page. Scient keeps it; you get only its name and how to use it. A matching account is returned instead, or reported as turned off.",
     parameters: Schema.Struct({
       kind: Schema.optional(Schema.Literals(["api-key", "website", "university"])).annotate({
         description: "api-key (default), website, or university.",
