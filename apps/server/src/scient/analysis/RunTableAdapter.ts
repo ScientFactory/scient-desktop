@@ -38,6 +38,7 @@ import {
   STAN_INSTALL_HINT,
   stanSetup,
   stanSourceProblem,
+  translateStan,
 } from "./StanRun.ts";
 
 const MAXIMUM_CAPTURED_BYTES = 64 * 1024 * 1024;
@@ -442,6 +443,20 @@ export function makeRunTableAdapters(input: {
                 pathModule(input.platform).join(source.cwd, source.relativePath),
                 input.platform,
               ),
+            prepareRun: async (context: AnalysisRunContext) => {
+              const stanc = context.runtime.executablePath;
+              const setup = stanc === null ? null : stanSetup(stanc, environment, input.platform);
+              if (stanc !== null && setup !== null && !("problem" in setup)) {
+                await translateStan({
+                  stanc,
+                  root: setup.root,
+                  model: context.absoluteSourcePath,
+                  environment: setup.toolchain.environment,
+                  platform: input.platform,
+                });
+              }
+              await capture.prepareRun?.(context);
+            },
           }
         : {}),
       ...(logs === undefined

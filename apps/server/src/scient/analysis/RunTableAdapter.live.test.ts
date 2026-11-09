@@ -340,14 +340,16 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         expect(adapter.validateSource?.(source)).toBeNull();
         const staging = NodePath.join(cwd, ".staging");
         NodeFS.mkdirSync(staging);
-        const prepared = adapter.prepare({
+        const context = {
           runId: ExecutionRunId.make("run-table-live"),
           projectId: "live",
           runtime: profile,
           source,
           absoluteSourcePath: NodePath.join(models, "eight schools.stan"),
           artifactStagingDirectory: staging,
-        });
+        };
+        yield* Effect.promise(async () => adapter.prepareRun?.(context));
+        const prepared = adapter.prepare(context);
         let shown = "";
         for (const step of [...(prepared.before ?? []), prepared]) {
           const result = yield* runStep(step);
@@ -412,14 +414,16 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         const relativePath = `${name}/models/m.stan`;
         const source = { cwd, relativePath, revision: "live" as never };
         expect(adapter.validateSource?.(source)).toBeNull();
-        const prepared = adapter.prepare({
+        const context = {
           runId: ExecutionRunId.make("run-table-live"),
           projectId: "live",
           runtime: profile,
           source,
           absoluteSourcePath: NodePath.join(models, "m.stan"),
           artifactStagingDirectory: staging,
-        });
+        };
+        yield* Effect.promise(async () => adapter.prepareRun?.(context));
+        const prepared = adapter.prepare(context);
         let shown = "";
         for (const step of [...(prepared.before ?? []), prepared]) {
           const result = yield* runStep(step);
@@ -440,6 +444,89 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
             );
           }
         }
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }).pipe(Effect.provide(Live)),
+  );
+
+  // Inline includes and a symlinked folder, read as stanc reads them; the program is rebuilt only
+  // when the model or an included file changed.
+  it.live.runIf(installedForTest?.includes("stan") ?? tools.has("stan"))(
+    "reads a Stan model's includes as stanc does, and rebuilds only when one changes",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "stan")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        expect(profile.availability, profile.detail ?? "").toBe("available");
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-stan-")),
+        );
+        const write = (name: string, text: string) => {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, name)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(cwd, name), text);
+        };
+        const linked = NodeProcess.platform !== "win32";
+        // Through the link, `link/../g` is elsewhere/g; read as text it would be models/g.
+        write("models/g.stanfunctions", "real g() { return 1; }\n");
+        write("elsewhere/deep/a.stanfunctions", "real a() { return 3; }\n");
+        write("elsewhere/g.stanfunctions", "real g() { return 100; }\n");
+        if (linked) {
+          NodeFS.symlinkSync(
+            NodePath.join(cwd, "elsewhere", "deep"),
+            NodePath.join(cwd, "models", "link"),
+          );
+        }
+        write("models/f.stanfunctions", "real f() { return 2; }\n");
+        const includes = linked
+          ? "#include link/a.stanfunctions\n#include link/../g.stanfunctions\n"
+          : "#include g.stanfunctions\nreal a() { return 3; }\n";
+        write(
+          "models/m.stan",
+          `functions { #include f.stanfunctions\n${includes}}\n// #include missing.stanfunctions\nparameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\ngenerated quantities {\n  real v = f() + a() + g();\n}\n`,
+        );
+        const model = NodePath.join(cwd, "models", "m.stan");
+        const run: { prepared: ReturnType<typeof adapter.prepare> | null } = { prepared: null };
+        const program = () => {
+          const make = run.prepared?.before?.[1];
+          return make === undefined ? null : make.args.at(-1)!;
+        };
+        const sample = Effect.fn("live.stan.sample")(function* () {
+          const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
+          const context = {
+            runId: ExecutionRunId.make("run-table-live"),
+            projectId: "live",
+            runtime: profile,
+            source: { cwd, relativePath: "models/m.stan", revision: "live" as never },
+            absoluteSourcePath: model,
+            artifactStagingDirectory: staging,
+          };
+          yield* Effect.promise(async () => adapter.prepareRun?.(context));
+          run.prepared = adapter.prepare(context);
+          for (const step of [...(run.prepared.before ?? []), run.prepared]) {
+            const result = yield* runStep(step);
+            expect(
+              result.code,
+              `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`,
+            ).toBe(0);
+          }
+          const summary = NodeFS.readFileSync(
+            NodePath.join(cwd, "models", "m-draws", "summary.csv"),
+            "utf8",
+          );
+          return Number(/^"v",([^,]+),/mu.exec(summary)?.[1]);
+        });
+        expect(yield* sample()).toBe(linked ? 105 : 6);
+        const built = NodeFS.statSync(program()!).mtimeMs;
+        expect(yield* sample()).toBe(linked ? 105 : 6);
+        expect(NodeFS.statSync(program()!).mtimeMs).toBe(built);
+        write("models/f.stanfunctions", "real f() { return 20; }\n");
+        expect(yield* sample()).toBe(linked ? 123 : 24);
+        expect(NodeFS.statSync(program()!).mtimeMs).toBeGreaterThan(built);
         NodeFS.rmSync(cwd, { recursive: true, force: true });
       }).pipe(Effect.provide(Live)),
   );

@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- CmdStan, the model, its build and its draws are host files.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import { pathModule } from "../compute/RuntimeDiscovery.ts";
@@ -39,14 +41,14 @@ function readIfPresent(file: string): string | null {
 
 /**
  * CmdStan's makefile pastes the paths it builds into shell commands, so only a path made of these
- * reaches make. The model's own folder never does: its includes are copied into the build.
+ * reaches make. The model's own folder never does: stanc reads it as an argument.
  */
 export function stanMakeSafe(path: string, platform: NodeJS.Platform): boolean {
   // Letters in any script are safe; spaces and shell or make symbols are not.
   return (
     platform === "win32"
-      ? /^(?:[A-Za-z]:)?[\p{L}\p{M}\p{N}_\-.\\/~+@,]+$/u
-      : /^[\p{L}\p{M}\p{N}_\-./~+@,]+$/u
+      ? /^(?:[A-Za-z]:)?[\p{L}\p{M}\p{N}_\-.\\/~+@]+$/u
+      : /^[\p{L}\p{M}\p{N}_\-./~+@]+$/u
   ).test(path);
 }
 
@@ -73,7 +75,7 @@ export function stanModelName(model: string, platform: NodeJS.Platform): string 
   return /^[A-Za-z]/u.test(name) ? name : `m_${name}`;
 }
 
-/** Models build in a copy here, kept between runs, since make reads the model's own path. */
+/** Where a model's C++ and program are kept between runs, away from the model's own path. */
 export function stanBuildFolder(
   root: string,
   model: string,
@@ -95,6 +97,10 @@ export function stanSourceProblem(
   const path = pathModule(platform);
   if (stanNeedsData(source) && stanDataFile(model) === null) {
     return `${path.basename(model)} reads data. Put it in ${path.basename(stemOf(model))}.data.json beside the model.`;
+  }
+  const folder = path.dirname(model);
+  if (folder.includes(",") && source.includes("#include")) {
+    return `stanc reads its include folders as a list separated by commas, so a model that uses #include cannot sit in ${folder}. Rename the folder without the comma.`;
   }
   if (!stanMakeSafe(temporary, platform)) {
     return `Stan builds models in the temporary folder, and make cannot build in ${temporary} because its path has spaces or symbols. Set ${platform === "win32" ? "TEMP" : "TMPDIR"} to a folder whose path has only letters, digits and - _ .`;
@@ -218,67 +224,62 @@ export function stanSetup(
     : { root, toolchain };
 }
 
-const INCLUDE = /^[ \t]*#include[ \t]+(?:"([^"\n]+)"|<([^>\n]+)>|(\S+))/gmu;
+/** stanc's arguments for this model, whose includes it reads against the model's own folder. */
+function stancArgs(model: string, output: string, name: string, platform: NodeJS.Platform) {
+  const folder = pathModule(platform).dirname(model);
+  // stanc splits its include folders at commas; such a folder runs only models without includes.
+  const includes = folder.includes(",") ? [] : [`--include-paths=${folder}`];
+  return [...includes, `--name=${name}_model`, `--o=${output}`, model];
+}
 
-/** Every file a model includes, by the name it uses. stanc reads each name against the model's folder. */
-function includedFiles(
-  source: string,
-  folder: string,
-  platform: NodeJS.Platform,
-): ReadonlyMap<string, string> {
-  const path = pathModule(platform);
-  const found = new Map<string, string>();
-  const pending = [source];
-  for (let text = pending.pop(); text !== undefined; text = pending.pop()) {
-    for (const match of text.matchAll(INCLUDE)) {
-      const name = (match[1] ?? match[2] ?? match[3])!;
-      if (found.has(name)) continue;
-      const contents = readIfPresent(path.resolve(folder, name));
-      if (contents === null) continue;
-      found.set(name, contents);
-      pending.push(contents);
-    }
+const TRANSLATE_TIMEOUT_MS = 120_000;
+
+async function readIfPresentAsync(file: string): Promise<string | null> {
+  try {
+    return await NodeFSP.readFile(file, "utf8");
+  } catch {
+    return null;
   }
-  return found;
 }
 
 /**
- * Copies the model and what it includes into the build when any of them changed, and only then, so
- * make rebuilds exactly when it must. Returns the folder stanc reads includes from, if any.
+ * Translates the model into the build's C++, replacing it only when the C++ changed, so make
+ * compiles exactly when the model or anything it includes changed. A failure leaves the build as
+ * it was: the run's first step translates again and shows stanc's own message.
  */
-function stageModel(input: {
-  readonly source: string;
-  readonly folder: string;
-  readonly build: string;
-  readonly name: string;
+export async function translateStan(input: {
+  readonly stanc: string;
+  readonly root: string;
+  readonly model: string;
+  readonly environment: Readonly<Record<string, string>>;
   readonly platform: NodeJS.Platform;
-}): string | null {
+  readonly temporary?: string;
+}): Promise<void> {
   const path = pathModule(input.platform);
-  const included = includedFiles(input.source, input.folder, input.platform);
-  const staged = [...included].filter(([name]) => !path.isAbsolute(name));
-  // A name may climb out of the model's folder with `..`, so the staged folder sits as deep.
-  const climb = Math.max(
-    0,
-    ...staged.map(([name]) => name.split(/[\\/]/u).filter((part) => part === "..").length),
-  );
-  const top = path.join(input.build, "include");
-  const includes = path.join(top, ...Array.from({ length: climb }, () => "up"));
-  const signature = NodeCrypto.createHash("sha256")
-    .update(JSON.stringify([input.source, [...included].sort()]))
-    .digest("hex");
-  const record = path.join(input.build, `${input.name}.sources`);
-  if (readIfPresent(record) !== signature) {
-    NodeFS.rmSync(top, { recursive: true, force: true });
-    for (const [name, contents] of staged) {
-      const target = path.resolve(includes, name);
-      if (path.relative(top, target).startsWith("..")) continue;
-      NodeFS.mkdirSync(path.dirname(target), { recursive: true });
-      NodeFS.writeFileSync(target, contents);
-    }
-    NodeFS.writeFileSync(path.join(input.build, `${input.name}.stan`), input.source);
-    NodeFS.writeFileSync(record, signature);
-  }
-  return staged.length === 0 ? null : includes;
+  const name = stanModelName(input.model, input.platform);
+  const build = stanBuildFolder(input.root, input.model, input.platform, input.temporary);
+  await NodeFSP.mkdir(build, { recursive: true });
+  const target = path.join(build, `${name}.hpp`);
+  const next = path.join(build, `${name}.next.hpp`);
+  const translated = await new Promise<boolean>((resolve) => {
+    NodeChildProcess.execFile(
+      input.stanc,
+      stancArgs(input.model, next, name, input.platform),
+      {
+        cwd: path.dirname(input.model),
+        env: input.environment,
+        timeout: TRANSLATE_TIMEOUT_MS,
+        windowsHide: true,
+      },
+      (error) => resolve(error === null),
+    );
+  });
+  const [fresh, current] = await Promise.all([
+    readIfPresentAsync(next),
+    readIfPresentAsync(target),
+  ]);
+  if (translated && fresh !== null && fresh !== current) await NodeFSP.rename(next, target);
+  else await NodeFSP.rm(next, { force: true });
 }
 
 interface StanStep {
@@ -290,9 +291,9 @@ interface StanStep {
 }
 
 /**
- * Checks the model where it is, so errors name its own lines, builds a copy, samples four chains,
- * then summarizes and diagnoses them. The draws stay beside the model; the build output and the
- * sampler's settings show only when that step fails.
+ * Checks the model where it is, so errors name its own lines and warnings show; compiles the C++
+ * `translateStan` left in the build; samples four chains; then summarizes and diagnoses them. The
+ * draws stay beside the model; the build output and the sampler's settings show only on failure.
  */
 export function prepareStan(input: {
   readonly stanc: string;
@@ -310,13 +311,13 @@ export function prepareStan(input: {
   const name = stanModelName(model, platform);
   const folder = path.dirname(model);
   const posix = (file: string) => file.replaceAll("\\", "/");
-  const source = NodeFS.readFileSync(model, "utf8");
   const build = stanBuildFolder(root, model, platform, input.temporary);
   if (!stanMakeSafe(build, platform) || !stanMakeSafe(root, platform)) {
     throw new Error(`make cannot build in ${build} from ${root}.`);
   }
   NodeFS.mkdirSync(build, { recursive: true });
-  const includes = stageModel({ source, folder, build, name, platform });
+  // Without a .stan beside the C++, CmdStan's makefile has no rule to translate, so it only compiles.
+  NodeFS.rmSync(path.join(build, `${name}.stan`), { force: true });
   const draws = path.join(folder, `${path.basename(stemOf(model))}-draws`);
   NodeFS.mkdirSync(draws, { recursive: true });
   const chains = Array.from({ length: CHAINS }, (_, index) =>
@@ -342,19 +343,10 @@ export function prepareStan(input: {
   return {
     ...step(tool("diagnose"), chains),
     before: [
-      step(input.stanc, [
-        `--include-paths=${folder}`,
-        `--o=${path.join(input.staging, `${name}.hpp`)}`,
-        model,
-      ]),
+      step(input.stanc, stancArgs(model, path.join(input.staging, `${name}.hpp`), name, platform)),
       step(
         input.toolchain.make,
-        [
-          "-s",
-          "STAN_THREADS=true",
-          ...(includes === null ? [] : [`STANCFLAGS=--include-paths=${posix(includes)}`]),
-          posix(path.join(build, `${name}${exe(platform)}`)),
-        ],
+        ["-s", "STAN_THREADS=true", posix(path.join(build, `${name}${exe(platform)}`))],
         { cwd: root, showOutput: "on-failure" },
       ),
       step(
