@@ -223,13 +223,18 @@ const fromFolder = Effect.fn("PersonalSkillSources.fromFolder")(function* (folde
 
 const readText = (file: string) =>
   Effect.tryPromise({
-    try: async () => {
-      const stat = await NodeFSP.stat(file);
-      if (stat.size > MAX_TEXT_BYTES) throw new Error("too large");
-      return decode(await NodeFSP.readFile(file));
-    },
-    catch: () => sourceError("That file could not be read, or is larger than 1 MiB.", "unreadable"),
-  });
+    try: () => NodeFSP.stat(file),
+    catch: () => sourceError("That file could not be read.", "unreadable"),
+  }).pipe(
+    Effect.flatMap((stat) =>
+      stat.size > MAX_TEXT_BYTES
+        ? Effect.fail(sourceError("That file is larger than 1 MiB.", "too-large"))
+        : Effect.tryPromise({
+            try: async () => decode(await NodeFSP.readFile(file)),
+            catch: () => sourceError("That file could not be read.", "unreadable"),
+          }),
+    ),
+  );
 
 /** Unpack an archive's regular files; links and clutter are left out. */
 const unpack = Effect.fn("PersonalSkillSources.unpack")(function* (
@@ -415,9 +420,10 @@ const PUBLIC_HOSTS = new Set([
 ]);
 
 /**
- * The host and path of an address on a public code host, without scheme, query or fragment, so
- * analytics can count which shared skills people add. Scient downloads without signing in, so a
- * download that worked was public.
+ * The host and path of an address on a public code host, without scheme or fragment, so analytics
+ * can count which shared skills people add. Scient downloads without signing in, so a download
+ * that worked was public. An address with a query is left out: it can carry a token (a private
+ * repository's raw file link does), and then the download proves nothing about the path.
  */
 export const publicSkillAddress = (address: string): string | undefined => {
   let url: URL;
@@ -426,7 +432,7 @@ export const publicSkillAddress = (address: string): string | undefined => {
   } catch {
     return undefined;
   }
-  if (url.username || url.password) return undefined;
+  if (url.username || url.password || url.search) return undefined;
   const host = url.hostname.toLowerCase().replace(/^www\./u, "");
   if (!PUBLIC_HOSTS.has(host)) return undefined;
   const value = `${host}${url.pathname.replace(/\/+$/u, "")}`;

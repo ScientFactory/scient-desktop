@@ -425,6 +425,10 @@ describe("PersonalSkills analytics", () => {
           if (fromWeb.kind !== "skills") throw new Error("expected skills");
           yield* personal.add({ stagingId: fromWeb.stagingId, keys: ["0"] });
           yield* personal.remove("../outside").pipe(Effect.flip);
+          const big = NodePath.join(home, "private-lab", "huge-notes.md");
+          yield* Effect.promise(() => NodeFSP.writeFile(big, "x".repeat(1024 * 1024 + 1)));
+          const tooLarge = yield* personal.inspect({ type: "path", path: big }).pipe(Effect.flip);
+          expect(tooLarge.reason).toBe("too-large");
 
           const used = analytics.events.map((event) => {
             expect(event.name).toBe("feature.used");
@@ -491,6 +495,13 @@ describe("PersonalSkills analytics", () => {
               outcome: "error",
               failureClass: "not-found",
             },
+            {
+              feature: "skills.personal.inspect",
+              trigger: "user",
+              variant: "document",
+              outcome: "error",
+              failureClass: "too-large",
+            },
           ]);
           expect(JSON.stringify(analytics.events)).not.toContain(home);
           expect(JSON.stringify(analytics.events)).not.toContain("methods-style");
@@ -502,9 +513,13 @@ describe("PersonalSkills analytics", () => {
 
 describe("publicSkillAddress", () => {
   it("names addresses on public code hosts only, without scheme, query or sign-in", () => {
-    expect(publicSkillAddress("https://github.com/acme/skills/tree/main/pdf/?tab=1#x")).toBe(
+    expect(publicSkillAddress("https://github.com/acme/skills/tree/main/pdf/#x")).toBe(
       "github.com/acme/skills/tree/main/pdf",
     );
+    // A query can hold a token, as a private repository's raw file link does.
+    expect(
+      publicSkillAddress("https://raw.githubusercontent.com/acme/private/main/SKILL.md?token=abc"),
+    ).toBeUndefined();
     expect(publicSkillAddress("https://www.huggingface.co/acme/skills")).toBe(
       "huggingface.co/acme/skills",
     );

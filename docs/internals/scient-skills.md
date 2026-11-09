@@ -132,9 +132,10 @@ agent), `outcome`, `durationMs`, and on failure `failureClass`: the
 came from (`folder`, `zip`, `skill-file`, `document`, `text`, `web`, or the
 other app's id when the path is in its skills folder), and counts found, ready
 and added; save records `created` or `updated`. A web source on a public code
-host adds `publicSource`, its host and path without scheme or query
+host adds `publicSource`, its host and path without scheme
 (`publicSkillAddress`); Scient downloads without signing in, so a download that
-worked was public. Skill names, paths and text are never recorded. Loading a
+worked was public. An address with a query is left out, since a query can carry a
+token. Skill names, paths and text are never recorded. Loading a
 skill records `skills.load` with the name only for Scient's own skills, and
 the web records opening the add dialog and each agent chat it starts
 (`skills.personal.agent_chat`: finish, rename, improve or fix).
