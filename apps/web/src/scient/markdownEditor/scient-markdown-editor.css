@@ -245,6 +245,41 @@
   color: var(--contrast-muted-foreground);
 }
 
+/* Whole-document font from the front matter (see documentFontPresentation.ts). */
+.scient-markdown-document[data-scient-font-size="10pt"] {
+  --scient-markdown-size-scale: 1;
+}
+.scient-markdown-document[data-scient-font-size="11pt"] {
+  --scient-markdown-size-scale: 1.1;
+}
+.scient-markdown-document[data-scient-font-size="12pt"] {
+  --scient-markdown-size-scale: 1.2;
+}
+.scient-markdown-document[data-scient-font-size] {
+  font-size: calc(var(--scient-font-size-markdown-body) * var(--scient-markdown-size-scale));
+}
+.scient-markdown-document[data-scient-font-size] h1 {
+  font-size: calc(var(--scient-font-size-markdown-h1) * var(--scient-markdown-size-scale));
+}
+.scient-markdown-document[data-scient-font-size] h2 {
+  font-size: calc(var(--scient-font-size-markdown-h2) * var(--scient-markdown-size-scale));
+}
+.scient-markdown-document[data-scient-font-size] h3 {
+  font-size: calc(var(--scient-font-size-markdown-h3) * var(--scient-markdown-size-scale));
+}
+.scient-markdown-document[data-scient-font-size] :is(h4, h5, h6) {
+  font-size: calc(var(--scient-font-size-markdown-body) * var(--scient-markdown-size-scale));
+}
+.scient-markdown-document[data-scient-font-family="serif"] {
+  font-family: serif;
+}
+.scient-markdown-document[data-scient-font-family="sans-serif"] {
+  font-family: sans-serif;
+}
+.scient-markdown-document[data-scient-font-family="monospace"] {
+  font-family: var(--font-mono);
+}
+
 .scient-markdown-document p,
 .scient-markdown-document ul,
 .scient-markdown-document ol,

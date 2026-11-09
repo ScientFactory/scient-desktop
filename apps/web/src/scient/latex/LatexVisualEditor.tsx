@@ -1,7 +1,9 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
 import { latexSelectionClipboard } from "./latexClipboard";
+import { FontMenuItems } from "../writing/FontMenuItems";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
+import { setLatexFontFamily, setLatexFontSize } from "./latexFontCommands";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
 import { mathColorSource } from "./mathColorSyntax";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
@@ -9653,6 +9655,15 @@ function LatexVisualEditorReady(
   const writingTextContents = {
     paragraphStyle: writingStyleItems,
     formatting: writingFormattingItems,
+    font: (
+      <FontMenuItems
+        family={editingPresentation.fontFamily}
+        size={editingPresentation.fontSize}
+        disabled={readOnly || !editor || !formattingAvailable || mathActive}
+        onFamily={(family) => setLatexFontFamily(editingTarget, family)}
+        onSize={(size) => setLatexFontSize(editingTarget, size)}
+      />
+    ),
     direction: (
       <LatexDirectionMenuItems
         editor={editor}

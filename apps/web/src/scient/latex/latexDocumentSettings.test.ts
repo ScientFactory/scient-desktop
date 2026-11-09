@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { documentLayoutSettings } from "./latexDocumentLayoutSettings";
 import { updateLatexDocumentSettingsSource } from "./latexDocumentSettingsSource";
 import { latexDocumentLanguage, latexLanguageLabels } from "./latexLanguage";
 import { DOCUMENT_TEMPLATES, createNewDocumentSource } from "../documents/documentTemplates";
@@ -114,5 +115,27 @@ describe("document settings language application", () => {
     expect(next.replaceAll("\r\n", "")).not.toContain("\n");
     expect(documentBody(next)).toBe(documentBody(source));
     expect(updateLatexDocumentSettingsSource(body, { language: "hebrew" })).toBeNull();
+  });
+});
+
+describe("document settings font family", () => {
+  it.each([
+    ["serif", "rmdefault"],
+    ["sans-serif", "sfdefault"],
+    ["monospace", "ttdefault"],
+  ] as const)("writes and reads the %s default", (fontFamily, command) => {
+    const next = updateLatexDocumentSettingsSource(document(), { fontFamily })!;
+    expect(next).toContain(`\\renewcommand{\\familydefault}{\\${command}}`);
+    expect(documentLayoutSettings(next).fontFamily).toBe(fontFamily);
+    expect(documentBody(next)).toBe(documentBody(document()));
+  });
+
+  it("replaces a previous choice and removes it on Default", () => {
+    const sans = updateLatexDocumentSettingsSource(document(), { fontFamily: "sans-serif" })!;
+    const mono = updateLatexDocumentSettingsSource(sans, { fontFamily: "monospace" })!;
+    expect(mono.match(/familydefault/gu)).toHaveLength(1);
+    const none = updateLatexDocumentSettingsSource(mono, { fontFamily: "default" })!;
+    expect(none).not.toContain("familydefault");
+    expect(documentLayoutSettings(none).fontFamily).toBe("default");
   });
 });
