@@ -1803,7 +1803,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
-      mergeQueueRemovals: { totalCount: input.removals },
+      mergeQueueRemovals: { filteredCount: input.removals },
       commits: {
         nodes: [
           {
