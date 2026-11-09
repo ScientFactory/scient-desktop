@@ -77,6 +77,51 @@ describe("ProviderInstanceCard", () => {
     await userEvent.click(toggle);
     expect(toggle.textContent).toBe("developer@example.com");
   });
+
+  it("keeps why setup failed behind an info button beside the status", async () => {
+    const reason =
+      "Scient could not install the private Codex runtime. The download server returned HTTP 504 on all 5 tries.";
+    await using screen = await renderCard(
+      provider({
+        installed: false,
+        version: null,
+        status: "warning",
+        auth: { status: "unauthenticated", required: true },
+        connection: {
+          methods: ["codex_browser"],
+          canDisconnect: false,
+          operation: null,
+          runtime: {
+            source: "missing",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["install"],
+            managedVersion: null,
+            previousManagedVersion: null,
+            message: "Install available.",
+            operation: {
+              operationId: "runtime-1",
+              action: "install",
+              status: "failed",
+              startedAt: "2026-11-09T08:13:10.000Z",
+              finishedAt: "2026-11-09T08:13:22.000Z",
+              message: reason,
+            },
+          },
+        },
+      }),
+      "editor",
+    );
+    expect(screen.container.textContent).toContain("Setup failed");
+    expect(document.body.textContent).not.toContain(reason);
+
+    await userEvent.click(
+      screen.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Setup failed: show why"]',
+      )!,
+    );
+    await expect.poll(() => document.body.textContent).toContain(reason);
+  });
 });
 
 describe("Pi status copy", () => {

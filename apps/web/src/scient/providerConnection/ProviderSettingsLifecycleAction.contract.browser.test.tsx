@@ -306,38 +306,36 @@ describe("ProviderSettingsLifecycleAction", () => {
   });
 
   it.each([
-    ["verifying", false, "Verifying"],
-    ["testing", false, "Verifying"],
-    ["activating", true, "Waiting"],
-  ] as const)(
-    "shows %s without implying download progress",
-    async (status, waitingForIdle, label) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
-      await _setupFixture2(_fixture);
+    ["verifying", {}, "Verifying"],
+    ["testing", {}, "Verifying"],
+    ["activating", { waitingForIdle: true }, "Waiting"],
+    ["downloading", { retrying: true }, "Retrying"],
+  ] as const)("shows %s without implying download progress", async (status, flags, label) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
 
-      const markup = await render(
-        _fixture,
-        withOperation(
-          { ...provider({ source: "scient_managed" }), probePending: true },
-          {
-            operationId: "runtime-1",
-            action: "install",
-            status,
-            waitingForIdle,
-            startedAt: "2026-10-08T00:00:00.000Z",
-            finishedAt: null,
-            message: "Working.",
-            downloadedBytes: 100,
-            totalBytes: 100,
-          },
-        ),
-      );
-      expect(markup).toContain(`aria-label="${label} Codex"`);
-      expect(markup).not.toContain("Download progress");
-    },
-  );
+    const markup = await render(
+      _fixture,
+      withOperation(
+        { ...provider({ source: "scient_managed" }), probePending: true },
+        {
+          operationId: "runtime-1",
+          action: "install",
+          status,
+          ...flags,
+          startedAt: "2026-10-08T00:00:00.000Z",
+          finishedAt: null,
+          message: "Working.",
+          downloadedBytes: 100,
+          totalBytes: 100,
+        },
+      ),
+    );
+    expect(markup).toContain(`aria-label="${label} Codex"`);
+    expect(markup).not.toContain("Download progress");
+  });
 
   // regression: 29da09f8c3 fix(providers): retain setup progress outside management dialogs
   // Succeeded and cancelled take the same inactive path; failed has its own.
