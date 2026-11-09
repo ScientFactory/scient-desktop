@@ -2716,6 +2716,9 @@ describe("local connectors", () => {
                   env: { TOKEN: LOCAL_KEY, REGION: "eu" },
                 },
                 remote: { type: "http", url: "https://example.com/mcp" },
+                // Neither could start here, so neither is offered.
+                off: { command: process.execPath, args: [script], disabled: true },
+                elsewhere: { command: "./Other.app/Contents/MacOS/helper", args: ["mcp"] },
               },
             }),
           );
@@ -2765,6 +2768,40 @@ describe("local connectors", () => {
         );
         const listed = yield* harness.runtime.inspectLocal({ path: folder });
         expect(JSON.stringify(listed)).not.toContain(LOCAL_KEY);
+
+        // A folder with nothing that could start here says why.
+        const appOnly = NodePath.join(folder, "app-only");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(appOnly);
+          await NodeFSP.writeFile(
+            NodePath.join(appOnly, ".mcp.json"),
+            JSON.stringify({ mcpServers: { helper: { command: "./Helper.app/helper" } } }),
+          );
+        });
+        const nothing = yield* harness.runtime.inspectLocal({ path: appOnly }).pipe(Effect.flip);
+        expect(nothing.message).toContain(NodePath.join(appOnly, "Helper.app/helper"));
+
+        // A Scient plugin folder is recognized, to be installed as a plugin.
+        const plugin = NodePath.join(folder, "plugin");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(plugin);
+          await NodeFSP.writeFile(
+            NodePath.join(plugin, "scient.plugin.json"),
+            JSON.stringify({
+              apiVersion: "scient.plugins/v1alpha1",
+              id: "acme.lab",
+              version: "1.0.0",
+              displayName: "Acme Lab",
+              description: "Lab notebook guidance.",
+              publisher: "Acme",
+              contributes: { skills: ["skills/lab-notes"] },
+            }),
+          );
+        });
+        expect(yield* harness.runtime.inspectLocal({ path: plugin })).toEqual({
+          kind: "plugin",
+          displayName: "Acme Lab",
+        });
         const refused = yield* harness.runtime
           .add({
             target: { type: "local-import", source: { type: "file", path: folder }, name: "argv" },

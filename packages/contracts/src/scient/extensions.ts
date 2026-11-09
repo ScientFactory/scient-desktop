@@ -512,6 +512,8 @@ export type LocalBundleInspection = typeof LocalBundleInspection.Type;
 export const LocalInspection = Schema.Union([
   LocalBundleInspection,
   Schema.Struct({ kind: Schema.Literal("servers"), servers: Schema.Array(LocalImportableServer) }),
+  /** A Scient plugin folder (`scient.plugin.json`), installed as a plugin instead. */
+  Schema.Struct({ kind: Schema.Literal("plugin"), displayName: Schema.String }),
 ]);
 export type LocalInspection = typeof LocalInspection.Type;
 

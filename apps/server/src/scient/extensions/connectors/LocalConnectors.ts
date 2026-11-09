@@ -32,6 +32,10 @@ import * as Schema from "effect/Schema";
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import type { AccountsService } from "../../accounts/AccountsService.ts";
 import type { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
+import {
+  parseScientPluginManifest,
+  SCIENT_PLUGIN_MANIFEST_FILE,
+} from "../plugins/ScientPluginManifest.ts";
 import type { ConnectorRecord, LocalLaunchRecord } from "./ConnectorStateStore.ts";
 import {
   type BundleManifest,
@@ -368,6 +372,22 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     return linked;
   });
 
+  /**
+   * Why a server another app runs cannot run in Scient: its program is missing here, or it needs
+   * values only that app hands it (Codex `env_vars` that are not in the user's environment and
+   * are not keys Scient could ask for).
+   */
+  const importProblem = Effect.fn("LocalConnectors.importProblem")(function* (
+    server: ImportedServer,
+  ) {
+    const env = yield* HostProcess.Environment;
+    const appOnly = server.passEnv.filter((name) => env[name] === undefined && !looksLikeKey(name));
+    if (appOnly.length > 0) {
+      return `${server.name} only runs inside ${server.sourceLabel}: it needs ${appOnly.join(", ")}, which ${server.sourceLabel} gives it.`;
+    }
+    return yield* withFiles(programUnavailable({ runtime: "system", command: server.command }));
+  });
+
   const inspect = Effect.fn("LocalConnectors.inspect")(function* (input: {
     readonly path: string;
   }) {
@@ -375,6 +395,21 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       Effect.map((info) => info.type === "Directory"),
       Effect.orElseSucceed(() => false),
     );
+    if (
+      isFolder &&
+      (yield* fileSystem
+        .exists(path.join(input.path, SCIENT_PLUGIN_MANIFEST_FILE))
+        .pipe(Effect.orElseSucceed(() => false)))
+    ) {
+      const displayName = yield* fileSystem
+        .readFile(path.join(input.path, SCIENT_PLUGIN_MANIFEST_FILE))
+        .pipe(
+          Effect.flatMap(parseScientPluginManifest),
+          Effect.map((manifest) => manifest.displayName),
+          Effect.orElseSucceed(() => path.basename(input.path)),
+        );
+      return { kind: "plugin", displayName } satisfies LocalInspection;
+    }
     if (
       isFolder &&
       !(yield* fileSystem
@@ -387,7 +422,12 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
           "Scient could not tell how to run this folder: it has no manifest.json or .mcp.json. Use Advanced → Run a command.",
         );
       }
-      return { kind: "servers", servers: servers.map(importableSummary) } satisfies LocalInspection;
+      const problems = yield* Effect.forEach(servers, importProblem);
+      const usable = servers.filter((_, index) => problems[index] === undefined);
+      const firstProblem = problems.find((problem) => problem !== undefined);
+      if (usable.length === 0 && firstProblem !== undefined)
+        return yield* unsupported(firstProblem);
+      return { kind: "servers", servers: usable.map(importableSummary) } satisfies LocalInspection;
     }
     const { manifest } = yield* readBundleManifest(input.path);
     const program = programOf(manifest, input.path);
@@ -413,7 +453,18 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
   const importables = Effect.fn("LocalConnectors.importables")(function* (
     records: ReadonlyArray<ConnectorRecord>,
   ) {
-    const servers = yield* importable;
+    const found = yield* importable;
+    // Only what would start here is offered; a server another app runs from inside itself is not.
+    const servers = yield* Effect.filter(found, (server) =>
+      records.some(
+        (record) =>
+          record.local?.imported !== undefined &&
+          record.local.imported.name === server.name &&
+          sameSource(record.local.imported.source, server.source),
+      )
+        ? Effect.succeed(true)
+        : importProblem(server).pipe(Effect.map((problem) => problem === undefined)),
+    );
     return servers.map((server): LocalImportableServer => {
       const installed = records.find(
         (record) =>
@@ -503,11 +554,20 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
                 `${server.name} passes a key on its command line (${flag}), where other programs can read it. In ${server.sourceLabel}, give it the key in an environment variable instead, then add it again.`,
               );
             }
-            const entries = Object.entries(server.env).map(([name, value]) => ({
-              name,
-              value,
-              secret: looksLikeKey(name),
-            }));
+            const problem = yield* importProblem(server);
+            if (problem !== undefined) return yield* unsupported(problem);
+            const env = yield* HostProcess.Environment;
+            const entries = [
+              ...Object.entries(server.env).map(([name, value]) => ({
+                name,
+                value,
+                secret: looksLikeKey(name),
+              })),
+              // A key the app takes from its environment and this one lacks is asked for later.
+              ...server.passEnv
+                .filter((name) => env[name] === undefined && server.env[name] === undefined)
+                .map((name) => ({ name, value: "", secret: true })),
+            ];
             const variables = variablesOf(entries);
             manifest = generatedManifest({
               name: slug(server.name),

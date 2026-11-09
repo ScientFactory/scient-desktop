@@ -41,8 +41,15 @@ access.
   entry in one category.
 - **All MCP servers** (`/settings/extensions/all`) — the MCP Registry, paged,
   with its own search; curated servers appear here in their curated shape.
-- **Installed** (`/settings/extensions/installed`) — Connected services (with
-  **Add by URL**), Scient plugins (with **Install from folder**), then one
+- **Add your own** — one button in the top bar of Discover and Installed (and a
+  link under Discover search results) opens one dialog for everything outside
+  the catalog: a connector file or folder, a Scient plugin folder
+  (`inspectLocal` answers `kind: "plugin"`), a server another app runs, a pasted
+  `https://` address (handed to the URL form), or Advanced → a command. The
+  import list leaves out servers that cannot start here (program not found, or
+  Codex `env_vars` that are neither in the environment nor keys).
+- **Installed** (`/settings/extensions/installed`) — Connected services,
+  Scient plugins, then one
   **From <agent>** section per provider instance with its plugins and MCP
   servers. A **Works with** filter narrows every section to what one provider
   instance can use. Provider sections show six entries with a header toggle to

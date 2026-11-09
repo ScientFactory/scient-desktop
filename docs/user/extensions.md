@@ -71,15 +71,18 @@ running this environment, for example a connector for your university's
 course site or for files on your disk. Scient starts it and every agent can
 use its tools, exactly like a connected service.
 
-Open **Installed** and choose **Add local** beside **Connected services**, then:
+Choose **Add your own** at the top of **Extensions** (on Discover or Installed,
+or **Not here? Add your own** under search results), then:
 
 - **Choose a file** (a `.mcpb` bundle, the format Claude Desktop uses for its
-  extensions, or a `.zip`) or **Choose a folder**. You can also type its path.
+  extensions, or a `.zip`) or **Choose a folder**. You can also paste its path.
   Scient works out how to run it and asks only what the connector needs, in plain
-  words.
+  words. A Scient plugin folder is installed as a plugin, and a pasted `https://`
+  address adds a connected service that runs online.
 - Or pick it under **From your other apps**: servers you already set up in Claude
   Desktop, Claude Code, Codex or Cursor on that computer, or in a project's
-  `.mcp.json`. One click adds it for every agent.
+  `.mcp.json`. One click adds it for every agent. Servers that only run inside
+  their own app, such as an app's built-in helpers, are not listed.
 - **Advanced: run a command** takes a command such as `uvx my-mcp-server` and
   environment variables. Tick **Key** on a variable that holds a key.
 
@@ -163,8 +166,8 @@ as Sources and Documents, and any plugin bundles you
 have installed. A built-in plugin's page describes what it adds and links to
 its settings.
 
-To install a plugin bundle, choose **Install from folder** and enter the path
-of the bundle's folder on the computer running the environment. A bundle
+To install a plugin bundle, choose **Add your own** and pick the bundle's folder
+on the computer running the environment, or paste its path. A bundle
 contains only skills and connected-service definitions; nothing in it runs as a
 program. Its skills appear in **Settings → Skills**, turned off until you turn
 them on, and its services appear under **Connected services**, waiting for you
@@ -242,11 +245,11 @@ computer, and the sign-in page returns to that environment when you finish.
 - Registry entries that run locally as anything other than an npm or PyPI
   package (for example a Docker image), need command-line arguments, or need
   extra configuration are listed with the reason and cannot be added yet.
-- Double-clicking a `.mcpb` file does not open Scient yet; use **Add local**.
+- Double-clicking a `.mcpb` file does not open Scient yet; use **Add your own**.
 - Each service can be connected once per environment. To use a different
   account, use **Reconnect** instead of adding it again.
 - Scient plugin bundles cannot contain code, local servers, or interface
-  panels; add local servers with **Add local** instead.
+  panels; add local servers with **Add your own** instead.
 - Signing in with Scient for GitHub does not let `git clone` reach private
   repositories; cloning still uses your git credential helper, such as
   `gh auth setup-git`.

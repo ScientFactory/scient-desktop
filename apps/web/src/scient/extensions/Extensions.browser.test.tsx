@@ -1581,7 +1581,7 @@ describe("Installed", () => {
     expect(buttonIn(fixture.row("Linear"), "Turn off")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Remove")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Open")?.disabled).toBe(false);
-    expect(buttonIn(fixture.section("Connected services"), "Add by URL")?.disabled).toBe(true);
+    expect(buttonIn(fixture.container, "Add your own")?.disabled).toBe(true);
     expect(fixture.container.textContent).toContain(
       "This connection can view extensions but not change them.",
     );

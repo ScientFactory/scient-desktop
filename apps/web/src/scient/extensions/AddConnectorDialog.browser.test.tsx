@@ -21,6 +21,8 @@ import "~/index.css";
 const state = vi.hoisted(() => ({
   add: vi.fn(),
   importable: vi.fn(),
+  inspect: vi.fn(),
+  install: vi.fn(),
   test: vi.fn(),
   startSignIn: vi.fn(),
   githubSignIn: { start: vi.fn(), wait: vi.fn(), cancel: vi.fn() },
@@ -41,6 +43,7 @@ vi.mock("../../state/query", () => ({
 vi.mock("./extensionsState", () => ({
   addConnector: "add",
   inspectLocalBundle: "inspect",
+  installScientPlugin: "install",
   listImportableConnectors: "importable",
   testConnector: "test",
   updateConnector: "update",
@@ -64,15 +67,19 @@ vi.mock("../../state/use-atom-command", () => ({
       ? state.add
       : command === "importable"
         ? state.importable
-        : command === "test"
-          ? state.test
-          : command === "start-sign-in"
-            ? state.startSignIn
-            : typeof command === "object" && command.name === "github-start"
-              ? state.githubSignIn.start
-              : typeof command === "object" && command.name === "github-wait"
-                ? state.githubSignIn.wait
-                : state.githubSignIn.cancel,
+        : command === "inspect"
+          ? state.inspect
+          : command === "install"
+            ? state.install
+            : command === "test"
+              ? state.test
+              : command === "start-sign-in"
+                ? state.startSignIn
+                : typeof command === "object" && command.name === "github-start"
+                  ? state.githubSignIn.start
+                  : typeof command === "object" && command.name === "github-wait"
+                    ? state.githubSignIn.wait
+                    : state.githubSignIn.cancel,
 }));
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => state.openInBrowser }));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
@@ -103,6 +110,8 @@ function setup() {
   state.accounts = [];
   state.managedElsewhere = [];
   state.add.mockReset();
+  state.inspect.mockReset();
+  state.install.mockReset();
   state.startSignIn.mockReset();
   state.githubSignIn.start.mockReset();
   state.githubSignIn.wait.mockReset();
@@ -873,5 +882,69 @@ describe("local connectors", () => {
         },
       },
     });
+  });
+
+  const renderAddYourOwn = (onWebAddress = vi.fn()) =>
+    renderScreen(
+      <AddLocalConnectorDialog
+        open
+        onOpenChange={state.onOpenChange}
+        environmentId={environmentId}
+        entry={null}
+        onWebAddress={onWebAddress}
+      />,
+    );
+
+  it("hands a pasted web address to the online form without reading it as a path", async () => {
+    await using _mocks = setup();
+    ready();
+    const onWebAddress = vi.fn();
+    await using _screen = await renderAddYourOwn(onWebAddress);
+    await userEvent.fill(
+      page.getByLabelText("A path on that computer, or a web address"),
+      " https://mcp.example.com/mcp ",
+    );
+    await press("Open");
+    expect(onWebAddress).toHaveBeenCalledWith("https://mcp.example.com/mcp");
+    expect(state.inspect).not.toHaveBeenCalled();
+  });
+
+  it("installs a Scient plugin folder as a plugin", async () => {
+    await using _mocks = setup();
+    ready();
+    state.inspect.mockResolvedValue({
+      _tag: "Success",
+      value: { kind: "plugin", displayName: "Acme Lab" },
+    });
+    state.install.mockResolvedValue({ _tag: "Success", value: {} });
+    await using _screen = await renderAddYourOwn();
+    await userEvent.fill(
+      page.getByLabelText("A path on that computer, or a web address"),
+      "/plugins/acme",
+    );
+    await press("Open");
+    await expect.element(page.getByText("Install Acme Lab")).toBeVisible();
+    await press("Install");
+    expect(state.install).toHaveBeenCalledWith({ environmentId, input: { path: "/plugins/acme" } });
+    expect(state.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps a long error to one line, with the full text behind the info button", async () => {
+    await using _mocks = setup();
+    ready();
+    const long = `Scient could not find ${"/Applications/Other.app/Contents/SharedSupport".repeat(3)}/helper on this computer.`;
+    state.inspect.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new ExtensionsError({ reason: "unreachable", message: long })),
+    });
+    await using _screen = await renderAddYourOwn();
+    await userEvent.fill(
+      page.getByLabelText("A path on that computer, or a web address"),
+      "/somewhere",
+    );
+    await press("Open");
+    await expect.element(page.getByText("Scient could not use that.")).toBeVisible();
+    await page.getByRole("button", { name: "Show the full error" }).click();
+    await expect.element(page.getByText(long, { exact: true }).last()).toBeVisible();
   });
 });

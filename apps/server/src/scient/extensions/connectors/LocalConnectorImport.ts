@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Reads other apps' MCP settings files on this computer.
 /**
  * Local MCP servers other apps already run on this computer (Claude Desktop, Claude Code, Codex,
- * Cursor) and servers listed in a folder's `.mcp.json`. Only stdio servers are offered. Variable
+ * Cursor) and servers listed in a folder's `.mcp.json`. Only stdio servers are offered, and
+ * relative paths are read against the settings file's folder, as those apps read them. Variable
  * values stay on the server: clients see names, and Add reads the file again.
  */
 import * as NodeFSP from "node:fs/promises";
@@ -23,6 +24,11 @@ const StdioServer = Schema.Struct({
   args: Schema.optional(Schema.Array(Schema.String)),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   cwd: Schema.optional(Schema.String),
+  /** Codex turns a server off with `enabled = false`, other apps with `disabled: true`. */
+  enabled: Schema.optional(Schema.Unknown),
+  disabled: Schema.optional(Schema.Unknown),
+  /** Codex: variables the server takes from the app's own environment. */
+  env_vars: Schema.optional(Schema.Unknown),
 });
 const decodeStdioServer = Schema.decodeUnknownExit(StdioServer);
 const JsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
@@ -37,6 +43,8 @@ export interface ImportedServer {
   readonly env: Readonly<Record<string, string>>;
   /** Where the other app runs it; Scient runs it there too. */
   readonly cwd: string | undefined;
+  /** Variables the other app hands over from its own environment (Codex `env_vars`). */
+  readonly passEnv: ReadonlyArray<string>;
 }
 
 export const looksLikeKey = (name: string) => KEY_NAME.test(name);
@@ -100,11 +108,19 @@ const readText = (file: string) =>
 const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Stdio entries of an `mcpServers`-style map; remote ones are added by URL instead. */
+/** A path with a folder part (`./bin/server`, `tools\server.exe`), not a bare program name. */
+const hasFolderPart = (command: string) => /[\\/]/.test(command);
+
+/**
+ * Stdio entries of an `mcpServers`-style map; remote ones are added by URL instead, and ones the
+ * app has turned off are left out. `base` is the settings file's folder, which relative paths
+ * are read against; `cwd` is where the app runs a server that names no folder.
+ */
 const serversOf = (
   servers: unknown,
   source: LocalImportSource,
   sourceLabel: string,
+  base: string,
   cwd: string | undefined,
 ): ReadonlyArray<ImportedServer> =>
   isObject(servers)
@@ -112,15 +128,27 @@ const serversOf = (
         const decoded = decodeStdioServer(raw);
         if (Exit.isFailure(decoded) || decoded.value.command.trim() === "") return [];
         const server = decoded.value;
+        if (server.enabled === false || server.disabled === true) return [];
+        const folder =
+          server.cwd === undefined || server.cwd.trim() === ""
+            ? cwd
+            : NodePath.resolve(base, server.cwd);
+        const command = server.command.trim();
         return [
           {
             source,
             sourceLabel,
             name,
-            command: server.command.trim(),
+            command:
+              hasFolderPart(command) && !NodePath.isAbsolute(command)
+                ? NodePath.resolve(folder ?? base, command)
+                : command,
             args: server.args ?? [],
             env: server.env ?? {},
-            cwd: server.cwd ?? cwd,
+            cwd: folder,
+            passEnv: Array.isArray(server.env_vars)
+              ? server.env_vars.filter((item): item is string => typeof item === "string")
+              : [],
           },
         ];
       })
@@ -135,7 +163,9 @@ const jsonServers = Effect.fn("LocalConnectorImport.json")(function* (
   const text = yield* readText(file);
   if (text === undefined) return [];
   const parsed = decodeJsonObject(text);
-  return Exit.isSuccess(parsed) ? serversOf(parsed.value.mcpServers, source, sourceLabel, cwd) : [];
+  return Exit.isSuccess(parsed)
+    ? serversOf(parsed.value.mcpServers, source, sourceLabel, NodePath.dirname(file), cwd)
+    : [];
 });
 
 const claudeDesktopSettings = (
@@ -162,13 +192,14 @@ const claudeCodeServers = Effect.fn("LocalConnectorImport.claudeCode")(function*
   if (Exit.isFailure(parsed)) return [];
   const projects = isObject(parsed.value.projects) ? parsed.value.projects : {};
   return [
-    ...serversOf(parsed.value.mcpServers, source, APP_LABELS["claude-code"], undefined),
+    ...serversOf(parsed.value.mcpServers, source, APP_LABELS["claude-code"], home, undefined),
     ...Object.entries(projects).flatMap(([folder, project]) =>
       isObject(project)
         ? serversOf(
             project.mcpServers,
             { ...source, folder },
             `${APP_LABELS["claude-code"]} · ${NodePath.basename(folder)}`,
+            folder,
             folder,
           )
         : [],
@@ -184,7 +215,13 @@ const codexServers = Effect.fn("LocalConnectorImport.codex")(function* (home: st
   );
   return parsed === undefined
     ? []
-    : serversOf(parsed.mcp_servers, { type: "app", app: "codex" }, APP_LABELS.codex, undefined);
+    : serversOf(
+        parsed.mcp_servers,
+        { type: "app", app: "codex" },
+        APP_LABELS.codex,
+        NodePath.join(home, ".codex"),
+        undefined,
+      );
 });
 
 /**

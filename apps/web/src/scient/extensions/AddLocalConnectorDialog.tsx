@@ -30,10 +30,11 @@ import { Label } from "../../components/ui/label";
 import { readLocalApi } from "../../localApi";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { commandFailureMessage } from "./ExtensionsFeedback";
+import { commandFailureMessage, ErrorNote } from "./ExtensionsFeedback";
 import {
   addConnector,
   inspectLocalBundle,
+  installScientPlugin,
   listImportableConnectors,
   testConnector,
 } from "./extensionsState";
@@ -57,6 +58,7 @@ type Step =
   | { readonly name: "choose" }
   | { readonly name: "bundle"; readonly path: string; readonly bundle: LocalBundleInspection }
   | { readonly name: "servers"; readonly servers: ReadonlyArray<LocalImportableServer> }
+  | { readonly name: "plugin"; readonly path: string; readonly displayName: string }
   | { readonly name: "command" }
   | {
       readonly name: "check";
@@ -65,6 +67,13 @@ type Step =
     };
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const WEB_ADDRESS = /^https?:\/\//i;
+
+/** An error as a whole and as one short line. */
+interface Failure {
+  readonly message: string;
+  readonly summary?: string;
+}
 
 let lastVariableId = 0;
 const newVariableId = () => ++lastVariableId;
@@ -153,34 +162,40 @@ function CheckResult({ step }: { readonly step: Extract<Step, { name: "check" }>
     );
   }
   return (
-    <p role="alert" className="text-sm text-destructive-foreground">
-      {connector.displayName} is added but did not start: {result.message ?? "no answer"}. Fix it on
-      its page, then choose Restart.
-    </p>
+    <div className="grid gap-1">
+      <p className="text-sm">
+        {connector.displayName} is added but did not start. Fix it on its page, then choose Restart.
+      </p>
+      <ErrorNote message={result.message ?? "It did not answer."} />
+    </div>
   );
 }
 
 /**
- * Adds a connector Scient runs on the environment's computer: a bundle file or folder, a server
- * another app already runs, an MCP Registry package (`entry`), or, under Advanced, a command.
- * It checks the connector once added.
+ * "Add your own": takes a connector file or folder, a Scient plugin folder, a server another app
+ * already runs, an MCP Registry package (`entry`), or, under Advanced, a command. A web address
+ * goes to `onWebAddress`. A connector is checked once added.
  */
 export function AddLocalConnectorDialog({
   open,
   onOpenChange,
   environmentId,
   entry,
+  onWebAddress,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly entry: DiscoverEntry | null;
+  /** A pasted `https://` address: a connector that runs online, added by URL. */
+  readonly onWebAddress?: (url: string) => void;
 }) {
   const formId = useId();
   const pkg = entry?.localPackage;
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const inspect = useAtomCommand(inspectLocalBundle, { reportFailure: false });
   const test = useAtomCommand(testConnector, { reportFailure: false });
+  const install = useAtomCommand(installScientPlugin, { reportFailure: false });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const accounts = useKeyAccounts(environmentId);
   const filePicker = useRef<HTMLInputElement>(null);
@@ -195,7 +210,9 @@ export function AddLocalConnectorDialog({
   const [commandLine, setCommandLine] = useState("");
   const [displayName, setDisplayName] = useState(entry ? entryName(entry) : "");
   const [variables, setVariables] = useState<ReadonlyArray<Variable>>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const setError = (message: string | null, summary?: string) =>
+    setFailure(message === null ? null : { message, ...(summary ? { summary } : {}) });
   const [busy, setBusy] = useState<string | null>(null);
   // A picked path names a file on this computer, so only the local environment can use it.
   const local = environmentId === primaryEnvironmentId;
@@ -217,13 +234,18 @@ export function AddLocalConnectorDialog({
   const readPath = async (candidate: string) => {
     const trimmed = candidate.trim();
     if (trimmed.length === 0) return;
+    if (WEB_ADDRESS.test(trimmed) && onWebAddress) return onWebAddress(trimmed);
     setPath(trimmed);
     setReading(true);
     setError(null);
     const result = await inspect({ environmentId, input: { path: trimmed } });
     setReading(false);
     if (result._tag !== "Success") {
-      setError(commandFailureMessage(result));
+      setError(commandFailureMessage(result), "Scient could not use that.");
+      return;
+    }
+    if (result.value.kind === "plugin") {
+      setStep({ name: "plugin", path: trimmed, displayName: result.value.displayName });
       return;
     }
     if (result.value.kind === "servers") {
@@ -235,7 +257,7 @@ export function AddLocalConnectorDialog({
     if (!displayName.trim()) setDisplayName(result.value.displayName);
   };
 
-  const finish = async (target: ConnectorAddInput["target"], busyKey: string) => {
+  const finish = async (target: ConnectorAddInput["target"], busyKey: string, label = "it") => {
     setBusy(busyKey);
     setError(null);
     const name = displayName.trim();
@@ -250,7 +272,7 @@ export function AddLocalConnectorDialog({
     });
     setBusy(null);
     if (result._tag !== "Success") {
-      setError(commandFailureMessage(result));
+      setError(commandFailureMessage(result), `Scient could not add ${label}.`);
       return;
     }
     const connector = result.value.connector;
@@ -288,6 +310,17 @@ export function AddLocalConnectorDialog({
 
   const submit = async () => {
     if (busy !== null) return;
+    if (step.name === "plugin") {
+      setBusy("add");
+      setError(null);
+      const result = await install({ environmentId, input: { path: step.path } });
+      setBusy(null);
+      if (result._tag === "Success") return onOpenChange(false);
+      return setError(
+        commandFailureMessage(result),
+        `Scient could not install ${step.displayName}.`,
+      );
+    }
     if (pkg !== undefined && entry !== null) {
       const fields = packageFields(entry);
       const input = setupInput(fields, answers);
@@ -337,6 +370,7 @@ export function AddLocalConnectorDialog({
     void finish(
       { type: "local-import", source: server.source, name: server.name },
       `${server.sourceLabel}:${server.name}`,
+      server.name,
     );
 
   const patchVariable = (id: number, next: Partial<Variable>) =>
@@ -349,8 +383,16 @@ export function AddLocalConnectorDialog({
       ? `${step.connector.displayName} added`
       : entry
         ? `Add ${entryName(entry)}`
-        : "Add local connector";
+        : step.name === "plugin"
+          ? `Install ${step.displayName}`
+          : "Add your own";
   const showsSetup = pkg !== undefined || step.name === "bundle" || step.name === "command";
+  const description =
+    step.name === "plugin"
+      ? "A Scient plugin: it adds the skills and connectors it lists. Nothing in it runs."
+      : step.name === "choose" && pkg === undefined
+        ? "A connector or plugin from a file, a folder, a web address, or one of your other apps. Every agent can use it."
+        : "This runs a program on the computer running this environment. Every agent can use its tools.";
   const choosing = step.name === "choose" && pkg === undefined;
 
   return (
@@ -358,17 +400,12 @@ export function AddLocalConnectorDialog({
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          {step.name === "check" ? null : (
-            <DialogDescription>
-              This runs a program on the computer running this environment. Every agent can use its
-              tools.
-            </DialogDescription>
-          )}
+          {step.name === "check" ? null : <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         <DialogPanel>
           <form
             id={formId}
-            className="grid gap-4"
+            className="grid grid-cols-1 gap-4 [overflow-wrap:anywhere]"
             noValidate
             onSubmit={(event) => {
               event.preventDefault();
@@ -379,7 +416,7 @@ export function AddLocalConnectorDialog({
 
             {choosing ? (
               <>
-                <div className="grid gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   {getPathForFile || pickFolder ? (
                     <div className="flex flex-wrap gap-2">
                       {getPathForFile ? (
@@ -416,13 +453,15 @@ export function AddLocalConnectorDialog({
                     </div>
                   ) : null}
                   <Label htmlFor="local-path">
-                    {getPathForFile ? "Or type its path" : "Path on that computer"}
+                    {getPathForFile
+                      ? "Or paste a path or web address"
+                      : "A path on that computer, or a web address"}
                   </Label>
                   <div className="flex gap-2">
                     <Input
                       id="local-path"
                       className="min-w-0 flex-1"
-                      placeholder="/path/to/connector.mcpb or a folder"
+                      placeholder="/path/to/connector.mcpb or https://…"
                       value={path}
                       onChange={(event) => setPath(event.target.value)}
                       onKeyDown={(event) => {
@@ -441,11 +480,12 @@ export function AddLocalConnectorDialog({
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    A connector file (.mcpb or .zip), or a folder with manifest.json or .mcp.json.
+                    A connector file (.mcpb or .zip), a connector or plugin folder, or a server's
+                    web address.
                   </p>
                 </div>
                 {importable.length > 0 ? (
-                  <div className="grid gap-2">
+                  <div className="grid grid-cols-1 gap-2">
                     <Label>From your other apps</Label>
                     <ServerRows servers={importable} busy={busy} onAdd={importServer} />
                   </div>
@@ -453,6 +493,7 @@ export function AddLocalConnectorDialog({
                 <Button
                   size="xs"
                   variant="ghost-muted"
+                  className="-ms-2 justify-self-start"
                   onClick={() => {
                     setError(null);
                     setStep({ name: "command" });
@@ -463,8 +504,12 @@ export function AddLocalConnectorDialog({
               </>
             ) : null}
 
+            {step.name === "plugin" ? (
+              <p className="text-sm text-muted-foreground">{step.path}</p>
+            ) : null}
+
             {step.name === "servers" ? (
-              <div className="grid gap-2">
+              <div className="grid grid-cols-1 gap-2">
                 <Label>Servers in that folder</Label>
                 <ServerRows servers={step.servers} busy={busy} onAdd={importServer} />
               </div>
@@ -488,11 +533,10 @@ export function AddLocalConnectorDialog({
                 {step.bundle.description ? (
                   <p className="text-sm text-muted-foreground">{step.bundle.description}</p>
                 ) : null}
-                {step.bundle.unavailableReason ? (
-                  <p role="alert" className="text-sm text-destructive-foreground">
-                    {step.bundle.unavailableReason}
-                  </p>
-                ) : null}
+                <ErrorNote
+                  message={step.bundle.unavailableReason ?? null}
+                  summary="It cannot run on this computer."
+                />
               </div>
             ) : null}
 
@@ -522,7 +566,7 @@ export function AddLocalConnectorDialog({
                     Put keys in variables below, not in the command.
                   </p>
                 </div>
-                <div className="grid gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   <div className="flex items-center justify-between">
                     <Label>Environment variables</Label>
                     <Button
@@ -611,11 +655,7 @@ export function AddLocalConnectorDialog({
                 />
               </div>
             ) : null}
-            {error ? (
-              <p role="alert" className="text-sm text-destructive-foreground">
-                {error}
-              </p>
-            ) : null}
+            <ErrorNote message={failure?.message ?? null} summary={failure?.summary} />
             <button type="submit" hidden />
           </form>
         </DialogPanel>
@@ -641,6 +681,11 @@ export function AddLocalConnectorDialog({
                   Cancel
                 </Button>
               )}
+              {step.name === "plugin" ? (
+                <Button disabled={busy !== null} onClick={() => void submit()}>
+                  {busy === "add" ? "Installing…" : "Install"}
+                </Button>
+              ) : null}
               {showsSetup ? (
                 <Button
                   disabled={

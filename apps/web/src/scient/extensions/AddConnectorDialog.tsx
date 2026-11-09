@@ -74,9 +74,9 @@ interface Draft {
   readonly accountId: string;
 }
 
-function emptyDraft(entry: DiscoverEntry | null): Draft {
+function emptyDraft(entry: DiscoverEntry | null, initialUrl = ""): Draft {
   return {
-    url: "",
+    url: initialUrl,
     remoteUrl: entry?.address ? "" : entry ? (installableRemotes(entry)[0]?.url ?? "") : "",
     displayName: entry?.title ?? "",
     authMode: entryNeedsToken(entry) || entry?.apiKey ? "api-key" : "automatic",
@@ -198,6 +198,10 @@ interface AddConnectorDialogProps {
   /** Prefills a registry target; null adds by URL. */
   readonly entry: DiscoverEntry | null;
   readonly callbackOrigin: string | null;
+  /** A web address already given, from Add your own. */
+  readonly initialUrl?: string;
+  /** Shows Back instead of Cancel, returning to Add your own. */
+  readonly onBack?: () => void;
 }
 
 /** A registry entry that only runs locally gets the local form. */
@@ -220,12 +224,14 @@ function RemoteConnectorDialog({
   environmentId,
   entry,
   callbackOrigin,
+  initialUrl,
+  onBack,
 }: AddConnectorDialogProps) {
   const github = entryNeedsToken(entry) === true;
   const [githubToken, setGithubToken] = useState(false);
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
-  const [draft, setDraft] = useState(() => emptyDraft(entry));
+  const [draft, setDraft] = useState(() => emptyDraft(entry, initialUrl));
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -394,7 +400,9 @@ function RemoteConnectorDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>{entry ? `Add ${entry.title ?? entry.name}` : "Add by URL"}</DialogTitle>
+              <DialogTitle>
+                {entry ? `Add ${entry.title ?? entry.name}` : "Add from a web address"}
+              </DialogTitle>
               <DialogDescription>
                 {github
                   ? "Connect GitHub to work with your repositories, issues and pull requests."
@@ -403,7 +411,7 @@ function RemoteConnectorDialog({
             </DialogHeader>
             <DialogPanel>
               <form
-                className="grid gap-4"
+                className="grid grid-cols-1 gap-4 [overflow-wrap:anywhere]"
                 noValidate
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -660,8 +668,8 @@ function RemoteConnectorDialog({
               </form>
             </DialogPanel>
             <DialogFooter variant="bare">
-              <Button variant="outline" onClick={close}>
-                Cancel
+              <Button variant="outline" onClick={onBack ?? close}>
+                {onBack ? "Back" : "Cancel"}
               </Button>
               <Button disabled={submitting} onClick={() => void submit()}>
                 {submitting ? "Adding…" : "Add"}
