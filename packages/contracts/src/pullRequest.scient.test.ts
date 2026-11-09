@@ -17,6 +17,7 @@ describe("PullRequestFilterOptions", () => {
           avatarUrl: "https://avatars.example/octocat.png",
         },
       ],
+      references: [],
       truncated: true,
     };
     const codec = Schema.toCodecJson(PullRequestFilterOptions);

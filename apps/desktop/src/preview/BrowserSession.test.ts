@@ -135,7 +135,7 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
+  it.effect("keeps the native User-Agent except for the Electron token sent to Teams", () =>
     Effect.gen(function* () {
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
@@ -167,6 +167,25 @@ describe("BrowserSession", () => {
       const browserSession = sessions.get(partition);
       assert.isDefined(browserSession);
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
+
+      // SCIENT-FORK:START — Scient's site identity is the session's one header listener, and it
+      // sends Teams a User-Agent without the Electron token.
+      const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
+      assert.strictEqual(calls.length, 1);
+      const [, listener] = calls[0] ?? [];
+      let response: { requestHeaders?: Record<string, string> } | undefined;
+      listener(
+        {
+          requestHeaders: { "User-Agent": nativeUserAgent, Accept: "*/*" },
+          url: "https://teams.microsoft.com/v2/",
+        },
+        (next: typeof response) => {
+          response = next;
+        },
+      );
+      assert.notInclude(response?.requestHeaders?.["User-Agent"] ?? "", "Electron/");
+      assert.strictEqual(response?.requestHeaders?.Accept, "*/*");
+      // SCIENT-FORK:END
     }).pipe(Effect.provide(layer)),
   );
 

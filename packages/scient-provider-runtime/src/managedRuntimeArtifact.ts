@@ -57,6 +57,11 @@ export interface ManagedRuntimeArtifactPolicy {
   readonly maximumVersionExclusive?: string;
   /** Exact release URL prefix immediately before the version; fixes asset and tag identity. */
   readonly releaseUrlPrefix?: string;
+  /**
+   * Scient's own copy of the same release, tried first: `<prefix><version>/<artifactName>`.
+   * It is checked against the catalog digest like the release itself.
+   */
+  readonly mirrorUrlPrefix?: string;
   /** App-compiled identity for vendors whose downloads use version and artifact query parameters. */
   readonly releaseUrlTemplate?: string;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
@@ -91,6 +96,13 @@ export interface ManagedRuntimeArtifact extends ManagedRuntimeArtifactPolicy {
   readonly checksum: ManagedRuntimeChecksum;
   readonly size: number;
   readonly catalogRevision: string;
+}
+
+/** Where Scient's own copy of this release lives, when the family has one. */
+export function managedRuntimeMirrorUrl(artifact: ManagedRuntimeArtifact): string | undefined {
+  return artifact.mirrorUrlPrefix
+    ? `${artifact.mirrorUrlPrefix}${artifact.version}/${artifact.artifactName}`
+    : undefined;
 }
 
 /** A source-owned minimum version also limits the family to stable semver releases. */

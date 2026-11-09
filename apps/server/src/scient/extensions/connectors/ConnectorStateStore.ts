@@ -17,6 +17,8 @@ import {
   type ExtensionsDiagnostic,
   GrantScope,
   IsoDateTime,
+  LocalConnectorKind,
+  LocalImportSource,
   NonNegativeInt,
   ProjectId,
   TrimmedNonEmptyString,
@@ -50,8 +52,38 @@ export const ConnectorAuthRecord = Schema.Union([
     storage: Schema.Literals(["owned", "bound"]),
     credentialRef: VaultSecretRef,
   }),
+  /** Borrowed from Source Control on each request; nothing of it is stored here. */
+  Schema.Struct({
+    type: Schema.Literal("source-control"),
+    host: TrimmedNonEmptyString,
+    account: TrimmedNonEmptyString,
+  }),
 ]);
 export type ConnectorAuthRecord = typeof ConnectorAuthRecord.Type;
+
+const LocalSettingValue = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.Boolean,
+  Schema.Array(Schema.String),
+]);
+
+/** A local connector: a folder whose `manifest.json` Scient reads each time it starts it. */
+export const LocalLaunchRecord = Schema.Struct({
+  kind: LocalConnectorKind,
+  directory: TrimmedNonEmptyString,
+  /** Scient made the folder (an unpacked file or a generated manifest); removed with it. */
+  owned: Schema.Boolean,
+  /** Plain answers by `user_config` key. */
+  settings: Schema.Record(Schema.String, LocalSettingValue),
+  /** Keys by `user_config` key: linked Accounts API-key accounts (`account:<id>:token`). */
+  keys: Schema.Record(Schema.String, VaultSecretRef),
+  /** The other app's server it came from, so Add shows it as added. */
+  imported: Schema.optional(
+    Schema.Struct({ source: LocalImportSource, name: TrimmedNonEmptyString }),
+  ),
+});
+export type LocalLaunchRecord = typeof LocalLaunchRecord.Type;
 
 export const ConnectorRecord = Schema.Struct({
   connectorId: ConnectorId,
@@ -70,6 +102,8 @@ export const ConnectorRecord = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),
+  /** Set exactly when `source.type` is `local`; `url` is then `scient-local:<connectorId>`. */
+  local: Schema.optional(LocalLaunchRecord),
 });
 export type ConnectorRecord = typeof ConnectorRecord.Type;
 
@@ -78,6 +112,8 @@ const STATE_FORMAT_VERSION = 2;
 const PersistedFile = Schema.Struct({
   formatVersion: Schema.Literal(STATE_FORMAT_VERSION),
   connectors: Schema.Array(Schema.Unknown),
+  /** The user removed GitHub, so Source Control's account is not connected again on its own. */
+  githubFromSourceControlDeclined: Schema.optionalKey(Schema.Boolean),
 });
 /** Format 1: `projectPolicy` on each connector plus per-project selection records. */
 const PersistedFileV1 = Schema.Struct({
@@ -133,6 +169,8 @@ const migrateV1Connectors = (file: PersistedFileV1): ReadonlyArray<unknown> => {
 
 export interface ConnectorStateData {
   readonly connectors: ReadonlyArray<ConnectorRecord>;
+  /** Until the user adds GitHub again, Source Control's account is never connected on its own. */
+  readonly githubFromSourceControlDeclined: boolean;
 }
 
 export interface ConnectorStateSnapshot extends ConnectorStateData {
@@ -164,6 +202,7 @@ const isNodeError = (error: unknown, code: string): error is NodeJS.ErrnoExcepti
 
 const unloadable = (message: string): LoadedState => ({
   connectors: [],
+  githubFromSourceControlDeclined: false,
   unreadableConnectors: [],
   migrated: false,
   diagnostics: [{ code: "state-unreadable", message }],
@@ -178,6 +217,7 @@ const loadState = async (statePath: string): Promise<LoadedState> => {
     if (isNodeError(error, "ENOENT")) {
       return {
         connectors: [],
+        githubFromSourceControlDeclined: false,
         unreadableConnectors: [],
         migrated: false,
         diagnostics: [],
@@ -224,6 +264,9 @@ const loadState = async (statePath: string): Promise<LoadedState> => {
   }
   return withDiagnostics({
     connectors,
+    githubFromSourceControlDeclined:
+      decoded.value.formatVersion === STATE_FORMAT_VERSION &&
+      decoded.value.githubFromSourceControlDeclined === true,
     unreadableConnectors,
     migrated,
     diagnostics: [],
@@ -256,6 +299,7 @@ const encodeState = (state: LoadedState): string =>
         ...state.connectors.map((record) => encodeRecord(record)),
         ...state.unreadableConnectors,
       ],
+      ...(state.githubFromSourceControlDeclined ? { githubFromSourceControlDeclined: true } : {}),
     },
     null,
     2,
@@ -377,6 +421,7 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
           const nextState = withDiagnostics({
             ...current,
             connectors: next.connectors,
+            githubFromSourceControlDeclined: next.githubFromSourceControlDeclined,
             unreadableConnectors: current.unreadableConnectors.filter(
               (entry) => !removed.has(String(preservedConnectorId(entry))),
             ),

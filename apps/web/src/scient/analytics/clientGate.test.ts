@@ -11,6 +11,129 @@ const tick = async () => {
 };
 
 describe("UI analytics gate", () => {
+  it("recovers the voice context after a server restart without replaying the old job", async () => {
+    let now = 0;
+    let context = "before-restart";
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({
+      record,
+      now: () => now,
+      status: async (): Promise<ScientAnalyticsStatus> => ({
+        available: true,
+        consent: "product",
+        collectionContext: context,
+        voiceLifecycleVersion: 2,
+      }),
+    });
+    const connection = {};
+    await gate.readStatus(connection);
+    context = "after-restart";
+    now = 60_001;
+    const old = gate.beginVoiceOperation(connection);
+    old({ name: "voice.transcription.started", properties: {} });
+    await tick();
+    old({ name: "voice.transcription.completed", properties: {} });
+    const fresh = gate.beginVoiceOperation(connection);
+    fresh({ name: "voice.transcription.started", properties: {} });
+    fresh({ name: "voice.transcription.completed", properties: {} });
+    await tick();
+    expect(record.mock.calls.map((call) => call[1])).toEqual([
+      { name: "voice.transcription.started", properties: {}, collectionContext: "after-restart" },
+      { name: "voice.transcription.completed", properties: {}, collectionContext: "after-restart" },
+    ]);
+  });
+  it("keeps a voice job paired during status refresh and long correction", async () => {
+    let now = 0;
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const status = vi.fn(async (): Promise<ScientAnalyticsStatus> => ({
+      available: true,
+      consent: "diagnostic",
+      collectionContext: "voice-context",
+      voiceLifecycleVersion: 2,
+    }));
+    const gate = createAnalyticsClientGate({ record, status, now: () => now });
+    const connection = {};
+    await gate.readStatus(connection);
+    now = 60_001;
+    const voice = gate.beginVoiceOperation(connection);
+    voice({ name: "voice.transcription.started", properties: { voiceSchemaVersion: 2 } });
+    await tick();
+    now = 180_000;
+    voice({ name: "voice.transcription.completed", properties: { voiceSchemaVersion: 2 } });
+    voice({ name: "voice.transcription.cancelled", properties: {} });
+    await tick();
+    expect(record.mock.calls.map((call) => call[1])).toEqual([
+      {
+        name: "voice.transcription.started",
+        properties: { voiceSchemaVersion: 2 },
+        collectionContext: "voice-context",
+      },
+      {
+        name: "voice.transcription.completed",
+        properties: { voiceSchemaVersion: 2 },
+        collectionContext: "voice-context",
+      },
+    ]);
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replay voice work from before consent, a reset context, or an older server", async () => {
+    let next: ScientAnalyticsStatus = { available: true, consent: "off" };
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({ record, status: async () => next });
+    const connection = {};
+    await gate.readStatus(connection);
+    const old = gate.beginVoiceOperation(connection);
+    next = {
+      available: true,
+      consent: "product",
+      collectionContext: "first",
+      voiceLifecycleVersion: 2,
+    };
+    await gate.readStatus(connection);
+    old({ name: "voice.transcription.completed", properties: {} });
+    const admitted = gate.beginVoiceOperation(connection);
+    admitted({ name: "voice.transcription.started", properties: {} });
+    await tick();
+    next = { ...next, collectionContext: "after-delete" };
+    await gate.readStatus(connection);
+    admitted({ name: "voice.transcription.completed", properties: {} });
+    next = { available: true, consent: "product", collectionContext: "older-server" };
+    await gate.readStatus(connection);
+    const legacy = gate.beginVoiceOperation(connection);
+    legacy({ name: "voice.transcription.started", properties: {} });
+    legacy({ name: "voice.transcription.completed", properties: {} });
+    await tick();
+    expect(record).toHaveBeenCalledOnce();
+    expect(record.mock.calls[0]?.[1].name).toBe("voice.transcription.started");
+  });
+
+  it("keeps recording failures distinct and permits reliability-only voice failures", async () => {
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({
+      record,
+      status: async (): Promise<ScientAnalyticsStatus> => ({
+        available: true,
+        consent: "essential",
+        collectionContext: "essential",
+        voiceLifecycleVersion: 2,
+      }),
+    });
+    const connection = {};
+    await gate.readStatus(connection);
+    gate.record(connection, {
+      name: "voice.recording.failed",
+      properties: { failureClass: "permission" },
+    });
+    const voice = gate.beginVoiceOperation(connection);
+    voice({ name: "voice.transcription.started", properties: {} });
+    voice({ name: "voice.transcription.failed", properties: { failureClass: "audio" } });
+    await tick();
+    expect(record.mock.calls.map((call) => call[1].name)).toEqual([
+      "voice.recording.failed",
+      "voice.transcription.failed",
+    ]);
+  });
   it("observes only the current visible view after discovery, with no historic replay", async () => {
     let resolve!: (status: ScientAnalyticsStatus) => void;
     let next: ScientAnalyticsStatus | null = null;

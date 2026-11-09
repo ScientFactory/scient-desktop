@@ -47,6 +47,8 @@ import {
   detectTargetSafely,
   isManagedRuntimeDowngrade,
   managedRuntimeDowngradeMessage,
+  managedRuntimeInstallationFailureMessage,
+  managedRuntimeRetryMessage,
   managedRuntimeSwitchPlan,
 } from "./ManagedProviderRuntimeActions.ts";
 
@@ -95,7 +97,10 @@ function mapProgress(progress: ManagedCodexRuntimeProgress): ProviderManagedRunt
   } as const;
   return {
     status: progress.stage,
-    message: messages[progress.stage],
+    message: progress.retry
+      ? managedRuntimeRetryMessage("Codex", progress.retry)
+      : messages[progress.stage],
+    ...(progress.retry ? { retrying: true } : {}),
     ...(progress.downloadedBytes === undefined
       ? {}
       : { downloadedBytes: progress.downloadedBytes }),
@@ -806,7 +811,8 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
               const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
               const downloadFinished =
                 progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-              if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
+              if (!stageChanged && !downloadAdvanced && !downloadFinished && !progress.retry)
+                return;
               lastStatus = progress.stage;
               lastReportedBytes = downloadedBytes;
               runFork(report(mapProgress(progress)));
@@ -815,7 +821,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         catch: (cause) =>
           isProviderConnectionActionError(cause)
             ? cause
-            : runtimeError("Scient could not install the private Codex runtime.", cause),
+            : runtimeError(managedRuntimeInstallationFailureMessage("Codex", cause), cause),
       });
       yield* Ref.set(managedHealthCache, null);
     });

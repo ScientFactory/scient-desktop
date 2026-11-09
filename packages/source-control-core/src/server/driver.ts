@@ -19,12 +19,18 @@ import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
 import type * as SourceControlHost from "./SourceControlHost.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+// SCIENT-FORK:START — Scient connectors borrow Source Control's credential.
+import type { SourceControlCredentials } from "./scientCredential.ts";
+export * from "./scientCredential.ts";
+// SCIENT-FORK:END
 
 export interface SourceControlMediaRequest {
   /** A `fetchUrl` this host's definition returned from `mediaUrl`. */
   readonly url: string;
   /** Request headers to forward, such as `range`. */
   readonly headers: Readonly<Record<string, string>>;
+  /** `owner/name` of the change request the media is in, else of the checkout it was shown in. */
+  readonly repository?: string;
 }
 
 /** The server side of a definition's `credentials.appSignIn`. */
@@ -67,6 +73,9 @@ export interface SourceControlDriverInstance {
   readonly isRepositoryStarred?: (host: string, repository: string) => Effect.Effect<boolean>;
   /** Stars `repository` as the server's account on `host`; false when the forge refused. */
   readonly starRepository?: (host: string, repository: string) => Effect.Effect<boolean>;
+  // SCIENT-FORK:START — Scient connectors borrow Source Control's credential.
+  readonly credential?: SourceControlCredentials;
+  // SCIENT-FORK:END
 }
 
 /** What the server gives every driver. A driver builds anything else it needs itself. */

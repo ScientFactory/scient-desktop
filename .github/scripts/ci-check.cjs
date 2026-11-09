@@ -18,8 +18,9 @@ const JOBS = [
   ...Object.keys(GATED),
   ...REPORTERS,
 ];
-// Evidence only: these run beside the gate and never block a merge.
-const ADVISORY = ["overleaf_macos"];
+// Evidence only: these run beside the gate and never block a merge. Without shard_weights
+// every shard uses the checked-in weights, and the shards themselves are gated.
+const ADVISORY = ["overleaf_macos", "shard_weights"];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];

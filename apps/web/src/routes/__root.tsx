@@ -32,9 +32,11 @@ import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProj
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
+import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
@@ -43,7 +45,6 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
-import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
@@ -178,33 +179,49 @@ function RootRouteBranch() {
     return hostedPromptLinkLanding;
   }
 
-  if (pathname === "/welcome") {
-    return (
-      <>
-        <CustomSnoozeDialogHost />
-        {/* SCIENT-FORK: conversation export dialog; imports wait for setup to finish. */}
-        <ConversationExportDialogHost />
-        <ConversationImportDialogHost suspended />
-        {/* SCIENT-FORK:START — app-level sign-in page opener. */}
-        <ProviderSignInPageCoordinator />
-        {/* SCIENT-FORK:END */}
-        <GuestShareDialogHost />
-        <CommandPalette>
-          <AppSidebarLayout>
-            <Outlet />
-          </AppSidebarLayout>
-        </CommandPalette>
-      </>
-    );
-  }
-
+  const isWelcome = pathname === "/welcome";
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;
   }
 
+  // Settings can reopen /welcome mid-session, so it mounts everything the app does except the
+  // first-run gate and the event router, whose first navigation would leave the page.
+  const appHosts = (
+    <>
+      {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+      {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
+        <DesktopWebLinkCoordinator />
+      ) : null}
+      {isElectron ? <RunningThreadKeepAlive /> : null}
+      <RelayClientInstallDialog />
+      <ConnectOnboardingDialog />
+      <SshPasswordPromptDialog />
+      <SnapShotCoordinator />
+      <ScientAnswerBadgeCoordinator />
+      <ComputeQuitGuardReport />
+      <ReopenClosedViewShortcut />
+      <ConfirmDialogHost />
+      <CustomSnoozeDialogHost />
+      {/* SCIENT-FORK: conversation export dialog; imports wait while /welcome is open. */}
+      <ConversationExportDialogHost />
+      <ConversationImportDialogHost suspended={isWelcome} />
+      {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+      <ProviderSignInPageCoordinator />
+      {/* SCIENT-FORK:END */}
+      <GuestShareDialogHost />
+      <ProjectCloneToastCoordinator />
+      <AddProjectToMachineDialogHost />
+      <UseInAnotherAppDialogHost />
+      {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
+      {/* SCIENT-FORK:START — Add project ▸ Overleaf project. */}
+      <OverleafNewProjectDialogHost />
+      {/* SCIENT-FORK:END */}
+    </>
+  );
   const appShell = (
     <CommandPalette>
-      <AppSidebarLayout>
+      {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
+      <AppSidebarLayout showSidebar={!isWelcome}>
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>
@@ -214,46 +231,27 @@ function RootRouteBranch() {
   // owns local assisted setup; a second first-run wizard must not intercept it.
   return (
     <>
-      <FirstRunGate enabled={false} hostedStatic={authGateState.status === "hosted-static"}>
-        {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
-        {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
-          <DesktopWebLinkCoordinator />
-        ) : null}
-        {isElectron ? <RunningThreadKeepAlive /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
-        <SnapShotCoordinator />
-        <ScientAnswerBadgeCoordinator />
-        <ComputeQuitGuardReport />
-        <ReopenClosedViewShortcut />
-        <ConfirmDialogHost />
-        <CustomSnoozeDialogHost />
-        {/* SCIENT-FORK: conversation export dialog. */}
-        <ConversationExportDialogHost />
-        <ConversationImportDialogHost />
-        {/* SCIENT-FORK:START — app-level sign-in page opener. */}
-        <ProviderSignInPageCoordinator />
-        {/* SCIENT-FORK:END */}
-        <GuestShareDialogHost />
-        <ProjectCloneToastCoordinator />
-        <AddProjectToMachineDialogHost />
-        {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
-        {/* SCIENT-FORK:START — Add project ▸ Overleaf project. */}
-        <OverleafNewProjectDialogHost />
-        {/* SCIENT-FORK:END */}
-        {primaryEnvironmentAuthenticated ? (
-          <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
-        ) : null}
-        {/* SCIENT-FORK:START — desktop availability stays in the update circle. */}
-        {primaryEnvironmentAuthenticated ? <BrowserProviderUpdateNotification /> : null}
-        {/* SCIENT-FORK:END */}
-        {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
-        {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
-        {appShell}
-        {/* Keep the theme editor above the router so drafts survive navigation. */}
-        <ThemeEditorHost />
-      </FirstRunGate>
+      <ChatGptWelcomeCoordinator />
+      {isWelcome ? (
+        <>
+          {appHosts}
+          {appShell}
+        </>
+      ) : (
+        <FirstRunGate enabled={false} hostedStatic={authGateState.status === "hosted-static"}>
+          {appHosts}
+          {primaryEnvironmentAuthenticated ? (
+            <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
+          ) : null}
+          {/* SCIENT-FORK:START — desktop availability stays in the update circle. */}
+          {primaryEnvironmentAuthenticated ? <BrowserProviderUpdateNotification /> : null}
+          {/* SCIENT-FORK:END */}
+          {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
+          {appShell}
+        </FirstRunGate>
+      )}
+      {/* Above both shells and the router, so drafts survive navigation, including to /welcome. */}
+      <ThemeEditorHost />
     </>
   );
 }

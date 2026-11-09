@@ -124,6 +124,7 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
 });
 vi.mock("../../state/shell", () => ({
   environmentShell: { stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }) },
+  shellEnvironment: { openInEditor: "open-in-editor" },
 }));
 vi.mock("../../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -361,6 +362,8 @@ vi.mock("./extensionsState", async () => {
     updateConnector: "update",
     removeConnector: "remove",
     testConnector: "test",
+    inspectLocalBundle: "inspect",
+    listImportableConnectors: "importable",
     startConnectorSignIn: "startSignIn",
     installScientPlugin: "install",
     removeScientPlugin: "pluginRemove",
@@ -1578,7 +1581,7 @@ describe("Installed", () => {
     expect(buttonIn(fixture.row("Linear"), "Turn off")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Remove")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Open")?.disabled).toBe(false);
-    expect(buttonIn(fixture.section("Connected services"), "Add by URL")?.disabled).toBe(true);
+    expect(buttonIn(fixture.container, "Add your own")?.disabled).toBe(true);
     expect(fixture.container.textContent).toContain(
       "This connection can view extensions but not change them.",
     );

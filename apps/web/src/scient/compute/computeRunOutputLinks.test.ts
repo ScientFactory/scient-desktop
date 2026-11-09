@@ -19,6 +19,7 @@ describe("links in a program's output", () => {
     ["bash", "/home/ada/lab/src/a.java: line 12: nope: command not found", 12],
     ["ruby", "/home/ada/lab/src/a.java:12:in 'f': boom", 12],
     ["tcl", '(file "/home/ada/lab/src/a.java" line 12)', 12],
+    ["stanc", "Syntax error in '/home/ada/lab/src/a.java', line 12, column 20 to column 21", 12],
   ])("finds the line in %s output", (_tool, text, line) => {
     expect(links(text)).toEqual([{ relativePath: "src/a.java", line }]);
   });

@@ -131,6 +131,27 @@ Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.
 `runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`, and
 `desktopLocal.test.ts`.
 
+## Typing beside documents
+
+Chat typing must not pay for an open document. Two Chromium costs reached every keystroke:
+
+- When layout is pending, reading `Selection.isCollapsed` flushes it; `anchorNode`,
+  `rangeCount`, `getRangeAt` and `Range.collapsed` do not. Handlers for document-wide
+  `selectionchange` or `keyup` read the range instead. PDF.js's own handlers needed a patch for
+  this; see `UPSTREAM.md`.
+- React copies a controlled textarea's value into `defaultValue` after each change, replacing its
+  text node. In Chromium we observed it then recheck `:has()` on the textarea's ancestors and
+  restyle the whole subtree of an ancestor that anchors a `:has()` before a combinator
+  (`X:has(…) Y`). Keep
+  `:has()` off `body`, `html` and `:root`, or each keystroke restyles the whole document; key
+  such styles off an attribute on a small element. `universalSiblingSelectors.test.ts` enforces
+  this.
+
+Check with a production build, a long PDF, a source file and a Visual LaTeX document open,
+typing into the composer and into Ask in chat under CPU throttling. Event Timing and Long
+Animation Frame entries name the cost. Development builds overstate React rendering several
+times over.
+
 ## Mobile looping animations
 
 `apps/mobile/package.json` sets Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` so keyboard avoiding

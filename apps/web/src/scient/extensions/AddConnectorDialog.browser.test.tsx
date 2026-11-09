@@ -1,12 +1,16 @@
 import {
   ConnectorId,
   AccountId,
+  type AccountsSnapshot,
   type AccountSummary,
+  DEFAULT_BROWSER_PROFILE_ID,
   defaultAccountControls,
   type ConnectorSummary,
   type DiscoverEntry,
   EnvironmentId,
   ExtensionsError,
+  SourceControlProviderKind,
+  SourceControlSignInError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -16,30 +20,73 @@ import "~/index.css";
 
 const state = vi.hoisted(() => ({
   add: vi.fn(),
+  importable: vi.fn(),
+  inspect: vi.fn(),
+  install: vi.fn(),
+  test: vi.fn(),
   startSignIn: vi.fn(),
+  githubSignIn: { start: vi.fn(), wait: vi.fn(), cancel: vi.fn() },
+  openInBrowser: vi.fn(),
   toast: vi.fn(),
   onOpenChange: vi.fn(),
   accountsAvailable: false,
   accounts: [] as AccountSummary[],
+  managedElsewhere: [] as NonNullable<AccountsSnapshot["managedElsewhere"]>,
 }));
 
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
     isSuccess: state.accountsAvailable,
-    data: { accounts: state.accounts },
+    data: { accounts: state.accounts, managedElsewhere: state.managedElsewhere },
   }),
 }));
 vi.mock("./extensionsState", () => ({
   addConnector: "add",
+  inspectLocalBundle: "inspect",
+  installScientPlugin: "install",
+  listImportableConnectors: "importable",
+  testConnector: "test",
+  updateConnector: "update",
   startConnectorSignIn: "start-sign-in",
 }));
+vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "local" }));
+vi.mock("../../state/sourceControl", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const allowed = Atom.make(true);
+  return {
+    sourceControlEnvironment: {
+      startSignIn: { name: "github-start", permissionAtom: () => allowed },
+      waitForSignIn: { name: "github-wait" },
+      cancelSignIn: { name: "github-cancel" },
+    },
+  };
+});
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "add" ? state.add : state.startSignIn),
+  useAtomCommand: (command: string | { readonly name: string }) =>
+    command === "add"
+      ? state.add
+      : command === "importable"
+        ? state.importable
+        : command === "inspect"
+          ? state.inspect
+          : command === "install"
+            ? state.install
+            : command === "test"
+              ? state.test
+              : command === "start-sign-in"
+                ? state.startSignIn
+                : typeof command === "object" && command.name === "github-start"
+                  ? state.githubSignIn.start
+                  : typeof command === "object" && command.name === "github-wait"
+                    ? state.githubSignIn.wait
+                    : state.githubSignIn.cancel,
 }));
+vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => state.openInBrowser }));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../../components/chat/providerIconUtils", () => ({ AVAILABLE_PROVIDER_OPTIONS: [] }));
 
 import { AddConnectorDialog } from "./AddConnectorDialog";
+import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 
 const environmentId = EnvironmentId.make("local");
 
@@ -61,8 +108,15 @@ const connector: ConnectorSummary = {
 function setup() {
   state.accountsAvailable = false;
   state.accounts = [];
+  state.managedElsewhere = [];
   state.add.mockReset();
+  state.inspect.mockReset();
+  state.install.mockReset();
   state.startSignIn.mockReset();
+  state.githubSignIn.start.mockReset();
+  state.githubSignIn.wait.mockReset();
+  state.githubSignIn.cancel.mockReset();
+  state.openInBrowser.mockReset().mockResolvedValue(true);
   state.toast.mockReset();
   state.onOpenChange.mockReset();
   const stack = new AsyncDisposableStack();
@@ -533,5 +587,364 @@ describe("curated connector setup", () => {
       url: "https://lab.mcp.benchling.com/mcp",
     });
     expect(document.body.textContent).toContain("Sign in to Linear");
+  });
+});
+
+describe("GitHub with Source Control's account", () => {
+  const githubEntry: DiscoverEntry = {
+    name: "io.github.github/github-mcp-server",
+    version: "2.0.2",
+    title: "GitHub",
+    remotes: [
+      { type: "streamable-http", url: "https://api.githubcopilot.com/mcp/", requiresInput: false },
+    ],
+    installable: true,
+    categories: [],
+  };
+  const login = (name: string, via: "gh" | "app" | "token") => ({
+    kind: "github" as const,
+    id: `github.com:${name}`,
+    name,
+    detail: "github.com",
+    href: "/settings/source-control" as const,
+    via,
+  });
+  const githubConnector: ConnectorSummary = {
+    ...connector,
+    connectorId: ConnectorId.make("con_github0001"),
+    displayName: "GitHub",
+    url: "https://api.githubcopilot.com/mcp/",
+    auth: { type: "source-control", host: "github.com", account: "octo" },
+    status: "connected",
+  };
+  const signInInput = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
+
+  it("connects as Source Control's own login, or the one picked, and sends no secret", async () => {
+    await using fixture = setup();
+    state.managedElsewhere = [login("octo", "app"), login("second", "gh")];
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: githubConnector, nextStep: "ready" },
+    });
+    await fixture.render(githubEntry);
+    await expect.element(page.getByRole("button", { name: "Connect as octo" })).toBeVisible();
+    // The app sign-in reaches only where it is installed; gh's own login is not limited so.
+    const install = page.getByRole("link", { name: "Install on an organization" });
+    await expect.element(install).toBeVisible();
+    await userEvent.selectOptions(field<HTMLSelectElement>("github-account"), "second");
+    await expect.element(install).not.toBeInTheDocument();
+    await press("Connect as second");
+    const sent = state.add.mock.calls[0]?.[0];
+    expect(sent.input.credential).toEqual({ type: "source-control", account: "second" });
+    expect(JSON.stringify(sent)).not.toContain("clientSecret");
+    expect(sent.input).not.toHaveProperty("oauthClient");
+    expect(state.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("signs in with a code to copy, on GitHub's page in Scient's own browser", async () => {
+    await using fixture = setup();
+    using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    const approved = Promise.withResolvers<unknown>();
+    state.githubSignIn.start.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        userCode: "WDJB-MJHT",
+        verificationUri: "https://github.com/login/device",
+        expiresAt: Date.now() + 900_000,
+      },
+    });
+    state.githubSignIn.wait.mockReturnValue(approved.promise);
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: githubConnector, nextStep: "ready" },
+    });
+    await fixture.render(githubEntry);
+    await press("Sign in with GitHub");
+    await expect.element(page.getByText("WDJB-MJHT")).toBeVisible();
+    expect(state.openInBrowser).toHaveBeenCalledWith(
+      "https://github.com/login/device",
+      DEFAULT_BROWSER_PROFILE_ID,
+    );
+    await page.getByRole("button", { name: "Copy sign-in code" }).click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("WDJB-MJHT"));
+    await act(async () => approved.resolve({ _tag: "Success", value: { account: "octo" } }));
+    await vi.waitFor(() =>
+      expect(state.add.mock.calls[0]?.[0].input.credential).toEqual({
+        type: "source-control",
+        account: "octo",
+      }),
+    );
+    expect(state.githubSignIn.wait).toHaveBeenCalledWith({ environmentId, input: signInInput });
+  });
+
+  it("ends the device sign-in when the dialog closes, so a late approval connects nothing", async () => {
+    await using fixture = setup();
+    const lateApproval = Promise.withResolvers<unknown>();
+    state.githubSignIn.start.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        userCode: "WDJB-MJHT",
+        verificationUri: "https://github.com/login/device",
+        expiresAt: Date.now() + 900_000,
+      },
+    });
+    state.githubSignIn.wait.mockReturnValueOnce(lateApproval.promise);
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: githubConnector, nextStep: "ready" },
+    });
+    await fixture.render(githubEntry);
+    await press("Sign in with GitHub");
+    await expect.element(page.getByText("WDJB-MJHT")).toBeVisible();
+    await fixture.reset();
+    expect(state.githubSignIn.cancel).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: signInInput,
+    });
+    await act(async () => lateApproval.resolve({ _tag: "Success", value: { account: "octo" } }));
+    expect(state.add).not.toHaveBeenCalled();
+
+    state.githubSignIn.wait.mockResolvedValueOnce({ _tag: "Success", value: { account: "octo" } });
+    await fixture.render(githubEntry);
+    await press("Sign in with GitHub");
+    await vi.waitFor(() =>
+      expect(state.add.mock.calls[0]?.[0].input.credential).toEqual({
+        type: "source-control",
+        account: "octo",
+      }),
+    );
+  });
+
+  it("tells an expired code from a failed connection and offers to try again", async () => {
+    await using fixture = setup();
+    state.githubSignIn.start.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        userCode: "WDJB-MJHT",
+        verificationUri: "https://github.com/login/device",
+        expiresAt: Date.now() + 900_000,
+      },
+    });
+    state.githubSignIn.wait.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new SourceControlSignInError({
+          provider: signInInput.provider,
+          host: "github.com",
+          reason: "expired",
+          detail: "The sign-in code expired. Start again.",
+        }),
+      ),
+    });
+    await fixture.render(githubEntry);
+    await press("Sign in with GitHub");
+    await expect.element(page.getByText("The sign-in code expired. Start again.")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(state.add).not.toHaveBeenCalled();
+  });
+
+  it("keeps a personal access token one link away", async () => {
+    await using fixture = setup();
+    state.managedElsewhere = [login("octo", "gh")];
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: githubConnector, nextStep: "ready" },
+    });
+    await fixture.render(githubEntry);
+    await press("Use a token instead");
+    await userEvent.fill(field<HTMLInputElement>("connector-key"), "github_pat_synthetic_value");
+    await submit();
+    expect(state.add.mock.calls[0]?.[0].input.credential).toEqual({
+      type: "entered",
+      strategy: "bearer",
+      value: "github_pat_synthetic_value",
+    });
+  });
+});
+
+describe("local connectors", () => {
+  const localEntry: DiscoverEntry = {
+    name: "io.example/notes",
+    version: "1.0.0",
+    title: "Notes",
+    categories: [],
+    remotes: [],
+    installable: true,
+    localPackage: {
+      runner: "npx",
+      identifier: "@example/notes-mcp",
+      version: "1.0.0",
+      args: [],
+      environment: [{ name: "NOTES_KEY", required: true, secret: true }],
+    },
+  };
+  const ready = () => {
+    state.add.mockResolvedValue({ _tag: "Success", value: { connector, nextStep: "ready" } });
+    state.importable.mockResolvedValue({ _tag: "Success", value: { servers: [] } });
+    state.test.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        connectorId: connector.connectorId,
+        outcome: "ok",
+        checkedAt: connector.updatedAt,
+        tools: [{ name: "search" }],
+      },
+    });
+  };
+
+  it("adds a registry package that runs locally, with its declared key, then checks it", async () => {
+    await using fixture = setup();
+    ready();
+    await fixture.render(localEntry);
+    await expect.element(page.getByText("@example/notes-mcp")).toBeVisible();
+    await userEvent.fill(page.getByLabelText("NOTES_KEY", { exact: true }), "notes-key-0123456789");
+    await submit();
+    expect(state.add).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        target: {
+          type: "local-package",
+          name: "io.example/notes",
+          version: "1.0.0",
+          package: localEntry.localPackage,
+          environment: [{ name: "NOTES_KEY", value: "notes-key-0123456789", secret: true }],
+        },
+        displayName: "Notes",
+      },
+    });
+    await expect.element(page.getByText("Ready: 1 tool")).toBeVisible();
+  });
+
+  it("adds a server another app runs in one click", async () => {
+    await using _mocks = setup();
+    ready();
+    state.importable.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        servers: [
+          {
+            source: { type: "app", app: "claude-desktop" },
+            sourceLabel: "Claude Desktop",
+            name: "huji",
+            commandLine: "node server.js",
+            keys: [],
+          },
+        ],
+      },
+    });
+    await using _screen = await renderScreen(
+      <AddLocalConnectorDialog
+        open
+        onOpenChange={state.onOpenChange}
+        environmentId={environmentId}
+        entry={null}
+      />,
+    );
+    await page.getByRole("button", { name: "Add huji from Claude Desktop" }).click();
+    expect(state.add).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        target: {
+          type: "local-import",
+          source: { type: "app", app: "claude-desktop" },
+          name: "huji",
+        },
+      },
+    });
+    await expect.element(page.getByText("Ready: 1 tool")).toBeVisible();
+  });
+
+  it("runs a typed command under Advanced, split like a shell, keeping Windows backslashes", async () => {
+    await using _mocks = setup();
+    ready();
+    await using _screen = await renderScreen(
+      <AddLocalConnectorDialog
+        open
+        onOpenChange={state.onOpenChange}
+        environmentId={environmentId}
+        entry={null}
+      />,
+    );
+    await page.getByRole("button", { name: "Advanced: run a command" }).click();
+    await userEvent.fill(
+      page.getByLabelText("Command"),
+      String.raw`C:\Tools\server.exe "My Notes" --port 3`,
+    );
+    await submit();
+    expect(state.add).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        target: {
+          type: "local-command",
+          command: String.raw`C:\Tools\server.exe`,
+          args: ["My Notes", "--port", "3"],
+          environment: [],
+        },
+      },
+    });
+  });
+
+  const renderAddYourOwn = (onWebAddress = vi.fn()) =>
+    renderScreen(
+      <AddLocalConnectorDialog
+        open
+        onOpenChange={state.onOpenChange}
+        environmentId={environmentId}
+        entry={null}
+        onWebAddress={onWebAddress}
+      />,
+    );
+
+  it("hands a pasted web address to the online form without reading it as a path", async () => {
+    await using _mocks = setup();
+    ready();
+    const onWebAddress = vi.fn();
+    await using _screen = await renderAddYourOwn(onWebAddress);
+    await userEvent.fill(
+      page.getByLabelText("A path on that computer, or a web address"),
+      " https://mcp.example.com/mcp ",
+    );
+    await press("Open");
+    expect(onWebAddress).toHaveBeenCalledWith("https://mcp.example.com/mcp");
+    expect(state.inspect).not.toHaveBeenCalled();
+  });
+
+  it("installs a Scient plugin folder as a plugin", async () => {
+    await using _mocks = setup();
+    ready();
+    state.inspect.mockResolvedValue({
+      _tag: "Success",
+      value: { kind: "plugin", displayName: "Acme Lab" },
+    });
+    state.install.mockResolvedValue({ _tag: "Success", value: {} });
+    await using _screen = await renderAddYourOwn();
+    await userEvent.fill(
+      page.getByLabelText("A path on that computer, or a web address"),
+      "/plugins/acme",
+    );
+    await press("Open");
+    await expect.element(page.getByText("Install Acme Lab")).toBeVisible();
+    await press("Install");
+    expect(state.install).toHaveBeenCalledWith({ environmentId, input: { path: "/plugins/acme" } });
+    expect(state.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps a long error to one line, with the full text behind the info button", async () => {
+    await using _mocks = setup();
+    ready();
+    const long = `Scient could not find ${"/Applications/Other.app/Contents/SharedSupport".repeat(3)}/helper on this computer.`;
+    state.inspect.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new ExtensionsError({ reason: "unreachable", message: long })),
+    });
+    await using _screen = await renderAddYourOwn();
+    await userEvent.fill(
+      page.getByLabelText("A path on that computer, or a web address"),
+      "/somewhere",
+    );
+    await press("Open");
+    await expect.element(page.getByText("Scient could not use that.")).toBeVisible();
+    await page.getByRole("button", { name: "Show the full error" }).click();
+    await expect.element(page.getByText(long, { exact: true }).last()).toBeVisible();
   });
 });

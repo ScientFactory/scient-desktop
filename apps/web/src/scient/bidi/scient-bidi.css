@@ -77,12 +77,9 @@
   text-align: start;
 }
 
-.chat-markdown[data-scient-content-direction="rtl"]
-  .chat-markdown-details
-  [data-markdown-details-summary],
-.chat-markdown[data-scient-content-direction="ltr"]
-  .chat-markdown-details
-  [data-markdown-details-summary] {
+/* Upstream's summary trigger is text-left; a summary follows its message's direction. */
+.chat-markdown[data-scient-content-direction="rtl"] [data-markdown-details-summary],
+.chat-markdown[data-scient-content-direction="ltr"] [data-markdown-details-summary] {
   text-align: start;
 }
 

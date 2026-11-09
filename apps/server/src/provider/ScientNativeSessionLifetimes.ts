@@ -199,6 +199,8 @@ export const ownNativeSessionLifetimes = (
       generateBranchName: (input) => ownGeneration(generation.generateBranchName(input)),
       generateThreadTitle: (input) => ownGeneration(generation.generateThreadTitle(input)),
       generateReviewGuide: (input) => ownGeneration(generation.generateReviewGuide(input)),
+      generateTranscriptionPostProcessing: (input) =>
+        ownGeneration(generation.generateTranscriptionPostProcessing(input)),
     },
     orchestrationAdapter: {
       ...adapter,

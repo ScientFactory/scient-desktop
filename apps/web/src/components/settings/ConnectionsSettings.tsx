@@ -1,4 +1,5 @@
 import { SessionPermissions } from "./SessionPermissions";
+import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
@@ -14,7 +15,7 @@ import {
   type AdvertisedEndpoint,
   type DesktopServerExposureState,
   type DesktopWslState,
-  type EnvironmentId,
+  EnvironmentId,
   managedCapabilityDenial,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -30,11 +31,11 @@ import {
   applyWslEnableSelection,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
-  resolveAccessEnvironmentId,
   resolveLocalVersionStatusLabel,
   resolveTailscaleServeBaseUrl,
 } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+import { useAccessEnvironment } from "./useAccessEnvironment";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
@@ -103,7 +104,6 @@ import {
   useEnvironment,
   useEnvironments,
   usePrimaryEnvironment,
-  usePrimaryEnvironmentId,
 } from "~/state/environments";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -138,6 +138,9 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+// SCIENT-FORK:START — Scient Accounts: removing a computer deletes the sign-ins copied there.
+import { copiesStayToast, withdrawCopies } from "~/scient/accounts/remoteSessions";
+// SCIENT-FORK:END
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -166,22 +169,17 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
 }
 
 function AccessSettings() {
-  const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
-  const candidates = environments.filter(
-    (environment) =>
-      environment.environmentId === primaryEnvironmentId ||
-      (environment.entry.enabled && !isDesktopLocalConnectionTarget(environment.entry.target)),
-  );
-  const accessEnvironmentId = resolveAccessEnvironmentId({
-    primaryEnvironmentId,
-    environments: candidates.map((environment) => ({
-      environmentId: environment.environmentId,
-      connected: environment.connection.phase === "connected",
-    })),
-    selected: selectedEnvironmentId,
+  // A link that names an environment, such as the MCP wizard's, opens the page on it. The
+  // settings layout remounts this page when the link changes.
+  const linkedEnvironmentId = useSearch({
+    strict: false,
+    select: (search) =>
+      typeof search.machine === "string" ? EnvironmentId.make(search.machine) : null,
   });
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(linkedEnvironmentId);
+  const { candidates, environment: accessEnvironment } =
+    useAccessEnvironment(selectedEnvironmentId);
+  const accessEnvironmentId = accessEnvironment?.environmentId ?? null;
   const picker =
     candidates.length > 1 && accessEnvironmentId !== null ? (
       <div className="flex min-w-0 items-center gap-1.5 px-3 text-sm text-muted-foreground sm:px-4">
@@ -675,6 +673,10 @@ function ConnectionsSettingsContent({
     const environmentId = environment.environmentId;
     setRemovingSavedEnvironmentId(environmentId);
     setSavedBackendError(null);
+    // SCIENT-FORK:START — Scient Accounts: the sign-ins copied there go first, if it answers in 5 s.
+    const copies = await withdrawCopies(environmentId);
+    if (copies === "offline") toastManager.add(copiesStayToast(environment.label));
+    // SCIENT-FORK:END
     const result = await removeEnvironment(environmentId);
     setRemovingSavedEnvironmentId(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

@@ -49,6 +49,11 @@ can identify a listener, but a port or worktree match alone does not establish
 ownership. Never pipe a process search into a kill command. Managed Electron
 candidates use the [local dev app stop command](./local-dev-app.md) instead.
 
+To stop a worktree's dev stack when its thread settles, import the **Dev** action from
+`t3.json` in Settings > Projects > Actions and start it through the action menu or its
+keybinding. Its `stopOnSettle` option lets Scient stop the terminal and its child processes.
+Running `vp run dev` through an agent's own shell tool does not attach it to this lifecycle.
+
 ### State and ports
 
 Scient candidate apps use their worktree-owned `.scient-next` state. The stable development
@@ -278,7 +283,7 @@ is the formatting/lint lane; `Build and Typecheck` shares one dependency install
 and rejects failures, cancellations, missing jobs, and unexplained skips.
 
 Every PR and fresh merge group runs all workspace/package and scripts tests,
-all three web shards (unit and browser), all eight server shards, build, typecheck,
+all six web shards (unit and browser), all twelve server shards, build, typecheck,
 and lint. Documentation can be a test input, so docs-only PRs run these lanes too.
 Release-note content keeps its additional catalog and rendering qualification;
 it does not suppress the full suites. Test selection never uses an import scan
@@ -301,31 +306,36 @@ legacy, or partial evidence falls back to ordinary CI. One reporting job per sui
 covers reused qualification; shard names are not required
 contexts. A successful workflow still needs transfer evidence whenever server tests ran.
 
-Server tests use eight sequential-file shards with 10-minute job timeouts. Web keeps
-three shards on standard GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
+Workspace package tests run on three runners. Part 1 keeps the `Test` name that
+`release/stable` requires and runs every package parts 2 and 3 don't name, so a new
+package always runs; it alone sets up Electron and the browser secret helper.
+
+Server tests use twelve sequential-file shards. Web uses six shards on standard
+GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
 Both use longest-file-first allocation with package-relative path tie breaking and
 the lowest shard index on equal load. New files receive the sequencer's fallback
 weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
 exclude them. The shard-one performance suites retain their own measurements.
 
-Regenerate weights from every shard report of a representative successful CI run:
+Weights come from main's own timings. The `Shard weights` job reads the reports of the
+newest main pushes (successful reports only, medians over up to three runs per suite)
+and publishes one artifact that every shard of the run copies over
+`apps/{server,web}/src/testUtils/shardWeights.json`, so all shards derive the same split.
+When no recent report is readable, or that job fails, every shard uses the checked-in
+weights instead. To refresh the checked-in fallback:
 
 ```sh
-# Use a fresh directory and the selected run's attempt number.
-gh run download 40121165937 --repo ScientFactory/scient-desktop \
-  --pattern 'vitest-*-attempt-1' --dir /tmp/scient-shard-reports
-node .github/scripts/shard-weights.mjs --suite server \
-  /tmp/scient-shard-reports/vitest-server-*/*.json
-node .github/scripts/shard-weights.mjs --suite web \
-  /tmp/scient-shard-reports/vitest-web-*/*.json
+GITHUB_REPOSITORY=ScientFactory/scient-desktop RUNNER_TEMP=/tmp \
+  node .github/scripts/ci-shard-weights.mjs /tmp/scient-shard-weights
+cp /tmp/scient-shard-weights/web.json apps/web/src/testUtils/shardWeights.json
+cp /tmp/scient-shard-weights/server.json apps/server/src/testUtils/shardWeights.json
 node .github/scripts/verify-ci-shards.mjs
 ```
 
 The importer normalizes runner roots and takes per-file medians across multiple runs.
 It rejects failed reports, malformed paths, duplicates within a report, and invalid
 durations. Server weights include elapsed gaps between serial file results to capture
-imports/setup; overlapping web projects use individual file durations. Review both
-`apps/{server,web}/src/testUtils/shardWeights.json` files with their source run IDs.
+imports/setup; overlapping web projects use individual file durations.
 The verifier loads the actual Vitest configurations, discovers every test specification,
 and checks that the configured partitions cover each exactly once, independent of
 discovery order. Vitest's `list --filesOnly --shard` does not apply the sequencer.
@@ -362,7 +372,7 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
+`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
@@ -388,19 +398,26 @@ vp run dist:desktop:linux
 vp run dist:desktop:win
 ```
 
+`dist:desktop:linux` targets x64. For a native Linux ARM64 build, run:
+
+```sh
+vp run dist:desktop:artifact --platform linux --target AppImage --arch arm64
+```
+
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
 ### Prepared server bytecode
 
-Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
-Electron executable, after ASAR creation and before signing. Linux builds skip generation until
-native packaging and relocated AppImage reuse have been validated. macOS x64 builds on ARM64
-hosts run the packaged x64 Electron under Rosetta to generate the cache. Other cross-platform and
-cross-architecture builds skip generation explicitly. CLI, SEA and WSL runtimes keep their
-existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
-Worker-only modules compile normally.
+Native macOS and Windows desktop artifact builds, and native Linux x64 and ARM64 builds, generate server
+bytecode with the packaged Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
+module declarations without launching server services; worker-only modules compile normally.
+AppImage backends use temporary links for each mount and remove them on normal exit. Later launches
+reclaim abandoned cache directories whose links point to gone mounts; AppImage main-process caching
+stays disabled. macOS x64 builds on ARM64 hosts run the packaged x64 Electron
+under Rosetta to generate the cache. Other cross-platform and cross-architecture builds skip
+generation explicitly. CLI, SEA and WSL runtimes keep their existing behavior.
 
 Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
 name. The backend links individual prepared files into its writable cache with keys for the
@@ -410,7 +427,7 @@ differ or resource permissions prevent linking. Protected installations therefor
 prepared bytecode. No cache bytes are copied during startup.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
-packaged engine produced the expected CLI entry and fails the build if that format changes.
+packaged engine produced the expected CLI and server entries and fails the build if that format changes.
 The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
 Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
 explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
@@ -419,25 +436,30 @@ keeps the explicit flush needed when Windows force-kills the backend.
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
+Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
+toolchain as release CI does.
 
-Ubuntu and Debian:
+Ubuntu 24.04 and Debian 13:
 
 ```sh
 sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
+sudo apt-get install build-essential libsecret-1-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
 ```
+
+On Ubuntu 22.04 and Debian 12, use `libgtk-3-0` and `libasound2` instead of the `t64` packages.
 
 Fedora:
 
 ```sh
-sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
+sudo dnf install gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
 ```
 
 Arch Linux:
 
 ```sh
-sudo pacman -S rust base-devel libsecret pkgconf imagemagick
+sudo pacman -S base-devel libsecret pkgconf imagemagick gtk3 nss alsa-lib mesa
 ```
 
 The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.

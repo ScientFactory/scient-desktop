@@ -131,15 +131,20 @@ const inProfile = (
   },
 });
 
-it.effect("uses the account of the tab's profile, never another profile's", () =>
+it.effect("uses the tab's profile's account first, another's only when it is the only one", () =>
   Effect.gen(function* () {
     const { result } = yield* run([
       inProfile("acc_fixture2", "Personal", "personal"),
       inProfile("acc_fixture3", "Work", "default"),
     ]);
     expect(result?.note).toBe("Signed in with Work.");
-    const other = yield* run([inProfile("acc_fixture2", "Personal", "personal")]);
-    expect(other.result).toBeUndefined();
+    const only = yield* run([inProfile("acc_fixture2", "Personal", "personal")]);
+    expect(only.result?.note).toBe("Signed in with Personal.");
+    const two = yield* run([
+      inProfile("acc_fixture2", "Personal", "personal"),
+      inProfile("acc_fixture4", "Home", "home"),
+    ]);
+    expect(two.result).toBeUndefined();
   }),
 );
 

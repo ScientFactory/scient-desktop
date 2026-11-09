@@ -233,6 +233,7 @@ interface BuildCliInput {
   readonly wslPrebuild: Option.Option<string>;
   readonly syncTexRuntime: Option.Option<string>;
   readonly wslSyncTexRuntime: Option.Option<string>;
+  readonly voiceRuntime: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -1066,6 +1067,7 @@ interface ResolvedBuildOptions {
   readonly wslPrebuild: string | undefined;
   readonly syncTexRuntime: string | undefined;
   readonly wslSyncTexRuntime: string | undefined;
+  readonly voiceRuntime: string | undefined;
 }
 
 interface StagePackageJson {
@@ -1295,14 +1297,15 @@ export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
 ] as const;
 
-// node-pty bundles both Darwin architectures; only universal apps need both.
+// Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
+// apps need both. macOS 27 warns that an arm64 app holding x64-only code won't open on macOS 28.
 export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
   if (arch === undefined || arch === "universal") {
     return [...MAC_FILE_EXCLUSIONS];
   }
 
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/node-pty/prebuilds/darwin-${unusedArch}/**/*`];
+  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/**/prebuilds/darwin-${unusedArch}/**/*`];
 }
 // Large ASAR sidecars avoid NSIS extracting thousands of loose files during installs and updates.
 // WSL uses its Linux archive; DesktopWslServerTree can materialize this sidecar as a fallback.
@@ -2030,6 +2033,7 @@ const BuildEnvConfig = Config.all({
   wslPrebuild: Config.String("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
   syncTexRuntime: Config.String("SCIENT_SYNCTEX_RUNTIME").pipe(Config.option),
   wslSyncTexRuntime: Config.String("SCIENT_WSL_SYNCTEX_RUNTIME").pipe(Config.option),
+  voiceRuntime: Config.String("SCIENT_VOICE_RUNTIME").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -2126,6 +2130,8 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     Option.getOrUndefined(input.syncTexRuntime) ?? Option.getOrUndefined(env.syncTexRuntime);
   const wslSyncTexRuntime =
     Option.getOrUndefined(input.wslSyncTexRuntime) ?? Option.getOrUndefined(env.wslSyncTexRuntime);
+  const voiceRuntime =
+    Option.getOrUndefined(input.voiceRuntime) ?? Option.getOrUndefined(env.voiceRuntime);
 
   return {
     platform,
@@ -2142,6 +2148,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     wslPrebuild,
     syncTexRuntime,
     wslSyncTexRuntime,
+    voiceRuntime,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -3264,7 +3271,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           asar: { smartUnpack: false },
           asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB, `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`],
         }
-      : { asarUnpack: [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`] }),
+      : {
+          asarUnpack: [
+            `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`,
+            "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
+          ],
+        }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" && nativePreviewPath
@@ -3305,6 +3317,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         // SCIENT-FORK:END
         NSLocalNetworkUsageDescription:
           "Scient connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+        NSCalendarsUsageDescription:
+          "Commands you run in Scient may need access to your calendars.",
+        NSCalendarsFullAccessUsageDescription:
+          "Commands you run in Scient may need to read and write your calendar events.",
+        NSCalendarsWriteOnlyAccessUsageDescription:
+          "Commands you run in Scient may need to add events to your calendars.",
         NSCameraUsageDescription:
           "Scient lets commands run by terminals and coding agents use the camera.",
       },
@@ -4547,6 +4565,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
           stageResourcesDir,
           platform: options.platform,
           arch: options.arch,
+          sourceDirectory: options.voiceRuntime,
           verbose: options.verbose,
         }),
       catch: (cause) =>
@@ -5225,6 +5244,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslSyncTexRuntime: Flag.String("wsl-synctex-runtime").pipe(
     Flag.withDescription(
       "Path to the verified Linux x64 SyncTeX runtime directory staged into the WSL sidecar (env: SCIENT_WSL_SYNCTEX_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  voiceRuntime: Flag.String("voice-runtime").pipe(
+    Flag.withDescription(
+      "Path to a verified whisper.cpp runtime directory staged for the desktop target (env: SCIENT_VOICE_RUNTIME).",
     ),
     Flag.optional,
   ),

@@ -5,15 +5,26 @@ import {
   type AccountTarget,
   type PreviewAutomationStatus,
   type PreviewTabId,
+  type AccountKeepTypedInput,
+  type AccountSignInAsPersonInput,
+  type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { AccountsService, fail, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
-import { isUniversitySignInService } from "../universitySignIn.ts";
+import { isUniversitySignInService } from "../signInTabs.ts";
 
 const isAccountsError = Schema.is(AccountsError);
 import { AccountCookies, netscapeCookieJar } from "./cookies.ts";
@@ -24,12 +35,14 @@ import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
 import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { fillField } from "./fillField.ts";
-import { guardedSignIn } from "./guardedSignIn.ts";
+import { guardedSignIn, keepTyped } from "./guardedSignIn.ts";
+import { continueWaitingPapers } from "../../papers/getPaper.ts";
+import { userRunInvocation } from "../checkAccounts.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
+import { setUpConnector } from "./connectorSetup.ts";
 import { previewInvoker } from "./broker.ts";
 import { getPaper, paperStatus, queuePapers } from "../../papers/getPaper.ts";
-import { signInCodes } from "./signInCodes.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
@@ -165,9 +178,10 @@ export const accountAgentOperations = {
   }) {
     const scope = yield* accountSessionScope();
     const account = yield* getAccount(scope, accountId);
-    return yield* guardedSignIn(scope, account, {
-      tabId,
-      engine: yield* signInCodes(scope, account),
+    return yield* guardedSignIn({
+      page: { tabId },
+      signIn: account,
+      caller: { kind: "agent", scope },
     });
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (
@@ -259,9 +273,21 @@ export const accountAgentOperations = {
       (account.details.kind !== "website" || !anySiteMatches(account.details.sites, input.url))
     )
       return yield* fail("denied", "The requested site does not match this website account.");
+    const { accounts: rows } = yield* accounts.snapshot;
     // The session at a university's sign-in service opens its mail and records too.
-    if (isUniversitySignInService((yield* accounts.snapshot).accounts, input.url))
+    if (isUniversitySignInService(rows, input.url))
       return yield* fail("denied", "A university's sign-in stays in the browser.");
+    // A sign-in under way on the site is the user's until it ends.
+    const signingIn = new Set((yield* accounts.attempts).map((attempt) => attempt.accountId));
+    if (
+      rows.some(
+        (row) =>
+          signingIn.has(row.accountId) &&
+          row.details.kind === "website" &&
+          anySiteMatches(row.details.sites, input.url),
+      )
+    )
+      return yield* fail("denied", "The user is signing in to this site. Wait for the sign-in.");
     const profileId =
       input.profileId ??
       (account && "profileId" in account.details ? account.details.profileId : undefined);
@@ -288,6 +314,17 @@ export const accountAgentOperations = {
         : yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId: profile.profileId });
       if (!opened.tabId)
         return yield* fail("unavailable", "No browser tab is available for this profile.");
+      // While a sign-in runs or waits in the profile, any of its sites may be that sign-in's by
+      // now, through any tab: none of the profile's sessions leaves it until the sign-in ends.
+      if (
+        (yield* accounts.attempts).some(
+          (attempt) => attempt.profileId === undefined || attempt.profileId === profile.profileId,
+        )
+      )
+        return yield* fail(
+          "denied",
+          "The user is signing in on this tab. Wait for scient_account_sign_in.",
+        );
       const raw = yield* invoke<unknown>("accountCookies", { urls: [input.url] }, opened.tabId);
       const cookies = yield* decodeCookies(raw).pipe(
         Effect.mapError(() => fail("unavailable", "The browser session could not be read.")),
@@ -339,6 +376,7 @@ export const accountAgentOperations = {
     );
   }),
   scient_account_add: addAccount,
+  scient_connector_setup: setUpConnector,
   scient_paper_get: getPaper,
   scient_papers_queue: queuePapers,
   scient_papers_status: paperStatus,
@@ -346,3 +384,94 @@ export const accountAgentOperations = {
 type ToolInput<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]
 >;
+
+/**
+ * The user's own sign-in to a row, beside their conversation: it runs on after the reply, which
+ * names the tab as soon as it opens, in the service's scope, so shutdown interrupts it.
+ */
+const signInAsPerson = Effect.fn("AccountsAgent.signInAsPerson")(function* (
+  scope: Scope.Scope,
+  input: AccountSignInAsPersonInput,
+  environmentId: EnvironmentId,
+) {
+  const accounts = yield* AccountsService;
+  const account = (yield* accounts.snapshot).accounts.find(
+    (row) => row.accountId === input.accountId,
+  );
+  if (account?.details.kind !== "website")
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: "Choose a website or university to sign in to.",
+    });
+  const opened = yield* Deferred.make<PreviewTabId>();
+  const services = yield* Effect.context<
+    AccountsService | FileSystem.FileSystem | Path.Path | PreviewAutomationBroker
+  >();
+  const signing = yield* guardedSignIn({
+    signIn: account,
+    caller: {
+      kind: "person",
+      afterSignIn: continueWaitingPapers(environmentId).pipe(Effect.provideContext(services)),
+      ...(input.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
+    },
+    onTab: (tabId) => Deferred.succeed(opened, tabId).pipe(Effect.asVoid),
+  }).pipe(
+    Effect.provideService(AgentInvocationContext, userRunInvocation(input.threadId, environmentId)),
+    Effect.forkIn(scope),
+  );
+  const tabId = yield* Deferred.await(opened).pipe(
+    Effect.raceFirst(
+      Fiber.join(signing).pipe(
+        Effect.flatMap((ended) =>
+          Effect.fail(
+            new AccountsError({
+              reason: "unavailable",
+              message:
+                ("message" in ended && ended.message) || "The browser could not open the sign-in.",
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+  return { tabId, threadId: input.threadId };
+});
+
+/** The person's own sign-ins, and what they type in one Scient runs, for the server's life. */
+export class AccountAgentService extends Context.Service<
+  AccountAgentService,
+  {
+    readonly signInAsPerson: (
+      input: AccountSignInAsPersonInput,
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      { readonly tabId: PreviewTabId; readonly threadId: ThreadId },
+      AccountsError,
+      PreviewAutomationBroker | FileSystem.FileSystem | Path.Path
+    >;
+    readonly keepTyped: (input: AccountKeepTypedInput) => Effect.Effect<{ readonly kept: boolean }>;
+  }
+>()("t3/scient/accounts/agent/AccountAgentService") {}
+
+export const layer = Layer.effect(
+  AccountAgentService,
+  Effect.gen(function* () {
+    const scope = yield* Effect.scope;
+    const accounts = yield* AccountsService;
+    return AccountAgentService.of({
+      signInAsPerson: Effect.fn("AccountAgentService.signInAsPerson")(function* (
+        input: AccountSignInAsPersonInput,
+        environmentId: EnvironmentId,
+      ) {
+        return yield* signInAsPerson(scope, input, environmentId).pipe(
+          Effect.provideService(AccountsService, accounts),
+        );
+      }),
+      keepTyped: Effect.fn("AccountAgentService.keepTyped")(function* (
+        input: AccountKeepTypedInput,
+      ) {
+        return yield* keepTyped(input).pipe(Effect.provideService(AccountsService, accounts));
+      }),
+    });
+  }),
+);

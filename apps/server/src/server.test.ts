@@ -212,6 +212,7 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -278,6 +279,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { registerAnalysisRpcTests } from "./scient/analysis/AnalysisRpcServerTests.ts";
 import { registerComputeRpcTests } from "./scient/compute/ComputeRpcServerTests.ts";
+import { ComputeRecipeNetwork } from "./scient/compute/ComputeRecipeSource.ts";
 import { registerMarkdownTransportTests } from "./scient/markdown/MarkdownTransportServerTests.ts";
 import {
   measureHttpGet,
@@ -1042,6 +1044,8 @@ const buildAppUnderTest = (options?: {
         // backed by this fixture's state directory, project store and provider registry.
         Layer.provide(ScientExtensionsLayerLive.pipe(Layer.provide(ProjectStoreV2.layer))),
         // SCIENT-FORK:END
+        // Provider installs run through T3's service, over the mocked installations below.
+        Layer.provide(ProviderInstallation.layer),
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
@@ -1266,6 +1270,9 @@ const buildAppUnderTest = (options?: {
       .pipe(
         // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
         Layer.provide(AccountsTestkit.layer),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — Compute recipe updates come from GitHub; harnesses keep the shipped recipes.
+        Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
         // SCIENT-FORK:END
         Layer.provide(ManagedPolicy.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
@@ -6135,6 +6142,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             generateReviewGuide: (): never => {
               throw new Error("Unexpected review guide generation");
             },
+            generateTranscriptionPostProcessing: (): never => {
+              throw new Error("Unexpected transcript cleanup");
+            },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");
             },
@@ -6347,6 +6357,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               generateReviewGuide: (): never => {
                 throw new Error("Unexpected review guide generation");
               },
+              generateTranscriptionPostProcessing: (): never => {
+                throw new Error("Unexpected transcript cleanup");
+              },
               generatePrContent: (): never => {
                 throw new Error("Unexpected generation");
               },
@@ -6453,6 +6466,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               },
               generateReviewGuide: (): never => {
                 throw new Error("Unexpected review guide generation");
+              },
+              generateTranscriptionPostProcessing: (): never => {
+                throw new Error("Unexpected transcript cleanup");
               },
               generatePrContent: (): never => {
                 throw new Error("Unexpected generation");
@@ -6686,6 +6702,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             },
             generateReviewGuide: (): never => {
               throw new Error("Unexpected review guide generation");
+            },
+            generateTranscriptionPostProcessing: (): never => {
+              throw new Error("Unexpected transcript cleanup");
             },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");

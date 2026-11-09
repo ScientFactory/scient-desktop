@@ -1,14 +1,39 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Generate ephemeral synthetic values instead of credential fixtures.
 import * as NodeCrypto from "node:crypto";
-import { expect, vi } from "vite-plus/test";
+import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PRIMARY_LOCAL_ENVIRONMENT_ID, type SessionCookie } from "@t3tools/contracts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import { BrowserImport } from "../../preview/BrowserImport/BrowserImport.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import { rememberAccountsSession } from "./sessionIdentity.ts";
-import { cookieMetadata, fill, forwardCapturedSignIn, signedInSites } from "./ipc.ts";
+import {
+  cookieMetadata,
+  fill,
+  fillMainHandler,
+  forwardCapturedSignIn,
+  signedInSites,
+  withdrawFromMainHandler,
+} from "./ipc.ts";
+import { signOutMainSite } from "./mainFill.ts";
+import { trackMainInserts } from "./mainInserts.ts";
+
+vi.mock("./sessionCookies.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sessionCookies.ts")>()),
+  withCookieDebugger: (
+    session: { send: (method: string, params?: object) => Promise<unknown> },
+    run: (send: (method: string, params?: object) => Promise<unknown>) => Promise<unknown>,
+  ) => run(session.send),
+}));
 
 vi.mock("electron", () => ({
   BrowserWindow: {},
@@ -107,6 +132,8 @@ it.effect(
       const f = fixture();
       const capture = {
         url: "https://example.test",
+        path: "/login",
+        step: "password",
         username: NodeCrypto.randomBytes(16).toString("hex"),
         password: NodeCrypto.randomBytes(16).toString("hex"),
       };
@@ -131,6 +158,34 @@ it.effect(
       yield* f.run(forwardCapturedSignIn(f.guestEvent, { ...capture, url: "https://other.test" }));
       expect(f.sent).toHaveLength(1);
     }),
+);
+
+it.effect("carries a username step to the next password step, and never sends it alone", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const username = NodeCrypto.randomBytes(16).toString("hex");
+    const password = NodeCrypto.randomBytes(16).toString("hex");
+    const step = (patch: object) =>
+      f.run(
+        forwardCapturedSignIn(f.guestEvent, {
+          url: "https://example.test",
+          path: "/login",
+          step: "password",
+          username: "",
+          password,
+          ...patch,
+        }),
+      );
+    yield* step({ step: "username", username, password: "" });
+    expect(f.sent).toEqual([]);
+    yield* step({ path: "/password" });
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0]).toMatchObject({ path: "/password", usernameFrom: "earlier-step" });
+    expect((f.sent[0] as { username: string }).username === username).toBe(true);
+    // Used once: the next password step has nothing to carry.
+    yield* step({});
+    expect(f.sent[1]).toMatchObject({ username: "", usernameFrom: "form" });
+  }),
 );
 
 it.effect(
@@ -183,3 +238,413 @@ it.effect("returns only cookie metadata and distinguishes denied reads from empt
     expect(yield* f.run(cookieMetadata({ profileId: "work" }, f.mainEvent))).toBeNull();
   }),
 );
+
+const fillInput = (input: Record<string, unknown>) => ({ mode: "fill", skipSites: [], ...input });
+
+/** Jars kept in memory behind a fake debugger, with faults a test can set. */
+function fillFixture(
+  stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-main-copies-")),
+) {
+  const sessions = new Map<string, ReturnType<typeof fakeJarSession>>();
+  const imports: Array<{ scope: string; persistent: boolean }> = [];
+  const sessionFor = (scope: string, persistent = true, namespace?: "profile") => {
+    let session = sessions.get(scope);
+    if (!session) {
+      session = fakeJarSession();
+      sessions.set(scope, session);
+      rememberAccountsSession(session as unknown as Electron.Session, scope, persistent, namespace);
+      if (persistent) trackMainInserts(session as unknown as Electron.Session);
+    }
+    return session;
+  };
+  const frame = {};
+  const mainContents = { id: 1, mainFrame: frame, isDestroyed: () => false };
+  const layer = Layer.mergeAll(
+    Layer.succeed(
+      DesktopEnvironment.DesktopEnvironment,
+      // Only the state folder: Main's copy records live there.
+      { stateDir, path: NodePath } as unknown as DesktopEnvironment.DesktopEnvironment["Service"],
+    ),
+    Layer.mock(PreviewManager)({
+      isBrowserPartition: () => true,
+      getBrowserSession: (scope = "shared", persistent, namespace) =>
+        Effect.succeed(sessionFor(scope, persistent, namespace) as unknown as Electron.Session),
+    }),
+    Layer.mock(BrowserImport)({
+      importCookies: ({ scope, persistent }) =>
+        Effect.sync(() => {
+          imports.push({ scope, persistent });
+          sessionFor(scope, persistent).put(jarCookie({ domain: ".github.com", value: "import" }));
+          return { imported: 1, skipped: 0, skippedDomains: [] };
+        }),
+    }),
+    Layer.mock(ElectronWindow)({
+      appWindows: Effect.succeed([
+        {
+          isDestroyed: () => false,
+          webContents: mainContents,
+        } as unknown as Electron.BrowserWindow,
+      ]),
+    }),
+  );
+  const event = { sender: { id: 1 }, senderFrame: frame };
+  const profile = (id: string) =>
+    sessionFor(JSON.stringify([PRIMARY_LOCAL_ENVIRONMENT_ID, id]), true, "profile");
+  return {
+    main: () => sessionFor(PRIMARY_LOCAL_ENVIRONMENT_ID),
+    profile,
+    imports,
+    sessions,
+    copy: (input: Record<string, unknown>, sender: unknown = event) =>
+      fillMainHandler(fillInput(input), sender as never).pipe(Effect.provide(layer)),
+    stateDir,
+    signOutMain: (site: string) =>
+      signOutMainSite(site, PRIMARY_LOCAL_ENVIRONMENT_ID).pipe(Effect.provide(layer)),
+    withdraw: (from: string, heldOnly?: true) =>
+      withdrawFromMainHandler(heldOnly ? { from, heldOnly } : { from }, event as never).pipe(
+        Effect.provide(layer),
+      ),
+  };
+}
+
+const jarCookie = (overrides: Partial<SessionCookie> = {}): SessionCookie => ({
+  name: "session",
+  value: "synthetic",
+  domain: ".github.com",
+  hostOnly: false,
+  path: "/",
+  secure: true,
+  httpOnly: true,
+  sameSite: "lax",
+  ...overrides,
+});
+
+function fakeJarSession() {
+  const jar = new Map<string, SessionCookie>();
+  const faults = {
+    corruptNextSet: false,
+    failDeletes: false,
+    onSet: () => {},
+  };
+  const cookies = Object.assign(new NodeEvents.EventEmitter(), {
+    flushStore: vi.fn(async () => undefined),
+    // Electron's own cookie API, which Accounts' Sign out uses.
+    get: vi.fn(async () => [...jar.values()].map(electronCookie)),
+    remove: vi.fn(async (_url: string, name: string) => {
+      for (const [key, cookie] of jar) if (cookie.name === name) jar.delete(key);
+    }),
+  });
+  // One cookie per slot and partition, as in a real jar.
+  const slot = (cookie: Pick<SessionCookie, "name" | "domain" | "path" | "partitionKey">) =>
+    JSON.stringify([cookie.name, cookie.domain, cookie.path, cookie.partitionKey ?? null]);
+  const put = (cookie: SessionCookie, own = false) => {
+    jar.set(slot(cookie), cookie);
+    if (!own) cookies.emit("changed", {}, electronCookie(cookie), "inserted", false);
+  };
+  // Electron's change event, like its cookie API, names no partition.
+  const electronCookie = ({ partitionKey: _, ...cookie }: SessionCookie) => ({
+    ...cookie,
+    session: cookie.expires === undefined,
+  });
+  const reads: { count: number; after?: (() => void) | undefined } = { count: 0 };
+  const send = async (method: string, params?: { cookies?: Array<Record<string, never>> }) => {
+    if (method === "Network.getAllCookies") {
+      reads.count++;
+      const after = reads.after;
+      reads.after = undefined;
+      after?.();
+    }
+    if (method === "Network.getAllCookies")
+      return {
+        cookies: [...jar.values()].map((cookie) => ({
+          ...cookie,
+          expires: cookie.expires ?? -1,
+          session: cookie.expires === undefined,
+          sameSite: { lax: "Lax", strict: "Strict", no_restriction: "None" }[
+            cookie.sameSite as "lax"
+          ],
+        })),
+      };
+    if (method === "Network.setCookies") {
+      const corrupt = faults.corruptNextSet;
+      faults.corruptNextSet = false;
+      for (const param of params?.cookies ?? []) {
+        const { url, sameSite, expires, domain, ...rest } = param as Record<string, unknown>;
+        const cookie = {
+          ...(rest as Omit<SessionCookie, "domain" | "hostOnly" | "sameSite">),
+          domain: (domain as string | undefined) ?? new URL(url as string).hostname,
+          hostOnly: domain === undefined,
+          sameSite: ({ Lax: "lax", Strict: "strict", None: "no_restriction" } as const)[
+            sameSite as "Lax"
+          ],
+          ...(expires === undefined ? {} : { expires: expires as number }),
+        } as SessionCookie;
+        jar.set(slot(cookie), corrupt ? { ...cookie, httpOnly: !cookie.httpOnly } : cookie);
+        cookies.emit("changed", {}, electronCookie(cookie), "inserted", false);
+      }
+      faults.onSet();
+      return {};
+    }
+    if (method === "Network.deleteCookies") {
+      if (faults.failDeletes) throw new Error("Synthetic delete failure");
+      jar.delete(slot(params as unknown as SessionCookie));
+      return {};
+    }
+    throw new Error(`Unexpected ${method}`);
+  };
+  return {
+    cookies,
+    jar,
+    faults,
+    reads,
+    put,
+    send,
+    clearStorageData: vi.fn(async () => jar.clear()),
+  };
+}
+
+describe("withdrawFromMain", () => {
+  it.effect("takes back only what a restricted profile's copies still hold in Main", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      f.profile("work").put(jarCookie({ domain: ".overleaf.com", value: "overleaf" }));
+      f.profile("home").put(jarCookie({ domain: ".gitlab.com", value: "home" }));
+      yield* f.copy({ from: "work" });
+      yield* f.copy({ from: "home" });
+      expect(f.main().jar.size).toBe(3);
+      // The site rotated Overleaf's session in Main since: it is Main's own now.
+      f.main().put(jarCookie({ domain: ".overleaf.com", value: "rotated" }));
+      // Listing what Main holds from it, for other computers first, removes nothing.
+      expect(yield* f.withdraw("work", true)).toEqual({
+        units: [["github.com"], ["overleaf.com"]],
+      });
+      expect(f.main().jar.size).toBe(3);
+      expect(yield* f.withdraw("work")).toEqual({ units: [["github.com"]] });
+      expect([...f.main().jar.values()].map(({ domain, value }) => [domain, value])).toEqual([
+        [".overleaf.com", "rotated"],
+        [".gitlab.com", "home"],
+      ]);
+      // Taken back once: nothing is left to take, and the source profile is never touched.
+      expect(yield* f.withdraw("work")).toEqual({ units: [] });
+      expect(f.profile("work").jar.size).toBe(2);
+    }),
+  );
+
+  it.effect("never takes back a session Main had before an identical copy", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      // Main was signed in on its own, to the same session the profile holds.
+      f.main().put(jarCookie(), true);
+      f.profile("work").put(jarCookie());
+      const filled = yield* f.copy({ from: "work" });
+      expect(filled?.units[0]?.outcome).toBe("same");
+      expect(yield* f.withdraw("work")).toEqual({ units: [] });
+      expect(f.main().jar.size).toBe(1);
+    }),
+  );
+
+  it.effect("keeps the first source's copy when an identical second source is restricted", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      f.profile("home").put(jarCookie());
+      expect((yield* f.copy({ from: "work" }))?.units[0]?.outcome).toBe("copied");
+      expect((yield* f.copy({ from: "home" }))?.units[0]?.outcome).toBe("same");
+      expect(yield* f.withdraw("home")).toEqual({ units: [] });
+      expect(f.main().jar.size).toBe(1);
+      expect(yield* f.withdraw("work")).toEqual({ units: [["github.com"]] });
+      expect(f.main().jar.size).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "keeps copy records on disk, digests only, and withdraws from them after a restart",
+    () =>
+      Effect.gen(function* () {
+        const first = fillFixture();
+        first.profile("work").put(jarCookie({ value: "work-session" }));
+        yield* first.copy({ from: "work" });
+        const file = NodePath.join(first.stateDir, "scient", "main-copies.json");
+        const text = NodeFS.readFileSync(file, "utf8");
+        expect(text).not.toContain("work-session");
+        expect(JSON.parse(text)).toEqual({
+          [PRIMARY_LOCAL_ENVIRONMENT_ID]: [
+            { from: "work", sites: ["github.com"], fingerprint: expect.any(String) },
+          ],
+        });
+        if ((yield* HostProcess.Platform) !== "win32")
+          expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
+        // A new run reads the records back from the file, with Main as the copy left it.
+        const restarted = fillFixture(first.stateDir);
+        restarted.main().put(jarCookie({ value: "work-session" }), true);
+        expect(yield* restarted.withdraw("work")).toEqual({ units: [["github.com"]] });
+        expect(restarted.main().jar.size).toBe(0);
+        expect(JSON.parse(NodeFS.readFileSync(file, "utf8"))).toEqual({
+          [PRIMARY_LOCAL_ENVIRONMENT_ID]: [],
+        });
+      }),
+  );
+});
+
+describe("fillMain", () => {
+  it.effect("refuses other senders, and Main or Incognito as a source", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      expect(yield* f.copy({ from: "work" }, { sender: { id: 2 } })).toBeNull();
+      for (const refused of [{ from: "default" }, { from: "incognito" }])
+        expect(yield* f.copy(refused)).toBeNull();
+      expect(f.main().jar.size).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "copies a sign-in into an empty Main, leaves the source alone and returns no values",
+    () =>
+      Effect.gen(function* () {
+        const f = fillFixture();
+        const secret = NodeCrypto.randomBytes(16).toString("hex");
+        f.profile("work").put(jarCookie({ value: secret }));
+        const before = [...f.profile("work").jar.values()];
+        const result = yield* f.copy({ from: "work" });
+        expect(result).toEqual({
+          units: [{ sites: ["github.com"], outcome: "copied" }],
+          unsupported: 0,
+        });
+        expect(JSON.stringify(result)).not.toContain(secret);
+        expect([...f.main().jar.values()]).toEqual(before);
+        expect([...f.profile("work").jar.values()]).toEqual(before);
+      }),
+  );
+
+  it.effect("reads Main's jar once for units it leaves alone, and again after a change", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      for (const domain of [".github.com", ".gitlab.com", ".overleaf.com"]) {
+        f.profile("work").put(jarCookie({ domain }));
+        f.main().put(jarCookie({ domain }), true);
+      }
+      const first = yield* f.copy({ from: "work" });
+      expect(first?.units.map(({ outcome }) => outcome)).toEqual(["same", "same", "same"]);
+      expect(f.main().reads.count).toBe(1);
+      // A page writing during the batch is a change event: the next unit reads the jar afresh.
+      f.main().reads.count = 0;
+      f.main().reads.after = () => f.main().put(jarCookie({ domain: ".example.com" }));
+      yield* f.copy({ from: "work" });
+      expect(f.main().reads.count).toBe(2);
+    }),
+  );
+
+  it.effect("gives one copy and one conflict for two identities at once", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie({ value: "work" }));
+      f.profile("home").put(jarCookie({ value: "home" }));
+      const results = yield* Effect.forEach(
+        ["work", "home"],
+        (from) =>
+          f.copy({
+            from,
+            units: [["github.com"]],
+            mode: "fill-or-replace",
+          }),
+        { concurrency: "unbounded" },
+      );
+      expect(results.map((result) => result?.units[0]?.outcome).toSorted()).toEqual([
+        "conflict",
+        "copied",
+      ]);
+    }),
+  );
+
+  it.effect(
+    "replaces only when nothing touched Main since its sign-out, as far as the tracker knows",
+    () =>
+      Effect.gen(function* () {
+        using _clock = fakeClock(1_000_000);
+        const f = fillFixture();
+        f.main().put(jarCookie({ value: "old" }), true);
+        f.profile("work").put(jarCookie({ value: "new" }));
+        const replace = (at: number) =>
+          f.copy({
+            from: "work",
+            units: [["github.com"]],
+            mode: "fill-or-replace",
+            replaceAllowedSince: { "github.com": DateTime.formatIso(DateTime.makeUnsafe(at)) },
+          });
+        // Before the tracker started, it can't say.
+        expect((yield* replace(999_000))?.units[0]?.outcome).toBe("conflict");
+        vi.setSystemTime(1_010_000);
+        f.main().put(jarCookie({ name: "page", value: "site" }));
+        expect((yield* replace(1_005_000))?.units[0]?.outcome).toBe("conflict");
+        f.main().jar.delete(JSON.stringify(["page", ".github.com", "/", null]));
+        expect((yield* replace(1_020_000))?.units[0]?.outcome).toBe("copied");
+        expect(f.main().jar.get(JSON.stringify(["session", ".github.com", "/", null]))?.value).toBe(
+          "new",
+        );
+      }),
+  );
+
+  // The copy-race rules are tested in shared applyUnit and on real Electron by the qualify
+  // harness; this one proves Electron's change events reach the copy as foreign writes.
+  it.effect("passes a site's insert during a copy to the restore, which keeps it", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      const main = f.main();
+      main.faults.corruptNextSet = true;
+      main.faults.onSet = () => {
+        main.faults.onSet = () => {};
+        main.put(jarCookie({ name: "page", value: "site" }));
+      };
+      const result = yield* f.copy({ from: "work" });
+      expect(result?.units[0]?.outcome).toBe("failed");
+      expect([...main.jar.values()].map((cookie) => cookie.name)).toEqual(["page"]);
+    }),
+  );
+
+  it.effect("refuses a unit whose restore failed until the user signs out of it in Main", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      f.profile("work").put(jarCookie());
+      const main = f.main();
+      main.faults.corruptNextSet = true;
+      main.faults.onSet = () => {
+        main.faults.failDeletes = true;
+      };
+      const first = yield* f.copy({ from: "work" });
+      expect(first?.units[0]?.outcome).toBe("restore-failed");
+      main.faults.failDeletes = false;
+      main.jar.clear();
+      const again = yield* f.copy({ from: "work" });
+      expect(again?.units[0]?.outcome).toBe("restore-failed");
+      expect(main.jar.size).toBe(0);
+      // The user's own Sign out of the site in Main lets copies write it again.
+      expect(yield* f.signOutMain("github.com")).toBe(true);
+      const afterSignOut = yield* f.copy({ from: "work" });
+      expect(afterSignOut?.units[0]?.outcome).toBe("copied");
+    }),
+  );
+
+  it.effect("imports into Main through a throwaway partition the importer writes instead", () =>
+    Effect.gen(function* () {
+      const f = fillFixture();
+      const result = yield* f.copy({
+        from: { importSourceId: "chrome", sourceProfileDirectory: "Default" },
+      });
+      expect(result?.units).toEqual([{ sites: ["github.com"], outcome: "copied" }]);
+      expect(f.imports).toHaveLength(1);
+      expect(f.imports[0]).toMatchObject({ persistent: false });
+      expect(f.imports[0]?.scope.startsWith("scient-import-staging:")).toBe(true);
+      expect(f.sessions.get(f.imports[0]!.scope)?.clearStorageData).toHaveBeenCalled();
+      expect(f.main().jar.size).toBe(1);
+    }),
+  );
+});
+
+function fakeClock(at: number) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(at);
+  return { [Symbol.dispose]: () => void vi.useRealTimers() };
+}

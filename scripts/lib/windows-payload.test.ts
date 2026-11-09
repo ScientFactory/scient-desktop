@@ -5,6 +5,7 @@ import {
   unexpectedWindowsNativeFiles,
   WINDOWS_VOICE_FILES,
   windowsCursorFiles,
+  windowsTranscribeFiles,
 } from "./windows-payload.ts";
 
 const componentFiles = [
@@ -27,7 +28,13 @@ it("reproduces the real 109-file release failure and admits the corrected invent
     (file) => !failed.unexpectedFiles.includes(file),
   );
   const corrected = analyzeWindowsPayloadInventory({ files: correctedFiles, arch: "x64" });
-  assert.deepStrictEqual(corrected.counts, { voice: 15, cursor: 22, preview: 0, core: 66 });
+  assert.deepStrictEqual(corrected.counts, {
+    voice: 15,
+    cursor: 22,
+    preview: 0,
+    transcribe: 0,
+    core: 66,
+  });
   assert.lengthOf(corrected.unexpectedFiles, 0);
   assert.equal(corrected.allowance, 37);
   assert.isAtMost(correctedFiles.length, 80 + corrected.allowance);
@@ -49,6 +56,24 @@ it.each([
 ])("rejects unapproved component files even below the total cap: %s", (extra) => {
   const result = analyzeWindowsPayloadInventory({ files: [...componentFiles, extra], arch: "x64" });
   assert.deepStrictEqual(result.unexpectedFiles, [extra]);
+});
+
+it("admits T3's transcription engine as its own component", () => {
+  const engine = windowsTranscribeFiles("x64").map(
+    (file) =>
+      `resources/server.asar.unpacked/node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/${file}`,
+  );
+  const result = analyzeWindowsPayloadInventory({
+    files: [...componentFiles, ...engine],
+    arch: "x64",
+  });
+  assert.equal(result.counts.transcribe, 13);
+  assert.equal(result.allowance, 37 + 13);
+  const partial = analyzeWindowsPayloadInventory({
+    files: [...componentFiles, ...engine.slice(1)],
+    arch: "x64",
+  });
+  assert.deepStrictEqual(partial.missingFiles, [engine[0]]);
 });
 
 it("admits only the explicitly staged preview inventory", () => {
@@ -96,4 +121,17 @@ it("does not grant additional allowance to a large dependency spill", () => {
   });
   assert.equal(result.allowance, 37);
   assert.equal(result.counts.core, 20_000);
+});
+
+it("counts the server compile cache apart from the core budget, up to its cap", () => {
+  const cache = (count: number) =>
+    Array.from({ length: count }, (_, index) => `resources/server-compile-cache/${index}`);
+  const core = ["resources/app.asar", "Scient.exe"];
+  const base = analyzeWindowsPayloadInventory({ files: core, arch: "x64" }).allowance;
+  const result = analyzeWindowsPayloadInventory({ files: [...core, ...cache(39)], arch: "x64" });
+  assert.equal(result.counts.compileCache, 39);
+  assert.equal(result.counts.core, 2);
+  assert.equal(result.allowance, base + 39);
+  const oversized = analyzeWindowsPayloadInventory({ files: [...core, ...cache(70)], arch: "x64" });
+  assert.equal(oversized.allowance, base + 64);
 });

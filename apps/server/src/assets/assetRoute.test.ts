@@ -21,6 +21,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl } from "./AssetAccess.ts";
 import * as AssetSigner from "./AssetSigner.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-pdf-route-test-",
@@ -41,6 +42,9 @@ const testLayer = Layer.mergeAll(
   }),
   // The route reads host media through the drivers' own services; this fixture serves files only.
   Layer.succeed(BuiltInDrivers.SourceControlDrivers, []),
+  Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+    resolve: () => Effect.die("This fixture serves files and never resolves a repository."),
+  }),
   NodeHttpPlatform.layer,
 ).pipe(
   Layer.provideMerge(FetchHttpClient.layer),

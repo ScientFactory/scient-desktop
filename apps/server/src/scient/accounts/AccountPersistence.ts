@@ -7,6 +7,8 @@ import {
   AccountWriteStore,
   BrowserProfileRecord,
   AccountActivityEntry,
+  EnvironmentId,
+  IsoDateTime,
   OnePasswordStatus,
 } from "@t3tools/contracts";
 import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
@@ -22,6 +24,19 @@ export const StoredAccount = Schema.Struct({
   ),
 });
 export type StoredAccount = typeof StoredAccount.Type;
+
+/** A desktop that sends here: the hash of its key, and the session it last proved it over. */
+export const RemoteSender = Schema.Struct({
+  source: EnvironmentId,
+  label: Schema.String,
+  keyHash: Schema.String,
+  sessionId: Schema.String,
+  /** The session that bound it; only that one may be issued a new key without the old. */
+  boundBy: Schema.optional(Schema.String),
+  /** When it last proved its key; a sender silent for 30 days loses its copies. */
+  seenAt: IsoDateTime,
+});
+export type RemoteSender = typeof RemoteSender.Type;
 export const AccountsState = Schema.Struct({
   format: Schema.Literal(1),
   agentAccess: Schema.Boolean,
@@ -40,6 +55,12 @@ export const AccountsState = Schema.Struct({
     ]),
   ),
   onePasswordStatus: OnePasswordStatus,
+  /** On a remote: desktops sending sign-ins here, each proven by a key only it holds. */
+  senders: Schema.optional(Schema.Array(RemoteSender)),
+  /** On the desktop: the key each other computer issued it as a sender. */
+  senderKeys: Schema.optional(
+    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, key: Schema.String })),
+  ),
 });
 export type AccountsState = typeof AccountsState.Type;
 export const emptyState: AccountsState = {
@@ -62,6 +83,8 @@ export class AccountPersistence extends Context.Service<
       value: Redacted.Redacted<Uint8Array>,
     ) => Effect.Effect<void, AccountsError>;
     readonly remove: (name: string) => Effect.Effect<void, AccountsError>;
+    /** Whether a record was ever stored, without opening the vault. */
+    readonly exists: (name: string) => Effect.Effect<boolean, AccountsError>;
   }
 >()("t3/scient/accounts/AccountPersistence") {}
 
@@ -89,6 +112,9 @@ export const layer = Layer.effect(
       }),
       remove: Effect.fn("AccountPersistence.remove")((name) =>
         store.remove(name).pipe(Effect.mapError(unavailable)),
+      ),
+      exists: Effect.fn("AccountPersistence.exists")((name) =>
+        store.get(name).pipe(Effect.map(Option.isSome), Effect.mapError(unavailable)),
       ),
     });
   }),
@@ -145,16 +171,56 @@ const foldSignInFields = (summary: Record<string, unknown>) => {
   return signIn ? { ...rest, ...verified, signIn } : { ...rest, ...verified };
 };
 
+const ORIGIN_PREFIXES = [
+  ["Imported from", "import"],
+  ["Copied from", "copy"],
+] as const;
+
+/** Imported and copied rows once said so only at the start of their detail; now in `from`. */
+const foldSignInOrigin = (summary: Record<string, unknown>) => {
+  const signIn = summary["signIn"] as
+    | { state?: unknown; detail?: unknown; from?: unknown }
+    | undefined;
+  if (signIn?.state !== "unknown" || signIn.from !== undefined) return summary;
+  const { detail } = signIn;
+  const from = ORIGIN_PREFIXES.find(
+    ([prefix]) => typeof detail === "string" && detail.startsWith(prefix),
+  )?.[1];
+  return from ? { ...summary, signIn: { ...signIn, from } } : summary;
+};
+
+/** Main's sign-outs and back-fill were fields of its profile record; they are its `main` now. */
+const foldMainFields = (profile: unknown) => {
+  if (typeof profile !== "object" || profile === null) return profile;
+  if (!("signedOutSites" in profile || "backfilled" in profile)) return profile;
+  const { signedOutSites, backfilled, ...rest } = profile as Record<string, unknown>;
+  const existing = (rest["main"] ?? {}) as Record<string, unknown>;
+  return {
+    ...rest,
+    main: {
+      ...(signedOutSites === undefined ? {} : { signedOutSites }),
+      ...(backfilled === undefined ? {} : { backfilled }),
+      ...existing,
+    },
+  };
+};
+
 /** Older stored shapes, read as today's before decoding. */
 export const foldStoredAccounts = (state: unknown): unknown => {
   if (typeof state !== "object" || state === null || !("accounts" in state)) return state;
   if (!Array.isArray(state.accounts)) return state;
+  const profiles =
+    "profiles" in state && Array.isArray(state.profiles) ? state.profiles : undefined;
   return {
     ...state,
+    ...(profiles ? { profiles: profiles.map(foldMainFields) } : {}),
     accounts: state.accounts.map((account) => {
       const summary = account?.summary;
       if (typeof summary !== "object" || summary === null) return account;
-      return { ...account, summary: foldSignInFields(foldLibraryDetails(summary)) };
+      return {
+        ...account,
+        summary: foldSignInOrigin(foldSignInFields(foldLibraryDetails(summary))),
+      };
     }),
   };
 };

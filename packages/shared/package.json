@@ -35,6 +35,18 @@
       "types": "./src/scientBrowserProfileChoice.ts",
       "import": "./src/scientBrowserProfileChoice.ts"
     },
+    "./scientSessionCookies": {
+      "types": "./src/scientSessionCookies.ts",
+      "import": "./src/scientSessionCookies.ts"
+    },
+    "./scientSessionQualify": {
+      "types": "./src/scientSessionQualify.ts",
+      "import": "./src/scientSessionQualify.ts"
+    },
+    "./scientSessionDelivery": {
+      "types": "./src/scientSessionDelivery.ts",
+      "import": "./src/scientSessionDelivery.ts"
+    },
     "./scientPublicationArtifact": {
       "types": "./src/scientPublicationArtifact.ts",
       "import": "./src/scientPublicationArtifact.ts"
@@ -291,6 +303,10 @@
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
     },
+    "./keybindingMatching": {
+      "types": "./src/keybindingMatching.ts",
+      "import": "./src/keybindingMatching.ts"
+    },
     "./threadTranscript": {
       "types": "./src/threadTranscript.ts",
       "import": "./src/threadTranscript.ts"
@@ -307,6 +323,10 @@
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
     },
+    "./pullRequestComposerTrigger": {
+      "types": "./src/pullRequestComposerTrigger.ts",
+      "import": "./src/pullRequestComposerTrigger.ts"
+    },
     "./composerInlineTokens": {
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"
@@ -322,6 +342,10 @@
     "./computeCitations": {
       "types": "./src/computeCitations.ts",
       "import": "./src/computeCitations.ts"
+    },
+    "./officeCitations": {
+      "types": "./src/officeCitations.ts",
+      "import": "./src/officeCitations.ts"
     },
     "./pdfCitations": {
       "types": "./src/pdfCitations.ts",
@@ -630,6 +654,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./speech": {
+      "types": "./src/speech.ts",
+      "import": "./src/speech.ts"
     }
   },
   "scripts": {
@@ -654,6 +682,7 @@
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",
     "remark-rehype": "catalog:",
+    "tldts": "catalog:",
     "unified": "catalog:",
     "yaml": "catalog:"
   },

@@ -3,14 +3,18 @@
  * Scient's own use (sign-in, brokered requests, per-session files) or through
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
+import type { SignInAttempts } from "./agent/signInAttempts.ts";
+import type { RemoteSender } from "./AccountPersistence.ts";
 import type {
   AccountSignIn,
   AccountCodeSources,
   AccountGoogleSessions,
+  AccountSessionsSeenInput,
   AccountKeyLink,
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
   AccountHandoff,
+  AccountSignInAttempt,
   PaperQueueSummary,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
@@ -28,9 +32,14 @@ import type {
   AccountStoresStatus,
   AccountSummary,
   AccountTarget,
+  BrowserProfileRecord,
+  EnvironmentId,
+  ProfileReceived,
+  ProfileSendLog,
+  ProfileSharedWith,
+  SentProfileControls,
   AccountUseAction,
   BrowserProfileId,
-  BrowserProfileRecord,
   BrowserProfileRecordUpdateInput,
   KeychainCandidatesResult,
   OnePasswordConnectInput,
@@ -60,6 +69,14 @@ export type AccountKeyConsumer =
       readonly pluginId: string;
       readonly envName: string;
       readonly origin?: string;
+      readonly projectId?: ProjectId;
+    }
+  /** A local connector's key; like a plugin key, it has no site and follows the project scope. */
+  | {
+      readonly kind: "local-connector";
+      readonly connectorId: ConnectorId;
+      readonly connector: string;
+      readonly key: string;
       readonly projectId?: ProjectId;
     };
 
@@ -92,6 +109,10 @@ export interface AccountsServiceShape {
     reveal?: Effect.Effect<void, AccountsError>,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeHandoff: (handoffId: string) => Effect.Effect<void>;
+  /** Sign-ins under way, by tab, in memory: their tabs are closed to agents meanwhile. */
+  readonly attempts: Effect.Effect<ReadonlyArray<AccountSignInAttempt>>;
+  readonly setAttempt: (attempt: AccountSignInAttempt) => Effect.Effect<void>;
+  readonly removeAttempt: (attemptId: string) => Effect.Effect<void>;
   /** The state of a project's papers, shown as a band and a card. */
   readonly setPaperQueue: (queue: PaperQueueSummary) => Effect.Effect<void>;
   readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;
@@ -112,9 +133,106 @@ export interface AccountsServiceShape {
     input: BrowserProfileRecordUpdateInput,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeProfile: (profileId: BrowserProfileId) => Effect.Effect<void, AccountsError>;
+  /**
+   * The fold's merge into Main: rows and choices naming the profile name Main, Main's own duplicate
+   * winning, and its record is kept, marked retired. "undo" clears the mark for good.
+   */
+  readonly retireProfile: (
+    profileId: BrowserProfileId,
+    change: { readonly name: string } | "undo",
+  ) => Effect.Effect<void, AccountsError>;
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
   readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
+  /**
+   * A row's sign-in was copied into Main: Main's row for it gains its sites and username, or a
+   * passwordless one is made, saying "Copied from …" until Main is seen signed in.
+   */
+  readonly mainFilled: (input: {
+    readonly accountId: AccountId;
+    readonly profileName: string;
+  }) => Effect.Effect<void, AccountsError>;
+  /**
+   * Records Accounts' Sign out in a profile as a delete revision for other computers; Main also
+   * keeps the site, so imports and back-fills never copy it back.
+   */
+  readonly profileSignedOut: (
+    profileId: BrowserProfileId,
+    site: string,
+  ) => Effect.Effect<number, AccountsError>;
+  /**
+   * Main gave back a restricted profile's copy of a unit: a delete revision other computers apply
+   * only to their copy of it, as Main sent it. Unlike Sign out, Main may copy the unit again.
+   */
+  readonly mainWithdrawn: (sites: ReadonlyArray<string>) => Effect.Effect<number, AccountsError>;
+  /** A whole-jar revision: after an import or refresh into the profile, or Send again. */
+  readonly profileResend: (profileId: BrowserProfileId) => Effect.Effect<number, AccountsError>;
+  readonly profileSendLog: (
+    profileId: BrowserProfileId,
+  ) => Effect.Effect<ProfileSendLog, AccountsError>;
+  /** Unlinking a computer: no profile's deletions wait for it; `forgetKey` also drops its key. */
+  readonly profilesUnshared: (
+    environmentId: EnvironmentId,
+    forgetKey: boolean,
+  ) => Effect.Effect<void, AccountsError>;
+  /** What another computer applied of the profile; entries all of them applied are dropped. */
+  readonly profileShared: (
+    profileId: BrowserProfileId,
+    share: ProfileSharedWith,
+  ) => Effect.Effect<void, AccountsError>;
+  /** On a remote: the desktops that send sign-ins here. */
+  readonly remoteSenders: Effect.Effect<ReadonlyArray<RemoteSender>, AccountsError>;
+  /** The sign-in executor's locks and kept attempts, for the server's life. */
+  readonly signInAttempts: Effect.Effect<SignInAttempts["Service"]>;
+  /** On a remote: records a sender, or forgets it with `undefined`. */
+  readonly setRemoteSender: (
+    source: EnvironmentId,
+    sender: RemoteSender | undefined,
+  ) => Effect.Effect<void, AccountsError>;
+  /** On the desktop: the key a computer issued it as a sender. */
+  readonly senderKey: (
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<string | undefined, AccountsError>;
+  readonly keepSenderKey: (
+    environmentId: EnvironmentId,
+    key: string,
+  ) => Effect.Effect<void, AccountsError>;
+  /** On a remote: the profiles holding copies from other computers, as stored. */
+  readonly receivedProfiles: Effect.Effect<ReadonlyArray<BrowserProfileRecord>, AccountsError>;
+  /**
+   * On a remote: changes a profile's received copies, and the controls a sender sets, in one
+   * locked commit. Returns the record as it was before the change.
+   */
+  readonly updateReceived: (
+    profileId: BrowserProfileId,
+    change: (record: BrowserProfileRecord) => {
+      readonly received: ReadonlyArray<ProfileReceived>;
+      readonly controls?: SentProfileControls;
+    },
+  ) => Effect.Effect<BrowserProfileRecord, AccountsError>;
+  /** Records the profiles the one-time back-fill copied into Main; an empty list marks it done. */
+  readonly mainBackfilled: (
+    profileIds: ReadonlyArray<BrowserProfileId>,
+  ) => Effect.Effect<void, AccountsError>;
+  /** Records the one-time fold of Scient-made profiles into Main; kept as first recorded. */
+  readonly mainFolded: (profiles: ReadonlyArray<string>) => Effect.Effect<void, AccountsError>;
+  /**
+   * Sessions in a profile, each on that profile's passwordless session row for its site: an import
+   * makes one only where there is none, saying "Imported from …"; a sign-in seen there is an action
+   * on it, or makes it. Saved passwords are separate rows and never take a session.
+   */
+  readonly sessionsSeen: (
+    input: AccountSessionsSeenInput,
+  ) => Effect.Effect<{ readonly created: ReadonlyArray<AccountId> }, AccountsError>;
+  /**
+   * Keeps a password the user typed in a sign-in that worked, in one locked step, unverified: only
+   * a later sign-in where Scient types it verifies it. Never on a removed row or one that is Off,
+   * and never over a linked password, which only gets an activity line.
+   */
+  readonly keepTyped: (
+    accountId: AccountId,
+    typed: { readonly username: string; readonly password: Redacted.Redacted<string> },
+  ) => Effect.Effect<"kept" | "linked" | "dropped", AccountsError>;
   /** Keeps one row per Google address in a profile, with the state Google reports. */
   readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
   /** Without an account, the variable keeps its value and stops following one. */
@@ -198,20 +316,25 @@ export interface AccountsServiceShape {
     accountId: AccountId,
     fields: ReadonlyArray<string>,
   ) => Effect.Effect<Readonly<Record<string, Redacted.Redacted<string>>>, AccountsError>;
-  /** Keeps what Scient last saw of a sign-in, through `withSignIn`, dated by the server clock. */
+  /**
+   * Keeps what Scient last saw of a sign-in, through `withSignIn` as a look, dated by the server
+   * clock. `username`, from the page, names a passwordless row that had none, when signed in.
+   */
   readonly recordCheck: (
     accountId: AccountId,
-    check: Omit<AccountSignIn, "at">,
+    check: Omit<AccountSignIn, "at" | "by"> & { readonly username?: string | undefined },
   ) => Effect.Effect<void, AccountsError>;
   /**
-   * Non-blocking; records the outcome of a use that `authorize` allowed. `savedPasswordUsed` (not
-   * kept in the log) says Scient typed the saved password, so a `signed-in` outcome verifies it.
+   * Records the outcome of a use that `authorize` allowed; non-blocking unless `wait`, which a
+   * sign-in needs so the next attempt on its site reads it. `savedPasswordUsed` (not kept in the
+   * log) says Scient typed the saved password, so a `signed-in` outcome verifies it.
    */
   readonly recordUse: (
     entry: Omit<AccountActivityEntry, "at" | "decision"> & {
       readonly savedPasswordUsed?: boolean;
     },
     message?: string,
+    wait?: boolean,
   ) => Effect.Effect<void>;
 }
 

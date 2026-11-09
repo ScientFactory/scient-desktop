@@ -81,21 +81,25 @@ vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => null,
   useEnvironment: () => null,
 }));
-vi.mock("../../state/server", () => ({
-  serverEnvironment: {
-    providerAuthState: () => "auth",
-    providerInstallState: () => "installation",
-    startProviderAuth: "startProviderAuth",
-    completeProviderAuth: "completeProviderAuth",
-    cancelProviderAuth: "cancelProviderAuth",
-    logoutProviderAuth: "logoutProviderAuth",
-    startProviderInstall: "startProviderInstall",
-    cancelProviderInstall: "cancelProviderInstall",
-    chatGptReconnectProfile: "chatGptReconnectProfile",
-    chatGptImportProfile: "chatGptImportProfile",
-    chatGptHandoffState: () => "handoff",
-  },
-}));
+vi.mock("../../state/server", async () => {
+  const Atom = await import("effect/reactivity/Atom");
+  return {
+    serverEnvironment: {
+      providerAuthState: () => "auth",
+      providerInstallState: () => "installation",
+      startProviderAuth: "startProviderAuth",
+      completeProviderAuth: "completeProviderAuth",
+      cancelProviderAuth: "cancelProviderAuth",
+      logoutProviderAuth: "logoutProviderAuth",
+      startProviderInstall: "startProviderInstall",
+      cancelProviderInstall: "cancelProviderInstall",
+      chatGptReconnectProfile: "chatGptReconnectProfile",
+      chatGptImportProfile: "chatGptImportProfile",
+      chatGptHandoffState: () => "handoff",
+      removeProviderAuthMethod: { permissionAtom: () => Atom.make(false) },
+    },
+  };
+});
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (query: string | null) => ({
     data: query === "auth" ? state.auth : query === "installation" ? state.installation : null,

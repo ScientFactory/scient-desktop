@@ -3,11 +3,7 @@ import {
   getEnvironmentScientAnalyticsStatus,
   recordEnvironmentScientAnalyticsEvent,
 } from "@t3tools/client-runtime/state/scient-analytics";
-import type {
-  ScientAnalyticsStatus,
-  ScientAnalyticsUiEvent,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { ScientAnalyticsUiEvent, EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 import * as Option from "effect/Option";
 
@@ -86,8 +82,17 @@ export function useRecordScientAnalytics() {
   };
 }
 
-export function readScientAnalyticsStatus(
-  prepared: PreparedConnection,
-): Promise<ScientAnalyticsStatus> {
-  return gate.readStatus(prepared);
+/** Bind a committed dictation to its original connection and consent context. */
+export function useBeginVoiceAnalytics(explicitEnvironmentId?: EnvironmentId) {
+  const primary = usePrimaryEnvironmentId();
+  const environmentId = explicitEnvironmentId ?? primary;
+  const prepared = usePreparedConnection(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes the imperative analytics consent cache when the bound connection changes
+  useEffect(() => {
+    if (Option.isSome(prepared)) gate.prime(prepared.value);
+  }, [prepared]);
+  return () => {
+    const connection = environmentId === null ? null : readPreparedConnection(environmentId);
+    return connection === null ? () => {} : gate.beginVoiceOperation(connection);
+  };
 }

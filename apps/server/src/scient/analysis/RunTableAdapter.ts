@@ -7,9 +7,11 @@ import {
   AnalysisArtifactFileName,
   AnalysisArtifactId,
   AnalysisArtifactRepresentationId,
+  AnalysisOperationError,
   AnalysisRuntimeId,
   type AnalysisArtifactCollection,
   type AnalysisRunContext,
+  type AnalysisRunSource,
   type AnalysisRuntimeAdapter,
 } from "@scientfactory/analysis";
 import {
@@ -23,11 +25,25 @@ import {
 import * as Effect from "effect/Effect";
 
 import { sanitizeComputeEnvironment } from "../compute/ComputeEnvironmentPolicy.ts";
+import { pathModule } from "../compute/RuntimeDiscovery.ts";
 import type {
   ComputeProjectOutputObservation,
   ComputeProjectOutputObserverPort,
 } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
+import { batchLogBaseline, batchLogsFor, type BatchLogBaseline } from "./batchLogOutput.ts";
+import {
+  cmdstanRoot,
+  prepareStan,
+  STAN_INSTALL_HINT,
+  stanSetup,
+  stanSourceProblem,
+  publishStan,
+  stanServerBuilds,
+  translateStan,
+  type StanPublication,
+  type StanTranslation,
+} from "./StanRun.ts";
 
 const MAXIMUM_CAPTURED_BYTES = 64 * 1024 * 1024;
 
@@ -40,16 +56,26 @@ interface RunnableTool {
 const programName = (executable: string) =>
   NodePath.basename(executable.replaceAll("\\", "/")).replace(/\.(exe|cmd|bat|com)$/iu, "");
 
-/** JAVA_HOME names the Java someone wants, which outranks the newest one. */
+/**
+ * JAVA_HOME names the Java someone wants, which outranks the newest one. A stanc inside CmdStan
+ * samples, so it outranks one that only checks a model.
+ */
 function runnable(
   route: ComputeRunRoute,
   tools: ReadonlyArray<FoundLanguageTool>,
   environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ): ReadonlyArray<FoundLanguageTool> {
   const ordered = computeRunnableTools(route, tools);
   const home = environment.JAVA_HOME;
-  if (route.languageId !== "java" || home === undefined) return ordered;
-  const chosen = ordered.filter((tool) => tool.executable.startsWith(home));
+  const leads =
+    route.languageId === "stan"
+      ? (tool: FoundLanguageTool) => cmdstanRoot(tool.executable, platform) !== null
+      : route.languageId === "java" && home !== undefined
+        ? (tool: FoundLanguageTool) => tool.executable.startsWith(home)
+        : null;
+  if (leads === null) return ordered;
+  const chosen = ordered.filter(leads);
   return [...chosen, ...ordered.filter((tool) => !chosen.includes(tool))];
 }
 
@@ -59,6 +85,7 @@ function chooseTool(
   tools: ReadonlyArray<FoundLanguageTool>,
   added: string | undefined,
   environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ): RunnableTool | null {
   if (added !== undefined) {
     const name = programName(added);
@@ -66,7 +93,7 @@ function chooseTool(
       route.commands.find((candidate) => candidate.command === name) ?? route.commands[0];
     return command === undefined ? null : { command, executable: added, version: null };
   }
-  const tool = runnable(route, tools, environment)[0];
+  const tool = runnable(route, tools, environment, platform)[0];
   const command = route.commands.find((candidate) => candidate.command === tool?.name);
   return tool === undefined || command === undefined
     ? null
@@ -127,6 +154,103 @@ function startable(
     : step;
 }
 
+/**
+ * The nearest folder at or above the file's that holds a marker. A file in `.lake`, where Lake keeps
+ * dependencies, belongs to the project above it.
+ */
+function projectRoot(
+  file: string,
+  markers: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+): string | null {
+  const path = pathModule(platform);
+  const [above, inside] = file.split(/[\\/]\.lake[\\/]/u);
+  let folder = inside === undefined ? path.dirname(file) : above!;
+  for (;;) {
+    if (markers.some((name) => NodeFS.existsSync(path.join(folder, name)))) return folder;
+    const parent = path.dirname(folder);
+    if (parent === folder) return null;
+    folder = parent;
+  }
+}
+
+/** Lake ships beside Lean in every install: elan's launchers and each toolchain alike. */
+export function beside(executable: string, command: string, platform: NodeJS.Platform): string {
+  const path = pathModule(platform);
+  const extension = /\.exe$/iu.test(executable) ? ".exe" : "";
+  return path.join(path.dirname(executable), `${command}${extension}`);
+}
+
+function readText(file: string): string | null {
+  try {
+    return NodeFS.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** `lake lean` arrived in Lean 4.8. Channels, nightlies and later versions have it. */
+export function lakeHasLeanCommand(toolchain: string | null): boolean {
+  const minor = /(?:^|:)v4\.(\d+)\./u.exec(toolchain?.trim() ?? "")?.[1];
+  return minor === undefined || Number(minor) >= 8;
+}
+
+interface LakeManifest {
+  readonly name?: unknown;
+  readonly packages?: ReadonlyArray<{ readonly name?: unknown } | null>;
+}
+
+/** A Mathlib project whose Mathlib is not built yet, which Mathlib's own cache fills in minutes. */
+export function mathlibNeedsCache(root: string): boolean {
+  let manifest: LakeManifest | null = null;
+  try {
+    manifest = JSON.parse(readText(NodePath.join(root, "lake-manifest.json")) ?? "null");
+  } catch {
+    return false;
+  }
+  const isMathlib = manifest?.name === "mathlib";
+  const packages = Array.isArray(manifest?.packages) ? manifest.packages : [];
+  if (!isMathlib && !packages.some((entry) => entry?.name === "mathlib")) return false;
+  const mathlib = isMathlib ? root : NodePath.join(root, ".lake", "packages", "mathlib");
+  const build = NodePath.join(mathlib, ".lake", "build", "lib");
+  return !["lean/Mathlib.olean", "Mathlib.olean"].some((file) =>
+    NodeFS.existsSync(NodePath.join(build, file)),
+  );
+}
+
+/** Stan samples through the CmdStan its stanc came with, which cmdstanpy and cmdstanr install. */
+function prepareStanRun(
+  stanc: string,
+  environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
+  context: AnalysisRunContext,
+  translation: StanTranslation | undefined,
+) {
+  const setup = stanSetup(stanc, environment, platform);
+  // A runtime-missing error is the one whose own message the run shows.
+  const fail = (message: string) =>
+    new AnalysisOperationError({ operation: "start", reason: "runtime-missing", message });
+  if ("problem" in setup) throw fail(setup.problem);
+  if (translation === undefined) throw fail("Stan could not translate the model before the run.");
+  if ("problem" in translation) throw fail(translation.problem);
+  const plan = prepareStan({
+    stanc,
+    root: setup.root,
+    toolchain: setup.toolchain,
+    model: context.absoluteSourcePath,
+    folder: translation.folder,
+    staging: context.artifactStagingDirectory,
+    cwd: context.source.cwd,
+    platform,
+  });
+  const started = <Step extends (typeof plan.before)[number]>(step: Step): Step => ({
+    ...step,
+    ...startable(step, step.environment, platform),
+  });
+  const { publication, ...main } = plan;
+  return { ...started(main), before: plan.before.map(started), publication };
+}
+
 function prepare(
   route: ComputeRunRoute,
   environment: Readonly<Record<string, string>>,
@@ -135,7 +259,7 @@ function prepare(
 ) {
   const executable = context.runtime.executablePath;
   if (executable === null) throw new Error(`${context.runtime.label} was not found.`);
-  const { command } = chooseTool(route, [], executable, environment)!;
+  const { command } = chooseTool(route, [], executable, environment, platform)!;
   const file = context.absoluteSourcePath;
   const process = { cwd: context.source.cwd, environment };
   const output = NodePath.join(
@@ -146,11 +270,35 @@ function prepare(
     ...startable({ executable: name, args }, environment, platform),
     ...process,
   });
-  const args = fill(
-    platform === "win32" ? command.args : [...command.args, ...(command.unixArgs ?? [])],
-    file,
-    output,
-  );
+  const root =
+    route.project === undefined ? null : projectRoot(file, route.project.markers, platform);
+  if (route.project !== undefined && root !== null) {
+    const tool = beside(executable, route.project.command, platform);
+    if (!NodeFS.existsSync(tool)) {
+      throw new AnalysisOperationError({
+        operation: "start",
+        reason: "runtime-missing",
+        message: `This file is in a Lake project at ${root}, and Lake is not beside ${executable}. Install Lean with elan, which brings Lake: https://lean-lang.org/install/`,
+      });
+    }
+    const inProject = (args: ReadonlyArray<string>) => ({ ...step(tool, args), cwd: root });
+    // Lean only: Mathlib's cache, and Lake from before `lake lean`.
+    const lean = route.languageId === "lean";
+    const before = lean && mathlibNeedsCache(root) ? [inProject(["exe", "cache", "get"])] : [];
+    if (lean && !lakeHasLeanCommand(readText(NodePath.join(root, "lean-toolchain")))) {
+      return { ...inProject(["env", "lean", file]), before: [...before, inProject(["build"])] };
+    }
+    const main = inProject(fill(route.project.args, file, output));
+    return before.length === 0 ? main : { ...main, before };
+  }
+  const logs = batchLogsFor(route.languageId, platform);
+  const args =
+    logs?.args(executable, context) ??
+    fill(
+      platform === "win32" ? command.args : [...command.args, ...(command.unixArgs ?? [])],
+      file,
+      output,
+    );
   if (command.build === undefined) return step(executable, args);
   // A build's runner sits beside the compiler that needs it.
   const runner = command.build.runner;
@@ -170,10 +318,11 @@ function alternatives(
   chosen: RunnableTool | null,
   label: string,
   environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ) {
   if (chosen === null) return [];
   const seen = new Set([`${programName(chosen.executable)} ${chosen.version}`]);
-  return runnable(route, tools, environment).flatMap((tool) => {
+  return runnable(route, tools, environment, platform).flatMap((tool) => {
     const key = `${tool.name} ${tool.version}`;
     if (seen.has(key)) return [];
     seen.add(key);
@@ -243,7 +392,8 @@ export function makeRunTableAdapters(input: {
   readonly observer?: ComputeProjectOutputObserverPort;
 }): ReadonlyArray<AnalysisRuntimeAdapter> {
   const { environment } = sanitizeComputeEnvironment(input.environment);
-  const capture = input.observer === undefined ? {} : projectOutputCapture(input.observer);
+  const capture: Pick<AnalysisRuntimeAdapter, "prepareRun" | "collectArtifacts"> =
+    input.observer === undefined ? {} : projectOutputCapture(input.observer);
   const names = new Map(
     COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).map((language) => [
       language.languageId,
@@ -252,6 +402,17 @@ export function makeRunTableAdapters(input: {
   );
   return COMPUTE_RUN_TABLE.map((route): AnalysisRuntimeAdapter => {
     const label = names.get(route.languageId) ?? route.label ?? route.languageId;
+    const logs = batchLogsFor(route.languageId, input.platform);
+    const baselines = new WeakMap<AnalysisRunContext, BatchLogBaseline>();
+    // Stan only: the build folder this run's C++ went to, or why it did not translate.
+    const translations = new WeakMap<AnalysisRunContext, StanTranslation>();
+    const publications = new WeakMap<AnalysisRunContext, StanPublication>();
+    const missing =
+      route.languageId === "sas" && input.platform === "darwin"
+        ? "SAS has no version for Mac. It runs on Windows and Linux, or online through SAS OnDemand for Academics."
+        : route.languageId === "stan"
+          ? `Stan was not found on this computer. ${STAN_INSTALL_HINT}`
+          : `${label} was not found on this computer.`;
     return {
       id: AnalysisRuntimeId.make(`file:${route.languageId}`),
       kind: route.languageId,
@@ -259,25 +420,95 @@ export function makeRunTableAdapters(input: {
       readsLiveScan: true,
       inspect: async ({ customExecutablePath, inspectedAt }) => {
         const tools = (await input.tools()).get(route.languageId) ?? [];
-        const tool = chooseTool(route, tools, customExecutablePath, environment);
+        const tool = chooseTool(route, tools, customExecutablePath, environment, input.platform);
+        const setup =
+          tool !== null && route.languageId === "stan"
+            ? stanSetup(tool.executable, environment, input.platform)
+            : null;
+        const problem = setup !== null && "problem" in setup ? setup : null;
         return {
           id: AnalysisRuntimeId.make(`file:${route.languageId}`),
           kind: route.languageId,
           label,
-          availability: tool === null ? "missing" : "available",
+          availability: tool === null ? "missing" : (problem?.availability ?? "available"),
           source:
             customExecutablePath !== undefined ? "custom" : tool === null ? "unconfigured" : "path",
           executablePath: tool?.executable ?? null,
           version: tool?.version ?? null,
-          detail: tool === null ? `${label} was not found on this computer.` : null,
+          detail: tool === null ? missing : (problem?.problem ?? null),
           capabilities: ["run-file", "stream-output", "cancel-process-tree"],
           inspectedAt,
           verification: null,
-          alternatives: alternatives(route, tools, tool, label, environment),
+          alternatives: alternatives(route, tools, tool, label, environment, input.platform),
         };
       },
       ...capture,
-      prepare: (context) => prepare(route, environment, input.platform, context),
+      ...(route.languageId === "stan"
+        ? {
+            validateSource: (source: AnalysisRunSource) =>
+              stanSourceProblem(
+                pathModule(input.platform).join(source.cwd, source.relativePath),
+                input.platform,
+              ),
+            prepareRun: async (context: AnalysisRunContext) => {
+              const stanc = context.runtime.executablePath;
+              const setup = stanc === null ? null : stanSetup(stanc, environment, input.platform);
+              if (stanc !== null && setup !== null && !("problem" in setup)) {
+                const translation = await translateStan({
+                  runId: context.runId,
+                  stanc,
+                  root: setup.root,
+                  model: context.absoluteSourcePath,
+                  toolchain: setup.toolchain,
+                  builds: stanServerBuilds(context, input.platform),
+                  platform: input.platform,
+                });
+                translations.set(context, translation);
+              }
+              await capture.prepareRun?.(context);
+            },
+            // A program is published only once every step succeeded. Stan's exit code is its
+            // verdict, which a run's conclusion must give, so it is the same as without one.
+            concludeRun: async (context: AnalysisRunContext, exitCode: number | null) => {
+              const publication = publications.get(context);
+              if (exitCode === 0 && publication !== undefined) await publishStan(publication);
+              return {
+                output: [],
+                failureMessage: exitCode === 0 ? null : `${label} exited with code ${exitCode}.`,
+                diagnostics: [],
+                writtenFiles: [],
+              };
+            },
+          }
+        : {}),
+      ...(logs === undefined
+        ? {}
+        : {
+            prepareRun: async (context: AnalysisRunContext) => {
+              baselines.set(context, await batchLogBaseline(logs.places(context)));
+              await capture.prepareRun?.(context);
+            },
+            concludeRun: async (context: AnalysisRunContext, exitCode: number | null) => {
+              const before = baselines.get(context);
+              if (before === undefined) throw new Error(`${label} began without a log baseline.`);
+              return logs.conclude(context, exitCode, before);
+            },
+          }),
+      prepare: (context) => {
+        const stanc = context.runtime.executablePath;
+        if (route.languageId !== "stan" || stanc === null) {
+          return prepare(route, environment, input.platform, context);
+        }
+        const { publication, ...steps } = prepareStanRun(
+          stanc,
+          environment,
+          input.platform,
+          context,
+          translations.get(context),
+        );
+        if (publication !== null) publications.set(context, publication);
+        return steps;
+      },
     };
   });
 }

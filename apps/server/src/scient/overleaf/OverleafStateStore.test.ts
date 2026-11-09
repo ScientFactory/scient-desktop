@@ -376,7 +376,10 @@ describe("OverleafStateStore", () => {
           expect(refusedValid).toMatchObject({ condition: "valid" });
 
           yield* Effect.promise(() => NodeFSP.writeFile(file, '{"schemaVersion":1,"revis'));
-          expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "corrupt" });
+          expect(yield* store.readConnection("connection-1")).toEqual({
+            _tag: "corrupt",
+            shows: { folder: null, unfinished: null },
+          });
           const refused = yield* Effect.flip(
             store.replaceConnection({ expectedRevision: 1, next: revised(document) }),
           );
@@ -389,10 +392,23 @@ describe("OverleafStateStore", () => {
             "OverleafConnectionExistsError",
           );
 
+          // A newer release's record with an unfinished sync is that release's to settle.
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              file,
+              JSON.stringify({ ...document, schemaVersion: 3, stagingPaths: ["paper/main.tex"] }),
+            ),
+          );
+          expect(yield* Effect.flip(store.quarantineConnection("connection-1"))).toMatchObject({
+            condition: "unfinished",
+          });
           yield* Effect.promise(() =>
             NodeFSP.writeFile(file, JSON.stringify({ ...document, schemaVersion: 3 })),
           );
-          expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "unsupported" });
+          expect(yield* store.readConnection("connection-1")).toMatchObject({
+            _tag: "unsupported",
+            shows: { unfinished: false },
+          });
           const unsupportedBytes = yield* Effect.promise(() => NodeFSP.readFile(file, "utf8"));
           const name = yield* store.quarantineConnection("connection-1");
           expect(
@@ -409,7 +425,7 @@ describe("OverleafStateStore", () => {
               JSON.stringify(document),
             ),
           );
-          expect(yield* store.readConnection("connection-2")).toEqual({ _tag: "corrupt" });
+          expect(yield* store.readConnection("connection-2")).toMatchObject({ _tag: "corrupt" });
         }),
       ),
   );
@@ -485,7 +501,7 @@ describe("OverleafStateStore", () => {
         yield* Effect.promise(() =>
           NodeFSP.writeFile(file, JSON.stringify({ ...old, markerPaths: ["/absolute.tex"] })),
         );
-        expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "corrupt" });
+        expect(yield* store.readConnection("connection-1")).toMatchObject({ _tag: "corrupt" });
       }),
     ),
   );

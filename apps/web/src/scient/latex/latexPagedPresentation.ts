@@ -489,6 +489,15 @@ function measured(
   );
 }
 
+/** Reserves a skipped block's height in Chromium's 1/64 px layout units. */
+function reserveBlockSize(element: HTMLElement, height: number) {
+  const size = Math.round(Math.max(0, height) * 64) / 64;
+  // Styles serialize six significant digits; rewriting an equal size restyles the block.
+  const current = parseFloat(element.style.containIntrinsicBlockSize.replace("auto", ""));
+  if (!(Math.abs(current - size) < 1 / 128 + size * 1e-5))
+    element.style.containIntrinsicBlockSize = `auto ${size}px`;
+}
+
 function flowOffsetDecoration(from: number, to: number, offset: number) {
   return Decoration.node(
     from,
@@ -598,6 +607,23 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
           const dirty = new WeakSet<DocumentNode>();
           let visibilityChangedFrom = Infinity;
           let visibilityRevision = 0;
+          // Chromium reports a revealed block's resize before its reveal event. Until
+          // its next hide, a block counts as resized from its first report on.
+          const sized = new Map<Element, () => void>();
+          const resized = new WeakSet<Element>();
+          const markResized = (records: readonly ResizeObserverEntry[]) => {
+            for (const { target } of records) resized.add(target);
+          };
+          const observeSizes = (elements: ReadonlySet<Element>) => {
+            for (const [element, stop] of sized)
+              if (!elements.has(element)) {
+                stop();
+                sized.delete(element);
+              }
+            for (const element of elements)
+              if (!sized.has(element))
+                sized.set(element, observeResize(element, markResized, { box: "border-box" }));
+          };
           const measurementContexts = new WeakMap<
             DocumentNode,
             { previous: WeakRef<DocumentNode> | "block" | null; layout: unknown }
@@ -992,6 +1018,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 // Decorations and navigation ranges were mapped by the input
                 // transaction. No DOM styles or presentation transaction are
                 // needed when every measured line remains in the same place.
+                observeSizes(new Set(entries.map((entry) => entry.element)));
                 progress.pending = refresh;
                 view.dom.dispatchEvent(new CustomEvent("scient-latex-layout", { bubbles: true }));
                 return;
@@ -1087,6 +1114,14 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             const oldGaps = (latexPagedKey.getState(view.state)?.decorations.find() ?? [])
               .filter((decoration) => typeof decoration.spec.pagedHeight === "number")
               .sort((a, b) => a.from - b.from);
+            // Read-back positions drift by fractions of a pixel. Within the 1 px that
+            // needs no spacer, keep each published one so the layout settles.
+            const published = new Map<number, number>();
+            for (const decoration of previousDecorations?.find() ?? []) {
+              const height: unknown =
+                decoration.spec.pagedHeight ?? decoration.spec.latexFlowOffset;
+              if (typeof height === "number") published.set(decoration.from, height);
+            }
             const gapsByEntry = new Map<Entry, { internal: number; total: number }>();
             let entryIndex = 0;
             for (const gap of oldGaps) {
@@ -1140,9 +1175,10 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                     entry.element.style.getPropertyValue("--scient-paged-display-shrink"),
                   ) || 0);
                 const repeated = repeatedHeights.get(entry) ?? 0;
-                const value = `auto ${Math.max(0, entry.measurement.height + internal + repeated - shrink)}px`;
-                if (entry.element.style.containIntrinsicBlockSize !== value)
-                  entry.element.style.containIntrinsicBlockSize = value;
+                reserveBlockSize(
+                  entry.element,
+                  entry.measurement.height + internal + repeated - shrink,
+                );
               }
             } finally {
               measurementObserver.start();
@@ -1178,11 +1214,9 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
               profile.twoSided && page % 2 === 1
                 ? (profile.marginRightIn - profile.marginLeftIn) * 96
                 : 0;
+            // Every origin must come from one layout: a block revealed between
+            // slices would move the blocks read after it.
             for (let index = 0; index < plan.placements.length; index++) {
-              if (performance.now() > deadline) {
-                yield;
-                deadline = performance.now() + 6;
-              }
               const owned = owners[index];
               if (!owned) continue;
               const { entry, part } = owned;
@@ -1239,16 +1273,22 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 }
                 if (shortDisplays.has(entry) && !reusable.has(entry))
                   decorations.push(
-                    Decoration.node(entry.position, entry.position + entry.node.nodeSize, {
-                      "data-short-display": "true",
-                    }),
+                    Decoration.node(
+                      entry.position,
+                      entry.position + entry.node.nodeSize,
+                      { "data-short-display": "true" },
+                      { latexShortDisplay: true },
+                    ),
                   );
                 if (!reusable.has(entry))
                   for (const math of entry.measurement.nestedDisplays ?? [])
                     decorations.push(
-                      Decoration.node(entry.position + math.from, entry.position + math.to, {
-                        "data-short-display": "true",
-                      }),
+                      Decoration.node(
+                        entry.position + math.from,
+                        entry.position + math.to,
+                        { "data-short-display": "true" },
+                        { latexShortDisplay: true },
+                      ),
                     );
                 const compressed = part.unit.height - placement.height;
                 if (compressed > 0.01 && !reusable.has(entry))
@@ -1341,7 +1381,14 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                   );
                 // Existing gaps already contribute to DOM positions; subtract them before adding a replacement.
                 const naturalTop = origin.natural + part.naturalTop;
-                const gapHeight = placement.top - naturalTop - displacement - origin.shift;
+                const exactHeight = placement.top - naturalTop - displacement - origin.shift;
+                const publishedHeight = published.get(
+                  part === entry.measurement.parts[0] ? entry.position : from,
+                );
+                const gapHeight =
+                  publishedHeight !== undefined && Math.abs(publishedHeight - exactHeight) <= 1
+                    ? publishedHeight
+                    : exactHeight;
                 // A run-in heading's top margin matches its paragraph's padding,
                 // which keeps both on one line; moving only the heading splits them.
                 const runIn =
@@ -1477,9 +1524,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 if (!hint || reusable.has(entry)) continue;
                 // Keep the browser's last rendered height. A fixed estimate can
                 // move the entire suffix when a previously seen block is skipped.
-                const value = `auto ${Math.max(0, hint.end - hint.start)}px`;
-                if (entry.element.style.containIntrinsicBlockSize !== value)
-                  entry.element.style.containIntrinsicBlockSize = value;
+                reserveBlockSize(entry.element, hint.end - hint.start);
               }
               for (const group of noteGroups.values()) {
                 const placement = plan.placements[group[0]!.index];
@@ -1695,6 +1740,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             if (generation === epoch && visibilityAtStart === visibilityRevision)
               visibilityChangedFrom = Infinity;
             if (generation === epoch) progress.laidOutReveals = visibilityAtStart;
+            observeSizes(new Set(entries.map((entry) => entry.element)));
             progress.pending = generation !== epoch || refresh;
             view.dom.dispatchEvent(new CustomEvent("scient-latex-layout", { bubbles: true }));
           }
@@ -1751,9 +1797,19 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
             // Widgets (pagination gaps, the gap cursor) own no measured block. Each pass
             // redraws them, so their first paint would schedule the next pass forever.
             if (event.target.classList.contains("ProseMirror-widget")) return;
-            if (skipped === true)
+            if (skipped === true) {
+              resized.delete(event.target);
               progress.visibility.set(event.target, { skipped, reveal: visibilityRevision });
+            }
             if (skipped !== false) return;
+            // A block revealed at the size it had while skipped moves nothing.
+            if (sized.has(event.target) && !resized.has(event.target)) {
+              progress.visibility.set(event.target, {
+                skipped,
+                reveal: progress.laidOutReveals,
+              });
+              return;
+            }
             try {
               const at = view.state.doc.resolve(view.posAtDOM(event.target, 0));
               visibilityChangedFrom = Math.min(
@@ -1807,6 +1863,8 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
               disposed = true;
               epoch++;
               cancelAnimationFrame(frame);
+              for (const stop of sized.values()) stop();
+              sized.clear();
               stopWidth();
               layer.remove();
               resetNaturalMeasurement(view);

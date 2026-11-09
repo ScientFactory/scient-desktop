@@ -3,13 +3,16 @@ import { AccountsError, AuthSettingsWriteScope, type EnvironmentId } from "@t3to
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
+import { Atom } from "effect/reactivity";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
+import { type SavedAccount, withSavedAccounts } from "./accountsView";
 
 const isAccountsError = Schema.is(AccountsError);
+const NOTHING_SAVED = Atom.make<ReadonlyArray<SavedAccount>>([]);
 
 export function useAccounts(environmentId: EnvironmentId | null) {
   const query = useEnvironmentQuery(
@@ -17,9 +20,13 @@ export function useAccounts(environmentId: EnvironmentId | null) {
   );
   const scope = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const permitted = useAtomValue(accountsState.save.permissionAtom(environmentId));
+  const saved = useAtomValue(
+    environmentId === null ? NOTHING_SAVED : accountsState.savedAccounts(environmentId),
+  );
+  const data = query.error || !query.data ? null : withSavedAccounts(query.data, saved);
   return {
     ...query,
-    data: query.error ? null : query.data,
+    data,
     // A refresh after each change keeps the last snapshot; writes stay enabled meanwhile.
     canWrite: scope && permitted && !query.error && query.data != null,
   };

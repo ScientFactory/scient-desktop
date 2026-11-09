@@ -296,6 +296,7 @@ export interface ProviderManagedRuntimeProgress {
   readonly downloadedBytes?: number | undefined;
   readonly totalBytes?: number | undefined;
   readonly waitingForIdle?: boolean | undefined;
+  readonly retrying?: boolean | undefined;
 }
 
 export interface ProviderManagedRuntimeActions {

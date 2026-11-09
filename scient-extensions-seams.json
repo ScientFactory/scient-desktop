@@ -262,6 +262,16 @@
       "purpose": "Upstream-owned and unchanged by Scient: T3's MCP Apps helper only mentions claude.ai connector names when it parses Claude's mcp__<server>__ tool prefix."
     },
     {
+      "path": "apps/web/src/components/CommandPalette.tsx",
+      "anchor": "action:use-in-another-app",
+      "purpose": "T3's \"use in another app (MCP)\" palette action lists \"connector\" as a search word; Scient only hides the action without cloud public config. Not part of Scient Extensions."
+    },
+    {
+      "path": "apps/web/src/components/mcp/mcpApps.ts",
+      "anchor": "connectorName=",
+      "purpose": "T3's MCP wizard fills claude.ai's add-connector link; Scient only renames the connector to Scient. Not part of Scient Extensions."
+    },
+    {
       "path": "apps/server/scripts/record-claude-agent-sdk-replay-fixture.ts",
       "anchor": "claude_mcp_tool_presentation",
       "purpose": "Upstream-owned and unchanged by Scient: its recording notes name the claude.ai Firecrawl connector, so upstream comment edits match the connector signal. Nothing Scient mounts here."
@@ -384,6 +394,21 @@
       "purpose": "Expose the live account-token resolver and matching-account list consumed by Extensions bindings."
     },
     {
+      "path": "apps/server/src/scient/accounts/AccountsServiceLive.ts",
+      "anchor": "githubCredential.value.get",
+      "purpose": "List Source Control's effective GitHub login, through the connector's credential service, so Accounts groups it with the GitHub connector."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsLayers.ts",
+      "anchor": "GitHubSourceControlCredential.layer",
+      "purpose": "Provide the GitHub credential service the connector also uses to the Accounts service."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/Accounts.testkit.ts",
+      "anchor": "Layer.succeed(GitHubSourceControlCredential",
+      "purpose": "Let Accounts tests stand in for Source Control's GitHub credential."
+    },
+    {
       "path": "apps/web/src/scient/accounts/accountsView.ts",
       "anchor": "curatedIcons.json",
       "purpose": "Account logos reuse logos from the Extensions curated icon registry; the file only names that source."
@@ -397,6 +422,26 @@
       "path": "apps/server/src/provider/Drivers/DroidSkills.ts",
       "anchor": "ServerProviderMcpServer",
       "purpose": "Map Droid's own MCP server listing to Scient Extensions' native MCP server rows."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/AccountAgentService.ts",
+      "anchor": "scient_connector_setup: setUpConnector",
+      "purpose": "Serve the local-connector setup tool from the Accounts toolkit, whose private key card it uses."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/connectorSetup.ts",
+      "anchor": "export const setUpConnector",
+      "purpose": "Save a local connector's missing settings and link its keys through Accounts' card, then restart it."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/tools.ts",
+      "anchor": "\"scient_connector_setup\"",
+      "purpose": "Declare the agent tool that sets up a local connector reporting Needs setup."
+    },
+    {
+      "path": "packages/shared/src/scientMcpToolPresentation.ts",
+      "anchor": "t3_connector_setup",
+      "purpose": "Name the local-connector setup tool in the work log."
     }
   ]
 }

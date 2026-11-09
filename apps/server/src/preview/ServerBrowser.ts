@@ -30,6 +30,7 @@ import {
   type PreviewAutomationScrollInput,
   type PreviewAutomationSelectInput,
   type PreviewAutomationSetColorSchemeInput,
+  type PreviewAutomationSnapshotInput,
   type PreviewAutomationStatus,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
@@ -58,6 +59,11 @@ import {
   typeAccountValue,
   waitForAccountPage,
 } from "../scient/accounts/agent/browserOperations.ts";
+import {
+  openProfileCookieJar,
+  ProfileCookiesError,
+  type ProfileCookieJar,
+} from "../scient/accounts/profileCookieJar.ts";
 // SCIENT-FORK:END
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import type { GeneratedDocumentStore } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
@@ -288,6 +294,11 @@ export class ServerBrowser extends Context.Service<
     }) => Effect.Effect<Option.Option<{ readonly path: string; readonly fileName: string }>>;
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
+    // SCIENT-FORK:START — Scient Accounts: one profile's jar, for copies from another computer.
+    readonly profileCookies?: (
+      profileId: string,
+    ) => Effect.Effect<ProfileCookieJar, ProfileCookiesError, Scope.Scope>;
+    // SCIENT-FORK:END
 
     readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
   }
@@ -539,6 +550,7 @@ const make = Effect.gen(function* () {
 
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
+    idleBrowserMs: 5 * 60_000,
     executable: () => runPromise(previewBrowser.executable),
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
     launcher: async (executable) => {
@@ -2044,13 +2056,22 @@ const make = Effect.gen(function* () {
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
+      // SCIENT-FORK:START — sent upstream: status reconnects like the other operations, or
+      // the broker forgets the agent's tab after a desktop detach.
       case "status":
         return statusWithTitle(
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
+            : ((await runPromise(
+                findTab(request.threadId, request.tabId).pipe(
+                  Effect.catchTags({
+                    ServerBrowserTabNotFoundError: () => Effect.void,
+                  }),
+                ),
+              )) ?? undefined),
           request.agentSessionId,
         );
+      // SCIENT-FORK:END
       case "open": {
         if (!request.agentSessionId)
           throw new BrowserControlInterrupted({
@@ -2235,11 +2256,11 @@ const make = Effect.gen(function* () {
     }
     const agentSessionId = request.agentSessionId!;
 
-    if (
-      READ_OPERATIONS.has(request.operation) &&
-      tab.control.agentId !== agentSessionId &&
-      !tab.control.agentCanActNow(agentSessionId)
-    ) {
+    // SCIENT-FORK:START — sent upstream: the owner reads too while a person drives.
+    const observeOnly =
+      READ_OPERATIONS.has(request.operation) && !tab.control.agentCanActNow(agentSessionId);
+    // SCIENT-FORK:END
+    if (observeOnly) {
       return tab.control.observe(async () => {
         if (tab.dialog)
           throw new BrowserControlInterrupted({
@@ -2321,6 +2342,7 @@ const make = Effect.gen(function* () {
           ServerBrowserPage.snapshot({
             ...tab,
             renderScale: tab.desktop ? "display" : RENDER_SCALE,
+            fullScreenshot: (input as PreviewAutomationSnapshotInput | undefined)?.fullScreenshot,
           }),
         );
       }
@@ -2918,6 +2940,33 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  // SCIENT-FORK:START — Scient Accounts: one profile's jar, held against tabs and clears.
+  const profileCookies = (profileId: string) =>
+    Effect.acquireRelease(
+      Effect.tryPromise({
+        try: async () => {
+          const lease = await contexts.leases.lease(profileId);
+          try {
+            return {
+              ...(await openProfileCookieJar(lease.context, lease.stopping)),
+              release: lease.release,
+            };
+          } catch (cause) {
+            // A helper that didn't open in time leaves a context nobody can trust.
+            await lease.release({ discard: true });
+            throw cause;
+          }
+        },
+        catch: (cause) => new ProfileCookiesError({ profileId, cause }),
+      }),
+      (held) =>
+        Effect.promise(async () => {
+          await held.close();
+          await held.release({ discard: held.jar.quarantined() });
+        }),
+    ).pipe(Effect.map(({ jar }) => jar));
+  // SCIENT-FORK:END
+
   // A document lease addresses an already live page. It never reopens a URL or
   // creates a replacement browser context when a tab or server generation changed.
   const documentLease = Effect.fn("ServerBrowser.documentLease")(function* (
@@ -3116,6 +3165,9 @@ const make = Effect.gen(function* () {
     navigateDocument,
     attachViewer,
     clearProfile,
+    // SCIENT-FORK:START — Scient Accounts: one profile's jar.
+    profileCookies,
+    // SCIENT-FORK:END
     profileReporter,
     openDownload,
     answerFileChooser,

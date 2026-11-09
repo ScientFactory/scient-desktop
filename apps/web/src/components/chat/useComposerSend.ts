@@ -1,12 +1,11 @@
-import { isClearComposerCommand } from "@t3tools/shared/composerTrigger";
+import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import { MessageId } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { chatActionErrorMessage, getAntigravitySendBlockReason } from "../ChatView.logic";
-import { shouldCompactBeforeSend } from "./ContextWindowMeter.logic";
+import { shouldCompactBeforeSend } from "./compaction.logic";
 import { declineShownApprovalsBeforeSend } from "./approvalSendGuard";
-import { resolveComposerInteractionMode } from "../ChatView.logic";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
@@ -44,10 +43,7 @@ import {
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
 import { flushComposerDraftPersistence } from "../../composerDraftStore";
 
-import {
-  encodeQueueComposerSnapshot,
-  assertQueueEditSelectionProvenance,
-} from "../../scient/threadQueue/composerSnapshot";
+import { assertQueueEditSelectionProvenance } from "../../scient/threadQueue/composerSnapshot";
 
 import {
   mergeDirectPreviewAnnotation,
@@ -94,13 +90,8 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  type ComposerSubmissionIntent,
-  parseSideChatCommand,
-  parseStandaloneComposerSlashCommand,
-} from "../../composer-logic";
-import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
-import { type ChatMessage } from "../../types";
+import { type ComposerSubmissionIntent } from "../../composer-logic";
+import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -126,7 +117,7 @@ import {
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
-import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/useSettings";
+import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
@@ -134,7 +125,6 @@ import {
   multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
-import { usePlanFollowUpSend } from "./useProposedPlanSend";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
@@ -159,7 +149,6 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -167,7 +156,6 @@ import type { SessionPhase } from "../../types";
 import type { DraftSessionState } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
-import type { LatestProposedPlanState } from "../../session-logic";
 import type { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import type { LocalDispatchActions } from "./useLocalDispatchState";
 import type { PendingThreadSendState } from "./usePendingThreadRequests";
@@ -177,8 +165,6 @@ import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
-
-const selectPlanModeEnabled = (settings: UnifiedSettings) => settings.planModeEnabled;
 
 function readEnvironmentPresentation(environmentId: EnvironmentId) {
   return appAtomRegistry.get(environmentPresentations.presentationsAtom).get(environmentId);
@@ -212,7 +198,6 @@ export interface ComposerSendInput {
   readonly activeThreadBranch: string | null;
   readonly activeProject: EnvironmentProject | null;
   readonly activeProjectDefaultModelSelection: ModelSelection | null;
-  readonly activeProposedPlan: LatestProposedPlanState | null;
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
   readonly isLocalDraftThread: boolean;
@@ -242,7 +227,6 @@ export interface ComposerSendInput {
   /** `/clear` can arm a fresh session on this thread. */
   readonly freshSessionAvailable: boolean;
   readonly resumeCompactionTokens: number | null;
-  readonly showPlanFollowUpPrompt: boolean;
   readonly usageLimitsKey: string | null;
   readonly usageLimitsOffered: boolean;
   readonly openUsageLimits: UsageLimitsPanel["open"];
@@ -273,7 +257,6 @@ export interface ComposerSendInput {
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
   readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
   readonly acknowledgeActiveThreadWoke: () => void;
-  readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   /** Resolves true once the side chat started and got the prompt. */
   readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
@@ -306,7 +289,6 @@ export function useComposerSend(input: ComposerSendInput) {
     activeThreadBranch,
     activeProject,
     activeProjectDefaultModelSelection,
-    activeProposedPlan,
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
@@ -332,7 +314,6 @@ export function useComposerSend(input: ComposerSendInput) {
     keepFullHistory,
     freshSessionAvailable,
     resumeCompactionTokens,
-    showPlanFollowUpPrompt,
     usageLimitsKey,
     usageLimitsOffered,
     openUsageLimits,
@@ -357,7 +338,6 @@ export function useComposerSend(input: ComposerSendInput) {
     setThreadError,
     setKeepFullHistory,
     acknowledgeActiveThreadWoke,
-    handleInteractionModeChange,
     onSideChat,
     sideChatDisabledReason,
     handleNewThreadInActiveProject,
@@ -376,7 +356,6 @@ export function useComposerSend(input: ComposerSendInput) {
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
   const clientSettingsHydrated = useClientSettingsHydrated();
-  const planModeEnabled = useEnvironmentSettings(environmentId, selectPlanModeEnabled);
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
@@ -478,26 +457,6 @@ export function useComposerSend(input: ComposerSendInput) {
     return false;
   };
 
-  const onSubmitPlanFollowUp = usePlanFollowUpSend({
-    environmentId,
-    routeThreadKey,
-    activeThread,
-    activeProposedPlan,
-    isServerThread,
-    isSendBusy,
-    beginLocalDispatch,
-    resetLocalDispatch,
-    localCheckoutBranchMismatch,
-    setOptimisticUserMessages,
-    setThreadError,
-    persistThreadSettingsForNextTurn,
-    currentRouteThreadKeyRef,
-    composerDraftTarget,
-    declineApprovalsForSend,
-    frameSubmittedMessage,
-    clearUsageLimitsFor,
-    acknowledgeActiveThreadWoke,
-  });
   // A follow-up returns its durable admission identity so only an accepted send
   // retires a queue edit and clears its matching draft.
   const onSend = useStableCallback(
@@ -787,8 +746,6 @@ export function useComposerSend(input: ComposerSendInput) {
             selectedProviderModels: ctxSelectedProviderModels,
             selectedPromptEffort: ctxSelectedPromptEffort,
             selectedModelSelection: ctxSelectedModelSelection,
-            interactionMode: sendInteractionMode,
-            interactionModeEnabled: sendInteractionModeEnabled,
           } = sendCtx;
           // SCIENT-FORK:START — a direct prompt (e.g. a queue steer) sends only its own text.
           const composerThreadContexts = directPrompt === null ? sendContextThreadContexts : [];
@@ -958,125 +915,6 @@ export function useComposerSend(input: ComposerSendInput) {
           }
           if (!sendCtx.providerAvailable) {
             notifyDirectAnnotationAttached();
-            return;
-          }
-          if (
-            !directAnnotation &&
-            directPrompt === null &&
-            !extractedIntent &&
-            freshArm === undefined &&
-            sendInteractionModeEnabled &&
-            showPlanFollowUpPrompt &&
-            activeProposedPlan &&
-            composerImages.length === 0 &&
-            effectiveComposerFiles.length === 0
-          ) {
-            const followUp = resolvePlanFollowUpSubmission({
-              draftText: promptForSend,
-              planMarkdown: activeProposedPlan.planMarkdown,
-            });
-            const outgoingFollowUpText = formatOutgoingPrompt({
-              provider: ctxSelectedProvider,
-              model: ctxSelectedModel,
-              models: ctxSelectedProviderModels,
-              effort: ctxSelectedPromptEffort,
-              text: followUp.text.trim(),
-            });
-            if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
-              return;
-            }
-            const followUpSubmissionId = await onSubmitPlanFollowUp({
-              previewQueueAdmission: shouldPreviewQueueAdmission({
-                ordinaryServerSend: sendCtx.shownPendingApprovalIds.length === 0,
-                phase,
-                hasWaitingItems:
-                  serverProjection?.runs.some((run) => run.status === "queued") === true,
-                awaitingCompletion: hasHeldQueuedRuns,
-              }),
-              sendCtx,
-              runtimeMode,
-              promptAtSend,
-              pendingApprovalIdsAtSend,
-              text: followUp.text,
-              readingPositionAtSend,
-              context: buildMessageContext({
-                terminalContexts: sendableComposerTerminalContexts,
-                reviewComments: composerReviewComments,
-                previewAnnotations: composerPreviewAnnotations,
-                threadContexts: composerThreadContexts,
-                environmentContexts: composerEnvironmentContexts,
-              }),
-              interactionMode: followUp.interactionMode,
-              selectedScientSkillNames: followUp.selectedScientSkillNames,
-              sourceProposedPlan:
-                queueEdit?.extractedItem?.sourceProposedPlan ??
-                (followUp.interactionMode === "default"
-                  ? { threadId: activeThread.id, planId: activeProposedPlan.id }
-                  : undefined),
-              composerSnapshot: encodeQueueComposerSnapshot({
-                prompt: promptForSend,
-                terminalContexts: sendableComposerTerminalContexts,
-                reviewComments: composerReviewComments,
-                previewAnnotations: [...composerPreviewAnnotations],
-              }),
-            });
-            // SCIENT-FORK:START — an admitted follow-up retires its queue edit and clears its draft.
-            if (followUpSubmissionId) {
-              const editToFinish = queueEdit;
-              const followUpThreadId = activeThread.id;
-              const acknowledged = await settlePromise(async () => {
-                if (editToFinish) await finishQueueEdit(editToFinish, draftSnapshotForSend);
-                if (
-                  composerSubmissionMatchesDraft(
-                    draftSnapshotForSend,
-                    useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                  )
-                ) {
-                  clearComposerDraftContent(composerDraftTarget);
-                  useComposerDraftStore
-                    .getState()
-                    .setInteractionMode(composerDraftTarget, followUp.interactionMode);
-                  flushComposerDraftPersistence();
-                  if (queueContextKeyRef.current === activeThreadKey) {
-                    promptRef.current = "";
-                    composerRef.current?.resetCursorState();
-                  }
-                }
-                acknowledgeQueueSubmission(
-                  composerTargetKey(scopeThreadRef(environmentId, followUpThreadId)),
-                  followUpSubmissionId,
-                );
-              });
-              if (acknowledged._tag === "Failure") {
-                setThreadError(
-                  followUpThreadId,
-                  chatActionErrorMessage(squashAtomCommandFailure(acknowledged)),
-                );
-              } else if (
-                submissionIntent === "background" &&
-                currentRouteThreadKeyRef.current === routeThreadKey
-              ) {
-                handleNewThreadInActiveProject();
-              }
-            }
-            // SCIENT-FORK:END
-            return;
-          }
-          const standaloneSlashCommand =
-            directPrompt === null &&
-            sendInteractionModeEnabled &&
-            composerImages.length === 0 &&
-            effectiveComposerFiles.length === 0 &&
-            sendableComposerTerminalContexts.length === 0 &&
-            composerPreviewAnnotations.length === 0 &&
-            effectiveReviewComments.length === 0
-              ? parseStandaloneComposerSlashCommand(trimmed)
-              : null;
-          if (standaloneSlashCommand && !extractedIntent && multipleModelSelections === null) {
-            handleInteractionModeChange(standaloneSlashCommand);
-            promptRef.current = "";
-            clearComposerDraftContent(composerDraftTarget);
-            composerRef.current?.resetCursorState();
             return;
           }
           if (!hasSendableContent) {
@@ -1251,7 +1089,6 @@ export function useComposerSend(input: ComposerSendInput) {
               models: provider.models,
               modelOptions: selection.options,
               promptInjectionState: getComposerPromptInjectionState(messageTextForSend),
-              planModeEnabled: planModeEnabled,
             });
             const text = formatOutgoingPrompt({
               provider: provider.driverKind,
@@ -1268,11 +1105,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 providerState.modelOptionsForDispatch,
               ),
               text,
-              interactionMode: resolveComposerInteractionMode({
-                planModeEnabled: planModeEnabled,
-                provider: provider.snapshot,
-                interactionMode: sendInteractionMode,
-              }).interactionMode,
+              interactionMode: DEFAULT_INTERACTION_MODE,
             });
           }
 
@@ -1474,7 +1307,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 context: outgoingMessageContext,
                 modelSelection: ctxSelectedModelSelection,
                 runtimeMode,
-                interactionMode: sendInteractionMode,
+                interactionMode: DEFAULT_INTERACTION_MODE,
                 selectedScientSkillNames,
                 ...(multipleModelSelections !== null ? { multipleModels: true } : {}),
                 attachments: await Promise.all(
@@ -1618,7 +1451,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   ? { branch: localCheckoutBranchMismatch.currentBranch }
                   : {}),
                 runtimeMode,
-                interactionMode: sendInteractionMode,
+                interactionMode: DEFAULT_INTERACTION_MODE,
               });
               if (settingsResult._tag === "Failure") {
                 failure = settingsResult;
@@ -1673,7 +1506,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   },
                   modelSelection: ctxSelectedModelSelection,
                   runtimeMode,
-                  interactionMode: sendInteractionMode,
+                  interactionMode: DEFAULT_INTERACTION_MODE,
                 },
               });
               if (compactResult._tag === "Failure") failure = compactResult;
@@ -1695,7 +1528,7 @@ export function useComposerSend(input: ComposerSendInput) {
                               title,
                               modelSelection: threadCreateModelSelection,
                               runtimeMode,
-                              interactionMode: sendInteractionMode,
+                              interactionMode: DEFAULT_INTERACTION_MODE,
                               branch: activeThreadBranch,
                               worktreePath: activeThread.worktreePath,
                               createdAt: activeThread.createdAt,
@@ -1765,7 +1598,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   modelSelection: ctxSelectedModelSelection,
                   titleSeed: title,
                   runtimeMode,
-                  interactionMode: sendInteractionMode,
+                  interactionMode: DEFAULT_INTERACTION_MODE,
                   dispatchMode: steerRequested || directAnnotation ? "steer" : turnDispatchMode,
                   ...(freshArm === undefined ? {} : { freshContext: true }),
                   ...(bootstrap ? { bootstrap } : {}),

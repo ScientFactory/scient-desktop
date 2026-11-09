@@ -142,7 +142,12 @@ export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
         };
       return notification;
     },
-    createToolPresentation: makeDroidToolPresentation,
+    createToolPresentation: (turnInput) => makeDroidToolPresentation(turnInput),
+    // Droid keeps working after a background sub-agent ends past its turn, and marks no end
+    // to that work. Quiet spans inside it reached 12 s while the model thought or wrote a call.
+    enablePostSettleContinuation: true,
+    continuationSilence: (lastOutput) =>
+      lastOutput?.sessionUpdate === "agent_message_chunk" ? "20 seconds" : "40 seconds",
     allowOnceForSessionApproval: true,
     supportsImagePrompts: true,
     modelSupportsImages: (runtime, selection) =>

@@ -41,8 +41,15 @@ access.
   entry in one category.
 - **All MCP servers** (`/settings/extensions/all`) — the MCP Registry, paged,
   with its own search; curated servers appear here in their curated shape.
-- **Installed** (`/settings/extensions/installed`) — Connected services (with
-  **Add by URL**), Scient plugins (with **Install from folder**), then one
+- **Add your own** — one button in the top bar of Discover and Installed (and a
+  link under Discover search results) opens one dialog for everything outside
+  the catalog: a connector file or folder, a Scient plugin folder
+  (`inspectLocal` answers `kind: "plugin"`), a server another app runs, a pasted
+  `https://` address (handed to the URL form), or Advanced → a command. The
+  import list leaves out servers that cannot start here (program not found, or
+  Codex `env_vars` that are neither in the environment nor keys).
+- **Installed** (`/settings/extensions/installed`) — Connected services,
+  Scient plugins, then one
   **From <agent>** section per provider instance with its plugins and MCP
   servers. A **Works with** filter narrows every section to what one provider
   instance can use. Provider sections show six entries with a header toggle to
@@ -123,7 +130,8 @@ endorsement. The source URLs are development inputs only.
 
 ### Model
 
-A connector is a remote MCP server reached over Streamable HTTP. Scient owns the
+A connector is a remote MCP server reached over Streamable HTTP, or a program
+Scient runs locally ([local connectors](#local-connectors)). Scient owns the
 vendor credential; agents never receive it.
 
 ```text
@@ -166,7 +174,8 @@ ConnectorRecord {
   serverName: string;             // unique MCP server name delivered to agents
   displayName: string;
   url: string;                    // canonical https endpoint (RFC 8707 resource)
-  source: { type: "registry"; name: string; version: string } | { type: "url" } | { type: "plugin"; pluginId: string };
+  source: { type: "registry"; name: string; version: string } | { type: "url" } | { type: "plugin"; pluginId: string }
+        | { type: "local"; registry?: { name: string; version: string } };
   auth:
     | { type: "none" }
     | { type: "oauth"; credentialRef: SecretRef }       // tokens + client registration
@@ -176,6 +185,8 @@ ConnectorRecord {
   authRevision: number;           // credential generation; absent in older records = 0
   availability: GrantScope;       // which projects receive it (shared with Secrets)
   createdAt; updatedAt;
+  local?: { kind: "bundle" | "command" | "package"; runtime: "scient-node" | "system";
+            command; args; environment; secretsRef?; ownedDirectory?; version?; author? };
 }
 GrantScope = { type: "all-projects" } | { type: "projects"; projectIds: ProjectId[] }
 ```
@@ -421,6 +432,100 @@ never shows a withheld connector as delivered.
 A session without an MCP injection channel (for example an external OpenCode
 server) records a receipt with no deliveries and every eligible connector
 skipped as `transport-unsupported`, replacing any earlier session's receipt.
+
+### Local connectors
+
+A local connector is a connector whose source is `local`: an MCP server Scient
+runs as a stdio program on the server host. Everything above (delivery,
+availability, enablement, receipts, the proxy and its redaction, Test) applies
+unchanged; only the upstream differs. `forward` hands a local record's exchange to
+`LocalConnectorProcesses` instead of `fetch`, which serves the program as
+Streamable HTTP:
+
+- One process per proxy session: `initialize` without a session starts a process
+  and returns its session id, which the proxy maps to the agent's own id as for any
+  vendor session. A stdio server serves one client, so sessions are never shared.
+- A request's response goes to the POST that carried it, as SSE. Other server
+  messages go to the oldest open POST stream, else the GET stream, else a backlog of
+  100 replayed to the next GET. Non-JSON stdout lines are dropped; a line over 32 MiB
+  stops the session.
+- `DELETE`, a crash, 30 minutes without requests (swept every minute), Remove, Turn
+  off, Restart (`extensions.connectors.update` with `restart: true`) and shutdown stop
+  the process tree (Scient's `DuplexProcess`). Pending requests are answered with a
+  JSON-RPC error; later requests on that session get 404, so the agent starts a
+  new one. At most 8 sessions per connector and 32 in all; the least recently used
+  idle one is stopped to make room.
+- A failure to start or a crash is recorded as `lastError` with the program's last
+  stderr line, key values removed; the first successful answer clears it.
+  `ConnectorSummary.local.running` counts live sessions and the change feed
+  advances when one starts or stops.
+
+**Every local connector is a folder with an MCP Bundle `manifest.json`**
+(`LocalConnectors`). Scient reads the manifest each time it starts the program
+(cached by modification time), so editing the folder and choosing Restart applies
+the change. The record keeps only the folder, whether Scient made it (`owned`,
+removed with the connector), plain answers (`settings`) and linked keys (`keys`):
+
+- `local-bundle`: a `.mcpb`, `.dxt` or `.zip` file is unpacked into
+  `<stateDir>/connectors/<name>-<id>` (links and entries outside the folder refused,
+  executable bits kept, 2 GiB and 100,000 entries at most); a folder with
+  `manifest.json` is used in place.
+- `local-command`, `local-package` (a registry entry's `localPackage`: npm via
+  `npx -y`, PyPI via `uvx`, recorded with `source.registry`) and `local-import` (a
+  stdio server from Claude Desktop, Claude Code's `~/.claude.json` including its
+  per-folder servers, Codex's `config.toml`, Cursor's `mcp.json`, or a project's or
+  chosen folder's `.mcp.json`) get a generated manifest (type `binary`, author
+  "Added in Scient") in Scient's connectors folder. Plain variables are written as
+  they are; key-like ones (`*KEY`, `*TOKEN`, `*SECRET`, `*PASSWORD`, …) and declared
+  package variables become `user_config` questions. An imported server keeps its
+  folder as `_meta["com.scientfactory.scient"].workingDirectory`.
+  `extensions.connectors.importable` lists importable servers by name and command;
+  variable values stay on the server, and Add reads the source again.
+- `extensions.connectors.inspectLocal` returns a bundle's name, questions and any
+  reason it cannot run here, or the servers of a folder's `.mcp.json`.
+
+The program runs in its own folder unless the manifest's Scient `_meta` names
+`project` (the thread's worktree, else its project folder) or an absolute folder.
+It gets the user's environment without Scient's internal variables
+(`agentProcessEnvironment`, as agents get it). `${__dirname}`, `${HOME}`,
+`${DESKTOP}`, `${DOCUMENTS}`, `${DOWNLOADS}`, `${/}` and `${user_config.*}` are filled
+at start; a whole-argument multi-value setting becomes one argument per value; `uv`
+bundles default to `uv run --project <dir> <entry>`; `platform_overrides` for the
+host replace `command` and `args` and merge `env`. Node bundles run on Scient's own
+executable with `ELECTRON_RUN_AS_NODE=1` (system `node` for a single-executable
+server); other commands resolve on PATH, and Windows `.cmd`/`.bat` shims run through
+`cmd.exe` with escaped arguments (`resolveSpawnCommand`). A missing program fails Add
+with a plain reason ("Needs uv …").
+
+**Keys are Accounts API-key accounts linked to the connector**, never copies.
+`settings` holds plain answers; `keys` maps a `sensitive` question to an
+`account:<id>:token` ref. Add and setup take a chosen account, or save a pasted value
+as a new account (or as the new value of the account that key already uses); an
+unanswered key links an existing account whose `envName` matches. At start each key
+resolves through `AccountsService.resolveBound` with the `local-connector` consumer
+(no site; Off switches and the account's project scope apply against the thread's
+project; uses appear in Accounts activity). Values reach the program only through its
+environment: a manifest that puts a key in `args` is refused at Add. Values of at
+least 16 characters join the proxy's redaction set. Removing a connector keeps its
+Accounts keys.
+
+**Needs setup.** A missing required answer or key (or a linked key Accounts refuses)
+does not block Add or delivery. `ConnectorSummary.local.missing` names what is
+missing and the row shows Needs setup; Test returns `needs-setup`. Until it is set up,
+a session starts Scient's setup answerer (`<stateDir>/connectors/.scient-setup.mjs`
+on Scient's Node) instead of the program: it lists the manifest's declared tools
+and answers every call with what is missing and to call `scient_connector_setup`.
+`extensions.connectors.update` with `localSetup` (the page's Edit setup) and the
+agent tool `scient_connector_setup` save answers and keys and restart the
+connector: the setup answerer stops, so the agent's next request gets 404 and a new
+session reaches the program. `scient_connector_setup` saves plain answers the agent
+collected in chat; each missing key goes through `scient_account_add`'s private
+secret card, or links a matching saved key without one; `replaceKeys` asks again for
+a key the program rejected.
+
+The record keeps `url` as `scient-local:<connectorId>` (unique, never fetched). Older
+Scient versions cannot decode `source.type: "local"`, so they preserve such records
+verbatim instead of treating them as remote connectors.
 
 ### Receipts
 
@@ -689,7 +794,8 @@ rejected with a named reason.
   model.
 - **Scient bundles do not carry code.** Nothing from a bundle is executed:
   no local MCP server processes, no scripts, no UI code. Shared native plugins
-  use the separate agent-owned path above.
+  use the separate agent-owned path above, and local MCP servers are added as
+  [local connectors](#local-connectors).
 
 ## Discover: curated catalog and MCP Registry
 
@@ -766,10 +872,12 @@ lists the `streamable-http` remotes served over https, decided after URL
 variables are substituted (fixed `value` first, then `default`), plus
 unresolved templates whose scheme is not a literal non-https one; a remote
 `requiresInput` when it has a required header or an unresolved URL variable;
-`installable` = at least one such remote without required input. Otherwise
-`unsupportedReason` explains why: package-only (local) servers "Runs locally —
-local servers are not supported yet", required configuration, non-https
-endpoints, or another transport (for example legacy SSE).
+`installable` = at least one such remote without required input, or else a
+`localPackage`: the first npm or PyPI stdio package whose arguments all have fixed
+values or defaults (runtime arguments are not supported), with its declared
+environment variables. Otherwise `unsupportedReason` explains why: other local
+packages (for example OCI images or remote `.mcpb` files), required configuration,
+non-https endpoints, or another transport (for example legacy SSE).
 
 ## Secrets integration
 
@@ -839,10 +947,11 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 
 ## Open decisions
 
-- **Scient bundles and direct registry installs carrying code** remain outside
-  the shared native plugin path: local registry processes and plugin UI are
-  not supported. Shared plugins with hooks, MCP servers, or modules are approved
-  for native installation with the store review state shown when available.
+- **Scient bundles carrying code** remain outside the shared native plugin path,
+  and plugin UI is not supported. Local registry packages and MCP Bundles run as
+  [local connectors](#local-connectors). Not yet: OCI and remote `.mcpb` registry
+  packages, `.mcpb` signature checks, opening a `.mcpb` from the file manager, and
+  Accounts bindings for local keys.
 - **Writing provider-native config** (export a connector into
   `~/.codex/config.toml` for use outside Scient): not built; the proxy covers
   every in-Scient session. Revisit only for standalone CLI use.
@@ -853,12 +962,27 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 - **Other agents**: inventory still depends on each provider exposing a verified
   owner interface. Codex, Claude, and Scient Agent have the paths above.
 
-GitHub uses a bearer personal access token by default, linked from its add dialog.
-Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
-“Sign in with GitHub” through the existing connector OAuth/PKCE flow and callback.
-It stays hidden when unset; registering the Scient OAuth app and configuring the
-provider's callback/client requirements remain prerequisites for live sign-in.
-Only user-added URLs expose custom OAuth client settings.
+GitHub's hosted MCP server has no dynamic client registration, so its connector
+borrows Source Control's GitHub credential (`source-control` auth) instead of
+connector OAuth. The GitHub driver's `credential` capability returns Source
+Control's effective credential in Source Control's order (saved token, Scient
+for GitHub app sign-in, `GH_TOKEN`, `gh`) with the login `GET /user` reports for
+that token; the record stores only that login. A pinned login gets its own
+credential or none, never another account's: none sets `needs-credential`. The
+token goes only to `https://api.githubcopilot.com/mcp/` and paths below it,
+checked on add and on every request; a 401 hands that token back to its own
+source and replays once with a different one. Credential errors carry no source
+text. Listings and session starts follow Source Control at most once a minute:
+GitHub is added when nothing points at that server and
+`githubFromSourceControlDeclined` (set when the user removes GitHub, cleared
+when they add it) is unset, and Source Control connectors move between
+`connected` and `needs-credential` without touching enablement or availability.
+
+Scient for GitHub (client ID `Iv23lieBEtqTwH75xtnk`, device flow, no secret) is
+the default app sign-in on every server; `T3CODE_GITHUB_APP_CLIENT_ID` overrides
+it, and an empty value turns it off. Device sign-in from the add dialog shows
+the code and opens `github.com/login/device` in Scient's browser. A token remains
+available. Only user-added URLs expose custom OAuth client settings.
 
 ## Plugin key detection
 

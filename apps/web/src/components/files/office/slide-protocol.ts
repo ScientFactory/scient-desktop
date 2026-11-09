@@ -1,5 +1,9 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
 import type { Method } from "./worker-rpc";
+// SCIENT-FORK:START
+import type { WordSpan } from "./word-protocol";
+import type { OfficeFindHit } from "~/scient/office/wordFind";
+// SCIENT-FORK:END
 
 /** The longest side a decoded picture keeps: enough for a full-width slide on a high-density screen. */
 export const maxImageSide = 2560;
@@ -44,4 +48,8 @@ export type SlideMethods = {
   readonly paint: Method<{ readonly index: number; readonly density: number }, SlidePainted>;
   /** Hands over SVG pictures rasterized for `VectorRequest`s. */
   readonly vectors: Method<readonly VectorBitmap[], void>;
+  // SCIENT-FORK:START — the reader's text layer and find, in the Word layer's units.
+  readonly text: Method<{ readonly index: number }, readonly WordSpan[]>;
+  readonly find: Method<{ readonly query: string }, readonly OfficeFindHit[]>;
+  // SCIENT-FORK:END
 };

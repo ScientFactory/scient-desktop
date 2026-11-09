@@ -70,7 +70,7 @@ import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
-import { appendBoundedAnalysisOutput } from "./analysisOutputBuffer.ts";
+import { appendBoundedAnalysisOutput, makeHeldAnalysisOutput } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
 import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
@@ -321,6 +321,36 @@ const make = Effect.gen(function* () {
       startedAt: Date.parse(receipt.startedAt),
       ...(status === "active" ? {} : { finishedAt: yield* Clock.currentTimeMillis }),
       trigger: "user",
+      ...(status === "active"
+        ? {}
+        : {
+            capture: {
+              captureSchemaVersion: 2 as const,
+              captureSource: "run-file" as const,
+              captureOutcome:
+                capture === "succeeded"
+                  ? run.artifacts.length > 0
+                    ? ("retained" as const)
+                    : ("none" as const)
+                  : run.artifacts.length > 0
+                    ? ("partial" as const)
+                    : status === "cancelled"
+                      ? ("unobserved" as const)
+                      : ("failed" as const),
+              captureCoverage:
+                capture === "succeeded" ? ("complete" as const) : ("unavailable" as const),
+              captureReason:
+                capture === "succeeded"
+                  ? ("none" as const)
+                  : status === "cancelled"
+                    ? ("observation-unavailable" as const)
+                    : ("artifact-collection-failed" as const),
+              retainedOutputCount: run.artifacts.length,
+              ...(capture === "succeeded" || status === "cancelled"
+                ? { rejectedOutputCount: 0 }
+                : {}),
+            },
+          }),
     });
   });
 
@@ -899,7 +929,19 @@ const make = Effect.gen(function* () {
               ),
           });
         }
-        const prepared = adapter.prepare(runContext);
+        // An adapter names a missing tool, such as one a project needs, with a runtime-missing error.
+        const prepared = yield* Effect.try({
+          try: () => adapter.prepare(runContext),
+          catch: (cause) =>
+            isOperationError(cause) && cause.reason === "runtime-missing"
+              ? cause
+              : analysisError(
+                  "start",
+                  "process-failed",
+                  `Unable to prepare the ${profile.label} run.`,
+                  cause,
+                ),
+        });
         let exitCode: number | null = 0;
         for (const [index, step] of [...(prepared.before ?? []), prepared].entries()) {
           // Stop between steps must not start the next one, such as a program just built.
@@ -927,19 +969,74 @@ const make = Effect.gen(function* () {
           if (running?.receipt.cancellationRequested) {
             yield* handle.cancel;
           }
+          const held =
+            "showOutput" in step && step.showOutput === "on-failure"
+              ? makeHeldAnalysisOutput()
+              : null;
           [, exitCode] = yield* Effect.all(
             [
               handle.output.pipe(
                 Stream.groupedWithin(OUTPUT_COALESCE_MAX_CHUNK, OUTPUT_COALESCE_WINDOW),
-                Stream.runForEach((outputs) => appendOutput(runId, outputs)),
+                Stream.runForEach((outputs) =>
+                  held === null
+                    ? appendOutput(runId, outputs)
+                    : Effect.sync(() => held.hold(outputs)),
+                ),
               ),
               handle.exitCode,
             ],
             { concurrency: 2 },
           );
-          if (exitCode !== 0) break;
+          if (exitCode !== 0) {
+            if (
+              held !== null &&
+              !(yield* Ref.get(runsRef)).get(runId)?.receipt.cancellationRequested
+            ) {
+              yield* appendOutput(runId, held.release());
+            }
+            break;
+          }
         }
         yield* updateReceipt(runId, "start", (run) => ({ ...run, phase: "capturing" }));
+        const concludeRun = adapter.concludeRun;
+        const outcome = concludeRun
+          ? yield* Effect.tryPromise({
+              try: () => concludeRun(runContext, exitCode),
+              catch: (cause) =>
+                analysisError(
+                  "start",
+                  "process-failed",
+                  `Unable to read the ${profile.label} results.`,
+                  cause,
+                ),
+            }).pipe(
+              // The exit code alone cannot say how such a run went (batch Stata exits 0 after an
+              // error), so results that cannot be read fail the run rather than pass it.
+              Effect.catchCause((cause) =>
+                Effect.logWarning("analysis run conclusion failed", { runId, cause }).pipe(
+                  Effect.as({
+                    output: [],
+                    failureMessage:
+                      exitCode === 0 || exitCode === null
+                        ? `Scient could not read the ${profile.label} results.`
+                        : `${profile.label} exited with code ${exitCode}, and Scient could not read its results.`,
+                    diagnostics: [],
+                    writtenFiles: [],
+                  }),
+                ),
+              ),
+            )
+          : null;
+        if (outcome !== null) {
+          yield* appendOutput(runId, outcome.output);
+          if (outcome.diagnostics.length > 0 || outcome.writtenFiles.length > 0) {
+            yield* updateReceipt(runId, "start", (run) => ({
+              ...run,
+              ...(outcome.diagnostics.length === 0 ? {} : { diagnostics: outcome.diagnostics }),
+              ...(outcome.writtenFiles.length === 0 ? {} : { writtenFiles: outcome.writtenFiles }),
+            }));
+          }
+        }
         if (adapter.collectDiagnostics) {
           const diagnostics = yield* Effect.promise(() =>
             adapter.collectDiagnostics!(runContext),
@@ -1014,7 +1111,7 @@ const make = Effect.gen(function* () {
             artifacts: collection.artifacts,
             ...(collection.writtenFiles.length === 0
               ? {}
-              : { writtenFiles: collection.writtenFiles }),
+              : { writtenFiles: [...(run.writtenFiles ?? []), ...collection.writtenFiles] }),
             artifactReceipt: {
               status: collection.status,
               failureMessage: collection.failureMessage,
@@ -1028,6 +1125,10 @@ const make = Effect.gen(function* () {
         const latest = (yield* Ref.get(runsRef)).get(runId);
         if (latest?.receipt.cancellationRequested) {
           yield* finishRun(runId, "cancelled", exitCode, null);
+        } else if (outcome !== null) {
+          yield* outcome.failureMessage === null
+            ? finishRun(runId, "succeeded", exitCode, null)
+            : finishRun(runId, "failed", exitCode, outcome.failureMessage);
         } else if (exitCode === 0) {
           yield* finishRun(runId, "succeeded", 0, null);
         } else {
@@ -1088,7 +1189,8 @@ const make = Effect.gen(function* () {
               ? null
               : status === "lost"
                 ? `Scient stopped before the ${profile.label} run completed.`
-                : isOperationError(failure) && failure.reason === "source-changed"
+                : isOperationError(failure) &&
+                    (failure.reason === "source-changed" || failure.reason === "runtime-missing")
                   ? failure.message
                   : `${profile.label} could not be started or completed.`,
           ).pipe(Effect.ignoreCause({ log: true }));

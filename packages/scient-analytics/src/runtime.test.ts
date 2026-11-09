@@ -7,6 +7,8 @@ import * as NodeSqlite from "node:sqlite";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { createAnalyticsRuntime, type AnalyticsRuntimeOptions } from "./runtime.ts";
+import type { AnalyticsBatch } from "./contract.ts";
+import { eventContractViolation } from "./wireContract.ts";
 
 const fixtures: string[] = [];
 const servers: NodeHttp.Server[] = [];
@@ -81,6 +83,81 @@ afterEach(async () => {
 });
 
 describe("Scient analytics background runtime", () => {
+  it("delivers capture and voice summaries through the real worker/outbox using the existing gateway contract", async () => {
+    const server = await ingestionServer();
+    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
+    try {
+      expect(
+        runtime.record("scient.operation.completed", {
+          operationKind: "compute-artifact",
+          captureSchemaVersion: 2,
+          captureSource: "interactive",
+          captureOutcome: "retained",
+          captureCoverage: "partial",
+          captureReason: "scan-depth-limit",
+          retainedOutputCount: 2,
+          rejectedOutputCount: 0,
+        }),
+      ).toBe(true);
+      expect(
+        runtime.record("voice.transcription.started", {
+          voiceSchemaVersion: 2,
+          engineClass: "local-whisper",
+        }),
+      ).toBe(true);
+      expect(
+        runtime.record("voice.transcription.completed", {
+          voiceSchemaVersion: 2,
+          engineClass: "local-whisper",
+          correctionOutcome: "fallback",
+          durationMs: 1000,
+          transcriptionDurationMs: 300,
+          correctionDurationMs: 700,
+          audioDurationMs: 3000,
+        }),
+      ).toBe(true);
+      expect(
+        runtime.record("voice.recording.failed", {
+          voiceSchemaVersion: 2,
+          stage: "recording",
+          failureClass: "permission",
+        }),
+      ).toBe(true);
+      expect(await runtime.pendingCount()).toBe(4);
+      expect(await runtime.flush()).toBe(4);
+      expect(await runtime.pendingCount()).toBe(0);
+      const events = (server.bodies as AnalyticsBatch[]).flatMap((body) => body.events);
+      expect(events).toHaveLength(4);
+      for (const event of events)
+        expect(
+          eventContractViolation({
+            name: event.name,
+            properties: event.properties,
+            privacyLevel: event.privacy_level,
+            consentLevel: event.consent_level,
+          }),
+        ).toBeNull();
+      expect(
+        events.find((event) => event.name === "scient.operation.completed")?.properties,
+      ).toMatchObject({
+        captureOutcome: "retained",
+        captureCoverage: "partial",
+        retainedOutputCountBucket: "2-3",
+      });
+      expect(
+        events.find((event) => event.name === "voice.transcription.completed")?.properties,
+      ).toMatchObject({
+        correctionOutcome: "fallback",
+        transcriptionDurationBucket: expect.any(String),
+        correctionDurationBucket: expect.any(String),
+      });
+      expect(JSON.stringify(events)).not.toMatch(
+        /"(?:collectionContext|audioBase64|transcript|text)"|DurationMs|retainedOutputCount"/u,
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
   it("does not replay buffered batches after deletion rotates the installation", async () => {
     const server = await ingestionServer();
     const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));

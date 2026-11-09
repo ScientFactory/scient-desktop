@@ -13,6 +13,7 @@ import { deriveProviderInstanceConfigMap } from "../../provider/ProviderInstance
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../TextGeneration.ts";
+import * as TextGenerators from "../TextGenerators.ts";
 
 /** Run caller-level metadata tests through the real instance/model resolver. */
 export const makeNativeTextGeneration = (
@@ -35,6 +36,11 @@ export const makeNativeTextGeneration = (
     }),
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function () {
       return Effect.die("Unexpected review guide generation");
+    }),
+    generateTranscriptionPostProcessing: Effect.fn(
+      "TextGeneration.generateTranscriptionPostProcessing",
+    )(function () {
+      return Effect.die("Unexpected transcript cleanup");
     }),
     ...overrides,
   });
@@ -88,6 +94,7 @@ export const makeNativeTextGeneration = (
           listInstances: Effect.succeed([instance]),
         }),
         ServerSettings.layerTest(),
+        Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
         Layer.mock(SourceControlProviderRegistry)({
           resolveLink: () => Effect.die("No source-control link expected"),
         }),

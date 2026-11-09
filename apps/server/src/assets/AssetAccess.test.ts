@@ -54,6 +54,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
@@ -1603,6 +1604,12 @@ describe("AssetAccess", () => {
         revision: { size: 9 },
       });
       expect(yield* resolveAsset(token, "private-notes.pdf")).toBeNull();
+      const renewed = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: pdfPath },
+        workspaceRoot: root,
+      });
+      expect(result.fileRevision).toEqual(expect.any(String));
+      expect(renewed.fileRevision).toBe(result.fileRevision);
 
       yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF-1.7\nchanged"));
       const staleAsset = yield* resolveAsset(token, "paper.pdf");
@@ -1624,8 +1631,39 @@ describe("AssetAccess", () => {
           refreshedSuffix.slice(refreshedSeparator + 1),
         ),
       ).toMatchObject({ revision: { size: 16 } });
+      expect(refreshed.fileRevision).not.toBe(result.fileRevision);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  // SCIENT-FORK:START — a preview keeps a loaded document while its file's revision holds.
+  it.effect("reports the revision of a workspace document", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-document-workspace-",
+      });
+      const documentPath = path.join(root, "report.docx");
+      yield* fileSystem.writeFileString(documentPath, "PK first");
+      const issue = () =>
+        issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: documentPath,
+          },
+          workspaceRoot: root,
+        });
+      const first = yield* issue();
+      const renewed = yield* issue();
+      expect(first.fileRevision).toEqual(expect.any(String));
+      expect(renewed.fileRevision).toBe(first.fileRevision);
+
+      yield* fileSystem.writeFileString(documentPath, "PK second, longer");
+      expect((yield* issue()).fileRevision).not.toBe(first.fileRevision);
+    }).pipe(Effect.provide(layerTest)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("issues exact renewable URLs for immutable generated PDF revisions", () =>
     Effect.gen(function* () {
@@ -2017,6 +2055,7 @@ describe("AssetAccess", () => {
         revision: { size: 4 },
       });
       expect(yield* resolveAsset(suffix.slice(0, separatorIndex), "sibling.png")).toBeNull();
+      expect(issued.fileRevision).toEqual(expect.any(String));
 
       const replacementPath = path.join(root, "replacement.png");
       yield* fileSystem.writeFile(replacementPath, new Uint8Array([137, 80, 78, 71]));
@@ -2144,8 +2183,37 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("preserves the change request repository through RPC decoding and signed media", () =>
+    Effect.gen(function* () {
+      const decodeAssetCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
+      const resource = {
+        _tag: SOURCE_CONTROL_MEDIA_ASSET,
+        cwd: "/personal-fork",
+        url: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
+        repository: "enterprise/private",
+      };
+      const input = yield* decodeAssetCreateUrlInput({ resource });
+      const issued = yield* issueAssetUrl(input);
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const resolved = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+
+      expect(resolved).toEqual({
+        kind: "source-control-media",
+        url: resource.url,
+        cwd: resource.cwd,
+        repository: resource.repository,
+        expiresAt: issued.expiresAt,
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves a host's credentialed media through that host's driver", () => {
-    const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+    const fetched: Array<{
+      url: string;
+      headers: Readonly<Record<string, string>>;
+      repository?: string;
+    }> = [];
     const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
     const media = sourceControlDefinitions.mediaUrl(url)!;
     const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
@@ -2164,6 +2232,17 @@ describe("AssetAccess", () => {
         }),
       },
     ]);
+    // Clients that predate `repository` get the checkout's.
+    const layerIdentities = Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+      resolve: () =>
+        Effect.succeed({
+          canonicalKey: "github.com/owner/repo",
+          locator: { source: "git-remote", remoteName: "origin", remoteUrl: "" },
+          provider: media.definition.kind,
+          owner: "owner",
+          name: "repo",
+        }),
+    });
     return Effect.gen(function* () {
       const decodeAssetCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
 
@@ -2187,12 +2266,21 @@ describe("AssetAccess", () => {
         range: "bytes=0-4",
         cookie: "session",
       });
-      expect(fetched).toEqual([{ url: media.fetchUrl, headers: { range: "bytes=0-4" } }]);
+      expect(fetched).toEqual([
+        { url: media.fetchUrl, headers: { range: "bytes=0-4" }, repository: "owner/repo" },
+      ]);
       expect(response.status).toBe(206);
       // The upstream sent no type, so it comes from the file name the host gave the media.
       expect(response.headers["content-type"]).toBe("image/png");
       expect(response.headers["content-length"]).toBe("5");
-    }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+
+      // A pull request's own repository wins over the checkout it is shown in.
+      yield* sourceControlMediaResponse({ ...asset, repository: "enterprise/private" }, {});
+      expect(fetched.at(-1)?.repository).toBe("enterprise/private");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)),
+      Effect.scoped,
+    );
   });
 
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>

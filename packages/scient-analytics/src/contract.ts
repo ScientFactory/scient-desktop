@@ -63,6 +63,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "voice.transcription.completed",
   "voice.transcription.failed",
   "voice.transcription.cancelled",
+  "voice.recording.failed",
+  "voice.recording.cancelled",
   "surface.opened",
   "panel.viewed",
   "settings.viewed",
@@ -270,10 +272,92 @@ const VOICE_FAILURE_CLASSES = new Set([
   "model-unavailable",
   "audio",
   "engine",
+  "delivery",
   "cancelled",
   "unknown",
 ]);
-const VOICE_CANCELLATION_STAGES = new Set(["recording", "transcribing", "unknown"]);
+const VOICE_CANCELLATION_STAGES = new Set([
+  "recording",
+  "preparing",
+  "transcribing",
+  "correcting",
+  "unknown",
+]);
+
+function closedCategory(value: unknown, allowed: ReadonlyArray<string>): string {
+  return typeof value === "string" && allowed.includes(value) ? value : "unknown";
+}
+
+function captureProperties(input: Readonly<Record<string, unknown>>, terminal: boolean) {
+  if (property(input, "captureSchemaVersion") !== 2) return {};
+  const identity = {
+    captureSchemaVersion: 2,
+    captureSource: closedCategory(property(input, "captureSource"), ["interactive", "run-file"]),
+  };
+  // Read terminal inputs on starts too, so inherited passthrough cannot send raw counts.
+  const outcome = {
+    captureOutcome: closedCategory(property(input, "captureOutcome"), [
+      "retained",
+      "partial",
+      "none",
+      "failed",
+      "unobserved",
+    ]),
+    captureCoverage: closedCategory(property(input, "captureCoverage"), [
+      "complete",
+      "partial",
+      "unavailable",
+    ]),
+    captureReason: closedCategory(property(input, "captureReason"), [
+      "none",
+      "scan-timeout",
+      "scan-entry-limit",
+      "scan-depth-limit",
+      "scan-unreadable",
+      "observation-unavailable",
+      "output-limit",
+      "image-limit",
+      "unsafe-image",
+      "invalid-image",
+      "image-changed",
+      "missing-resource",
+      "resource-mismatch",
+      "persistence-failed",
+      "artifact-collection-failed",
+    ]),
+    retainedOutputCountBucket: countBucket(property(input, "retainedOutputCount")),
+    rejectedOutputCountBucket: countBucket(property(input, "rejectedOutputCount")),
+  };
+  return terminal ? { ...identity, ...outcome } : identity;
+}
+
+function voiceProperties(input: Readonly<Record<string, unknown>>) {
+  if (property(input, "voiceSchemaVersion") !== 2) return {};
+  return {
+    voiceSchemaVersion: 2,
+    ...(property(input, "transcriptionDurationMs") === undefined
+      ? {}
+      : {
+          transcriptionDurationBucket: durationBucket(property(input, "transcriptionDurationMs")),
+        }),
+    ...(property(input, "correctionDurationMs") === undefined
+      ? {}
+      : {
+          correctionDurationBucket: durationBucket(property(input, "correctionDurationMs")),
+        }),
+    ...(property(input, "correctionOutcome") === undefined
+      ? {}
+      : {
+          correctionOutcome: closedCategory(property(input, "correctionOutcome"), [
+            "disabled",
+            "corrected",
+            "fallback",
+            "bypassed",
+            "cancelled",
+          ]),
+        }),
+  };
+}
 const OWNER_SOURCES = new Set(["connect", "openai", "claude", "device"]);
 const OWNER_OBSERVERS = new Set(["server", "client"]);
 const OWNER_ID_PATTERN = /^[0-9a-f]{64}$/u;
@@ -693,6 +777,7 @@ function normalizeEvent(
           durationBucket: durationBucket(property(input, "durationMs")),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           reviewRequired: normalizedBoolean(property(input, "reviewRequired")),
+          ...captureProperties(input, name !== "scient.operation.started"),
         },
       };
     case "app.session.started":
@@ -1152,6 +1237,7 @@ function normalizeEvent(
             "other",
           ),
           languageMode: normalizedEnum(property(input, "languageMode"), VOICE_LANGUAGE_MODES),
+          ...voiceProperties(input),
         },
       };
     case "voice.transcription.completed":
@@ -1167,8 +1253,10 @@ function normalizeEvent(
           ),
           durationBucket: durationBucket(property(input, "durationMs")),
           audioDurationBucket: durationBucket(property(input, "audioDurationMs")),
+          ...voiceProperties(input),
         },
       };
+    case "voice.recording.failed":
     case "voice.transcription.failed":
       return {
         name,
@@ -1181,8 +1269,21 @@ function normalizeEvent(
             "other",
           ),
           failureClass: normalizedEnum(property(input, "failureClass"), VOICE_FAILURE_CLASSES),
+          ...(property(input, "voiceSchemaVersion") !== 2
+            ? {}
+            : {
+                stage: closedCategory(property(input, "stage"), [
+                  "preparing",
+                  "transcribing",
+                  "recording",
+                  "delivering",
+                ]),
+                durationBucket: durationBucket(property(input, "durationMs")),
+              }),
+          ...voiceProperties(input),
         },
       };
+    case "voice.recording.cancelled":
     case "voice.transcription.cancelled":
       return {
         name,
@@ -1190,6 +1291,12 @@ function normalizeEvent(
         priority: "summary",
         properties: {
           stage: normalizedEnum(property(input, "stage"), VOICE_CANCELLATION_STAGES),
+          ...(property(input, "voiceSchemaVersion") !== 2
+            ? {}
+            : {
+                durationBucket: durationBucket(property(input, "durationMs")),
+              }),
+          ...voiceProperties(input),
         },
       };
     case "surface.opened":

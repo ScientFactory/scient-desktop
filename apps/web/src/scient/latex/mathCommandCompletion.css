@@ -33,7 +33,6 @@
   background: var(--accent);
   color: var(--accent-foreground);
 }
-body:has(.scient-latex-mathfield math-field[data-environment-completion]:focus-within)
-  #mathlive-suggestion-popover {
+body[data-math-completion-hides-native] #mathlive-suggestion-popover {
   display: none;
 }

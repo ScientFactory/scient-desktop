@@ -56,6 +56,11 @@ describe("ComputeProjectOutputObserver", () => {
         expect(collection.warnings).toEqual([
           "Some project files could not be checked (time limit).",
         ]);
+        expect(collection.capture).toMatchObject({
+          coverage: "partial",
+          coverageReason: "scan-timeout",
+          rejectedCount: 0,
+        });
       }),
     ).pipe(Effect.provide(liveLayer)),
   );
@@ -154,6 +159,11 @@ describe("ComputeProjectOutputObserver", () => {
 
         const collection = yield* collect(observation);
         expect(collection.images).toHaveLength(32);
+        expect(collection.capture).toMatchObject({
+          coverage: "complete",
+          rejectedCount: 2,
+          rejectionReason: "image-limit",
+        });
         expect(collection.warnings.some((warning) => warning.includes("first 32"))).toBe(true);
       }),
     ).pipe(Effect.provide(liveLayer)),
@@ -168,6 +178,10 @@ describe("ComputeProjectOutputObserver", () => {
 
         const collection = yield* collect(observation, 6);
         expect(collection.images.map((image) => image.relativePath)).toEqual(["a.svg"]);
+        expect(collection.capture).toMatchObject({
+          rejectedCount: 1,
+          rejectionReason: "output-limit",
+        });
         expect(collection.warnings.some((warning) => warning.includes("output limit"))).toBe(true);
       }),
     ).pipe(Effect.provide(liveLayer)),
@@ -272,6 +286,11 @@ describe("ComputeProjectOutputObserver", () => {
         const observation = yield* begin(root);
         const unchanged = yield* collect(observation);
         expect(unchanged.images).toEqual([]);
+        expect(unchanged.capture).toMatchObject({
+          coverage: "partial",
+          coverageReason: "scan-depth-limit",
+          rejectedCount: 0,
+        });
         expect(unchanged.warnings).toEqual([
           "Some project files could not be checked (depth limit).",
         ]);
@@ -279,6 +298,11 @@ describe("ComputeProjectOutputObserver", () => {
         yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(root, "seen.svg"), "<svg/>"));
         const collection = yield* collect(observation);
         expect(collection.images.map((image) => image.relativePath)).toEqual(["seen.svg"]);
+        expect(collection.capture).toMatchObject({
+          coverage: "partial",
+          coverageReason: "scan-depth-limit",
+          rejectedCount: 0,
+        });
         expect(collection.warnings).toEqual(unchanged.warnings);
       }),
     ).pipe(Effect.provide(liveLayer)),

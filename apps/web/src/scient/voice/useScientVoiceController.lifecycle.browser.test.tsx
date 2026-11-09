@@ -36,7 +36,10 @@ vi.mock("./useVoiceRecorder.ts", () => ({
     return recorder;
   },
 }));
-vi.mock("../analytics/client.ts", () => ({ useRecordScientAnalytics: () => analytics }));
+vi.mock("../analytics/client.ts", () => ({
+  useRecordScientAnalytics: () => analytics,
+  useBeginVoiceAnalytics: () => () => analytics,
+}));
 import {
   useScientVoiceController,
   type ScientVoiceController,

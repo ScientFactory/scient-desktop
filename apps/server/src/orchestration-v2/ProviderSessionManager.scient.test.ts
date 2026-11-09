@@ -2606,8 +2606,8 @@ for (const status of ["error", "stopped"] as const) {
         yield* Effect.sync(() => {
           unhealthy = true;
         });
-        // The exposed opening snapshot remains ready; internal live status decides.
-        assert.equal(original.providerSession.status, "ready");
+        // The exposed session follows the live snapshot; retirement still waits for close.
+        assert.equal(original.providerSession.status, status);
         const reopening = yield* manager.open(input).pipe(Effect.exit, Effect.forkChild);
         yield* Deferred.await(closeEntered);
         assert.equal((yield* Ref.get(state)).openCount, 1);

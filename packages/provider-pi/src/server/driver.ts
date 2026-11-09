@@ -61,8 +61,12 @@ const DRIVER_KIND = ProviderDriverKind.make("pi");
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
+  mise: { tool: "pi" },
   nativeUpdate: { args: ["update", "--self"] },
 });
+// SCIENT-FORK:START — a host keeps its private Pi runtime out of this rule.
+export const piMaintenanceResolver = UPDATE;
+// SCIENT-FORK:END
 
 export type PiDriverEnv =
   | PiAdapterV2DriverEnv

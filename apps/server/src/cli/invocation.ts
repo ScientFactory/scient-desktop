@@ -11,9 +11,8 @@ import packageJson from "../../package.json" with { type: "json" };
 
 type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
-/** Package-runner cache layouts identify install ownership on a best-effort basis.
- * Global installs and repository checkouts have no recognized runner. */
-function detectCliRunner(entryPath: string): CliRunner | null {
+/** Detection is best-effort; callers must fail closed to a plain `t3` command. */
+export function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
   if (path.includes("/_npx/")) {
     return "npx";

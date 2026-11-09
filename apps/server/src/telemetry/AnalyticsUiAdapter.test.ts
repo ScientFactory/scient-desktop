@@ -31,6 +31,48 @@ function fixture() {
 }
 
 describe("UI operation consent context", () => {
+  it.effect(
+    "fences all voice stages across consent changes and deletion without exporting the context",
+    () =>
+      Effect.gen(function* () {
+        const f = fixture();
+        const ui = makeAnalyticsUiAdapter(f.service);
+        const status = yield* ui.status;
+        expect(status.voiceLifecycleVersion).toBe(2);
+        for (const name of [
+          "voice.transcription.started",
+          "voice.transcription.completed",
+          "voice.transcription.failed",
+          "voice.transcription.cancelled",
+          "voice.recording.failed",
+        ]) {
+          const event = { name, properties: { voiceSchemaVersion: 2 } };
+          expect(yield* ui.record(event)).toEqual({ accepted: false });
+          expect(
+            yield* ui.record({ ...event, collectionContext: status.collectionContext }),
+          ).toEqual({ accepted: true });
+        }
+        yield* f.deleteData;
+        expect(
+          yield* ui.record({
+            name: "voice.transcription.completed",
+            properties: {},
+            collectionContext: status.collectionContext,
+          }),
+        ).toEqual({ accepted: false });
+        const refreshed = yield* ui.status;
+        yield* f.setConsent("off");
+        yield* f.setConsent("product");
+        expect(
+          yield* ui.record({
+            name: "voice.transcription.completed",
+            properties: {},
+            collectionContext: refreshed.collectionContext,
+          }),
+        ).toEqual({ accepted: false });
+        expect(JSON.stringify(f.events)).not.toMatch(/collectionContext|voiceLifecycleVersion/u);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
   it.effect("accepts Visual LaTeX outcomes only within the current collection context", () =>
     Effect.gen(function* () {
       const f = fixture();

@@ -213,8 +213,11 @@ const add = metadata(
       SecretRequests,
     ],
     description:
-      "Ask the user, in a private card, for an API key or token to keep in Accounts, and wait. It stays out of chat. Returns its accountId and how to use it. A matching account is returned instead, or reported as turned off.",
+      "Ask the user to add an account in a private card here, and wait. api-key: they paste a key. website or university: they sign in on its own page in the card, and Scient keeps it. You only get the account's name and how to use it. A matching account is returned instead, or reported as turned off.",
     parameters: Schema.Struct({
+      kind: Schema.optional(Schema.Literals(["api-key", "website", "university"])).annotate({
+        description: "api-key (default), website, or university.",
+      }),
       name: AccountSummary.fields.name.annotate({ description: "The service, e.g. OpenAI." }),
       reason: TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
         description: "What it is for and where to get it.",
@@ -232,10 +235,22 @@ const add = metadata(
         description: "Replace this account's key when it is wrong or expired.",
       }),
       placeholder: Schema.optional(TrimmedNonEmptyString),
+      site: Schema.optional(AccountSite).annotate({
+        description: "website: the site to sign in to, e.g. github.com.",
+      }),
+      loginUrl: Schema.optional(
+        TrimmedNonEmptyString.check(Schema.isPattern(/^https:\/\//)),
+      ).annotate({ description: "website: its sign-in page, when not on the site's home page." }),
+      username: Schema.optional(Schema.String.check(Schema.isMaxLength(256))).annotate({
+        description: "website: who signs in, when the user has several there.",
+      }),
+      institution: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120))).annotate({
+        description: "university: its name or email domain, e.g. huji.ac.il.",
+      }),
     }),
     success: Schema.Union([
       Schema.Struct({
-        status: Schema.Literals(["saved", "exists"]),
+        status: Schema.Literals(["saved", "exists", "signed-in"]),
         accountId: AccountId,
         usage: Schema.Array(Schema.String),
       }),
@@ -249,10 +264,50 @@ const add = metadata(
       }),
       Schema.Struct({ status: Schema.Literals(["declined", "cancelled", "timed_out"]) }),
       Schema.Struct({ status: Schema.Literal("unavailable"), message: Schema.String }),
+      Schema.Struct({
+        status: Schema.Literal("choose").annotate({
+          description: "Several universities match: call again with the right one's domain.",
+        }),
+        universities: Schema.Array(Schema.Struct({ name: Schema.String, domain: Schema.String })),
+      }),
     ]),
   }),
   "add",
   "Add an account key",
+);
+const connectorSetup = metadata(
+  Tool.make("scient_connector_setup", {
+    failure: AccountsError,
+    dependencies: [
+      ...common.dependencies,
+      McpInvocationContext,
+      OrchestratorMcpService,
+      SecretRequests,
+    ],
+    description:
+      "When a local connector says it needs setup: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key). Then call its tool again. replaceKeys asks again for a key the program rejected.",
+    parameters: Schema.Struct({
+      connector: TrimmedNonEmptyString.annotate({ description: "Its MCP server name." }),
+      settings: Schema.optional(
+        Schema.Record(
+          TrimmedNonEmptyString,
+          Schema.Union([
+            Schema.String.check(Schema.isMaxLength(4096)),
+            Schema.Number,
+            Schema.Boolean,
+          ]),
+        ),
+      ).annotate({ description: "Plain answers by setting key." }),
+      replaceKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    }),
+    success: Schema.Struct({
+      status: Schema.Literals(["ready", "needs"]),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-setup",
+  "Set up a local connector",
 );
 const paperDependencies = [
   ...common.dependencies,
@@ -356,6 +411,7 @@ export const ScientAccountsToolkit = Toolkit.make(
   browserSession,
   findProfile,
   add,
+  connectorSetup,
   paperGet,
   paperQueue,
   paperStatus,

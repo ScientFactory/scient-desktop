@@ -134,6 +134,8 @@ export function measureNatural<T>(
       if (
         attr.name !== "contenteditable" &&
         attr.name !== "id" &&
+        // A lone copy has no paragraph after it to run into.
+        !(node === original && attr.name === "data-latex-run-in") &&
         (!attr.name.startsWith("data-paged") ||
           attr.name === "data-paged-measurement" ||
           attr.name === "data-paged-passive-root")

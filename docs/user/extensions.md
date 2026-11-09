@@ -40,9 +40,88 @@ matching API-key account is saved in **Settings → Accounts & secrets**. Updati
 account's key updates the service too. Account access set to **Off**, or the global
 **Agent access** switch, prevents its use.
 
+### GitHub
+
+GitHub uses the account Source Control already has, so one sign-in serves both.
+
+- When Source Control has a GitHub account, Scient adds GitHub on its own, for all
+  projects. Remove it to stop that: it is not added again until you add it yourself.
+- **Add GitHub** offers **Connect as** that account. When Source Control has several
+  GitHub accounts, pick one; Source Control's own choice comes first.
+- Without one, **Sign in with GitHub** shows a code to copy and opens GitHub's
+  device page in Scient's browser. Enter the code there and approve Scient for
+  GitHub. Source Control uses the same sign-in.
+- Scient for GitHub reaches only the accounts and organizations it is installed
+  on. **Install on an organization** adds one.
+- **Use a token instead** adds GitHub with a personal access token.
+
+The connector stays with the account it was connected as. If Source Control no
+longer has that account, GitHub shows **Account missing** until you sign in as
+that account again; it never switches to another account. Scient sends this
+credential only to GitHub's own MCP server.
+
 Scient holds the sign-in or key. Every agent that Scient runs can use the
 service through Scient, and agents never receive your credentials: they are
 not written into agent configuration, environment variables, or transcripts.
+
+## Add a local connector
+
+A local connector is an MCP server that runs as a program on the computer
+running this environment, for example a connector for your university's
+course site or for files on your disk. Scient starts it and every agent can
+use its tools, exactly like a connected service.
+
+Choose **Add your own** at the top of **Extensions** (on Discover or Installed,
+or **Not here? Add your own** under search results), then:
+
+- **Choose a file** (a `.mcpb` bundle, the format Claude Desktop uses for its
+  extensions, or a `.zip`) or **Choose a folder**. You can also paste its path.
+  Scient works out how to run it and asks only what the connector needs, in plain
+  words. A Scient plugin folder is installed as a plugin, and a pasted `https://`
+  address adds a connected service that runs online.
+- Or pick it under **From your other apps**: servers you already set up in Claude
+  Desktop, Claude Code, Codex or Cursor on that computer, or in a project's
+  `.mcp.json`. One click adds it for every agent. Servers that only run inside
+  their own app, such as an app's built-in helpers, are not listed.
+- **Advanced: run a command** takes a command such as `uvx my-mcp-server` and
+  environment variables. Tick **Key** on a variable that holds a key.
+
+Servers in **Browse all MCP servers** that are published as npm or PyPI packages
+can be added with **+** too. They run through `npx` (Node.js) or `uvx` (uv), which
+must be installed on that computer.
+
+After adding, Scient starts the connector once and shows **Ready** with its tools,
+what it still needs, or the program's own error.
+
+### Keys and settings
+
+- Keys are saved in **Settings → Accounts & secrets** as API keys and linked to the
+  connector. You can choose a key you already saved instead of pasting one, and a
+  key saved under the same variable name is linked on its own. Turning a key off in
+  Accounts stops the connector from using it. Removing the connector keeps its keys.
+- You can leave anything empty. The connector is added anyway and its row says
+  **Needs setup**. When an agent uses it, the agent asks you in the chat: plain
+  settings in a message, keys in a private card. Or open its page and choose **Edit
+  setup**.
+- Keys reach the program only through environment variables. A connector that would
+  pass a key on the command line is refused, because other programs on the computer
+  can read command lines.
+
+### How it runs
+
+- Each chat that uses it gets its own copy of the program, started on the first
+  request and stopped after 30 minutes without use.
+- It runs in its own folder. Scient keeps that folder in its data folder (a folder
+  you chose is used where it is); **Show in folder** on its page opens it. Changes
+  to the folder apply after **Restart**.
+- Node.js bundles run on Scient's own Node.js, so nothing else is needed. Python
+  bundles bring their packages with them; bundles of type `uv` need uv.
+- If the program fails, its row shows **Stopped with an error** and its page shows
+  the program's last error line. **Restart** stops every running copy; the next
+  request starts a fresh one. Turning it off stops them too.
+
+A local connector runs with your user account's permissions, like any program you
+start yourself. Add only programs you trust.
 
 ## Manage a connected service
 
@@ -87,8 +166,8 @@ as Sources and Documents, and any plugin bundles you
 have installed. A built-in plugin's page describes what it adds and links to
 its settings.
 
-To install a plugin bundle, choose **Install from folder** and enter the path
-of the bundle's folder on the computer running the environment. A bundle
+To install a plugin bundle, choose **Add your own** and pick the bundle's folder
+on the computer running the environment, or paste its path. A bundle
 contains only skills and connected-service definitions; nothing in it runs as a
 program. Its skills appear in **Settings → Skills**, turned off until you turn
 them on, and its services appear under **Connected services**, waiting for you
@@ -163,9 +242,14 @@ computer, and the sign-in page returns to that environment when you finish.
 
 ## Current limits
 
-- Only remote servers can be added. Registry entries that run locally on your
-  computer (stdio servers), need extra configuration, or use an unsupported
-  connection type are listed with the reason and cannot be added yet.
+- Registry entries that run locally as anything other than an npm or PyPI
+  package (for example a Docker image), need command-line arguments, or need
+  extra configuration are listed with the reason and cannot be added yet.
+- Double-clicking a `.mcpb` file does not open Scient yet; use **Add your own**.
 - Each service can be connected once per environment. To use a different
   account, use **Reconnect** instead of adding it again.
-- Plugin bundles cannot contain code, local servers, or interface panels.
+- Scient plugin bundles cannot contain code, local servers, or interface
+  panels; add local servers with **Add your own** instead.
+- Signing in with Scient for GitHub does not let `git clone` reach private
+  repositories; cloning still uses your git credential helper, such as
+  `gh auth setup-git`.

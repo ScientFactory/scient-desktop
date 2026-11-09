@@ -71,6 +71,7 @@ import { ScientAssetClaimsSchemas } from "./ScientAssetClaims.ts";
 import {
   isScientAssetClaims,
   issueScientAssetClaims,
+  fileInfoRevision,
   resolveScientAsset,
 } from "./ScientAssetAccess.ts";
 // SCIENT-FORK:END
@@ -189,6 +190,7 @@ const AssetClaimsSchema = Schema.Union([
     /** A host's `fetchUrl`, narrowed at mint time; the signature is what keeps it there. */
     url: Schema.String,
     cwd: Schema.String,
+    repository: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
 ]);
@@ -219,6 +221,7 @@ export type ResolvedAsset =
       readonly kind: "source-control-media";
       readonly url: string;
       readonly cwd: string;
+      readonly repository?: string;
       readonly expiresAt: number;
     };
 
@@ -549,7 +552,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
-    const pdfInfo = isWorkspacePdfPreviewPath(resolved.relativePath)
+    // SCIENT-FORK:START — every exact file reports its revision, so a preview keeps a loaded
+    // document while a check finds the file unchanged.
+    const fileInfo = !/\.html?$/i.test(resolved.relativePath)
       ? yield* fileSystem.stat(canonicalFile).pipe(
           Effect.mapError(
             (cause) =>
@@ -560,6 +565,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           ),
         )
       : null;
+    const pdfInfo = isWorkspacePdfPreviewPath(resolved.relativePath) ? fileInfo : null;
+    // SCIENT-FORK:END
     return {
       claims: !/\.html?$/i.test(resolved.relativePath)
         ? {
@@ -588,7 +595,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       fileName: path.basename(resolved.relativePath),
       sourcePath: resolved.relativePath,
       imageDimensions,
-      fileRevision: undefined,
+      // SCIENT-FORK:START — the revision a reader keeps its document by; see fileInfoRevision.
+      fileRevision: fileInfo ? fileInfoRevision(fileInfo) : undefined,
+      // SCIENT-FORK:END
     };
   },
 );
@@ -686,6 +695,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = finalized.fileName;
       sourcePath = finalized.sourcePath;
       imageDimensions = finalized.imageDimensions;
+      // SCIENT-FORK:START — report the revision, as draft-workspace-file does below.
+      fileRevision = finalized.fileRevision;
+      // SCIENT-FORK:END
       break;
     }
     case "draft-workspace-file": {
@@ -918,6 +930,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = issued.fileName;
       sourcePath = issued.sourcePath;
       expiresAt = issued.expiresAt;
+      fileRevision = issued.fileRevision;
       break;
     }
     // SCIENT-FORK:END
@@ -936,11 +949,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (media === null) {
         return yield* new AssetSourceControlMediaUrlValidationError({});
       }
+      const { _tag, ...resource } = input.resource;
       claims = {
         version: 1,
         kind: SOURCE_CONTROL_MEDIA_ASSET,
+        ...resource,
         url: media.fetchUrl,
-        cwd: input.resource.cwd,
         expiresAt,
       };
       fileName = media.fileName;
@@ -1054,12 +1068,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   }
 
   if (claims.kind === SOURCE_CONTROL_MEDIA_ASSET) {
-    return {
-      kind: "source-control-media",
-      url: claims.url,
-      cwd: claims.cwd,
-      expiresAt: claims.expiresAt,
-    } satisfies ResolvedAsset;
+    const { version: _version, ...media } = claims;
+    return { ...media, kind: "source-control-media" } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "tool-output-image") {
