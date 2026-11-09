@@ -1,7 +1,8 @@
 export interface TiffFixturePage {
   readonly width: number;
   readonly height: number;
-  readonly bits: 8 | 16 | 32 | 64;
+  /** 8, 16, 32 or 64 with `data`; any width with `rawBlocks`. */
+  readonly bits: number;
   /** 1 unsigned, 2 signed, 3 float. */
   readonly format?: 1 | 2 | 3;
   readonly samples?: number;
@@ -16,6 +17,8 @@ export interface TiffFixturePage {
   readonly jpegTables?: Uint8Array;
   /** 2 stores each sample in its own blocks; only meaningful with `rawBlocks`. */
   readonly planar?: 1 | 2;
+  /** Entries written with any count and value offset, for malformed-file tests. */
+  readonly rawEntries?: readonly { tag: number; type: number; count: number; offset: number }[];
   readonly rowsPerStrip?: number;
   readonly deflate?: boolean;
   readonly colorMap?: ArrayLike<number>;
@@ -25,7 +28,13 @@ export interface TiffFixturePage {
   readonly rawBlocks?: { readonly compression: number; readonly blocks: readonly Uint8Array[] };
 }
 
-type Entry = { tag: number; type: number; values: number[] | Uint8Array };
+type Entry = {
+  tag: number;
+  type: number;
+  values: number[] | Uint8Array;
+  /** A raw entry: this count, pointing at this offset, with no data written. */
+  raw?: { count: number; offset: number };
+};
 
 async function deflate(bytes: Uint8Array<ArrayBuffer>) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
@@ -136,6 +145,12 @@ export async function tiffFixture(
       ...(page.colorMap ? [{ tag: 320, type: 3, values: Array.from(page.colorMap) }] : []),
       ...(page.extraSamples ? [{ tag: 338, type: 3, values: [...page.extraSamples] }] : []),
       ...(page.jpegTables ? [{ tag: 347, type: 7, values: page.jpegTables }] : []),
+      ...(page.rawEntries ?? []).map(({ tag, type, count, offset }) => ({
+        tag,
+        type,
+        values: [],
+        raw: { count, offset },
+      })),
       ...(page.description
         ? [{ tag: 270, type: 2, values: new TextEncoder().encode(`${page.description}\0`) }]
         : []),
@@ -145,7 +160,7 @@ export async function tiffFixture(
     const external = new Map<number, number>();
     for (const entry of entries) {
       const length = entry.values.length * width(entry.type);
-      if (length <= inline) continue;
+      if (entry.raw || length <= inline) continue;
       const bytes = new DataView(new ArrayBuffer(length));
       entry.values.forEach((value, index) =>
         write(bytes, entry.type, index * width(entry.type), value),
@@ -162,10 +177,11 @@ export async function tiffFixture(
       const at = (big ? 8 : 2) + index * entrySize;
       ifd.setUint16(at, entry.tag, true);
       ifd.setUint16(at + 2, entry.type, true);
-      if (big) ifd.setBigUint64(at + 4, BigInt(entry.values.length), true);
-      else ifd.setUint32(at + 4, entry.values.length, true);
+      const count = entry.raw?.count ?? entry.values.length;
+      if (big) ifd.setBigUint64(at + 4, BigInt(count), true);
+      else ifd.setUint32(at + 4, count, true);
       const valueAt = at + (big ? 12 : 8);
-      const offset = external.get(entry.tag);
+      const offset = entry.raw?.offset ?? external.get(entry.tag);
       if (offset !== undefined) write(ifd, big ? 16 : 4, valueAt, offset);
       else
         entry.values.forEach((value, i) =>

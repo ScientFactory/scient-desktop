@@ -369,14 +369,23 @@ export function guardTiffDecoder(compression: number) {
         }
       };
     },
-    async (directory) => {
-      const parameters = await blockParameters(directory);
-      if (compression !== 7) return parameters;
-      // geotiff's JPEG decoder parses these tables in its constructor, before any block guard runs.
-      const tables = (await directory.loadValue("JPEGTables")) as Uint8Array | undefined;
-      checkJpegTables(tables);
-      return { ...parameters, ...(tables ? { JPEGTables: tables } : {}) };
-    },
+    (directory) => decoderParameters(compression, directory),
     false,
   );
+}
+
+async function decoderParameters(compression: number, directory: ImageFileDirectory) {
+  const parameters = await blockParameters(directory);
+  if (compression !== 7) return parameters;
+  // geotiff's JPEG decoder parses these tables in its constructor, before any block guard runs.
+  const tables = (await directory.loadValue("JPEGTables")) as Uint8Array | undefined;
+  checkJpegTables(tables);
+  return { ...parameters, ...(tables ? { JPEGTables: tables } : {}) };
+}
+
+/** The bounded decoder geotiff would pick for this directory, for reading blocks directly. */
+export async function tiffBlockDecoder(directory: ImageFileDirectory) {
+  const compression = Number(directory.getValue("Compression") ?? 1);
+  guardTiffDecoder(compression);
+  return getDecoder(compression, await decoderParameters(compression, directory));
 }

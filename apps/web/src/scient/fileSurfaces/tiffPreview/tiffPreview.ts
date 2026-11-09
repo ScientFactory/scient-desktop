@@ -1,8 +1,9 @@
-import type { GeoTIFF, GeoTIFFImage } from "geotiff";
+import { GeoTIFF, type GeoTIFFImage } from "geotiff";
 
-import { checkTiffLayout, LAYOUT_INVALID, LAYOUT_UNSUPPORTED } from "./tiffLayout";
+import { checkTiffLayout, LAYOUT_INVALID, LAYOUT_UNSUPPORTED, type TiffLayout } from "./tiffLayout";
 import {
   compressionName,
+  tiffBlockDecoder,
   guardTiffDecoder,
   JPEG_TILE_BYTES,
   JPEG_TOO_LARGE,
@@ -16,9 +17,10 @@ const MAX_OUTPUT_PIXELS = 32_000_000;
 const MAX_OUTPUT_SIDE = 16_384;
 const MAX_SOURCE_SIDE = 1 << 20;
 const MAX_SOURCE_PIXELS = 256_000_000;
-// Peak decode memory stays under about 400 MiB: values up to 128 MiB, one window's blocks up to
-// 64 MiB plus 1.5× compressed and a 64 MiB interleaved copy, and 128 MiB of RGBA at 32 MP.
-// PNG encoding later holds the RGBA, the canvas and the PNG, also under about 400 MiB.
+// Peak memory stays under about 400 MiB. Decoding: values ≤128 MiB, one window ≤64 MiB counting
+// packed, unpacked and interleaved copies, compressed input ≤1.5× packed (≤96 MiB): ≤288 MiB.
+// Then values plus 128 MiB of RGBA at 32 MP: 256 MiB. PNG encoding holds the RGBA, the canvas and
+// the PNG: about 390 MiB, the peak.
 const TILE_BYTES = 64 * 1024 * 1024;
 const VALUES_BYTES = 128 * 1024 * 1024;
 // Decoded bytes read at once; a window always holds at least one block, so a larger block is read alone.
@@ -132,11 +134,12 @@ function parseDescription(description: string | undefined): Description | null {
   };
 }
 
-async function describeLayout(
-  tiff: GeoTIFF,
-  first: GeoTIFFImage,
-  directories: number,
-): Promise<Layout> {
+// geotiff keeps every directory it walks past, so each one is opened on its own.
+function openDirectory(tiff: GeoTIFF, offset: number) {
+  return new GeoTIFF(tiff.source, tiff.littleEndian, tiff.bigTiff, offset).getImage(0);
+}
+
+async function describeLayout(first: GeoTIFFImage, walked: TiffLayout): Promise<Layout> {
   const directory = first.getFileDirectory();
   const description = directory.hasTag("ImageDescription")
     ? String(await directory.loadValue("ImageDescription"))
@@ -147,21 +150,10 @@ async function describeLayout(
   const samplesAsChannels = !rgb && photometric !== 3 && colour > 1 ? colour : 1;
   const parsed = parseDescription(description);
   // Multi-file OME and ImageJ's >4 GB stacks describe planes this file does not hold.
-  if (parsed && parsed.count >= 1 && parsed.count <= directories) {
-    const present = await tiff.getImage(parsed.count - 1).then(
-      () => true,
-      () => false,
-    );
-    if (present) return { pages: null, pageCount: parsed.count, samplesAsChannels, ...parsed };
-  }
-  const pages: number[] = [];
-  for (let index = 0; index < directories; index++) {
-    const image = await tiff.getImage(index).catch(() => null);
-    if (!image) break;
-    // Skip reduced-resolution and mask images.
-    if (!(Number(image.getFileDirectory().getValue("NewSubfileType") ?? 0) & 0b101))
-      pages.push(index);
-  }
+  if (parsed && parsed.count >= 1 && parsed.count <= walked.offsets.length)
+    return { pages: null, pageCount: parsed.count, samplesAsChannels, ...parsed };
+  // Skip reduced-resolution and mask images.
+  const pages = walked.subfileTypes.flatMap((type, index) => (type & 0b101 ? [] : [index]));
   return {
     pages,
     pageCount: pages.length,
@@ -247,6 +239,66 @@ async function readRawRows(
   return out;
 }
 
+// Assembles a window from decoded blocks, which geotiff unpacks to 8, 16 or 32 bits per sample
+// except 24-bit samples, which it leaves as three bytes.
+async function readOddWidth(
+  image: GeoTIFFImage,
+  [left, top, right, bottom]: readonly [number, number, number, number],
+  read: readonly number[],
+  signal: AbortSignal | undefined,
+): Promise<Band> {
+  const decoder = await tiffBlockDecoder(image.getFileDirectory());
+  const bits = image.getBitsPerSample(0);
+  const planar = image.planarConfiguration === 2;
+  const stride = planar ? 1 : image.getSamplesPerPixel();
+  const tileWidth = image.getTileWidth();
+  const tileHeight = image.getTileHeight();
+  const span = right - left;
+  const out = new Float32Array((bottom - top) * span * read.length);
+  for (let tileY = Math.floor(top / tileHeight); tileY * tileHeight < bottom; tileY++)
+    for (let tileX = Math.floor(left / tileWidth); tileX * tileWidth < right; tileX++)
+      for (let c = 0; c < read.length; c++) {
+        if (!planar && c > 0) break;
+        const block = await image.getTileOrStrip(
+          tileX,
+          tileY,
+          planar ? read[c]! : 0,
+          decoder,
+          signal,
+        );
+        const bytes = new Uint8Array(block.data);
+        const unpacked =
+          bits === 24
+            ? null
+            : bits <= 8
+              ? bytes
+              : bits <= 16
+                ? new Uint16Array(block.data)
+                : new Uint32Array(block.data);
+        const sample = (index: number) => {
+          if (unpacked) return unpacked[index]!;
+          const at = index * 3;
+          return image.littleEndian
+            ? bytes[at]! | (bytes[at + 1]! << 8) | (bytes[at + 2]! << 16)
+            : (bytes[at]! << 16) | (bytes[at + 1]! << 8) | bytes[at + 2]!;
+        };
+        const y0 = Math.max(top, tileY * tileHeight);
+        const y1 = Math.min(bottom, (tileY + 1) * tileHeight);
+        const x0 = Math.max(left, tileX * tileWidth);
+        const x1 = Math.min(right, (tileX + 1) * tileWidth);
+        for (let y = y0; y < y1; y++)
+          for (let x = x0; x < x1; x++) {
+            const pixel = (y - tileY * tileHeight) * tileWidth + (x - tileX * tileWidth);
+            const target = ((y - top) * span + (x - left)) * read.length;
+            if (planar) out[target + c] = sample(pixel);
+            else
+              for (let r = 0; r < read.length; r++)
+                out[target + r] = sample(pixel * stride + read[r]!);
+          }
+      }
+  return out;
+}
+
 function percentileRange(
   values: ArrayLike<number>,
   channels: number,
@@ -309,20 +361,21 @@ export async function readTiffPlane(
 ): Promise<TiffPlane> {
   const { signal } = request;
   registerBoundedTiffDecoders();
-  const directories = await checkTiffLayout(tiff).catch((cause: unknown) => {
+  const walked = await checkTiffLayout(tiff).catch((cause: unknown) => {
     if (cause instanceof Error && [LAYOUT_INVALID, LAYOUT_UNSUPPORTED].includes(cause.message))
       throw tiffPreviewError(cause.message);
     return asMetadataError(cause);
   });
-  const first = await tiff.getImage(0).catch(asMetadataError);
-  const layout = await describeLayout(tiff, first, directories).catch(asMetadataError);
+  const first = await openDirectory(tiff, walked.offsets[0]!).catch(asMetadataError);
+  const layout = await describeLayout(first, walked).catch(asMetadataError);
   const planes = layout.pageCount * layout.samplesAsChannels;
   if (planes < 1) throw tiffPreviewError("This TIFF has no readable image.");
   const plane = Math.min(Math.max(0, Math.trunc(request.plane)), planes - 1);
   const page = Math.floor(plane / layout.samplesAsChannels);
-  const image = await tiff
-    .getImage(layout.pages ? layout.pages[page]! : page)
-    .catch(asMetadataError);
+  const image = await openDirectory(
+    tiff,
+    walked.offsets[layout.pages ? layout.pages[page]! : page]!,
+  ).catch(asMetadataError);
   const directory = image.getFileDirectory();
   const width = image.getWidth();
   const height = image.getHeight();
@@ -343,6 +396,9 @@ export async function readTiffPlane(
     throw tiffPreviewError("This TIFF color format is not supported.");
   const samples = image.getSamplesPerPixel();
   const bits = image.getBitsPerSample(0);
+  // geotiff cannot unpack samples without a stated width, such as bilevel files that rely on the default.
+  if (!bits)
+    throw tiffPreviewError("This TIFF doesn't state its sample width, which preview needs.");
   const sampleFormat = image.getSampleFormat(0);
   const format = sampleFormat === 3 ? "float" : sampleFormat === 2 ? "int" : "uint";
   const colorMap = photometric === 3 ? await directory.loadValue("ColorMap") : undefined;
@@ -361,8 +417,17 @@ export async function readTiffPlane(
   ];
   const channels = read.length;
   const alphaMax = format === "float" ? 1 : 2 ** bits - 1;
+  // geotiff places unsigned samples of other widths at the wrong offsets, so those are read by block.
+  if (format === "int" ? ![8, 16, 32].includes(bits) : format === "uint" && bits > 32)
+    throw tiffPreviewError(`This TIFF's ${bits}-bit samples aren't supported for preview.`);
+  if (format === "float" && ![16, 32, 64].includes(bits))
+    throw tiffPreviewError(`This TIFF's ${bits}-bit samples aren't supported for preview.`);
+  const oddWidth = format === "uint" && ![8, 16, 32].includes(bits);
   const rawRows =
-    compression === 1 && !image.isTiled && image.planarConfiguration === 1 && bits % 8 === 0;
+    compression === 1 &&
+    !image.isTiled &&
+    image.planarConfiguration === 1 &&
+    [8, 16, 32, 64].includes(bits);
   const allBits = Array.from(
     ((await directory.loadValue("BitsPerSample")) as ArrayLike<number> | undefined) ?? [bits],
     Number,
@@ -373,9 +438,30 @@ export async function readTiffPlane(
   const tileHeight = image.getTileHeight();
   const tilesAcross = Math.ceil(width / tileWidth);
   const blockDecoded = Math.ceil((tileWidth * blockBits) / 8) * tileHeight;
-  // A block, with every sample read from it, is decoded whole whatever the window budget.
+  // geotiff widens packed samples (1-bit, 12-bit, 24-bit, float16) into a second, unpacked copy.
+  const blockBitsList = image.planarConfiguration === 2 ? [bits] : allBits;
+  const unpacked = blockBitsList.some((sampleBits) => ![8, 16, 32, 64].includes(sampleBits))
+    ? tileWidth *
+      tileHeight *
+      blockBitsList.reduce((sum, sampleBits) => sum + unpackedBytes(sampleBits, format), 0)
+    : 0;
+  const blockMemory = blockDecoded + unpacked;
+  // Integers wider than 24 bits and 64-bit floats lose precision in Float32, so they keep doubles.
+  const precise = format === "float" ? bits > 32 : bits > 24;
+  // geotiff's JPEG decoder needs several times a tile's pixels while it works.
+  const jpegWorking =
+    compression === 7
+      ? jpegTileWorkingBytes(tileWidth, tileHeight, image.planarConfiguration === 2 ? 1 : samples)
+      : 0;
+  if (jpegWorking > JPEG_TILE_BYTES) throw tiffPreviewError(JPEG_TOO_LARGE);
+  // A block, with every sample read from it, is decoded whole whatever the window budget, and its
+  // pixels are copied once more into the window's interleaved values.
   const blockSamples = image.planarConfiguration === 2 ? channels : 1;
-  if (!rawRows && blockDecoded * blockSamples > TILE_BYTES)
+  const windowBytes = rawRows || oddWidth ? (precise ? 8 : 4) : unpackedBytes(bits, format);
+  const blockInFlight =
+    Math.max(blockMemory, jpegWorking) * blockSamples +
+    tileWidth * tileHeight * channels * windowBytes;
+  if (!rawRows && blockInFlight > TILE_BYTES)
     throw tiffPreviewError("This TIFF stores its image in blocks too large to preview.");
   // Edge tiles are decoded whole, so a thin image must not hide tiles far larger than itself.
   if (
@@ -391,12 +477,11 @@ export async function readTiffPlane(
     Array.from(byteCounts ?? [], Number).some((count) => count > maxCompressedBytes(blockDecoded))
   )
     throw tiffPreviewError("This TIFF has an oversized compressed block.");
-  // 32-bit integers and 64-bit floats lose precision in Float32, so they keep doubles at half the pixels.
-  const precise = bits > 32 || (bits === 32 && format !== "float");
 
   // Values keep the source's own integer type when every output pixel is one source pixel.
   const floatBytes = precise ? 8 : 4;
-  const nativeBytes = format === "float" || precise || associated ? floatBytes : bits <= 8 ? 1 : 2;
+  const nativeBytes =
+    format === "float" || associated || bits > 32 ? floatBytes : unpackedBytes(bits, format);
   const scaleFor = (bytesPerPixel: number) => {
     const pixels = Math.min(
       request.maxOutputPixels ?? MAX_OUTPUT_PIXELS,
@@ -417,24 +502,10 @@ export async function readTiffPlane(
   const values =
     factor > 1 || nativeBytes === floatBytes
       ? (precise ? new Float64Array(length) : new Float32Array(length)).fill(Number.NaN)
-      : nativeBytes === 1
-        ? format === "int"
-          ? new Int8Array(length)
-          : new Uint8Array(length)
-        : format === "int"
-          ? new Int16Array(length)
-          : new Uint16Array(length);
+      : integerArray(nativeBytes, format === "int", length);
   const counts = factor > 1 && !palette ? new Uint16Array(outWidth * outHeight) : null;
   // geotiff decodes every block of a window at once, so windows hold a bounded number of blocks.
   const bandBytes = request.bandBytes ?? BAND_BYTES;
-  // geotiff's JPEG decoder needs several times a tile's pixels while it works.
-  const jpegWorking =
-    compression === 7
-      ? jpegTileWorkingBytes(tileWidth, tileHeight, image.planarConfiguration === 2 ? 1 : samples)
-      : 0;
-  if (jpegWorking > JPEG_TILE_BYTES) throw tiffPreviewError(JPEG_TOO_LARGE);
-  const blockWorking = Math.max(blockDecoded, jpegWorking);
-  const blockInFlight = blockWorking * blockSamples;
   const blocksPerBand = Math.max(1, Math.floor(bandBytes / blockInFlight));
   let bandRows = tileHeight;
   let bandColumns = width;
@@ -457,12 +528,14 @@ export async function readTiffPlane(
       const span = right - left;
       const band: Band = rawRows
         ? await readRawRows(image, top, bottom, read, precise, signal)
-        : await image.readRasters({
-            window: [left, top, right, bottom],
-            samples: [...read],
-            interleave: true,
-            ...(signal ? { signal } : {}),
-          });
+        : oddWidth
+          ? await readOddWidth(image, [left, top, right, bottom], read, signal)
+          : await image.readRasters({
+              window: [left, top, right, bottom],
+              samples: [...read],
+              interleave: true,
+              ...(signal ? { signal } : {}),
+            });
       for (let y = top; y < bottom; y++) {
         const outRow = Math.floor(y / factor) * outWidth;
         for (let x = left; x < right; x++) {
@@ -573,4 +646,16 @@ export async function readTiffPlane(
 
 function planeChannel(plane: number, layout: Layout) {
   return axisIndices(plane, layout.axes).find(({ axis }) => axis.name === "C")?.index ?? 0;
+}
+
+/** Bytes per sample in the arrays geotiff produces, which round packed widths up. */
+function unpackedBytes(bits: number, format: TiffPreviewInfo["format"]) {
+  if (format === "float") return bits > 32 ? 8 : 4;
+  return bits <= 8 ? 1 : bits <= 16 ? 2 : bits <= 32 ? 4 : 8;
+}
+
+function integerArray(bytes: number, signed: boolean, length: number) {
+  if (bytes === 1) return signed ? new Int8Array(length) : new Uint8Array(length);
+  if (bytes === 2) return signed ? new Int16Array(length) : new Uint16Array(length);
+  return signed ? new Int32Array(length) : new Uint32Array(length);
 }

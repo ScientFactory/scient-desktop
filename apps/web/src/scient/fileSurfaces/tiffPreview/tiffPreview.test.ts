@@ -16,6 +16,36 @@ import {
   zstdContentSize,
 } from "./tiffBlockDecoders";
 import { readTiffPlane, tiffPlaneLabel } from "./tiffPreview";
+import { openTiffBytes } from "./tiffSource";
+
+// Records typed-array allocations above `limit` elements and refuses them instead of allocating.
+function watchAllocations(name: "Uint8Array" | "Uint16Array", limit: number) {
+  const large: number[] = [];
+  const Real = globalThis[name];
+  vi.stubGlobal(
+    name,
+    new Proxy(Real, {
+      construct(target, args: unknown[]) {
+        if (typeof args[0] === "number" && args[0] > limit) {
+          large.push(args[0]);
+          throw new RangeError("large test allocation");
+        }
+        return Reflect.construct(target, args) as object;
+      },
+    }),
+  );
+  return { large, [Symbol.dispose]: () => vi.unstubAllGlobals() };
+}
+
+// Packs unsigned samples most-significant bit first, as TIFF stores widths that are not whole bytes.
+function packSamples(values: readonly number[], bits: number) {
+  const out = new Uint8Array(Math.ceil((values.length * bits) / 8));
+  let bit = 0;
+  for (const value of values)
+    for (let index = bits - 1; index >= 0; index--, bit++)
+      if (Math.floor(value / 2 ** index) % 2) out[bit >> 3]! |= 0x80 >> (bit & 7);
+  return out;
+}
 
 registerBoundedTiffDecoders();
 
@@ -28,9 +58,8 @@ async function plane(
   pages: readonly TiffFixturePage[],
   options: { plane?: number; bigTiff?: boolean; maxOutputPixels?: number } = {},
 ) {
-  const tiff = await fromArrayBuffer(
-    await tiffFixture(pages, { bigTiff: options.bigTiff ?? false }),
-  );
+  // The app's range reader, so the layout check knows the file size.
+  const tiff = await openTiffBytes(await tiffFixture(pages, { bigTiff: options.bigTiff ?? false }));
   return readTiffPlane(tiff, {
     plane: options.plane ?? 0,
     ...(options.maxOutputPixels ? { maxOutputPixels: options.maxOutputPixels } : {}),
@@ -474,8 +503,8 @@ describe("bounded TIFF block decoders", () => {
     const tiff = await fromArrayBuffer(
       await tiffFixture([{ width: 256, height: 16, bits: 8, tile: 16, data }]),
     );
-    // Sixteen 256-byte tiles across, four allowed at once.
-    const result = await readTiffPlane(tiff, { plane: 0, bandBytes: 1_024 });
+    // Sixteen 256-byte tiles across, each with a 256-byte window copy: four fit in 2 KiB.
+    const result = await readTiffPlane(tiff, { plane: 0, bandBytes: 2_048 });
     const tiles = readRasters.mock.calls.map(([options]) => {
       const [left, top, right, bottom] = options!.window!;
       return (
@@ -603,6 +632,124 @@ describe("bounded TIFF block decoders", () => {
       vi.unstubAllGlobals();
     }
     expect(large).toEqual([]);
+  });
+
+  it.each([
+    [12, [100, 4_000]],
+    [20, [65_536, 131_072]],
+    [24, [1, 16_000_000]],
+  ])("keeps %i-bit samples whole", async (bits, values) => {
+    const result = await plane([
+      {
+        width: 2,
+        height: 1,
+        bits,
+        data: [],
+        // Whole-byte widths follow the file's (little-endian) byte order; others pack high bit first.
+        rawBlocks: {
+          compression: 1,
+          blocks: [
+            bits === 24
+              ? new Uint8Array(
+                  values.flatMap((value) => [value & 255, (value >> 8) & 255, value >> 16]),
+                )
+              : packSamples(values, bits),
+          ],
+        },
+      },
+    ]);
+    expect(result.info.range).toEqual(values);
+    expect([red(result.rgba, 0), red(result.rgba, 1)]).toEqual([0, 255]);
+  });
+
+  it("reads 1-bit samples packed high bit first", async () => {
+    const result = await plane([
+      {
+        width: 8,
+        height: 1,
+        bits: 1,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [new Uint8Array([0b1011_0000])] },
+      },
+    ]);
+    expect([0, 1, 2, 3, 4].map((pixel) => red(result.rgba, pixel))).toEqual([255, 0, 255, 255, 0]);
+  });
+
+  it("refuses a 1-bit image whose unpacked copy is far larger than its packed bytes", async () => {
+    using allocations = watchAllocations("Uint8Array", 1 << 26);
+    // 32 MB packed, 256 MB once geotiff widens each bit to a byte.
+    const result = plane([
+      {
+        width: 16_000,
+        height: 16_000,
+        bits: 1,
+        data: [],
+        rawBlocks: { compression: 1, blocks: [new Uint8Array(1)] },
+      },
+    ]);
+    await expect(result).rejects.toThrow("blocks too large to preview");
+    expect(allocations.large).toEqual([]);
+  });
+
+  it("refuses metadata that points past the end of the file", async () => {
+    const result = plane([
+      {
+        width: 1,
+        height: 1,
+        bits: 8,
+        data: [1],
+        rawEntries: [{ tag: 320, type: 3, count: 1 << 20, offset: 100_000_000 }],
+      },
+    ]);
+    await expect(result).rejects.toThrow("Invalid TIFF metadata.");
+  });
+
+  it("refuses metadata that adds up past the budget across directories", async () => {
+    // Forty directories each declare a 2 MiB array over the first page's real pixels.
+    const big = { width: 1_536, height: 1_536, bits: 8, data: new Uint8Array(1_536 * 1_536) };
+    const result = plane([
+      big,
+      ...Array.from({ length: 40 }, () => ({
+        width: 1,
+        height: 1,
+        bits: 8,
+        data: [1],
+        rawEntries: [{ tag: 320, type: 3, count: 1 << 20, offset: 16 }],
+      })),
+    ]);
+    await expect(result).rejects.toThrow("This TIFF's layout isn't supported for preview.");
+  });
+
+  it("refuses Codex's forty-directory file before any large array is allocated", async () => {
+    using allocations = watchAllocations("Uint16Array", 1 << 22);
+    const result = plane(
+      Array.from({ length: 40 }, () => ({
+        width: 1,
+        height: 1,
+        bits: 8,
+        data: [1],
+        rawEntries: [{ tag: 320, type: 3, count: 8 << 20, offset: 4_096 }],
+      })),
+    );
+    await expect(result).rejects.toThrow("Invalid TIFF metadata.");
+    expect(allocations.large).toEqual([]);
+  });
+
+  it("parses only the directory it shows", async () => {
+    using allocations = watchAllocations("Uint16Array", 1 << 19);
+    const big = { width: 1_536, height: 1_536, bits: 8, data: new Uint8Array(1_536 * 1_536) };
+    const result = await plane([
+      big,
+      {
+        width: 1,
+        height: 1,
+        bits: 8,
+        data: [1],
+        rawEntries: [{ tag: 320, type: 3, count: 1 << 20, offset: 16 }],
+      },
+    ]);
+    expect(result.info).toMatchObject({ plane: 0, planes: 2 });
+    expect(allocations.large).toEqual([]);
   });
 
   it("refuses a planar Float64 RGBA tile larger than one tile's budget", async () => {

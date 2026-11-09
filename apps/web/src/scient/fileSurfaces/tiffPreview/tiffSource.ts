@@ -1,4 +1,4 @@
-import { BaseClient, BaseResponse, fromArrayBuffer, fromCustomClient, type GeoTIFF } from "geotiff";
+import { BaseClient, BaseResponse, fromCustomClient, type GeoTIFF } from "geotiff";
 
 import { asMetadataError, tiffPreviewError } from "./tiffPreview";
 
@@ -61,10 +61,13 @@ class HttpRangeClient extends BaseClient {
       if (init?.signal?.aborted) throw cause;
       throw tiffPreviewError("The file could not be loaded. Close it and try again.", "load");
     });
-    // The asset route answers a range past the end with 416; geotiff expects a short read.
+    // The asset route answers a range past the end with 416; geotiff expects a short read, and
+    // keeps the file size only when the reply names it.
     if (response.status === 416) {
       await response.body?.cancel();
-      return new SliceResponse(206, new Headers(), async () => new ArrayBuffer(0));
+      const size = /\/(\d+)$/u.exec(response.headers.get("content-range") ?? "")?.[1];
+      const headers = new Headers(size ? { "content-range": `bytes 0-0/${size}` } : {});
+      return new SliceResponse(206, headers, async () => new ArrayBuffer(0));
     }
     if (!response.ok) {
       await response.body?.cancel();
@@ -76,6 +79,11 @@ class HttpRangeClient extends BaseClient {
     }
     return new SliceResponse(response.status, response.headers, () => response.arrayBuffer());
   }
+}
+
+/** Opens bytes already in memory through the same range reader, so the file size is known. */
+export function openTiffBytes(bytes: ArrayBuffer) {
+  return fromCustomClient(new BlobRangeClient(new Blob([bytes])));
 }
 
 export async function openTiffSource(
@@ -107,5 +115,6 @@ export async function openTiffSource(
       "load",
     );
   }
-  return await fromArrayBuffer(bytes).catch(asMetadataError);
+  // A Blob reader reports the file size, which the layout check needs.
+  return await openTiffBytes(bytes).catch(asMetadataError);
 }

@@ -4,7 +4,8 @@ const MAX_TIFF_DIRECTORIES = 10_000;
 const MAX_ENTRIES = 1_024;
 const MAX_BLOCKS = 1 << 20;
 const MAX_TAG_BYTES = 16 * 1024 * 1024;
-const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024;
+// Metadata arrays geotiff may hold across the whole file.
+const MAX_METADATA_BYTES = 64 * 1024 * 1024;
 export const LAYOUT_UNSUPPORTED = "This TIFF's layout isn't supported for preview.";
 export const LAYOUT_INVALID = "Invalid TIFF metadata.";
 
@@ -33,6 +34,14 @@ interface Entry {
   readonly count: number;
   readonly bytes: number;
   readonly value: number;
+  /** Where an out-of-line value starts; null when it fits in the entry. */
+  readonly offset: number | null;
+}
+
+export interface TiffLayout {
+  /** File offset of each directory, in order. */
+  readonly offsets: readonly number[];
+  readonly subfileTypes: readonly number[];
 }
 
 function refuse(): never {
@@ -71,14 +80,21 @@ async function readDirectory(tiff: GeoTIFF, offset: number) {
           : type === 16
             ? Number(view.getBigUint64(valueAt, little))
             : 0;
-    list.push({ tag: view.getUint16(at, little), count, bytes: count * size, value });
+    const bytes = count * size;
+    const offset =
+      bytes > (big ? 8 : 4)
+        ? big
+          ? Number(view.getBigUint64(valueAt, little))
+          : view.getUint32(valueAt, little)
+        : null;
+    list.push({ tag: view.getUint16(at, little), count, bytes, value, offset });
   }
   const tail = entries * entrySize;
   const next = big ? Number(view.getBigUint64(tail, little)) : view.getUint32(tail, little);
   return { entries: list, next };
 }
 
-function checkDirectory(entries: readonly Entry[]) {
+function checkDirectory(entries: readonly Entry[], fileSize: number | null) {
   const value = (tag: number) => entries.find((entry) => entry.tag === tag)?.value;
   const width = value(256) ?? 0;
   const height = value(257) ?? 0;
@@ -95,7 +111,12 @@ function checkDirectory(entries: readonly Entry[]) {
   let total = 0;
   for (const entry of entries) {
     if (!Number.isSafeInteger(entry.bytes)) refuse();
-    total += entry.bytes;
+    if (entry.offset !== null) {
+      total += entry.bytes;
+      // A value that runs past the end of the file is truncated metadata.
+      if (fileSize !== null && entry.offset + entry.bytes > fileSize)
+        throw new Error(LAYOUT_INVALID);
+    }
     if (
       BLOCK_TAGS.has(entry.tag)
         ? entry.count > Math.min(blocks, MAX_BLOCKS)
@@ -103,29 +124,36 @@ function checkDirectory(entries: readonly Entry[]) {
     )
       refuse();
   }
-  if (total > MAX_DIRECTORY_BYTES) refuse();
+  return total;
 }
 
-const checked = new WeakMap<GeoTIFF, Promise<number>>();
+const checked = new WeakMap<GeoTIFF, Promise<TiffLayout>>();
 
 /**
- * Reads every directory's entry counts before geotiff parses it, because geotiff allocates arrays
- * straight from those counts. Resolves to the number of directories that are safe to open.
+ * Reads every directory's entries before geotiff sees any of them, because geotiff allocates
+ * arrays straight from their counts. Values must lie inside the file, and all directories together
+ * may declare at most 64 MiB of arrays.
  */
 export function checkTiffLayout(tiff: GeoTIFF) {
   let result = checked.get(tiff);
   if (!result) {
     result = (async () => {
+      const offsets: number[] = [];
+      const subfileTypes: number[] = [];
       const seen = new Set<number>();
+      let metadata = 0;
       let offset = tiff.firstIFDOffset;
       while (offset && !seen.has(offset) && seen.size < MAX_TIFF_DIRECTORIES) {
         seen.add(offset);
         const directory = await readDirectory(tiff, offset);
-        checkDirectory(directory.entries);
+        metadata += checkDirectory(directory.entries, tiff.source.fileSize);
+        if (metadata > MAX_METADATA_BYTES) refuse();
+        offsets.push(offset);
+        subfileTypes.push(directory.entries.find((entry) => entry.tag === 254)?.value ?? 0);
         offset = directory.next;
       }
-      if (!seen.size) refuse();
-      return seen.size;
+      if (!offsets.length) refuse();
+      return { offsets, subfileTypes };
     })();
     checked.set(tiff, result);
   }
