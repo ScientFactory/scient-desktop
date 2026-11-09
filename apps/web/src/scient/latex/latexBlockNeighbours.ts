@@ -1,5 +1,6 @@
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
+import { AttrStep } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { latexPagedKey } from "./latexPagedGeometry";
 
@@ -60,9 +61,14 @@ function decorate(
 function changedRange(tr: Transaction): [number, number] | null {
   let from = Infinity,
     to = -Infinity;
-  tr.mapping.maps.forEach((map, index) => {
+  tr.steps.forEach((step, index) => {
     const rest = tr.mapping.slice(index + 1);
-    map.forEach((_oldFrom, _oldTo, newFrom, newTo) => {
+    // An attribute step, such as a heading level change, maps no positions.
+    if (step instanceof AttrStep) {
+      from = Math.min(from, rest.map(step.pos, -1));
+      to = Math.max(to, rest.map(step.pos, 1));
+    }
+    step.getMap().forEach((_oldFrom, _oldTo, newFrom, newTo) => {
       from = Math.min(from, rest.map(newFrom, -1));
       to = Math.max(to, rest.map(newTo, 1));
     });

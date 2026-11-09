@@ -81,6 +81,11 @@ it("keeps each block's neighbour marks through edits, undo and paged publication
   // The next display moves up against the paragraph, but was never set short.
   state = state.apply(state.tr.delete(38, 39));
   expect(marks(state, plugin)).toContain("20 display");
+  // A heading level change alone maps no positions.
+  state = state.apply(state.tr.setNodeAttribute(0, "level", 3));
+  expect(marks(state, plugin)).not.toContain("0 run-in");
+  state = state.apply(state.tr.setNodeAttribute(0, "level", 4));
+  expect(marks(state, plugin)).toContain("0 run-in");
 
   let seed = 7;
   const random = (count: number) => (seed = (seed * 48271) % 2147483647) % count;
@@ -99,9 +104,12 @@ it("keeps each block's neighbour marks through edits, undo and paged publication
     else if (action === 2) tr.insert(end, heading.create({ level: 4 + random(2) }, text("H")));
     else if (action === 3 && state.doc.childCount > 1) tr.delete(position, end);
     else if (action === 4 && node.isTextblock && node.content.size > 1) tr.split(position + 2);
-    else if (action === 5 && node.type === heading)
-      tr.setNodeMarkup(position, undefined, { level: 3 + random(3) });
-    else if (action === 6) {
+    else if (action === 5 && node.type === heading) {
+      // Attribute steps map no positions; mix one with a structural edit elsewhere.
+      if (random(2)) tr.setNodeMarkup(position, undefined, { level: 3 + random(3) });
+      else tr.setNodeAttribute(position, "level", 3 + random(3));
+      if (random(2)) tr.insert(tr.doc.content.size, paragraph.create(null, text("P")));
+    } else if (action === 6) {
       const displays: number[] = [];
       state.doc.descendants((child, at) => {
         if (child.type === latexDisplayMath && random(2)) displays.push(at);
