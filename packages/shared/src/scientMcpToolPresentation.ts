@@ -49,10 +49,22 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_account_fill: tool(["Fill", "Filling", "Filled", "a saved field"], "scient-accounts"),
   t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
   t3_connector_setup: tool(["Set up", "Setting up", "Set up", "a connector"], "scient-accounts"),
+  t3_connector_copy: tool(
+    ["Copy", "Copying", "Copied", "a connector to change"],
+    "scient-accounts",
+  ),
+  t3_connector_check: tool(["Check", "Checking", "Checked", "a connector"], "scient-accounts"),
+  t3_connector_save: tool(["Save", "Saving", "Saved", "a connector"], "scient-accounts"),
   t3_paper_get: tool(["Get", "Getting", "Got", "a paper's PDF"], "scient-accounts"),
   t3_papers_queue: tool(["Queue", "Queueing", "Queued", "papers to fetch"], "scient-accounts"),
   t3_papers_status: tool(["Check", "Checking", "Checked", "queued papers"], "scient-accounts"),
   // SCIENT-FORK:END
+  preview_network: {
+    displayName: "Read the preview page's requests",
+    labels: ["Read", "Reading", "Read", "the preview page's requests"],
+    icon: "browser",
+    summaryAction: "browser",
+  },
   t3_skills_list: tool(["Check", "Checking", "Checked", "available skills"], "scient-skills"),
   // A completed load reads "Used Latex Authoring", the wording skill loads already use.
   t3_skill_load: tool(["Load", "Loading", "Used", "a skill"], "scient-skills"),

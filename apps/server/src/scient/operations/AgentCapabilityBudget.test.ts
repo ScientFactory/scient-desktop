@@ -163,8 +163,9 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(52);
+      expect(scientTools).toHaveLength(53);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
+        "preview_network",
         "scient_account_add",
         "scient_account_browser_session",
         "scient_account_credentials",
