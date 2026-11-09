@@ -619,6 +619,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`402d0623d5f4160859607e9b7c11fc829fbe3e18` is recorded in
+[the 2026-11-09 402d0623d5 receipt](docs/internals/t3-upstream-sync-20261109-402d0623d5.md).
+Literal merge `4ced9d1208a9bdf0116ed3d7e60b72e53452d42c` has owned base
+`8b328c6330bc95db3e011f49132e32bca862024e` and the frozen official target as parents, retaining
+the 83 official commits after `6417151c09`. Plan mode, the composer context meter and the legacy
+sidebar are removed as in T3. Model APIs can write titles and commit text, Claude and Codex can
+suggest the next prompt (on by default in Scient), the `scient` command installs on a fresh first
+launch, Pi offers speed tiers, and database space can be reclaimed from Settings. No migrations.
+Release remains separate.
+
+The previous committed alignment through
 `6417151c093e54dbba0e6c824c69d03983793b9a` is recorded in
 [the 2026-11-08 6417151c09 receipt](docs/internals/t3-upstream-sync-20261108-6417151c09.md).
 Literal merge `aaf3b2af5b767d8b3d3ac3524e3314db3f642445` has owned base
@@ -628,7 +639,7 @@ to another thread, side chats start with the parent's reasoning level, and agent
 Linked environments changes. A starting turn may reopen its own reserved session for that. No
 migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `4c3a9d58184f20bd76833bd599c3544d2c09e3eb` is recorded in
 [the 2026-11-07 4c3a9d5818 receipt](docs/internals/t3-upstream-sync-20261107-4c3a9d5818.md).
 Literal merge `23567dd575ff3e83b3276159f013e615430e7572` has owned base

@@ -382,7 +382,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       />
       {/* SCIENT-FORK:START — a long path wraps within a bounded tooltip. */}
       <TooltipPopup side="top" variant="code" className="max-w-[min(40rem,calc(100vw-2rem))]">
-        <div className="scient-file-link-tooltip overflow-x-auto leading-tight whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
+        <div className="scient-file-link-tooltip leading-tight">
           {/* SCIENT-FORK:END */}
           <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
         </div>

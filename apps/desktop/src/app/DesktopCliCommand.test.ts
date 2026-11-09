@@ -39,6 +39,7 @@ const environmentFor = (
     homeDirectory: input.home,
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
+    desktopSettingsPath: path.join(input.baseDir, "userdata", "desktop-settings.json"),
     // SCIENT-FORK:START scient-cli-command
     serverRoot: input.serverRoot ?? "/opt/T3 Code/resources/app.asar",
     appImagePath: Option.none(),
@@ -202,6 +203,66 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         }
         expect(yield* fs.readFileString(legacy)).toBe(previousContent);
       }).pipe(Effect.scoped),
+  );
+
+  unix("installs scient on a fresh first launch once, and a removal sticks", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "scient-first-launch-" });
+      const serverRoot = yield* fixtureServer(path.join(home, "Scient App"), "current");
+      const command = yield* commandIn({ home, serverRoot });
+      yield* command.installOnFirstLaunch;
+      const installed = yield* command.state;
+      expect(installed.installedPath).toBe(path.join(home, ".local/bin/scient"));
+
+      yield* command.uninstall;
+      const relaunched = yield* commandIn({ home, serverRoot });
+      yield* relaunched.installOnFirstLaunch;
+      expect((yield* relaunched.state).installedPath).toBeNull();
+    }).pipe(Effect.scoped),
+  );
+
+  unix("leaves an existing install and another scient to Settings on first launch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "scient-first-launch-" });
+      const serverRoot = yield* fixtureServer(path.join(home, "Scient App"), "current");
+      const other = path.join(home, ".local/bin/scient");
+      yield* fs.makeDirectory(path.dirname(other), { recursive: true });
+      yield* fs.writeFileString(other, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const beside = yield* commandIn({ home, serverRoot });
+      yield* beside.installOnFirstLaunch;
+      expect(yield* fs.readFileString(other)).toBe("#!/bin/sh\nexit 0\n");
+
+      const existingHome = yield* fs.makeTempDirectoryScoped({ prefix: "scient-existing-" });
+      const baseDir = path.join(existingHome, ".scient-next");
+      yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
+      yield* fs.writeFileString(path.join(baseDir, "userdata", "desktop-settings.json"), "{}");
+      const existing = yield* commandIn({ home: existingHome, serverRoot });
+      yield* existing.installOnFirstLaunch;
+      expect((yield* existing.state).installedPath).toBeNull();
+    }).pipe(Effect.scoped),
+  );
+
+  unix("adds the command folder to the shell startup file once", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "scient-add-path-" });
+      const serverRoot = yield* fixtureServer(path.join(home, "Scient App"), "current");
+      const env = { PATH: "/usr/bin", SHELL: "/bin/zsh" };
+      const command = yield* commandIn({ home, serverRoot, env });
+      const installed = yield* command.install;
+      expect(installed.onPath).toBe(false);
+      expect(installed.pathSetup).toEqual({ file: "~/.zshrc", added: false });
+      const added = yield* command.addToPath;
+      expect(added.pathSetup).toEqual({ file: "~/.zshrc", added: true });
+      yield* command.addToPath;
+      const zshrc = yield* fs.readFileString(path.join(home, ".zshrc"));
+      expect(zshrc.match(/# Added by Scient/g)).toHaveLength(1);
+    }).pipe(Effect.scoped),
   );
 
   unix("links the launcher onto PATH and removes only that link", () =>

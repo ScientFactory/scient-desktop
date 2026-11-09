@@ -11,7 +11,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import { piContextExtension } from "./contextExtension.ts";
-import { makePiMcpExtensionSource, PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import {
+  makePiMcpExtensionSource,
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, materializePiT3McpExtension } from "./mcpInjection.ts";
 // SCIENT-FORK:START — Scient Extensions connectors: connector tool registrations.
 import { loadMcpBridge, type RegisteredTool } from "./mcpBridge.testkit.ts";
@@ -1183,6 +1187,60 @@ async function loadRequestHook(): Promise<RequestHook> {
     return Object.fromEntries(Object.entries(result));
   };
 }
+
+type ServiceTierRequestHook = (
+  event: { payload: unknown },
+  ctx: { model: { provider: string; serviceTiers?: ReadonlyArray<{ id: string }> } },
+) => Record<string, unknown> | undefined;
+type CommandHandler = (args: string) => Promise<void>;
+
+async function loadServiceTierHook() {
+  const handlers = new Map<string, ServiceTierRequestHook>();
+  const commands = new Map<string, CommandHandler>();
+  const source = NodeModule.stripTypeScriptTypes(
+    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+      "export default async function",
+      "async function",
+    ),
+  );
+  await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+    process: { env: {} },
+    pi: {
+      on: (name: string, handler: ServiceTierRequestHook) => handlers.set(name, handler),
+      registerCommand: (name: string, options: { handler: CommandHandler }) =>
+        commands.set(name, options.handler),
+    },
+  });
+  const hook = handlers.get("before_provider_request");
+  const setServiceTier = commands.get(PI_T3_SERVICE_TIER_COMMAND);
+  assert.isDefined(hook);
+  assert.isDefined(setServiceTier);
+  return Object.assign(hook!, { setServiceTier: setServiceTier! });
+}
+
+describe("Pi service tier", () => {
+  it("sends only a tier the active model advertises, until Standard clears it", async () => {
+    const hook = await loadServiceTierHook();
+    const sol = {
+      provider: "columbia-codex",
+      serviceTiers: [{ id: "priority" }, { id: "ultrafast" }],
+    };
+    const payload = { model: "gpt-6.1-sol", reasoning: { effort: "high" } };
+    assert.isUndefined(hook({ payload }, { model: sol }));
+
+    await hook.setServiceTier("priority");
+    assert.deepEqual(hook({ payload }, { model: sol }), { ...payload, service_tier: "priority" });
+
+    await hook.setServiceTier("ultrafast");
+    assert.equal(hook({ payload }, { model: sol })?.service_tier, "ultrafast");
+    const fastOnly = { provider: "columbia-codex", serviceTiers: [{ id: "priority" }] };
+    assert.isUndefined(hook({ payload }, { model: fastOnly }));
+    assert.isUndefined(hook({ payload }, { model: { provider: "anthropic" } }));
+
+    await hook.setServiceTier("");
+    assert.isUndefined(hook({ payload }, { model: sol }));
+  });
+});
 
 describe("Pi upstream output-budget workaround", () => {
   it.each(["max_tokens", "max_completion_tokens"])(

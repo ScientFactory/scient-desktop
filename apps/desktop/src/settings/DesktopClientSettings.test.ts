@@ -37,7 +37,6 @@ const clientSettings: ClientSettings = {
   contentDirection: "auto",
   // SCIENT-FORK:END scient-desktop-settings
   confirmThreadUnpin: false,
-  contextWindowMeterEnabled: false,
   diffFilesCollapsed: true,
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
@@ -57,7 +56,6 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
-  planModeEnabled: false,
   showSkillsInSlashMenu: true,
   // SCIENT-FORK:END scient-desktop-settings
   proactivePanelsEnabled: true,
@@ -72,7 +70,6 @@ const clientSettings: ClientSettings = {
   boringSidebarMultilineRows: false,
   threadDetailsUsageEnabled: false,
   threadDetailsItems: {},
-  legacySidebarEnabled: false,
   sidebarWorkingShelfEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
