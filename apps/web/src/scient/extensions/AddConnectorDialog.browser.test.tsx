@@ -20,6 +20,8 @@ import "~/index.css";
 
 const state = vi.hoisted(() => ({
   add: vi.fn(),
+  importable: vi.fn(),
+  test: vi.fn(),
   startSignIn: vi.fn(),
   githubSignIn: { start: vi.fn(), wait: vi.fn(), cancel: vi.fn() },
   openInBrowser: vi.fn(),
@@ -38,8 +40,13 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("./extensionsState", () => ({
   addConnector: "add",
+  inspectLocalBundle: "inspect",
+  listImportableConnectors: "importable",
+  testConnector: "test",
+  updateConnector: "update",
   startConnectorSignIn: "start-sign-in",
 }));
+vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "local" }));
 vi.mock("../../state/sourceControl", async () => {
   const { Atom } = await import("effect/reactivity");
   const allowed = Atom.make(true);
@@ -55,19 +62,24 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string | { readonly name: string }) =>
     command === "add"
       ? state.add
-      : command === "start-sign-in"
-        ? state.startSignIn
-        : typeof command === "object" && command.name === "github-start"
-          ? state.githubSignIn.start
-          : typeof command === "object" && command.name === "github-wait"
-            ? state.githubSignIn.wait
-            : state.githubSignIn.cancel,
+      : command === "importable"
+        ? state.importable
+        : command === "test"
+          ? state.test
+          : command === "start-sign-in"
+            ? state.startSignIn
+            : typeof command === "object" && command.name === "github-start"
+              ? state.githubSignIn.start
+              : typeof command === "object" && command.name === "github-wait"
+                ? state.githubSignIn.wait
+                : state.githubSignIn.cancel,
 }));
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => state.openInBrowser }));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../../components/chat/providerIconUtils", () => ({ AVAILABLE_PROVIDER_OPTIONS: [] }));
 
 import { AddConnectorDialog } from "./AddConnectorDialog";
+import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 
 const environmentId = EnvironmentId.make("local");
 
@@ -737,6 +749,129 @@ describe("GitHub with Source Control's account", () => {
       type: "entered",
       strategy: "bearer",
       value: "github_pat_synthetic_value",
+    });
+  });
+});
+
+describe("local connectors", () => {
+  const localEntry: DiscoverEntry = {
+    name: "io.example/notes",
+    version: "1.0.0",
+    title: "Notes",
+    categories: [],
+    remotes: [],
+    installable: true,
+    localPackage: {
+      runner: "npx",
+      identifier: "@example/notes-mcp",
+      version: "1.0.0",
+      args: [],
+      environment: [{ name: "NOTES_KEY", required: true, secret: true }],
+    },
+  };
+  const ready = () => {
+    state.add.mockResolvedValue({ _tag: "Success", value: { connector, nextStep: "ready" } });
+    state.importable.mockResolvedValue({ _tag: "Success", value: { servers: [] } });
+    state.test.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        connectorId: connector.connectorId,
+        outcome: "ok",
+        checkedAt: connector.updatedAt,
+        tools: [{ name: "search" }],
+      },
+    });
+  };
+
+  it("adds a registry package that runs locally, with its declared key, then checks it", async () => {
+    await using fixture = setup();
+    ready();
+    await fixture.render(localEntry);
+    await expect.element(page.getByText("@example/notes-mcp")).toBeVisible();
+    await userEvent.fill(page.getByLabelText("NOTES_KEY", { exact: true }), "notes-key-0123456789");
+    await submit();
+    expect(state.add).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        target: {
+          type: "local-package",
+          name: "io.example/notes",
+          version: "1.0.0",
+          package: localEntry.localPackage,
+          environment: [{ name: "NOTES_KEY", value: "notes-key-0123456789", secret: true }],
+        },
+        displayName: "Notes",
+      },
+    });
+    await expect.element(page.getByText("Ready: 1 tool")).toBeVisible();
+  });
+
+  it("adds a server another app runs in one click", async () => {
+    await using _mocks = setup();
+    ready();
+    state.importable.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        servers: [
+          {
+            source: { type: "app", app: "claude-desktop" },
+            sourceLabel: "Claude Desktop",
+            name: "huji",
+            commandLine: "node server.js",
+            keys: [],
+          },
+        ],
+      },
+    });
+    await using _screen = await renderScreen(
+      <AddLocalConnectorDialog
+        open
+        onOpenChange={state.onOpenChange}
+        environmentId={environmentId}
+        entry={null}
+      />,
+    );
+    await page.getByRole("button", { name: "Add huji from Claude Desktop" }).click();
+    expect(state.add).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        target: {
+          type: "local-import",
+          source: { type: "app", app: "claude-desktop" },
+          name: "huji",
+        },
+      },
+    });
+    await expect.element(page.getByText("Ready: 1 tool")).toBeVisible();
+  });
+
+  it("runs a typed command under Advanced, split like a shell, keeping Windows backslashes", async () => {
+    await using _mocks = setup();
+    ready();
+    await using _screen = await renderScreen(
+      <AddLocalConnectorDialog
+        open
+        onOpenChange={state.onOpenChange}
+        environmentId={environmentId}
+        entry={null}
+      />,
+    );
+    await page.getByRole("button", { name: "Advanced: run a command" }).click();
+    await userEvent.fill(
+      page.getByLabelText("Command"),
+      String.raw`C:\Tools\server.exe "My Notes" --port 3`,
+    );
+    await submit();
+    expect(state.add).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        target: {
+          type: "local-command",
+          command: String.raw`C:\Tools\server.exe`,
+          args: ["My Notes", "--port", "3"],
+          environment: [],
+        },
+      },
     });
   });
 });

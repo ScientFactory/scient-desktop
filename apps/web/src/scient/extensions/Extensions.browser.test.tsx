@@ -124,6 +124,7 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
 });
 vi.mock("../../state/shell", () => ({
   environmentShell: { stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }) },
+  shellEnvironment: { openInEditor: "open-in-editor" },
 }));
 vi.mock("../../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -361,6 +362,8 @@ vi.mock("./extensionsState", async () => {
     updateConnector: "update",
     removeConnector: "remove",
     testConnector: "test",
+    inspectLocalBundle: "inspect",
+    listImportableConnectors: "importable",
     startConnectorSignIn: "startSignIn",
     installScientPlugin: "install",
     removeScientPlugin: "pluginRemove",

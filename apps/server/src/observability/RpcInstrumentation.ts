@@ -357,6 +357,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.extensionsConnectorUpdate]: "extensions",
   [WS_METHODS.extensionsConnectorRemove]: "extensions",
   [WS_METHODS.extensionsConnectorTest]: "extensions",
+  [WS_METHODS.extensionsConnectorInspectLocal]: "extensions",
+  [WS_METHODS.extensionsConnectorImportable]: "extensions",
   [WS_METHODS.extensionsDiscoverSearch]: "extensions",
   [WS_METHODS.extensionsDiscoverCatalog]: "extensions",
   [WS_METHODS.extensionsBrandIcon]: "extensions",

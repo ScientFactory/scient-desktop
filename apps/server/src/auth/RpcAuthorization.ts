@@ -199,6 +199,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.extensionsConnectorUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.extensionsConnectorRemove]: AuthSettingsWriteScope,
   [WS_METHODS.extensionsConnectorTest]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorInspectLocal]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorImportable]: AuthSettingsWriteScope,
   [WS_METHODS.extensionsPluginInstall]: AuthSettingsWriteScope,
   [WS_METHODS.extensionsPluginRemove]: AuthSettingsWriteScope,
   [WS_METHODS.extensionsPluginSetEnabled]: AuthSettingsWriteScope,

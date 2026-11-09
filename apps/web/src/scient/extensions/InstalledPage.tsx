@@ -1,5 +1,5 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
-import { FolderOpenIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { FolderOpenIcon, PlusIcon, RefreshCwIcon, TerminalIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
@@ -10,6 +10,7 @@ import { openAuthorizationPage } from "./openAuthorizationPage";
 import { Button } from "../../components/ui/button";
 import { NativeSelect } from "../../components/ui/select";
 import { AddConnectorDialog } from "./AddConnectorDialog";
+import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import {
   ConnectorItem,
   PluginItem,
@@ -151,7 +152,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     canWrite,
   } = useExtensionsEnvironment();
   const [worksWith, setWorksWith] = useState<ProviderInstanceId | null>(null);
-  const [dialog, setDialog] = useState<"add" | "install" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "local" | "install" | null>(null);
   const options = worksWithOptions(inventory?.providerSupport ?? [], providers);
   const selected = options.find((option) => option.instanceId === worksWith) ?? null;
   const groups = collectProviderExtensionGroups(
@@ -207,9 +208,18 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
           id={searchableSetting("extensions-connected-services").id}
           title="Connected services"
           action={
-            <SectionAction icon={PlusIcon} disabled={!canWrite} onClick={() => setDialog("add")}>
-              Add by URL
-            </SectionAction>
+            <span className="flex items-center gap-3">
+              <SectionAction
+                icon={TerminalIcon}
+                disabled={!canWrite}
+                onClick={() => setDialog("local")}
+              >
+                Add local
+              </SectionAction>
+              <SectionAction icon={PlusIcon} disabled={!canWrite} onClick={() => setDialog("add")}>
+                Add by URL
+              </SectionAction>
+            </span>
           }
         >
           {inventory === null ? (
@@ -314,6 +324,16 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
           environmentId={environmentId}
           entry={null}
           callbackOrigin={callbackOrigin}
+        />
+      ) : null}
+      {dialog === "local" ? (
+        <AddLocalConnectorDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setDialog(null);
+          }}
+          environmentId={environmentId}
+          entry={null}
         />
       ) : null}
       {dialog === "install" ? (

@@ -29,6 +29,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
 import { GitHubConnect, type SourceControlLogin } from "./GitHubConnect";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
@@ -190,20 +191,36 @@ function invalidProps(fieldId: string, message: string | undefined) {
   return message ? { "aria-invalid": true as const, "aria-describedby": `${fieldId}-error` } : {};
 }
 
-export function AddConnectorDialog({
-  open,
-  onOpenChange,
-  environmentId,
-  entry,
-  callbackOrigin,
-}: {
+interface AddConnectorDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   /** Prefills a registry target; null adds by URL. */
   readonly entry: DiscoverEntry | null;
   readonly callbackOrigin: string | null;
-}) {
+}
+
+/** A registry entry that only runs locally gets the local form. */
+export function AddConnectorDialog(props: AddConnectorDialogProps) {
+  return props.entry?.localPackage === undefined ? (
+    <RemoteConnectorDialog {...props} />
+  ) : (
+    <AddLocalConnectorDialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      environmentId={props.environmentId}
+      entry={props.entry}
+    />
+  );
+}
+
+function RemoteConnectorDialog({
+  open,
+  onOpenChange,
+  environmentId,
+  entry,
+  callbackOrigin,
+}: AddConnectorDialogProps) {
   const github = entryNeedsToken(entry) === true;
   const [githubToken, setGithubToken] = useState(false);
   const add = useAtomCommand(addConnector, { reportFailure: false });
