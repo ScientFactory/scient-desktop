@@ -289,7 +289,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       state:
         account === undefined
           ? ("missing" as const)
-          : local.signInNeedsUser
+          : // Until the person signs in again; their sign-in clears it.
+            local.signInNeedsUser && account.signIn?.state !== "signed-in"
             ? ("needs-user" as const)
             : ("linked" as const),
       ...(account === undefined ? {} : { accountId: account.accountId, account: account.name }),

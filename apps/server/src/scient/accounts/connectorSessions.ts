@@ -5,6 +5,7 @@
  * own unattended sign-in (saved password and authenticator code) when the session ends. The
  * program never gets the password.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -97,6 +98,12 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
   const folderOf = (connectorId: string) =>
     NodePath.join(root, connectorId.replace(/[^A-Za-z0-9_-]/gu, "_"));
   const invoke = previewInvoker(broker, invocation, { updateCurrentTab: false });
+  /** What each connector's files last held, to tell a session the profile renewed itself. */
+  const written = new Map<string, string>();
+  const fingerprint = (cookies: ReadonlyArray<{ readonly name: string; readonly value: string }>) =>
+    NodeCrypto.createHash("sha256")
+      .update(cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("\n"))
+      .digest("hex");
   const browser = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(AgentInvocationContext, invocation),
@@ -169,6 +176,7 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
     { cookies, userAgent }: Effect.Success<ReturnType<typeof readCookies>>,
   ) {
     const folder = folderOf(connectorId);
+    written.set(connectorId, fingerprint(cookies));
     return yield* Effect.tryPromise({
       try: async () => {
         await privateDirectory(root);
@@ -241,6 +249,11 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
     target: ConnectorSessionTarget,
   ) {
     const account = yield* usable(target);
+    // The person may have signed in since (or the site renewed the session): use that session.
+    const current = yield* readCookies(account, target.site).pipe(browserProblem(target));
+    const last = written.get(target.connectorId);
+    if (current.cookies.length > 0 && last !== undefined && fingerprint(current.cookies) !== last)
+      return yield* write(target.connectorId, target.site, current);
     yield* signIn(account);
     const session = yield* readCookies(account, target.site).pipe(browserProblem(target));
     return yield* write(target.connectorId, target.site, session);
@@ -261,8 +274,10 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
     prepare,
     signInAgain,
     remove: (connectorId) =>
-      Effect.promise(() =>
-        NodeFSP.rm(folderOf(connectorId), { recursive: true, force: true }).catch(() => undefined),
-      ),
+      Effect.promise(() => {
+        written.delete(connectorId);
+        return;
+        NodeFSP.rm(folderOf(connectorId), { recursive: true, force: true }).catch(() => undefined);
+      }),
   } satisfies ConnectorSessionsShape;
 });
