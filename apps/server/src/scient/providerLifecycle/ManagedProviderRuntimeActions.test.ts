@@ -784,5 +784,13 @@ describe("managed provider runtime installation failures", () => {
         new Error("secret-bearing implementation detail"),
       ),
     ).toBe("Scient could not install the private Claude runtime.");
+    expect(
+      managedRuntimeInstallationFailureMessage(
+        "Claude",
+        Object.assign(new Error("EACCES: permission denied, mkdir '/Users/someone/private'"), {
+          code: "EACCES",
+        }),
+      ),
+    ).toBe("Scient could not install the private Claude runtime. System error EACCES.");
   });
 });
