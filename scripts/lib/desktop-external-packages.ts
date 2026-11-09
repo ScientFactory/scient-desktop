@@ -8,6 +8,9 @@ const DESKTOP_RUNTIME_EXTERNAL_PREFIXES = [
   "@yuuang/",
   // Playwright reads its runtime bundle/driver from disk; inlining cannot replace those files.
   "playwright-core",
+  // SCIENT-FORK:START — the Hunspell port loads its WebAssembly file from beside its module.
+  "hunspell-wasm",
+  // SCIENT-FORK:END
 ] as const;
 
 export function isDesktopRuntimeExternalDependency(id: string): boolean {
