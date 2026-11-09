@@ -213,8 +213,17 @@ function describeSourceFailure(failure: Error): string {
 export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput): Promise<void> {
   const sources = input.fallbackUrl ? [input.url, input.fallbackUrl] : [input.url];
   const allowedHosts = new Set(input.allowedHosts.map((host) => host.toLowerCase()));
-  const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
-  const waitSignal = AbortSignal.any([input.signal, timeoutSignal]);
+  // Each copy gets the whole time limit, so a slow copy never uses up the other's.
+  const deadlines = new Map<string, AbortSignal>();
+  const deadline = (source: string): AbortSignal => {
+    const existing = deadlines.get(source);
+    if (existing) return existing;
+    const created = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+    deadlines.set(source, created);
+    return created;
+  };
+  const waitSignal =
+    sources.length === 1 ? AbortSignal.any([input.signal, deadline(input.url)]) : input.signal;
   const lastFailure = new Map<string, Error>();
   let usable = [...sources];
   let round = [...usable];
@@ -224,7 +233,7 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
     tries += 1;
     let cause: unknown;
     try {
-      await downloadOnce(input, source, allowedHosts, timeoutSignal);
+      await downloadOnce(input, source, allowedHosts, deadline(source));
       if (input.checksum) {
         await verifyManagedRuntimeChecksum(input.destination, input.checksum).catch(
           async (mismatch: unknown) => {
@@ -237,10 +246,15 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
     } catch (caught) {
       cause = caught;
     }
-    // With a second copy, a problem with this one only rules this copy out.
-    const ruledOut = cause instanceof ManagedRuntimeFileError && sources.length > 1;
+    // With a second copy, a problem with this one, running out of time
+    // included, only rules this copy out. Cancellation still ends everything.
+    const outOfTime = deadline(source).aborted && !input.signal.aborted;
+    const ruledOut = sources.length > 1 && (cause instanceof ManagedRuntimeFileError || outOfTime);
     if (!(cause instanceof TransientDownloadFailure) && !ruledOut) throw cause;
-    lastFailure.set(source, cause as Error);
+    lastFailure.set(
+      source,
+      outOfTime ? new Error("took longer than 10 minutes.") : (cause as Error),
+    );
     if (ruledOut) {
       usable = usable.filter((candidate) => candidate !== source);
       round = round.filter((candidate) => candidate !== source);

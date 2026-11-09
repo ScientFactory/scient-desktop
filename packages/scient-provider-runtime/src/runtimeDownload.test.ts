@@ -343,6 +343,31 @@ describe("downloads with Scient's own copy first", () => {
     expect(urls(fetch)).toEqual([mirror, request.fallbackUrl, request.fallbackUrl]);
   });
 
+  it("gives GitHub its own time limit when Scient's copy runs out of time", async () => {
+    const request = await twoSources();
+    const limits: AbortController[] = [];
+    using _timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const limit = new AbortController();
+      limits.push(limit);
+      return limit.signal;
+    });
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(
+        (_url: URL, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+            // Scient's copy is still busy when its own ten minutes end.
+            limits[0]!.abort(new DOMException("time limit", "TimeoutError"));
+          }),
+      )
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    await downloadManagedRuntime(request);
+    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl]);
+    expect(limits).toHaveLength(2);
+  });
+
   it("fails only when both copies fail, and names both", async () => {
     const request = await twoSources();
     const fetch = vi.fn().mockImplementation(async () => new Response("busy", { status: 504 }));
