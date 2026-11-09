@@ -23,10 +23,11 @@
 }
 
 /* The selection toolbar is a fixed overlay portaled to the body: selecting
-   text must never push the document down. */
+   text must never push the document down. Like the chat's selection bar, it
+   floats above the side panel's divider. */
 .scient-markdown-selection-toolbar {
   position: fixed;
-  z-index: 40;
+  z-index: 50;
   display: flex;
   max-width: calc(100vw - 1rem);
   overflow-x: auto;

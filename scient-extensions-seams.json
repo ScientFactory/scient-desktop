@@ -262,6 +262,16 @@
       "purpose": "Upstream-owned and unchanged by Scient: T3's MCP Apps helper only mentions claude.ai connector names when it parses Claude's mcp__<server>__ tool prefix."
     },
     {
+      "path": "apps/web/src/components/CommandPalette.tsx",
+      "anchor": "action:use-in-another-app",
+      "purpose": "T3's \"use in another app (MCP)\" palette action lists \"connector\" as a search word; Scient only hides the action without cloud public config. Not part of Scient Extensions."
+    },
+    {
+      "path": "apps/web/src/components/mcp/mcpApps.ts",
+      "anchor": "connectorName=",
+      "purpose": "T3's MCP wizard fills claude.ai's add-connector link; Scient only renames the connector to Scient. Not part of Scient Extensions."
+    },
+    {
       "path": "apps/server/scripts/record-claude-agent-sdk-replay-fixture.ts",
       "anchor": "claude_mcp_tool_presentation",
       "purpose": "Upstream-owned and unchanged by Scient: its recording notes name the claude.ai Firecrawl connector, so upstream comment edits match the connector signal. Nothing Scient mounts here."

@@ -256,6 +256,15 @@
       }
     },
     {
+      "name": "lerc",
+      "version": "3.0.0",
+      "sourceUrl": "https://github.com/Esri/lerc",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0",
+        "copyrights": ["Copyright 2015-2021 Esri"]
+      }
+    },
+    {
       "name": "lru_map",
       "generatedNotice": {
         "licenseId": "MIT",

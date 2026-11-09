@@ -974,9 +974,7 @@ tr[data-latex-longtable-band] {
   margin-left: var(--scient-latex-par-indent);
 }
 /* Paragraph/subparagraph headings share the following paragraph's first line. */
-/* A PDF page marker between them is zero-height and does not break the run-in. */
-.scient-latex-visual-document
-  :is(h4, h5)[data-latex-command]:has(+ p, + .scient-latex-page-marker + p) {
+.scient-latex-visual-document :is(h4, h5)[data-latex-command][data-latex-run-in] {
   float: left;
   clear: left;
   max-width: calc(100% - 1em);
@@ -1179,20 +1177,20 @@ tr[data-latex-longtable-band] {
   /* The paragraph line box already reserves part of the preceding baseline skip. */
   margin: calc(0.9em - 0.2lh) 0 0.9em;
 }
-.scient-latex-visual-document p:has(+ .node-latexDisplayMath),
-.scient-latex-visual-document p:has(+ .scient-latex-pagination-gap + .node-latexDisplayMath) {
+/* Neighbour attributes come from latexBlockNeighbours.ts. */
+.scient-latex-visual-document p[data-latex-before-display] {
   margin-bottom: 0;
 }
 /* A short display sits against the line above and reaches into it with its
    guide gutter; that line keeps its own clicks. */
-.scient-latex-visual-document p:has(+ .node-latexDisplayMath[data-short-display]) {
+.scient-latex-visual-document p[data-latex-before-display="short"] {
   position: relative;
   z-index: 1;
 }
 /* A raised line holding an open editor stays above the next raised line, which
    would otherwise paint over that editor. */
 .scient-latex-visual-document
-  p:has(+ .node-latexDisplayMath[data-short-display]):is(
+  p[data-latex-before-display="short"]:is(
     :focus-within,
     :has([data-scient-active-slot], .scient-latex-visual-command[data-footnote-editor])
   ) {

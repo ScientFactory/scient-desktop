@@ -3575,6 +3575,10 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+// SCIENT-FORK:START — subagent cards showed Claude Code's tools-used line; upstream PR pending.
+// Claude Code opens a subagent's result with the tools it used, a note for the parent model.
+const CLAUDE_TOOLS_USED_LINE = /^<tools-used-before-summary>[^<]*<\/tools-used-before-summary>\s*/u;
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
@@ -3596,11 +3600,12 @@ function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
       )
       .join("\n");
     if (text.length > 0) {
-      return text;
+      return text.replace(CLAUDE_TOOLS_USED_LINE, "");
     }
   }
-  return claudeNativeToolOutputText(output);
+  return claudeNativeToolOutputText(output).replace(CLAUDE_TOOLS_USED_LINE, "");
 }
+// SCIENT-FORK:END
 
 function isClaudeSubagentAsyncLaunchAck(output: ClaudeNativeToolOutput): boolean {
   const value = claudeNativeToolOutputValue(output);
@@ -9687,9 +9692,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (message.compact_result !== undefined ||
               (message.status === null && message.permissionMode === undefined))
           ) {
+            // The CLI reports a compaction it aborted for our interrupt as failed.
+            const failed =
+              message.compact_result === "failed" &&
+              !(yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             if (message.compact_result !== undefined) {
-              context.compactionFailure =
-                message.compact_result === "failed" ? { message: message.compact_error } : null;
+              context.compactionFailure = failed ? { message: message.compact_error } : null;
             }
             if (context.compaction?.status === "running") {
               const now = yield* DateTime.now;
@@ -9698,18 +9706,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 status:
                   message.compact_result === "success"
                     ? "completed"
-                    : message.compact_result === "failed"
+                    : failed
                       ? "failed"
                       : "interrupted",
                 title:
                   message.compact_result === "success"
                     ? "Context compacted"
-                    : message.compact_result === "failed"
+                    : failed
                       ? "Context compaction failed"
                       : "Context compaction stopped",
-                ...(message.compact_result === "failed" && message.compact_error
-                  ? { summary: message.compact_error }
-                  : {}),
+                ...(failed && message.compact_error ? { summary: message.compact_error } : {}),
                 completedAt: now,
                 updatedAt: now,
               };

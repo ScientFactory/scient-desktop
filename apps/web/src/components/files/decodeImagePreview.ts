@@ -1,6 +1,12 @@
 import { readBinaryPreview } from "./readBinaryPreview";
+// SCIENT-FORK:START — TIFFs use Scient's range-reading decoder with automatic contrast.
+import { decodeScientTiffPreview } from "~/scient/fileSurfaces/tiffPreview/tiffPreviewSession";
+// SCIENT-FORK:END
 
 export async function decodeImagePreview(src: string, heif: boolean, signal: AbortSignal) {
+  // SCIENT-FORK:START
+  if (!heif) return await decodeScientTiffPreview(src, signal);
+  // SCIENT-FORK:END
   const worker = new Worker(new URL("./imageDecode.worker.ts", import.meta.url), {
     type: "module",
   });
