@@ -794,6 +794,8 @@ function ApiKeysDialog({
         ) : (
           <SettingsRow
             key={row.id}
+            {...(row.uses[0] ? clickableAccountRow(() => open(row.uses[0]!.href)) : {})}
+            aria-label={row.uses[0] ? `Open where ${row.name} is used` : undefined}
             title={
               <span className="flex min-w-0 items-center gap-3">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
@@ -810,23 +812,25 @@ function ApiKeysDialog({
             control={
               <span className="flex items-center gap-2">
                 {row.stored === "agent" && savedKeys.length ? (
-                  <ApiKeyAccountPicker
-                    aria-label={`Key in Accounts for ${row.name}`}
-                    emptyLabel="Its own key"
-                    options={savedKeys}
-                    size="xs"
-                    value=""
-                    disabled={!canWrite}
-                    onChange={(event) => {
-                      const accountId = event.currentTarget.value;
-                      if (accountId)
-                        void link({
-                          instanceId: row.instanceId,
-                          variable: row.variable,
-                          accountId: AccountId.make(accountId),
-                        });
-                    }}
-                  />
+                  <span className="w-36 shrink-0">
+                    <ApiKeyAccountPicker
+                      aria-label={`Key in Accounts for ${row.name}`}
+                      emptyLabel="Its own key"
+                      options={savedKeys}
+                      size="xs"
+                      value=""
+                      disabled={!canWrite}
+                      onChange={(event) => {
+                        const accountId = event.currentTarget.value;
+                        if (accountId)
+                          void link({
+                            instanceId: row.instanceId,
+                            variable: row.variable,
+                            accountId: AccountId.make(accountId),
+                          });
+                      }}
+                    />
+                  </span>
                 ) : null}
                 {row.stored === "agent" || row.stored === "files" ? (
                   <Button
@@ -836,11 +840,6 @@ function ApiKeysDialog({
                     onClick={() => void keep(row)}
                   >
                     Keep in Accounts
-                  </Button>
-                ) : null}
-                {row.uses[0] ? (
-                  <Button size="xs" variant="outline" onClick={() => open(row.uses[0]!.href)}>
-                    Open
                   </Button>
                 ) : null}
               </span>
