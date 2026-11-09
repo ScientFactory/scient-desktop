@@ -225,7 +225,10 @@ page outranks all of these. C++ builds to the newest standard your compiler know
 Octave; `.gp` to gnuplot, then PARI/GP; `.v` to Rocq, then Verilog; and `.pro` to IDL, then Prolog. A
 `.sql` file that uses sqlite3's dot commands, such as `.bail on`, runs with `sqlite3` when it is here.
 A `.lean` file in a Lake project runs through Lake from the project's folder, so its imports build
-first; a Mathlib project fetches Mathlib's ready-built files the first time. A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
+first; a Mathlib project fetches Mathlib's ready-built files the first time. Stata and SAS write
+their results to files in the project's folder, and Run shows them: Stata's log, or SAS's listing
+followed by any warnings. A do-file that stops at an error fails with that error, though Stata
+itself reports success. A NetLogo model runs its first saved BehaviorSpace experiment and shows the results table, since
 NetLogo runs nothing else without its window; save an experiment in the model to run it. A run gets
 no typed input, so a tool that waits at a prompt after its file exits instead.
 

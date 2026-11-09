@@ -120,6 +120,9 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string, string?]>> = {
   agda: ["a.agda", "module a where\n", ""],
   // The apostrophe proves the path reaches sqlite3 whole.
   sqlite: ["o'brien.sql", ".bail on\nselect 'scient-ran';\n"],
+  // Licensed, so these run only where someone has them. Both print nothing and write a log.
+  stata: ["a.do", 'display "scient-ran"\n'],
+  sas: ["a.sas", 'data _null_; put "scient-ran"; run;\n'],
 };
 
 /** Sold with a license, so no test computer can install them. Everything else has a program. */
@@ -229,19 +232,29 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           NodeFS.mkdirSync(staging);
           const absoluteSourcePath = NodePath.join(cwd, name);
           NodeFS.writeFileSync(absoluteSourcePath, source);
-          const prepared = adapter.prepare({
+          const context = {
             runId: ExecutionRunId.make("run-table-live"),
             projectId: "live",
             runtime: profile,
             source: { cwd, relativePath: name, revision: "live" as never },
             absoluteSourcePath,
             artifactStagingDirectory: staging,
-          });
+          };
+          yield* Effect.promise(async () => adapter.prepareRun?.(context));
+          const prepared = adapter.prepare(context);
           let output = "";
+          let code: number | null = 0;
           for (const step of [...(prepared.before ?? []), prepared]) {
             const result = yield* runStep(step);
             output += `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`;
-            expect(result.code, output).toBe(0);
+            code = result.code;
+            if (adapter.concludeRun === undefined) expect(result.code, output).toBe(0);
+          }
+          const concludeRun = adapter.concludeRun;
+          if (concludeRun !== undefined) {
+            const outcome = yield* Effect.promise(() => concludeRun(context, code));
+            output += outcome.output.map((chunk) => chunk.text).join("");
+            expect(outcome.failureMessage, output).toBeNull();
           }
           expect(output).toContain(prints);
         }).pipe(Effect.provide(Live)),

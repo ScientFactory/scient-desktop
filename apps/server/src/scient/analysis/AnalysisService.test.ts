@@ -1033,6 +1033,78 @@ describe("analysis service coordination", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
+  it.effect("lets an adapter whose results are files show them and say how the run went", () =>
+    Effect.gen(function* () {
+      const diagnostic = {
+        diagnosticId: "stata-error-1",
+        severity: "error",
+        source: "runtime",
+        code: "r(601)",
+        message: "file nothere.dta not found",
+        relativePath: "analysis.m",
+        line: 2,
+        column: null,
+        frames: [],
+        related: [],
+      } as const;
+      const terminal = new Set(["succeeded", "failed", "cancelled"]);
+      for (const scenario of [
+        { exitCode: 0, failureMessage: "file nothere.dta not found (r(601))", status: "failed" },
+        { exitCode: 1, failureMessage: null, status: "succeeded" },
+        { exitCode: 0, throws: true, status: "succeeded" },
+        { exitCode: 3, throws: true, status: "failed" },
+        { cancel: true, failureMessage: null, status: "cancelled" },
+      ] as const) {
+        const harness = yield* makeServiceTestLayer({
+          ...testAdapter,
+          concludeRun: async () => {
+            if ("throws" in scenario) throw new Error("private detail");
+            return {
+              output: [{ stream: "stdout", text: "the log\n" }],
+              failureMessage: scenario.failureMessage,
+              diagnostics: scenario.failureMessage === null ? [] : [diagnostic],
+              writtenFiles: ["analysis.log"],
+            };
+          },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* AnalysisService;
+            yield* service.startRun({
+              cwd: harness.projectRoot,
+              relativePath: "analysis.m",
+              sourceRevision,
+              runtimeId,
+            });
+            const runId = yield* Queue.take(harness.startedRuns);
+            if ("cancel" in scenario) yield* service.cancelRun({ cwd: harness.projectRoot, runId });
+            else yield* Deferred.succeed(harness.processExits.get(runId)!, scenario.exitCode);
+            const finished = yield* service
+              .getRun({ cwd: harness.projectRoot, runId })
+              .pipe(Effect.repeat({ until: (current) => terminal.has(current.receipt.status) }));
+            expect(finished.receipt.status).toBe(scenario.status);
+            if ("throws" in scenario) {
+              expect(finished.receipt.output).toEqual([]);
+              expect(finished.receipt.failureMessage).toBe(
+                scenario.exitCode === 0 ? null : "MATLAB test runtime exited with code 3.",
+              );
+              return;
+            }
+            expect(finished.receipt.output.map((chunk) => chunk.text)).toEqual(["the log\n"]);
+            expect(finished.writtenFiles).toEqual(["analysis.log"]);
+            if ("exitCode" in scenario) expect(finished.receipt.exitCode).toBe(scenario.exitCode);
+            if (scenario.status !== "cancelled") {
+              expect(finished.receipt.failureMessage).toBe(scenario.failureMessage);
+              expect(finished.diagnostics).toEqual(
+                scenario.failureMessage === null ? [] : [diagnostic],
+              );
+            }
+          }).pipe(Effect.provide(harness.analysisLayer)),
+        );
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
   it.effect("never runs a file that changed while its run was waiting", () =>
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;

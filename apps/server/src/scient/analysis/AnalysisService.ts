@@ -982,6 +982,35 @@ const make = Effect.gen(function* () {
           if (exitCode !== 0) break;
         }
         yield* updateReceipt(runId, "start", (run) => ({ ...run, phase: "capturing" }));
+        const concludeRun = adapter.concludeRun;
+        const outcome = concludeRun
+          ? yield* Effect.tryPromise({
+              try: () => concludeRun(runContext, exitCode),
+              catch: (cause) =>
+                analysisError(
+                  "start",
+                  "process-failed",
+                  `Unable to read the ${profile.label} results.`,
+                  cause,
+                ),
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("analysis run conclusion failed", { runId, cause }).pipe(
+                  Effect.as(null),
+                ),
+              ),
+            )
+          : null;
+        if (outcome !== null) {
+          yield* appendOutput(runId, outcome.output);
+          if (outcome.diagnostics.length > 0 || outcome.writtenFiles.length > 0) {
+            yield* updateReceipt(runId, "start", (run) => ({
+              ...run,
+              ...(outcome.diagnostics.length === 0 ? {} : { diagnostics: outcome.diagnostics }),
+              ...(outcome.writtenFiles.length === 0 ? {} : { writtenFiles: outcome.writtenFiles }),
+            }));
+          }
+        }
         if (adapter.collectDiagnostics) {
           const diagnostics = yield* Effect.promise(() =>
             adapter.collectDiagnostics!(runContext),
@@ -1056,7 +1085,7 @@ const make = Effect.gen(function* () {
             artifacts: collection.artifacts,
             ...(collection.writtenFiles.length === 0
               ? {}
-              : { writtenFiles: collection.writtenFiles }),
+              : { writtenFiles: [...(run.writtenFiles ?? []), ...collection.writtenFiles] }),
             artifactReceipt: {
               status: collection.status,
               failureMessage: collection.failureMessage,
@@ -1070,6 +1099,10 @@ const make = Effect.gen(function* () {
         const latest = (yield* Ref.get(runsRef)).get(runId);
         if (latest?.receipt.cancellationRequested) {
           yield* finishRun(runId, "cancelled", exitCode, null);
+        } else if (outcome !== null) {
+          yield* outcome.failureMessage === null
+            ? finishRun(runId, "succeeded", exitCode, null)
+            : finishRun(runId, "failed", exitCode, outcome.failureMessage);
         } else if (exitCode === 0) {
           yield* finishRun(runId, "succeeded", 0, null);
         } else {

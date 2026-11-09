@@ -123,7 +123,10 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
   {
     languageId: "stata",
     extensions: [".do"],
-    commands: ["stata-mp", "stata-se", "stata-be", "stata"].map((name) => file(name, "-b", "do")),
+    // Batch Stata prints nothing and writes its results to a log, which Run reads afterwards.
+    commands: ["stata-mp", "stata-se", "stata-be", "stata"].map((name) =>
+      file(name, "-q", "-b", "do"),
+    ),
   },
   { languageId: "sas", extensions: [".sas"], commands: [file("sas", "-sysin")] },
   {

@@ -378,6 +378,100 @@ describe("a Lean file in a Lake project", () => {
   });
 });
 
+describe("Stata and SAS, which write their results to files", () => {
+  const prepareOn = async (
+    platform: NodeJS.Platform,
+    languageId: string,
+    executable: string,
+    cwd: string,
+    absoluteSourcePath: string,
+  ) => {
+    const adapter = makeRunTableAdapters({
+      tools: async () => new Map([[languageId, [tool(languageId, languageId, executable)]]]),
+      environment: {},
+      platform,
+    }).find((candidate) => candidate.kind === languageId)!;
+    const runtime = await adapter.inspect({
+      inspectedAt: "2026-11-09T00:00:00.000Z",
+      platform,
+      environment: {},
+    });
+    return adapter.prepare({
+      runId: ExecutionRunId.make("run"),
+      projectId: "project",
+      runtime,
+      source: { cwd, relativePath: "a", revision: "1" as never },
+      absoluteSourcePath,
+      artifactStagingDirectory: "/staging",
+    });
+  };
+
+  it("runs console Stata in batch mode, without its logo", async () => {
+    const step = await prepareOn("linux", "stata", "/usr/local/stata19/stata-mp", "/p", "/p/a.do");
+    expect(step.args).toEqual(["-q", "-b", "do", "/p/a.do"]);
+  });
+
+  it("quotes a path with a space, since Stata reads its words as one command", async () => {
+    const step = await prepareOn(
+      "linux",
+      "stata",
+      "/usr/local/stata19/stata",
+      "/p q",
+      "/p q/a b.do",
+    );
+    expect(step.args).toEqual(["-q", "-b", "do", '"/p q/a b.do"']);
+  });
+
+  it("runs a Mac window Stata with -e, since -b waits on a dialog when done", async () => {
+    const executable = "/Applications/Stata/StataMP.app/Contents/MacOS/StataMP";
+    const step = await prepareOn("darwin", "stata", executable, "/p", "/p/a.do");
+    expect(step.args).toEqual(["-q", "-e", "do", "/p/a.do"]);
+  });
+
+  it("runs Windows Stata with /e, since /b waits for a click when done", async () => {
+    const executable = "C:\\Program Files\\Stata19\\StataMP-64.exe";
+    const step = await prepareOn("win32", "stata", executable, "C:\\p q", "C:\\p q\\a.do");
+    expect(step).toMatchObject({ executable, args: ["/q", "/e", "do", "C:\\p q\\a.do"] });
+  });
+
+  it("names where SAS writes its log and listing, in the folder the run starts in", async () => {
+    const executable = "C:\\Program Files\\SASHome\\SASFoundation\\9.4\\sas.exe";
+    const step = await prepareOn("win32", "sas", executable, "C:\\p q", "C:\\p q\\sub\\study.sas");
+    expect(step.args).toEqual([
+      "-sysin",
+      "C:\\p q\\sub\\study.sas",
+      "-log",
+      "C:\\p q\\study.log",
+      "-print",
+      "C:\\p q\\study.lst",
+    ]);
+  });
+
+  it("reads the files after the run only for Stata and SAS", () => {
+    const concluding = makeRunTableAdapters({
+      tools: async () => new Map(),
+      environment: {},
+      platform: "linux",
+    }).flatMap((adapter) => (adapter.concludeRun === undefined ? [] : [adapter.kind]));
+    expect(concluding).toEqual(["stata", "sas"]);
+  });
+
+  it("says SAS has no Mac version instead of only that it was not found", async () => {
+    const [adapter] = makeRunTableAdapters({
+      tools: async () => new Map(),
+      environment: {},
+      platform: "darwin",
+    }).filter((candidate) => candidate.kind === "sas");
+    const profile = await adapter!.inspect({
+      inspectedAt: "2026-11-09T00:00:00.000Z",
+      platform: "darwin",
+      environment: {},
+    });
+    expect(profile.availability).toBe("missing");
+    expect(profile.detail).toMatch(/no version for Mac/u);
+  });
+});
+
 describe("the run table", () => {
   it("lists what Run can start in the order it tries them", () => {
     const route = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === "javascript")!;

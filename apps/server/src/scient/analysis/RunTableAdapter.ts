@@ -30,6 +30,7 @@ import type {
   ComputeProjectOutputObserverPort,
 } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
+import { batchLogBaseline, batchLogsFor, type BatchLogBaseline } from "./batchLogOutput.ts";
 
 const MAXIMUM_CAPTURED_BYTES = 64 * 1024 * 1024;
 
@@ -233,11 +234,14 @@ function prepare(
     const main = inProject(fill(route.project.args, file, output));
     return before.length === 0 ? main : { ...main, before };
   }
-  const args = fill(
-    platform === "win32" ? command.args : [...command.args, ...(command.unixArgs ?? [])],
-    file,
-    output,
-  );
+  const logs = batchLogsFor(route.languageId, platform);
+  const args =
+    logs?.args(executable, context) ??
+    fill(
+      platform === "win32" ? command.args : [...command.args, ...(command.unixArgs ?? [])],
+      file,
+      output,
+    );
   if (command.build === undefined) return step(executable, args);
   // A build's runner sits beside the compiler that needs it.
   const runner = command.build.runner;
@@ -330,7 +334,8 @@ export function makeRunTableAdapters(input: {
   readonly observer?: ComputeProjectOutputObserverPort;
 }): ReadonlyArray<AnalysisRuntimeAdapter> {
   const { environment } = sanitizeComputeEnvironment(input.environment);
-  const capture = input.observer === undefined ? {} : projectOutputCapture(input.observer);
+  const capture: Pick<AnalysisRuntimeAdapter, "prepareRun" | "collectArtifacts"> =
+    input.observer === undefined ? {} : projectOutputCapture(input.observer);
   const names = new Map(
     COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).map((language) => [
       language.languageId,
@@ -339,6 +344,12 @@ export function makeRunTableAdapters(input: {
   );
   return COMPUTE_RUN_TABLE.map((route): AnalysisRuntimeAdapter => {
     const label = names.get(route.languageId) ?? route.label ?? route.languageId;
+    const logs = batchLogsFor(route.languageId, input.platform);
+    const baselines = new WeakMap<AnalysisRunContext, BatchLogBaseline>();
+    const missing =
+      route.languageId === "sas" && input.platform === "darwin"
+        ? "SAS has no version for Mac. It runs on Windows and Linux, or online through SAS OnDemand for Academics."
+        : `${label} was not found on this computer.`;
     return {
       id: AnalysisRuntimeId.make(`file:${route.languageId}`),
       kind: route.languageId,
@@ -356,7 +367,7 @@ export function makeRunTableAdapters(input: {
             customExecutablePath !== undefined ? "custom" : tool === null ? "unconfigured" : "path",
           executablePath: tool?.executable ?? null,
           version: tool?.version ?? null,
-          detail: tool === null ? `${label} was not found on this computer.` : null,
+          detail: tool === null ? missing : null,
           capabilities: ["run-file", "stream-output", "cancel-process-tree"],
           inspectedAt,
           verification: null,
@@ -364,6 +375,19 @@ export function makeRunTableAdapters(input: {
         };
       },
       ...capture,
+      ...(logs === undefined
+        ? {}
+        : {
+            prepareRun: async (context: AnalysisRunContext) => {
+              baselines.set(context, await batchLogBaseline(logs.places(context)));
+              await capture.prepareRun?.(context);
+            },
+            concludeRun: async (context: AnalysisRunContext, exitCode: number | null) => {
+              const before = baselines.get(context);
+              if (before === undefined) throw new Error(`${label} began without a log baseline.`);
+              return logs.conclude(context, exitCode, before);
+            },
+          }),
       prepare: (context) => prepare(route, environment, input.platform, context),
     };
   });
