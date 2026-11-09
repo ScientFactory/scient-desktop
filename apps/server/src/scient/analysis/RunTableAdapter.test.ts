@@ -15,7 +15,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
-import { makeRunTableAdapters } from "./RunTableAdapter.ts";
+import {
+  beside,
+  lakeHasLeanCommand,
+  makeRunTableAdapters,
+  mathlibNeedsCache,
+} from "./RunTableAdapter.ts";
 
 const tool = (languageId: string, name: string, executable: string): FoundLanguageTool => ({
   languageId,
@@ -235,6 +240,141 @@ describe("how a file is built", () => {
       "--table",
       "-",
     ]);
+  });
+});
+
+describe("a Lean file in a Lake project", () => {
+  /** A computer with Lean and Lake in `bin`, and these files in a folder whose name has a space. */
+  const leanComputer = (files: Readonly<Record<string, string>>, withLake = true) => {
+    const folder = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-lean ")),
+    );
+    const bin = NodePath.join(folder, "bin");
+    NodeFS.mkdirSync(bin);
+    for (const name of withLake ? ["lean", "lake"] : ["lean"]) {
+      NodeFS.writeFileSync(NodePath.join(bin, name), "");
+    }
+    for (const [name, contents] of Object.entries(files)) {
+      NodeFS.mkdirSync(NodePath.dirname(NodePath.join(folder, name)), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(folder, name), contents);
+    }
+    const adapter = adapterFor("lean", [found("lean", "lean", NodePath.join(bin, "lean"), null)]);
+    const run = async (relativePath: string) =>
+      adapter.prepare({
+        runId: ExecutionRunId.make("run"),
+        projectId: "project",
+        runtime: await inspect(adapter),
+        source: { cwd: folder, relativePath, revision: "1" as never },
+        absoluteSourcePath: NodePath.join(folder, relativePath),
+        artifactStagingDirectory: "/staging",
+      });
+    return { folder, lake: NodePath.join(bin, "lake"), lean: NodePath.join(bin, "lean"), run };
+  };
+
+  it("runs a file outside any project with Lean alone, as before", async () => {
+    const { folder, lean, run } = leanComputer({ "a.lean": "" });
+    expect(await run("a.lean")).toMatchObject({
+      executable: lean,
+      args: [NodePath.join(folder, "a.lean")],
+      cwd: folder,
+    });
+  });
+
+  it("builds what the file imports through Lake, from the project's folder", async () => {
+    const { folder, lake, run } = leanComputer({
+      "proof/lakefile.toml": 'name = "proof"\n',
+      "proof/Notes/Try it.lean": "",
+    });
+    const step = await run("proof/Notes/Try it.lean");
+    expect(step).toMatchObject({
+      executable: lake,
+      args: ["-q", "lean", NodePath.join(folder, "proof", "Notes", "Try it.lean")],
+      cwd: NodePath.join(folder, "proof"),
+    });
+    expect(step.before).toBeUndefined();
+  });
+
+  it("takes the nearest lakefile, and Lake's dependencies belong to the project above them", async () => {
+    const { folder, run } = leanComputer({
+      "outer/lakefile.lean": "",
+      "outer/inner/lakefile.toml": "",
+      "outer/inner/A.lean": "",
+      "outer/.lake/packages/dep/lakefile.lean": "",
+      "outer/.lake/packages/dep/Dep.lean": "",
+    });
+    expect((await run("outer/inner/A.lean")).cwd).toBe(NodePath.join(folder, "outer", "inner"));
+    expect((await run("outer/.lake/packages/dep/Dep.lean")).cwd).toBe(
+      NodePath.join(folder, "outer"),
+    );
+  });
+
+  it("fetches Mathlib's ready-built files first when Mathlib is not built", async () => {
+    const manifest = JSON.stringify({ name: "proof", packages: [{ name: "mathlib" }] });
+    const { folder, lake, run } = leanComputer({
+      "lakefile.toml": "",
+      "lake-manifest.json": manifest,
+      "A.lean": "",
+    });
+    expect((await run("A.lean")).before).toEqual([
+      expect.objectContaining({ executable: lake, args: ["exe", "cache", "get"], cwd: folder }),
+    ]);
+    expect(mathlibNeedsCache(folder)).toBe(true);
+    const built = NodePath.join(folder, ".lake/packages/mathlib/.lake/build/lib/lean");
+    NodeFS.mkdirSync(built, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(built, "Mathlib.olean"), "");
+    expect(mathlibNeedsCache(folder)).toBe(false);
+    expect((await run("A.lean")).before).toBeUndefined();
+  });
+
+  it("leaves a project without Mathlib, or not yet resolved, to Lake", () => {
+    const { folder } = leanComputer({ "lakefile.toml": "" });
+    expect(mathlibNeedsCache(folder)).toBe(false);
+    NodeFS.writeFileSync(
+      NodePath.join(folder, "lake-manifest.json"),
+      JSON.stringify({ name: "proof", packages: [{ name: "batteries" }] }),
+    );
+    expect(mathlibNeedsCache(folder)).toBe(false);
+  });
+
+  it("builds and then runs Lean in Lake's environment before Lean 4.8, which has no `lake lean`", async () => {
+    const { folder, lake, run } = leanComputer({
+      "lakefile.lean": "",
+      "lean-toolchain": "leanprover/lean4:v4.7.0\n",
+      "A.lean": "",
+    });
+    expect(await run("A.lean")).toMatchObject({
+      executable: lake,
+      args: ["env", "lean", NodePath.join(folder, "A.lean")],
+      cwd: folder,
+      before: [{ executable: lake, args: ["build"], cwd: folder }],
+    });
+    expect(lakeHasLeanCommand("leanprover/lean4:v4.0.0")).toBe(false);
+    for (const toolchain of [
+      "leanprover/lean4:v4.8.0",
+      "leanprover/lean4:v4.36.0-rc2",
+      "v4.12.1",
+      "stable",
+      "leanprover/lean4:nightly-2026-01-01",
+      "",
+      null,
+    ]) {
+      expect(lakeHasLeanCommand(toolchain), String(toolchain)).toBe(true);
+    }
+  });
+
+  it("says to install Lean with elan when Lake is not beside Lean", async () => {
+    const { run } = leanComputer({ "lakefile.toml": "", "A.lean": "" }, false);
+    await expect(run("A.lean")).rejects.toMatchObject({
+      reason: "runtime-missing",
+      message: expect.stringContaining("Install Lean with elan"),
+    });
+  });
+
+  it("finds Lake beside Lean on Windows, with its extension", () => {
+    expect(beside("C:\\Users\\a\\.elan\\bin\\lean.exe", "lake", "win32")).toBe(
+      "C:\\Users\\a\\.elan\\bin\\lake.exe",
+    );
+    expect(beside("/home/a/.elan/bin/lean", "lake", "linux")).toBe("/home/a/.elan/bin/lake");
   });
 });
 

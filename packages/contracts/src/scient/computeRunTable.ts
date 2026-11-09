@@ -21,6 +21,15 @@ export interface ComputeRunRoute {
   readonly commands: ReadonlyArray<ComputeRunCommand>;
   /** Name shown for a route no catalog language covers. */
   readonly label?: string;
+  /**
+   * Inside a project one of `markers` names, the file runs with `command` from that project's
+   * folder. The command sits beside the tool that was chosen.
+   */
+  readonly project?: {
+    readonly markers: ReadonlyArray<string>;
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+  };
 }
 
 const file = (command: string, ...flags: ReadonlyArray<string>): ComputeRunCommand => ({
@@ -128,7 +137,17 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
     commands: [file("wolframscript", "-file")],
   },
   { languageId: "stan", extensions: [".stan"], commands: [file("stanc")] },
-  { languageId: "lean", extensions: [".lean"], commands: [file("lean")] },
+  {
+    languageId: "lean",
+    extensions: [".lean"],
+    commands: [file("lean")],
+    // Lake builds what the file imports, with the project's own toolchain, before Lean reads it.
+    project: {
+      markers: ["lakefile.lean", "lakefile.toml"],
+      command: "lake",
+      args: ["-q", "lean", "{file}"],
+    },
+  },
   {
     languageId: "isabelle",
     extensions: [".thy"],

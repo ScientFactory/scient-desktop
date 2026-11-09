@@ -247,4 +247,47 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         }).pipe(Effect.provide(Live)),
     );
   }
+
+  // A file that imports its own project's module, which only Lake can build. Needs no network.
+  it.live.runIf(installedForTest?.includes("lean") ?? tools.has("lean"))(
+    "runs a Lean file in a Lake project through Lake",
+    () =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.kind === "lean")!;
+        const profile = yield* Effect.promise(() =>
+          adapter.inspect({
+            inspectedAt: "2026-11-09T00:00:00.000Z",
+            platform: NodeProcess.platform,
+            environment,
+          }),
+        );
+        const cwd = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-lake ")),
+        );
+        const write = (name: string, text: string) => {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, name)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(cwd, name), text);
+        };
+        write("lakefile.toml", 'name = "greet"\n\n[[lean_lib]]\nname = "Greet"\n');
+        write("Greet/Basic.lean", 'def greeting := "scient-ran"\n');
+        write("Notes/Use it.lean", "import Greet.Basic\n\n#eval IO.println greeting\n");
+        const staging = NodePath.join(cwd, ".staging");
+        NodeFS.mkdirSync(staging);
+        const prepared = adapter.prepare({
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source: { cwd, relativePath: "Notes/Use it.lean", revision: "live" as never },
+          absoluteSourcePath: NodePath.join(cwd, "Notes", "Use it.lean"),
+          artifactStagingDirectory: staging,
+        });
+        let output = "";
+        for (const step of [...(prepared.before ?? []), prepared]) {
+          const result = yield* runStep(step);
+          output += `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`;
+          expect(result.code, output).toBe(0);
+        }
+        expect(output).toContain("scient-ran");
+      }).pipe(Effect.provide(Live)),
+  );
 });

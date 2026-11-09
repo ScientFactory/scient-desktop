@@ -929,7 +929,19 @@ const make = Effect.gen(function* () {
               ),
           });
         }
-        const prepared = adapter.prepare(runContext);
+        // An adapter names a missing tool, such as one a project needs, with a runtime-missing error.
+        const prepared = yield* Effect.try({
+          try: () => adapter.prepare(runContext),
+          catch: (cause) =>
+            isOperationError(cause) && cause.reason === "runtime-missing"
+              ? cause
+              : analysisError(
+                  "start",
+                  "process-failed",
+                  `Unable to prepare the ${profile.label} run.`,
+                  cause,
+                ),
+        });
         let exitCode: number | null = 0;
         for (const [index, step] of [...(prepared.before ?? []), prepared].entries()) {
           // Stop between steps must not start the next one, such as a program just built.
@@ -1118,7 +1130,8 @@ const make = Effect.gen(function* () {
               ? null
               : status === "lost"
                 ? `Scient stopped before the ${profile.label} run completed.`
-                : isOperationError(failure) && failure.reason === "source-changed"
+                : isOperationError(failure) &&
+                    (failure.reason === "source-changed" || failure.reason === "runtime-missing")
                   ? failure.message
                   : `${profile.label} could not be started or completed.`,
           ).pipe(Effect.ignoreCause({ log: true }));

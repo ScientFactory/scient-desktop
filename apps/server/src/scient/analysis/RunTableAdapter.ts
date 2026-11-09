@@ -7,6 +7,7 @@ import {
   AnalysisArtifactFileName,
   AnalysisArtifactId,
   AnalysisArtifactRepresentationId,
+  AnalysisOperationError,
   AnalysisRuntimeId,
   type AnalysisArtifactCollection,
   type AnalysisRunContext,
@@ -23,6 +24,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import { sanitizeComputeEnvironment } from "../compute/ComputeEnvironmentPolicy.ts";
+import { pathModule } from "../compute/RuntimeDiscovery.ts";
 import type {
   ComputeProjectOutputObservation,
   ComputeProjectOutputObserverPort,
@@ -127,6 +129,70 @@ function startable(
     : step;
 }
 
+/**
+ * The nearest folder at or above the file's that holds a marker. A file in `.lake`, where Lake keeps
+ * dependencies, belongs to the project above it.
+ */
+function projectRoot(
+  file: string,
+  markers: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+): string | null {
+  const path = pathModule(platform);
+  const [above, inside] = file.split(/[\\/]\.lake[\\/]/u);
+  let folder = inside === undefined ? path.dirname(file) : above!;
+  for (;;) {
+    if (markers.some((name) => NodeFS.existsSync(path.join(folder, name)))) return folder;
+    const parent = path.dirname(folder);
+    if (parent === folder) return null;
+    folder = parent;
+  }
+}
+
+/** Lake ships beside Lean in every install: elan's launchers and each toolchain alike. */
+export function beside(executable: string, command: string, platform: NodeJS.Platform): string {
+  const path = pathModule(platform);
+  const extension = /\.exe$/iu.test(executable) ? ".exe" : "";
+  return path.join(path.dirname(executable), `${command}${extension}`);
+}
+
+function readText(file: string): string | null {
+  try {
+    return NodeFS.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** `lake lean` arrived in Lean 4.8. Channels, nightlies and later versions have it. */
+export function lakeHasLeanCommand(toolchain: string | null): boolean {
+  const minor = /(?:^|:)v4\.(\d+)\./u.exec(toolchain?.trim() ?? "")?.[1];
+  return minor === undefined || Number(minor) >= 8;
+}
+
+interface LakeManifest {
+  readonly name?: unknown;
+  readonly packages?: ReadonlyArray<{ readonly name?: unknown } | null>;
+}
+
+/** A Mathlib project whose Mathlib is not built yet, which Mathlib's own cache fills in minutes. */
+export function mathlibNeedsCache(root: string): boolean {
+  let manifest: LakeManifest | null = null;
+  try {
+    manifest = JSON.parse(readText(NodePath.join(root, "lake-manifest.json")) ?? "null");
+  } catch {
+    return false;
+  }
+  const isMathlib = manifest?.name === "mathlib";
+  const packages = Array.isArray(manifest?.packages) ? manifest.packages : [];
+  if (!isMathlib && !packages.some((entry) => entry?.name === "mathlib")) return false;
+  const mathlib = isMathlib ? root : NodePath.join(root, ".lake", "packages", "mathlib");
+  const build = NodePath.join(mathlib, ".lake", "build", "lib");
+  return !["lean/Mathlib.olean", "Mathlib.olean"].some((file) =>
+    NodeFS.existsSync(NodePath.join(build, file)),
+  );
+}
+
 function prepare(
   route: ComputeRunRoute,
   environment: Readonly<Record<string, string>>,
@@ -146,6 +212,27 @@ function prepare(
     ...startable({ executable: name, args }, environment, platform),
     ...process,
   });
+  const root =
+    route.project === undefined ? null : projectRoot(file, route.project.markers, platform);
+  if (route.project !== undefined && root !== null) {
+    const tool = beside(executable, route.project.command, platform);
+    if (!NodeFS.existsSync(tool)) {
+      throw new AnalysisOperationError({
+        operation: "start",
+        reason: "runtime-missing",
+        message: `This file is in a Lake project at ${root}, and Lake is not beside ${executable}. Install Lean with elan, which brings Lake: https://lean-lang.org/install/`,
+      });
+    }
+    const inProject = (args: ReadonlyArray<string>) => ({ ...step(tool, args), cwd: root });
+    // Lean only: Mathlib's cache, and Lake from before `lake lean`.
+    const lean = route.languageId === "lean";
+    const before = lean && mathlibNeedsCache(root) ? [inProject(["exe", "cache", "get"])] : [];
+    if (lean && !lakeHasLeanCommand(readText(NodePath.join(root, "lean-toolchain")))) {
+      return { ...inProject(["env", "lean", file]), before: [...before, inProject(["build"])] };
+    }
+    const main = inProject(fill(route.project.args, file, output));
+    return before.length === 0 ? main : { ...main, before };
+  }
   const args = fill(
     platform === "win32" ? command.args : [...command.args, ...(command.unixArgs ?? [])],
     file,

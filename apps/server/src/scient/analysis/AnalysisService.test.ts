@@ -6,6 +6,7 @@ import {
   AnalysisArtifactFileName,
   AnalysisArtifactId,
   AnalysisArtifactRepresentationId,
+  AnalysisOperationError,
   AnalysisRuntimeId,
   AnalysisSourceRevision,
   type AnalysisRuntimeAdapter,
@@ -990,6 +991,45 @@ describe("analysis service coordination", () => {
           yield* service.cancelRun({ cwd: harness.projectRoot, runId: first.receipt.runId });
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect("says what is missing when an adapter names it, and keeps other failures plain", () =>
+    Effect.gen(function* () {
+      for (const [thrown, shown] of [
+        [
+          new AnalysisOperationError({
+            operation: "start",
+            reason: "runtime-missing",
+            message: "Install Lean with elan, which brings Lake.",
+          }),
+          "Install Lean with elan, which brings Lake.",
+        ],
+        [new Error("private detail"), "MATLAB test runtime could not be started or completed."],
+      ] as const) {
+        const harness = yield* makeServiceTestLayer({
+          ...testAdapter,
+          prepare: () => {
+            throw thrown;
+          },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* AnalysisService;
+            const run = yield* service.startRun({
+              cwd: harness.projectRoot,
+              relativePath: "launch-error.m",
+              sourceRevision,
+              runtimeId,
+            });
+            const failed = yield* service
+              .getRun({ cwd: harness.projectRoot, runId: run.receipt.runId })
+              .pipe(Effect.repeat({ until: (current) => current.receipt.status === "failed" }));
+            expect(failed.receipt.failureMessage).toBe(shown);
+            expect(yield* Ref.get(harness.processStartCount)).toBe(0);
+          }).pipe(Effect.provide(harness.analysisLayer)),
+        );
+      }
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 

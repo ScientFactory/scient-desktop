@@ -91,6 +91,18 @@ describe("the tool scan", () => {
     expect(tools.get("ruby")?.[0]?.version).toBe("3.3.1");
   });
 
+  it("leads with elan's launcher, which runs the toolchain a Lean project pins", () => {
+    const tools = scan(
+      computer([
+        "/home/a/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lean",
+        "/home/a/.elan/toolchains/leanprover--lean4---v4.35.0/bin/lake",
+        "/home/a/.elan/bin/lean",
+        "/home/a/.elan/bin/lake",
+      ]),
+    );
+    expect(tools.get("lean")?.[0]?.executable).toBe("/home/a/.elan/bin/lean");
+  });
+
   it("does not take Windows' WSL launcher for Bash", () => {
     const tools = scan(
       computer(["C:\\Windows\\System32\\bash.exe", "C:\\Tools\\Git\\bin\\bash.exe"], {
