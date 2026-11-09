@@ -108,6 +108,7 @@ import {
   useImportingPasswords,
 } from "./BrowserProfiles";
 import { copySignInIntoMain } from "./mainFill";
+import { CHROME_WINDOW_ACTION, useChromeSignIn } from "./ChromeSignIn";
 import { RemoteComputers } from "./RemoteComputers";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
@@ -554,6 +555,7 @@ export function MainSiteChoice({
   accounts,
   profiles,
   onImport,
+  onChromeWindow,
 }: {
   environmentId: EnvironmentId;
   /** Main's row for the site. */
@@ -561,6 +563,8 @@ export function MainSiteChoice({
   accounts: ReadonlyArray<AccountSummary>;
   profiles: ReturnType<typeof mergeProfiles>;
   onImport?: () => void;
+  /** Signs Main in to Google in a Chrome window; absent where the desktop can't. */
+  onChromeWindow?: (() => void) | undefined;
 }) {
   const openBrowser = useAccountBrowser(environmentId);
   const site = "sites" in account.details ? account.details.sites[0] : undefined;
@@ -609,6 +613,9 @@ export function MainSiteChoice({
           {googleMissing && onImport ? (
             <MenuGroup>
               <MenuGroupLabel className="max-w-64">{GOOGLE_SIGNED_OUT}</MenuGroupLabel>
+              {onChromeWindow ? (
+                <MenuItem onClick={onChromeWindow}>{CHROME_WINDOW_ACTION}</MenuItem>
+              ) : null}
               <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
             </MenuGroup>
           ) : google && using && usingRow ? (
@@ -863,6 +870,7 @@ function AccountsContent({
   snapshot: AccountsSnapshot;
   canWrite: boolean;
 }) {
+  const chromeSignIn = useChromeSignIn(environmentId);
   const [dialog, setDialog] = useState<
     | "add"
     | "import"
@@ -1095,6 +1103,7 @@ function AccountsContent({
         snapshot={snapshot}
         canWrite={canWrite}
         onImport={() => setDialog("import")}
+        onChromeWindow={chromeSignIn.available ? chromeSignIn.start : undefined}
         renderSignIn={(account, menu) => (
           <AccountRow
             key={account.accountId}
@@ -1113,6 +1122,11 @@ function AccountsContent({
                   accounts={snapshot.accounts}
                   profiles={profiles}
                   onImport={() => setDialog("import")}
+                  onChromeWindow={
+                    chromeSignIn.available
+                      ? () => chromeSignIn.start({ id: DEFAULT_BROWSER_PROFILE_ID, name: "Main" })
+                      : undefined
+                  }
                 />
               ) : null
             }
@@ -1144,6 +1158,7 @@ function AccountsContent({
           }}
         />
       ) : null}
+      {chromeSignIn.dialog}
       {dialog === "import" ? (
         <BrowserImportDialog
           environmentId={environmentId}

@@ -33,6 +33,12 @@ import {
   withdrawFromMain,
 } from "./mainFill.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
+import {
+  ChromeSignInInput,
+  chromeSignIn,
+  chromeSignInBrowser,
+  endChromeSignIn,
+} from "./chromeSignIn.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
 import { accountsOwner } from "./accountsOwner.ts";
@@ -310,6 +316,16 @@ export const withdrawFromMainHandler = Effect.fn("DesktopAccounts.withdrawFromMa
   },
 );
 
+const decodeChromeSignIn = Schema.decodeUnknownOption(ChromeSignInInput);
+const chromeSignInHandler = Effect.fn("DesktopAccounts.chromeSignInHandler")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  const input = decodeChromeSignIn(raw);
+  if (!(yield* appWindowSender(event)) || Option.isNone(input)) return { outcome: "failed" };
+  return yield* chromeSignIn(input.value);
+});
+
 const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -378,6 +394,27 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
     ) {
       if (!(yield* appWindowSender(event))) return false;
       return accountsOwner(yield* (yield* ElectronWindow).appWindows) === event?.sender.id;
+    }),
+  });
+  yield* ipc.handle({
+    channel: Channels.CHROME_SIGN_IN_BROWSER,
+    handler: Effect.fn("DesktopAccounts.chromeSignInBrowser")(function* (
+      _raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      if (!(yield* appWindowSender(event))) return null;
+      return yield* chromeSignInBrowser;
+    }),
+  });
+  yield* ipc.handle({ channel: Channels.CHROME_SIGN_IN, handler: chromeSignInHandler });
+  yield* ipc.handle({
+    channel: Channels.END_CHROME_SIGN_IN,
+    handler: Effect.fn("DesktopAccounts.endChromeSignInHandler")(function* (
+      raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      if (!(yield* appWindowSender(event)) || typeof raw !== "boolean") return false;
+      return yield* endChromeSignIn(raw);
     }),
   });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });

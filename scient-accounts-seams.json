@@ -37,6 +37,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": ".github/workflows/ci.yml",
+      "anchor": "SCIENT-FORK:START \u2014 Windows Overleaf and Accounts evidence is mandatory",
+      "purpose": "Run the desktop Accounts and browser import tests, and real Chrome and Edge sign-in windows, on Windows."
+    },
+    {
       "path": "packages/contracts/src/browserProfile.ts",
       "anchor": "SCIENT-FORK:START \u2014 distinguish original browser storage from the new-tab preference.",
       "purpose": "Name the built-in original browser profile Main while preserving its default id."

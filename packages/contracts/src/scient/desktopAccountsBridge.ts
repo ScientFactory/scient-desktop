@@ -114,6 +114,32 @@ export interface DesktopFillMainInput {
   readonly skipSites: ReadonlyArray<string>;
 }
 
+/** A sign-in in a window of the person's own Chromium browser, then copied into a Scient profile. */
+export interface DesktopChromeSignInInput {
+  /** Omit for the primary local environment. */
+  readonly environmentId?: string;
+  readonly profileId: string;
+  /** An https page, or a loopback http one. */
+  readonly url: string;
+  /** Required for Main: what the copy may do, as for an import into Main. */
+  readonly main?: Pick<
+    DesktopFillMainInput,
+    "mode" | "replaceAllowedSince" | "replaceGoogle" | "skipSites"
+  >;
+}
+
+export type DesktopChromeSignInResult =
+  | { readonly outcome: "no-browser" }
+  /** `nothing`: the window held no sign-in when it closed. */
+  | { readonly outcome: "busy" | "failed" | "cancelled" | "nothing"; readonly browser?: string }
+  | {
+      readonly outcome: "signed-in";
+      readonly browser: string;
+      readonly sites: ReadonlyArray<string>;
+      /** Into Main: what the copy did to each site. */
+      readonly main?: DesktopFillMainResult;
+    };
+
 /**
  * A shareable profile's sign-ins in the desktop's own jar, for other computers. The app window
  * decides which profiles may be read, from the server's profile record; the desktop doesn't.
@@ -213,6 +239,18 @@ export interface DesktopAccountsBridge {
   readonly readSessions?: (
     input: DesktopReadSessionsInput,
   ) => Promise<DesktopReadSessionsResult | null>;
+  /**
+   * The browser a sign-in window opens in ("Chrome", "Edge"…), or null when none is installed.
+   * `canQuit`: Done can quit it; elsewhere the person closes the window themselves.
+   */
+  readonly chromeSignInBrowser?: () => Promise<{
+    readonly name: string;
+    readonly canQuit: boolean;
+  } | null>;
+  /** Resolves once the window closed and its sign-in was copied, or with why not. */
+  readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
+  /** Done (`keep`) quits the open sign-in window, Cancel stops it. False when none is open. */
+  readonly endChromeSignIn?: (keep: boolean) => Promise<boolean>;
   /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
   readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

@@ -69,6 +69,7 @@ import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
 import { recordImportedSessions } from "./importedSessions";
 import { copySignInIntoMain } from "./mainFill";
+import { CHROME_WINDOW_ACTION, useChromeSignIn } from "./ChromeSignIn";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
@@ -382,6 +383,14 @@ export function BrowserImportDialog({
   // What each profile imported here brought, by its key.
   const [brought, setBrought] = useState<ReadonlyMap<string, string>>(new Map());
   const passwordsImporting = useImportingPasswords();
+  const chromeSignIn = useChromeSignIn(environmentId);
+  // On Windows the system keeps Chromium's cookies from other apps: Chrome and Edge are listed
+  // as unsupported there, never as missing.
+  const chromiumUnreadable = sources.some(
+    (source) =>
+      (source.id === "chrome" || source.id === "edge") &&
+      source.unavailable === "unsupportedPlatform",
+  );
   const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
@@ -668,12 +677,24 @@ export function BrowserImportDialog({
                           );
                         }),
                   )}
-                {loaded &&
-                sources.every(
-                  (source) =>
-                    source.unavailable === "notInstalled" ||
-                    (source.profiles.length === 0 && source.unavailable !== "needsFullDiskAccess"),
-                ) ? (
+                {chromiumUnreadable && chromeSignIn.available ? (
+                  <DiscoveryListRow
+                    disabled={busy || !canWrite}
+                    icon={<ProfilePicture name="Chrome" browser="chrome" />}
+                    title={CHROME_WINDOW_ACTION}
+                    description="Chrome's and Edge's sign-ins can't be read on Windows"
+                    action={<ArrowRightIcon className="size-4 text-muted-foreground" />}
+                    onClick={() =>
+                      chromeSignIn.start({ id: DEFAULT_BROWSER_PROFILE_ID, name: "Main" })
+                    }
+                  />
+                ) : loaded &&
+                  sources.every(
+                    (source) =>
+                      source.unavailable === "notInstalled" ||
+                      (source.profiles.length === 0 &&
+                        source.unavailable !== "needsFullDiskAccess"),
+                  ) ? (
                   <div className="px-3 py-3 text-sm text-muted-foreground">No browsers found</div>
                 ) : null}
                 {sources.some((source) => source.unavailable === "notInstalled") ? (
@@ -742,6 +763,7 @@ export function BrowserImportDialog({
             </DialogFooter>
           </>
         )}
+        {chromeSignIn.dialog}
       </DialogPopup>
     </Dialog>
   );
@@ -760,7 +782,8 @@ export const GOOGLE_SIGNED_OUT = "Signed out of Google.";
 
 /**
  * What a signed-out profile does: bring the browser's Google sign-in in again. A profile with no
- * browser behind it, Main, copies another profile's working Google, or else imports one.
+ * browser behind it, Main, copies another profile's working Google, or else imports one. Signing
+ * in in a Chrome window works for every profile, so it is offered beside each.
  */
 export function googleRecovery(
   source: BrowserProfileRecord["source"],
@@ -768,8 +791,12 @@ export function googleRecovery(
     readonly refresh: () => void;
     readonly importProfile: () => void;
     readonly copyFrom?: { readonly name: string; readonly run: () => void } | undefined;
+    readonly chromeWindow?: (() => void) | undefined;
   },
 ) {
+  const inWindow = actions.chromeWindow
+    ? { also: { action: CHROME_WINDOW_ACTION, onAction: actions.chromeWindow } }
+    : {};
   if (!source)
     return actions.copyFrom
       ? {
@@ -777,19 +804,29 @@ export function googleRecovery(
           hint: `Copy ${actions.copyFrom.name}'s Google sign-in into Main.`,
           action: `Copy from ${actions.copyFrom.name}`,
           onAction: actions.copyFrom.run,
+          ...inWindow,
         }
-      : {
-          message: GOOGLE_SIGNED_OUT,
-          hint: "Sign in to Google in your browser, then import that profile.",
-          action: "Import from a browser…",
-          onAction: actions.importProfile,
-        };
+      : actions.chromeWindow
+        ? {
+            message: GOOGLE_SIGNED_OUT,
+            hint: "Sign in to Google in a small Chrome window, or import a browser profile that has it.",
+            action: CHROME_WINDOW_ACTION,
+            onAction: actions.chromeWindow,
+            also: { action: "Import from a browser…", onAction: actions.importProfile },
+          }
+        : {
+            message: GOOGLE_SIGNED_OUT,
+            hint: "Sign in to Google in your browser, then import that profile.",
+            action: "Import from a browser…",
+            onAction: actions.importProfile,
+          };
   const browser = browserName(source.browser);
   return {
     message: GOOGLE_SIGNED_OUT,
     hint: `Sign in to Google in ${browser}, then Refresh.`,
     action: `Refresh from ${browser}`,
     onAction: actions.refresh,
+    ...inWindow,
   };
 }
 
@@ -829,6 +866,19 @@ export function ProfileDetail({
         <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={recover.onAction}>
           <span className="text-xs text-foreground">{recover.action}</span>
         </Button>
+        {recover.also ? (
+          <>
+            <span aria-hidden>·</span>
+            <Button
+              size="micro"
+              variant="link"
+              className="-my-0.5 shrink-0"
+              onClick={recover.also.onAction}
+            >
+              <span className="text-xs text-foreground">{recover.also.action}</span>
+            </Button>
+          </>
+        ) : null}
       </span>
     );
   return (
@@ -844,6 +894,7 @@ export function BrowserProfiles({
   snapshot,
   canWrite,
   onImport,
+  onChromeWindow,
   renderSignIn,
 }: {
   environmentId: EnvironmentId;
@@ -852,6 +903,8 @@ export function BrowserProfiles({
   /** A sign-in's row in its profile's sites, with `menu` added to the row's own. */
   renderSignIn: RenderSignIn;
   onImport: () => void;
+  /** Signs the profile in to Google in a Chrome window; absent where the desktop can't. */
+  onChromeWindow?: ((profile: { readonly id: string; readonly name: string }) => void) | undefined;
 }) {
   const settings = useClientSettings();
   const hydrated = useClientSettingsHydrated();
@@ -1257,6 +1310,10 @@ export function BrowserProfiles({
                             refresh: () => void act(() => refresh([profile])),
                             importProfile: onImport,
                             copyFrom: googleToCopy(profile.id),
+                            chromeWindow:
+                              onChromeWindow && !disabled
+                                ? () => onChromeWindow(profile)
+                                : undefined,
                           })
                         : undefined
                     }
