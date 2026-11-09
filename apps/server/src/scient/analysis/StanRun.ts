@@ -276,8 +276,8 @@ function firstError(output: string): string {
 
 type Translated = { readonly code: number } | { readonly timedOut: true };
 
-/** Runs stanc with the process tree Run uses, keeping the start of what it prints. */
-function runStanc(input: {
+/** Runs a tool with the process tree Run uses, keeping the start of what it prints. */
+function runCaptured(input: {
   readonly runId: ExecutionRunId;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -401,6 +401,7 @@ const BUILD_VARIABLE =
  * compiler make finds. Headers reinstalled over the same CmdStan at the same version go unseen.
  */
 async function buildIdentity(input: {
+  readonly runId: ExecutionRunId;
   readonly cpp: Buffer;
   readonly root: string;
   readonly toolchain: StanToolchain;
@@ -429,26 +430,73 @@ async function buildIdentity(input: {
     .sort(([left], [right]) => left.localeCompare(right));
   for (const [name, value] of variables) add(`variable ${name}`, value);
   add("path", (toolchain.added ?? []).join("\n"));
-  const compiler = stanCompiler(toolchain, platform);
+  const compiler = stanCompiler(toolchain, platform, await makeCompiler(input));
   const stats = compiler === null ? null : await NodeFSP.stat(compiler).catch(() => null);
   add("compiler", stats === null ? "" : `${compiler} ${stats.size} ${stats.mtimeMs}`);
   return key.digest("hex").slice(0, 32);
 }
 
-/** The C++ compiler CmdStan's makefiles use unless make/local names another: CXX, or the usual. */
-function stanCompiler(toolchain: StanToolchain, platform: NodeJS.Platform): string | null {
+/** What make said CXX is, by root, toolchain and make/local, for as long as this server runs. */
+const makeCompilers = new Map<string, string>();
+
+/**
+ * The CXX CmdStan's makefiles settle on, make/local included, as their `print-CXX` target reports
+ * it. Its first word is the compiler, which may be a wrapper such as ccache. Null when make cannot
+ * say, and the usual default is fingerprinted instead.
+ */
+async function makeCompiler(input: {
+  readonly runId: ExecutionRunId;
+  readonly root: string;
+  readonly toolchain: StanToolchain;
+  readonly platform: NodeJS.Platform;
+}): Promise<string | null> {
+  const { root, toolchain, platform } = input;
+  const local = await readIfPresentAsync(pathModule(platform).join(root, "make", "local"));
+  const key = JSON.stringify([
+    root,
+    toolchain.make,
+    Object.entries(toolchain.environment).sort(([left], [right]) => left.localeCompare(right)),
+    local?.toString("base64") ?? null,
+  ]);
+  const known = makeCompilers.get(key);
+  if (known !== undefined) return known;
+  const { result, output } = await runCaptured({
+    runId: input.runId,
+    executable: toolchain.make,
+    args: ["-s", ...MAKE_FLAGS, "print-CXX"],
+    cwd: root,
+    environment: toolchain.environment,
+    timeoutMs: MAKE_PRINT_TIMEOUT_MS,
+  });
+  const named = /^CXX = *(\S+)/mu.exec(output)?.[1];
+  if (!("code" in result) || result.code !== 0 || named === undefined) return null;
+  makeCompilers.set(key, named);
+  return named;
+}
+
+const MAKE_PRINT_TIMEOUT_MS = 10_000;
+
+/** The compiler make named, or without it CXX or the usual default, as a real file on PATH. */
+function stanCompiler(
+  toolchain: StanToolchain,
+  platform: NodeJS.Platform,
+  fromMake: string | null,
+): string | null {
   const path = pathModule(platform);
   const environment = toolchain.environment;
   const named =
+    fromMake ??
     environment[variableName(environment, "CXX")] ??
     (platform === "darwin" ? "clang++" : platform === "win32" ? "g++.exe" : "g++");
-  if (path.isAbsolute(named)) return named;
   const entries = (environment[variableName(environment, "PATH")] ?? "")
     .split(platform === "win32" ? ";" : ":")
     .filter((entry) => entry.length > 0);
-  const found = entries
-    .map((entry) => path.join(entry, named))
-    .find((file) => NodeFS.existsSync(file));
+  const names = platform === "win32" && !/\.exe$/iu.test(named) ? [named, `${named}.exe`] : [named];
+  const found = path.isAbsolute(named)
+    ? named
+    : entries
+        .flatMap((entry) => names.map((name) => path.join(entry, name)))
+        .find((file) => NodeFS.existsSync(file));
   if (found === undefined) return null;
   try {
     return NodeFS.realpathSync(found);
@@ -483,7 +531,7 @@ export async function translateStan(input: {
   await NodeFSP.mkdir(incoming, { recursive: true });
   const next = path.join(incoming, `${name}.${NodeCrypto.randomBytes(6).toString("hex")}.hpp`);
   const timeoutMs = input.timeoutMs ?? TRANSLATE_TIMEOUT_MS;
-  const { result, output } = await runStanc({
+  const { result, output } = await runCaptured({
     runId: input.runId,
     executable: input.stanc,
     args: stancArgs(input.model, next, name, input.platform),
@@ -503,6 +551,7 @@ export async function translateStan(input: {
     };
   }
   const identity = await buildIdentity({
+    runId: input.runId,
     cpp,
     root: input.root,
     toolchain: input.toolchain,

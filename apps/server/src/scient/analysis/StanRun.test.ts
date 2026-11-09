@@ -530,6 +530,13 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
     const project = temporaryFolder("scient stan model ");
     const model = NodePath.join(project, "m.stan");
     const builds = NodePath.join(temporary, "scient-stan", "server-a");
+    // Answers CmdStan's print-CXX as its makefiles would, from make/local, and counts the asks.
+    const make = NodePath.join(root, "bin", "make");
+    NodeFS.writeFileSync(
+      make,
+      `#!/bin/sh\necho asked >> "${root}/asked.log"\ncxx=$(sed -n 's/^CXX *= *//p' make/local 2>/dev/null | tail -1)\necho "CXX = \${cxx:-clang++}"\n`,
+    );
+    NodeFS.chmodSync(make, 0o755);
     const translate = (
       options: {
         readonly timeoutMs?: number;
@@ -543,7 +550,7 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
         root,
         model,
         toolchain: {
-          make: "/usr/bin/make",
+          make,
           environment: { PATH: "/usr/bin:/bin", ...options.environment },
         },
         builds,
@@ -635,6 +642,28 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
     NodeFS.writeFileSync(NodePath.join(root, "make", "program"), "%.o : %.hpp\n\t# changed\n");
     folders.push(await folderOf());
     expect(new Set([plain, ...folders]).size).toBe(6);
+  });
+
+  it("fingerprints the compiler make/local names, as make reports it, asking make once", async () => {
+    const { folderOf, model, root, temporary } = computer();
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    const compiler = NodePath.join(temporary, "custom-c++");
+    NodeFS.writeFileSync(compiler, "compiler 1");
+    NodeFS.mkdirSync(NodePath.join(root, "make"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, "make", "local"), `CXX=${compiler}\n`);
+    const asked = () =>
+      NodeFS.readFileSync(NodePath.join(root, "asked.log"), "utf8").split("\n").length - 1;
+    const first = await folderOf();
+    expect(await folderOf()).toBe(first);
+    expect(asked()).toBe(1);
+    // The same compiler upgraded in place: make/local is unchanged, the compiler is not.
+    NodeFS.writeFileSync(compiler, "compiler 2, larger");
+    const upgraded = await folderOf();
+    expect(upgraded).not.toBe(first);
+    expect(asked()).toBe(1);
+    NodeFS.writeFileSync(NodePath.join(root, "make", "local"), `CXX=${compiler}\nO=2\n`);
+    expect(await folderOf()).not.toBe(upgraded);
+    expect(asked()).toBe(2);
   });
 
   it("prunes only this server's builds unused for 30 days", async () => {
