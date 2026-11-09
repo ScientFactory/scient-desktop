@@ -6,6 +6,7 @@ import {
   mergeWindowEntries,
   mergeWindowValue,
   onStorageKey,
+  sameJson,
 } from "./crossWindowMerge";
 
 const UI_STATE_FIELDS = [
@@ -96,15 +97,16 @@ export function createUiStateWindowSync(options: {
       return null;
     }
   };
+  const readStored = (): UiState | null => {
+    try {
+      const raw = readRaw();
+      return raw ? options.parse(JSON.parse(raw) as PersistedUiState) : null;
+    } catch {
+      return null;
+    }
+  };
   const sync = createCrossWindowStateSync<UiState>({
-    read: () => {
-      try {
-        const raw = readRaw();
-        return raw ? options.parse(JSON.parse(raw) as PersistedUiState) : null;
-      } catch {
-        return null;
-      }
-    },
+    read: readStored,
     merge: (local, synced, stored) =>
       mergeUiState(
         local,
@@ -127,8 +129,9 @@ export function createUiStateWindowSync(options: {
       const before = readRaw();
       options.persist(sync.mergeForWrite(local));
       // `persist` swallows write errors (a full quota); a failed write leaves storage as it was.
-      if (readRaw() !== before) {
-        sync.didWrite(local);
+      if (readRaw() !== before) sync.didWrite(local);
+      // Storage can already hold this window's choice, so the bytes need not change.
+      if (sameJson(readStored()?.sidebarProjectScopeKeys, local.sidebarProjectScopeKeys)) {
         ownScope = local.sidebarProjectScopeKeys;
       }
     },

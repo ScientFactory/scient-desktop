@@ -87,6 +87,22 @@ describe("UI state across app windows", () => {
     expect(third.store.getState().sidebarProjectScopeKeys).toEqual(["compute"]);
   });
 
+  it("records a project choice that storage already held", async () => {
+    const storage = sharedLocalStorage();
+    using first = await openUiStateWindow(storage);
+    using second = await openUiStateWindow(storage);
+
+    first.store.getState().setSidebarProjectScopeKeys(["overleaf"]);
+    first.save();
+    second.store.getState().setSidebarProjectScopeKeys(["overleaf"]);
+    second.save();
+    first.store.getState().setSidebarProjectScopeKeys(["compute"]);
+    first.save();
+    second.store.getState().setProjectExpanded("project", false);
+    second.save();
+    expect(stored(storage).sidebarProjectScopeKeys).toEqual(["compute"]);
+  });
+
   it("saves the later visit of either window, and an unread mark made here", async () => {
     const storage = sharedLocalStorage();
     storage.setItem(
