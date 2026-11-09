@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Node's Zstandard encoder builds the test blocks.
 import * as NodeZlib from "node:zlib";
 
-import { fromArrayBuffer } from "geotiff";
-import { describe, expect, it } from "vite-plus/test";
+import { fromArrayBuffer, GeoTIFFImage } from "geotiff";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { tiffFixture, type TiffFixturePage } from "../../../../test/tiffFixture";
 import {
@@ -405,6 +405,94 @@ describe("bounded TIFF block decoders", () => {
     const jpeg = new Uint8Array([...frame, 0xff, 0xd9]);
     expect(jpegFrameSize(jpeg)).toEqual({ width: 60_000, height: 60_000 });
     await expect(onePixel(7, jpeg)).rejects.toThrow("oversized");
+  });
+
+  // Start-of-frame segment: height and width, then one component per entry as [id, sampling, table].
+  const sof = (width: number, height: number, components = [[1, 0x11, 0]]) => [
+    0xff,
+    0xc0,
+    0,
+    8 + 3 * components.length,
+    8,
+    height >> 8,
+    height & 255,
+    width >> 8,
+    width & 255,
+    components.length,
+    ...components.flat(),
+  ];
+  const jpeg = (...segments: number[][]) =>
+    new Uint8Array([0xff, 0xd8, ...segments.flat(), 0xff, 0xd9]);
+
+  it("refuses a JPEG block with a second, larger frame", async () => {
+    const block = jpeg(sof(1, 1), sof(2_048, 2_048));
+    expect(jpegFrameSize(block)).toBeNull();
+    await expect(onePixel(7, block)).rejects.toThrow("JPEG data isn't supported for preview");
+  });
+
+  it("refuses JPEG frames with out-of-range components or sampling", () => {
+    expect(jpegFrameSize(jpeg(sof(1, 1)))).toEqual({ width: 1, height: 1 });
+    expect(jpegFrameSize(jpeg(sof(1, 1, [[1, 0x51, 0]])))).toBeNull();
+    expect(
+      jpegFrameSize(
+        jpeg(
+          sof(
+            1,
+            1,
+            [1, 2, 3, 4, 5].map((id) => [id, 0x11, 0]),
+          ),
+        ),
+      ),
+    ).toBeNull();
+  });
+
+  it("refuses shared JPEG tables that carry a frame before any decoder is built", async () => {
+    const result = plane([
+      {
+        width: 1,
+        height: 1,
+        bits: 8,
+        data: [],
+        jpegTables: jpeg(sof(2_048, 2_048)),
+        rawBlocks: { compression: 7, blocks: [jpeg(sof(1, 1))] },
+      },
+    ]);
+    await expect(result).rejects.toThrow("JPEG data isn't supported for preview");
+  });
+
+  it("decodes a wide row of tiles a few at a time within the byte budget", async () => {
+    // geotiff decodes every tile of a window at once, so the window bounds the tiles in flight.
+    using readRasters = vi.spyOn(GeoTIFFImage.prototype, "readRasters");
+    const data = Array.from({ length: 256 * 16 }, (_, index) => (index * 7) % 256);
+    const tiff = await fromArrayBuffer(
+      await tiffFixture([{ width: 256, height: 16, bits: 8, tile: 16, data }]),
+    );
+    // Sixteen 256-byte tiles across, four allowed at once.
+    const result = await readTiffPlane(tiff, { plane: 0, bandBytes: 1_024 });
+    const tiles = readRasters.mock.calls.map(([options]) => {
+      const [left, top, right, bottom] = options!.window!;
+      return (
+        (Math.ceil(right! / 16) - Math.floor(left! / 16)) *
+        (Math.ceil(bottom! / 16) - Math.floor(top! / 16))
+      );
+    });
+    expect(tiles).toEqual([4, 4, 4, 4]);
+    expect(Array.from({ length: data.length }, (_, pixel) => result.rgba[pixel * 4])).toEqual(data);
+  });
+
+  it("refuses tiles far larger than a thin image", async () => {
+    const result = plane([
+      {
+        width: 512,
+        height: 1,
+        bits: 8,
+        data: [],
+        tile: 16,
+        tileHeight: 65_536,
+        rawBlocks: { compression: 1, blocks: Array.from({ length: 32 }, () => new Uint8Array(1)) },
+      },
+    ]);
+    await expect(result).rejects.toThrow("tiles are far larger than its image");
   });
 
   // 16×16 bytes (x * 7 + y * 3) % 16, LZW-encoded by imagecodecs.

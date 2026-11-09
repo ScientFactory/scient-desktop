@@ -154,32 +154,50 @@ export function zstdContentSize(input: Uint8Array) {
   return total;
 }
 
-/** Frame width and height from a JPEG's start-of-frame marker, or null when there is none. */
+const UNSUPPORTED_JPEG = "This TIFF's JPEG data isn't supported for preview.";
+
+const isFrameMarker = (marker: number) =>
+  marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+
+// geotiff allocates a frame wherever it reads a start-of-frame marker, so every such byte pair counts.
+function frameMarkerPositions(input: Uint8Array) {
+  const positions: number[] = [];
+  for (let at = 0; at + 1 < input.length; at++)
+    if (input[at] === 0xff && isFrameMarker(input[at + 1]!)) positions.push(at);
+  return positions;
+}
+
+/**
+ * The single baseline or progressive frame of a JPEG block, or null when the block has no frame,
+ * more than one, or a frame whose components or sampling factors are out of range.
+ */
 export function jpegFrameSize(input: Uint8Array) {
   if (input[0] !== 0xff || input[1] !== 0xd8) return null;
-  for (let at = 2; at + 4 <= input.length;) {
-    if (input[at] !== 0xff) return null;
-    const marker = input[at + 1]!;
-    if (marker === 0xff) {
-      at++;
-      continue;
-    }
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) {
-      at += 2;
-      continue;
-    }
-    if (marker === 0xda || marker === 0xd9) return null;
-    const length = (input[at + 2]! << 8) | input[at + 3]!;
-    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-      if (at + 9 > input.length) return null;
-      return {
-        height: (input[at + 5]! << 8) | input[at + 6]!,
-        width: (input[at + 7]! << 8) | input[at + 8]!,
-      };
-    }
-    at += 2 + length;
+  const positions = frameMarkerPositions(input);
+  if (positions.length !== 1) return null;
+  const at = positions[0]!;
+  if (input[at + 1]! > 0xc2 || at + 10 > input.length) return null;
+  const length = (input[at + 2]! << 8) | input[at + 3]!;
+  const components = input[at + 9]!;
+  if (input[at + 4] !== 8 || components < 1 || components > 4 || length !== 8 + 3 * components)
+    return null;
+  if (at + 10 + 3 * components > input.length) return null;
+  for (let index = 0; index < components; index++) {
+    const sampling = input[at + 11 + index * 3]!;
+    const horizontal = sampling >> 4;
+    const vertical = sampling & 15;
+    if (horizontal < 1 || horizontal > 4 || vertical < 1 || vertical > 4) return null;
   }
-  return null;
+  const height = (input[at + 5]! << 8) | input[at + 6]!;
+  const width = (input[at + 7]! << 8) | input[at + 8]!;
+  return width && height ? { width, height } : null;
+}
+
+/** Shared JPEG tables may hold quantization and Huffman tables but never a frame. */
+function checkJpegTables(tables: Uint8Array | undefined) {
+  if (!tables) return;
+  if (tables[0] !== 0xff || tables[1] !== 0xd8 || frameMarkerPositions(tables).length)
+    throw new Error(UNSUPPORTED_JPEG);
 }
 
 async function blockParameters(directory: ImageFileDirectory): Promise<BlockParameters> {
@@ -236,9 +254,9 @@ const guardZstd: Guard = (bytes, parameters) => {
 
 const guardJpeg: Guard = (bytes, parameters) => {
   const frame = jpegFrameSize(bytes);
+  if (!frame) throw new Error(UNSUPPORTED_JPEG);
   // A JPEG block is encoded at the block's size, padded to at most one 16-pixel MCU.
   if (
-    !frame ||
     frame.width > Math.ceil(parameters.tileWidth / 16) * 16 ||
     frame.height > Math.ceil(parameters.tileHeight / 16) * 16
   )
@@ -305,10 +323,14 @@ export function guardTiffDecoder(compression: number) {
         }
       };
     },
-    async (directory) => ({
-      ...(await blockParameters(directory)),
-      ...(compression === 7 ? { JPEGTables: await directory.loadValue("JPEGTables") } : {}),
-    }),
+    async (directory) => {
+      const parameters = await blockParameters(directory);
+      if (compression !== 7) return parameters;
+      // geotiff's JPEG decoder parses these tables in its constructor, before any block guard runs.
+      const tables = (await directory.loadValue("JPEGTables")) as Uint8Array | undefined;
+      checkJpegTables(tables);
+      return { ...parameters, ...(tables ? { JPEGTables: tables } : {}) };
+    },
     false,
   );
 }

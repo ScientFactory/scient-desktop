@@ -290,6 +290,8 @@ export async function readTiffPlane(
     readonly plane: number;
     readonly heldDisplay?: (channel: number) => readonly [number, number] | undefined;
     readonly maxOutputPixels?: number;
+    /** Decoded bytes allowed in flight at once; tests lower it. */
+    readonly bandBytes?: number;
     readonly signal?: AbortSignal;
   },
 ): Promise<TiffPlane> {
@@ -350,9 +352,18 @@ export async function readTiffPlane(
   );
   const blockBits =
     image.planarConfiguration === 2 ? bits : allBits.reduce((sum, value) => sum + value, 0);
-  const blockDecoded = Math.ceil((image.getTileWidth() * blockBits) / 8) * image.getTileHeight();
+  const tileWidth = image.getTileWidth();
+  const tileHeight = image.getTileHeight();
+  const tilesAcross = Math.ceil(width / tileWidth);
+  const blockDecoded = Math.ceil((tileWidth * blockBits) / 8) * tileHeight;
   if (!rawRows && blockDecoded > MAX_BLOCK_BYTES)
     throw tiffPreviewError("This TIFF stores its image in blocks too large to preview.");
+  // Edge tiles are decoded whole, so a thin image must not hide tiles far larger than itself.
+  if (
+    tilesAcross * tileWidth * Math.ceil(height / tileHeight) * tileHeight >
+    4 * width * height + tileWidth * tileHeight
+  )
+    throw tiffPreviewError("This TIFF's tiles are far larger than its image.");
   // Every block is checked before it is fetched, so a false byte count cannot pull in a whole file.
   const byteCounts = (await directory.loadValue(
     image.isTiled ? "TileByteCounts" : "StripByteCounts",
@@ -378,58 +389,64 @@ export async function readTiffPlane(
       : new Float32Array(outWidth * outHeight * channels)
   ).fill(Number.NaN);
   const counts = factor > 1 && !palette ? new Uint16Array(outWidth * outHeight) : null;
-  const blockRows = rawRows ? 1 : image.getTileHeight();
-  const rowBytes = width * image.getBytesPerPixel();
-  const bandRows = Math.max(
-    blockRows,
-    Math.floor(BAND_BYTES / rowBytes / blockRows) * blockRows,
-    factor,
-  );
+  // geotiff decodes every block of a window at once, so windows hold a bounded number of blocks.
+  const bandBytes = request.bandBytes ?? BAND_BYTES;
+  const blockInFlight = blockDecoded * (image.planarConfiguration === 2 ? channels : 1);
+  const blocksPerBand = Math.max(1, Math.floor(bandBytes / blockInFlight));
+  let bandRows = tileHeight;
+  let bandColumns = width;
+  if (rawRows) bandRows = Math.max(1, Math.floor(bandBytes / (width * image.getBytesPerPixel())));
+  else if (!image.isTiled || tilesAcross <= blocksPerBand)
+    bandRows = tileHeight * Math.max(1, Math.floor(blocksPerBand / tilesAcross));
+  else bandColumns = tileWidth * blocksPerBand;
   let min = Infinity;
   let max = -Infinity;
   const pixelValues = new Float64Array(channels);
-  for (let top = 0; top < height; top += bandRows) {
-    signal?.throwIfAborted();
-    const bottom = Math.min(height, top + bandRows);
-    const band: Band = rawRows
-      ? await readRawRows(image, top, bottom, read, precise, signal)
-      : await image.readRasters({
-          window: [0, top, width, bottom],
-          samples: [...read],
-          interleave: true,
-          ...(signal ? { signal } : {}),
-        });
-    for (let y = top; y < bottom; y++) {
-      const outRow = Math.floor(y / factor) * outWidth;
-      for (let x = 0; x < width; x++) {
-        const source = ((y - top) * width + x) * channels;
-        const target = (outRow + Math.floor(x / factor)) * channels;
-        let finite = true;
-        for (let c = 0; c < channels; c++) {
-          const value = band[source + c]!;
-          if (!Number.isFinite(value)) finite = false;
-          pixelValues[c] = value;
+  for (let top = 0; top < height; top += bandRows)
+    for (let left = 0; left < width; left += bandColumns) {
+      signal?.throwIfAborted();
+      const bottom = Math.min(height, top + bandRows);
+      const right = Math.min(width, left + bandColumns);
+      const span = right - left;
+      const band: Band = rawRows
+        ? await readRawRows(image, top, bottom, read, precise, signal)
+        : await image.readRasters({
+            window: [left, top, right, bottom],
+            samples: [...read],
+            interleave: true,
+            ...(signal ? { signal } : {}),
+          });
+      for (let y = top; y < bottom; y++) {
+        const outRow = Math.floor(y / factor) * outWidth;
+        for (let x = left; x < right; x++) {
+          const source = ((y - top) * span + (x - left)) * channels;
+          const target = (outRow + Math.floor(x / factor)) * channels;
+          let finite = true;
+          for (let c = 0; c < channels; c++) {
+            const value = band[source + c]!;
+            if (!Number.isFinite(value)) finite = false;
+            pixelValues[c] = value;
+          }
+          if (!finite) continue;
+          if (associated) {
+            const opacity = pixelValues[channels - 1]! / alphaMax;
+            for (let c = 0; c < channels - 1; c++)
+              pixelValues[c] = opacity > 0 ? pixelValues[c]! / opacity : 0;
+          }
+          for (let c = 0; c < (alpha ? channels - 1 : channels); c++) {
+            if (pixelValues[c]! < min) min = pixelValues[c]!;
+            if (pixelValues[c]! > max) max = pixelValues[c]!;
+          }
+          if (counts) {
+            const pixel = target / channels;
+            if (!counts[pixel]) for (let c = 0; c < channels; c++) values[target + c] = 0;
+            for (let c = 0; c < channels; c++) values[target + c]! += pixelValues[c]!;
+            counts[pixel]!++;
+          } else if (Number.isNaN(values[target]!))
+            for (let c = 0; c < channels; c++) values[target + c] = pixelValues[c]!;
         }
-        if (!finite) continue;
-        if (associated) {
-          const opacity = pixelValues[channels - 1]! / alphaMax;
-          for (let c = 0; c < channels - 1; c++)
-            pixelValues[c] = opacity > 0 ? pixelValues[c]! / opacity : 0;
-        }
-        for (let c = 0; c < (alpha ? channels - 1 : channels); c++) {
-          if (pixelValues[c]! < min) min = pixelValues[c]!;
-          if (pixelValues[c]! > max) max = pixelValues[c]!;
-        }
-        if (counts) {
-          const pixel = target / channels;
-          if (!counts[pixel]) for (let c = 0; c < channels; c++) values[target + c] = 0;
-          for (let c = 0; c < channels; c++) values[target + c]! += pixelValues[c]!;
-          counts[pixel]!++;
-        } else if (Number.isNaN(values[target]!))
-          for (let c = 0; c < channels; c++) values[target + c] = pixelValues[c]!;
       }
     }
-  }
   if (counts)
     for (let pixel = 0; pixel < counts.length; pixel++)
       if (counts[pixel])
