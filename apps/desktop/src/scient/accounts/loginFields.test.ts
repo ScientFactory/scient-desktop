@@ -38,9 +38,14 @@ describe("login field selection", () => {
       name,
       label,
     });
-    expect(detectLoginFields([named("text", "tz9"), named("email", "email")])).toMatchObject({
+    const tz9 = { ...named("text", "tz9"), minLength: 9, maxLength: 9 };
+    expect(detectLoginFields([tz9, named("email", "email")])).toMatchObject({
       username: 1,
       other: 0,
+    });
+    expect(detectLoginFields([named("text", "full_name"), named("email", "email")])).toMatchObject({
+      username: 1,
+      other: -1,
     });
     expect(
       detectLoginFields([named("text", "username", "username otp-username"), field("password")]),

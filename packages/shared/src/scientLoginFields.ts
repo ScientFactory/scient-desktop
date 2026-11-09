@@ -11,6 +11,8 @@ export interface LoginField {
   readonly name?: string | undefined;
   readonly inputMode?: string | undefined;
   readonly maxLength?: number | undefined;
+  readonly minLength?: number | undefined;
+  readonly pattern?: string | undefined;
 }
 
 /** What a username box accepts, from its own type and constraints. */
@@ -126,6 +128,16 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
     tokens[index]?.includes("email") === true ||
     /^e-?mail$/i.test(field?.name ?? "");
   const emailUsername = isEmail(fields[username], username);
+  // A second box must say it identifies the person, or be shaped like an ID; never a name or phone.
+  const identifies = (field: LoginField, index: number) => {
+    const label = field.label ?? "";
+    if (tokens[index]?.includes("username") || /user|login|(^|[^a-z\d])id($|[^a-z\d])/i.test(label))
+      return true;
+    const shaped =
+      Boolean(field.pattern) ||
+      ((field.minLength ?? -1) > 0 && field.minLength === field.maxLength);
+    return shaped && field.type !== "tel" && !/name|phone|mobile|address|zip|postal/i.test(label);
+  };
   // An ID box comes before the email box; either comes before the password.
   const other =
     username === -1
@@ -135,6 +147,7 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
             index !== username &&
             textual(field, index) &&
             isEmail(field, index) !== emailUsername &&
+            identifies(field, index) &&
             (!emailUsername || index < username) &&
             (password === -1 || index < password),
         );
@@ -196,6 +209,8 @@ export function collectLoginFields<Input extends PageInput>(
     name: input.name || input.id,
     inputMode: input.inputMode,
     maxLength: input.maxLength,
+    minLength: input.minLength,
+    pattern: input.pattern,
   }));
   return { inputs, ...detectLoginFields(fields, rules) };
 }
