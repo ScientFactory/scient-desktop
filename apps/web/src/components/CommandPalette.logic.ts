@@ -384,15 +384,14 @@ export function enumerateCommandPaletteItems(
   });
 }
 
-export function shouldOpenNewThreadTargetPicker(input: {
-  readonly legacySidebarEnabled: boolean;
+export function shouldOpenNewThreadTargetPicker(_input: {
   readonly projectGroupCount: number;
 }): boolean {
   // SCIENT-FORK:START — always, so Add project is always one step away: the
   // picker lists every project (the current one first) and ends with Add
-  // project (T3: only with more than one project). Starting directly in the
+  // project (T3: only with more than one open project). Starting directly in the
   // current project stays on chat.newLocal and Shift+click.
-  return !input.legacySidebarEnabled;
+  return true;
   // SCIENT-FORK:END
 }
 

@@ -364,6 +364,16 @@
       "path": "apps/web/src/scient/files/useScientFileActions.tsx",
       "anchor": "applyScientFileRename({",
       "purpose": "The Files panel's moves and renames make open tabs follow their files through the file surfaces' rename handoff."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorRuntime.ts",
+      "anchor": "Layer.provide(LocalDuplexProcess.layer)",
+      "purpose": "Run local connectors through the owned duplex process port shared with Compute."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/LocalConnectorProcesses.ts",
+      "anchor": "import { DuplexProcess } from \"../../execution/LocalDuplexProcess.ts\";",
+      "purpose": "Start each local connector session as an owned process tree, stopped with it."
     }
   ]
 }

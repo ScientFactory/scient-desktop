@@ -123,12 +123,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        const { legacySidebarEnabled } = getClientSettings();
         if (
           // SCIENT-FORK:START — Scient's target-picker rule: always open it, so Add
           // project stays one step away (upstream: only with more than one open project).
           shouldOpenNewThreadTargetPicker({
-            legacySidebarEnabled,
             projectGroupCount: readProjectGroups().length,
           })
           // SCIENT-FORK:END

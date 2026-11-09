@@ -573,9 +573,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         if (!hasLiveAssignment) assignments.delete(assignmentKey);
         return [undefined, { ...current, assignments }] as const;
       }
-      // First open may install Chromium for ten minutes; keep it alive without replaying effects.
+      // SCIENT-FORK:START — sent upstream with the status reconnect fix: status may finish recovering the browser.
+      // Opening or recovering a tab may install Chromium for ten minutes.
       const timeoutMs =
-        input.timeoutMs ?? (input.operation === "open" && connection.preferred ? 660_000 : 15_000);
+        input.timeoutMs ??
+        ((input.operation === "open" || input.operation === "status") && connection.preferred
+          ? 660_000
+          : 15_000);
+      // SCIENT-FORK:END
       const canReuseAssignedTab =
         assigned !== undefined &&
         assigned.connectionId === connection.connectionId &&

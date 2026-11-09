@@ -58,6 +58,7 @@ vi.mock("../../state/entities", () => ({
     projectId: "project-a",
     sectionId: mocks.membership.get(ref.threadId)?.sectionId ?? null,
   }),
+  useQuietThreadShells: () => [],
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>

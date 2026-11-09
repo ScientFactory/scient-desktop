@@ -65,7 +65,7 @@ const matches = [projectId, otherProjectId].map((id) => ({
 const listed = (found: ReadonlyArray<(typeof matches)[number]>) => ({
   matches: found.map((match) => ({
     ...match,
-    link: formatThreadLink({ environmentId, threadId: match.threadId }),
+    link: formatThreadLink({ environmentId, threadId: match.threadId }, match.title),
   })),
 });
 
