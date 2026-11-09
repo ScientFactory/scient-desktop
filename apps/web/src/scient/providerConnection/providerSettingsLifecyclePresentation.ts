@@ -128,12 +128,15 @@ export function providerSettingsLifecyclePresentation(
   if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
     const label = runtimeOperation.waitingForIdle
       ? "Waiting"
-      : runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
-        ? "Verifying"
-        : RUNTIME_ACTION_LABELS[runtimeOperation.action];
+      : runtimeOperation.retrying
+        ? "Retrying"
+        : runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
+          ? "Verifying"
+          : RUNTIME_ACTION_LABELS[runtimeOperation.action];
     const { downloadedBytes, totalBytes } = runtimeOperation;
     const downloadPercent =
       runtimeOperation.status === "downloading" &&
+      !runtimeOperation.retrying &&
       downloadedBytes !== undefined &&
       totalBytes !== undefined &&
       Number.isFinite(downloadedBytes) &&

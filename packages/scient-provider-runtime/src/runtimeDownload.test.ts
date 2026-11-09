@@ -5,21 +5,23 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { downloadManagedRuntime, verifyManagedRuntimeChecksum } from "./runtimeFiles.ts";
 
 vi.mock("node:timers/promises", { spy: true });
 // The retry backoff resolves at once but still honours cancellation; the
 // "cancels the retry delay promptly" test drives the real timer.
-vi.mocked(NodeTimersPromises.setTimeout).mockImplementation((async (
-  _delay: number,
-  value: unknown,
-  options?: { signal?: AbortSignal },
-) => {
-  options?.signal?.throwIfAborted();
-  return value;
-}) as never);
+beforeEach(() => {
+  vi.mocked(NodeTimersPromises.setTimeout).mockImplementation((async (
+    _delay: number,
+    value: unknown,
+    options?: { signal?: AbortSignal },
+  ) => {
+    options?.signal?.throwIfAborted();
+    return value;
+  }) as never);
+});
 
 const roots: string[] = [];
 async function input(signal = new AbortController().signal) {
@@ -31,7 +33,6 @@ async function input(signal = new AbortController().signal) {
     allowedHosts: ["github.com", "release-assets.githubusercontent.com"],
     expectedSize: 2,
     signal,
-    retryTransientResponses: true,
   };
 }
 
@@ -44,8 +45,8 @@ afterEach(async () => {
 
 describe("transient managed runtime downloads", () => {
   // regression: a5d49bba34 fix(scient-agent): recover transient managed download failures
-  // One row per status: dropping one from TRANSIENT_DOWNLOAD_STATUSES fails no other test.
-  it.each([500, 502, 503, 504])(
+  // Gateway codes such as 522 and 524 come from CDNs in front of release hosts.
+  it.each([408, 429, 500, 502, 503, 504, 522, 524])(
     "recovers from HTTP %s before writing or verifying bytes",
     async (status) => {
       const request = await input();
@@ -77,17 +78,7 @@ describe("transient managed runtime downloads", () => {
     },
   );
 
-  it("keeps the existing single-attempt policy unless recovery is requested", async () => {
-    const request = await input();
-    const fetch = vi.fn().mockResolvedValue(new Response("unavailable", { status: 500 }));
-    vi.stubGlobal("fetch", fetch);
-    await expect(
-      downloadManagedRuntime({ ...request, retryTransientResponses: false }),
-    ).rejects.toThrow("HTTP 500");
-    expect(fetch).toHaveBeenCalledOnce();
-  });
-
-  it.each([401, 403, 404, 429])("does not retry HTTP %s", async (status) => {
+  it.each([401, 403, 404, 501])("does not retry HTTP %s", async (status) => {
     const request = await input();
     const fetch = vi.fn().mockResolvedValue(new Response("refused", { status }));
     vi.stubGlobal("fetch", fetch);
@@ -96,15 +87,38 @@ describe("transient managed runtime downloads", () => {
     await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("bounds persistent failures and leaves no artifact", async () => {
+  it("bounds persistent failures, reports each retry and leaves no artifact", async () => {
     const request = await input();
     const fetch = vi
       .fn()
-      .mockImplementation(() => Promise.resolve(new Response("unavailable", { status: 500 })));
+      .mockImplementation(() => Promise.resolve(new Response("unavailable", { status: 504 })));
     vi.stubGlobal("fetch", fetch);
-    await expect(downloadManagedRuntime(request)).rejects.toThrow("HTTP 500");
-    expect(fetch).toHaveBeenCalledTimes(3);
+    const onRetry = vi.fn();
+    await expect(downloadManagedRuntime({ ...request, onRetry })).rejects.toThrow(
+      "The download server returned HTTP 504 on all 5 tries.",
+    );
+    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(onRetry.mock.calls.map(([retry]) => [retry.retry, retry.retries, retry.reason])).toEqual(
+      [1, 2, 3, 4].map((retry) => [retry, 4, "HTTP 504"]),
+    );
     await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("waits as long as the server asks, up to a minute", async () => {
+    const request = await input();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("busy", { status: 503, headers: { "retry-after": "7" } }))
+      .mockResolvedValueOnce(
+        new Response("busy", { status: 429, headers: { "retry-after": "3600" } }),
+      )
+      .mockResolvedValueOnce(new Response("ok", { headers: { "content-length": "2" } }));
+    vi.stubGlobal("fetch", fetch);
+    vi.mocked(NodeTimersPromises.setTimeout).mockClear();
+    await downloadManagedRuntime(request);
+    expect(vi.mocked(NodeTimersPromises.setTimeout).mock.calls.map(([delay]) => delay)).toEqual([
+      7_000, 60_000,
+    ]);
   });
 
   it("cancels recovery without sending another request", async () => {
@@ -143,7 +157,7 @@ describe("transient managed runtime downloads", () => {
     await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("shares the retry budget across redirect hops", async () => {
+  it("starts each retry again from the release address", async () => {
     const request = await input();
     const fetch = vi
       .fn()
@@ -161,18 +175,17 @@ describe("transient managed runtime downloads", () => {
           headers: { location: "https://release-assets.githubusercontent.com/second" },
         }),
       )
-      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
+      .mockResolvedValueOnce(new Response("ok", { headers: { "content-length": "2" } }));
     vi.stubGlobal("fetch", fetch);
-    await expect(downloadManagedRuntime(request)).rejects.toThrow("HTTP 503");
-    expect(fetch).toHaveBeenCalledTimes(5);
+    await downloadManagedRuntime(request);
+    // A redirect target can expire, so a retry never resumes from one.
     expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
       request.url,
       request.url,
       "https://release-assets.githubusercontent.com/first",
-      "https://release-assets.githubusercontent.com/first",
+      request.url,
       "https://release-assets.githubusercontent.com/second",
     ]);
-    await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not replenish the redirect budget when retrying", async () => {
@@ -212,26 +225,164 @@ describe("transient managed runtime downloads", () => {
     const download = downloadManagedRuntime(request);
     await bodyReleased.promise;
     await retryStarted.promise;
-    expect(retryTimer).toHaveBeenCalledWith(500, undefined, { signal: expect.any(AbortSignal) });
+    const [delay] = retryTimer.mock.calls[0]!;
+    // The first wait is about two seconds, spread by up to a fifth either way.
+    expect(delay).toBeGreaterThanOrEqual(1_600);
+    expect(delay).toBeLessThanOrEqual(2_400);
     controller.abort();
     await expect(download).rejects.toMatchObject({ name: "AbortError" });
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it("does not retry a transport exception", async () => {
+  it("retries a failed connection and names it when every try fails", async () => {
     const request = await input();
-    const fetch = vi.fn().mockRejectedValue(new Error("synthetic transport failure"));
+    const reset = () =>
+      new TypeError("fetch failed", {
+        cause: Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }),
+      });
+    const recovered = vi
+      .fn()
+      .mockRejectedValueOnce(reset())
+      .mockResolvedValueOnce(new Response("ok", { headers: { "content-length": "2" } }));
+    vi.stubGlobal("fetch", recovered);
+    await downloadManagedRuntime(request);
+    expect(recovered).toHaveBeenCalledTimes(2);
+
+    const failing = vi.fn().mockImplementation(() => Promise.reject(reset()));
+    vi.stubGlobal("fetch", failing);
+    await expect(downloadManagedRuntime(await input())).rejects.toThrow(
+      "couldn't reach the download server on all 5 tries (connection failed, ECONNRESET)",
+    );
+    expect(failing).toHaveBeenCalledTimes(5);
+  });
+
+  it("does not retry a certificate that doesn't check out", async () => {
+    const request = await input();
+    const fetch = vi.fn().mockRejectedValue(
+      new TypeError("fetch failed", {
+        cause: Object.assign(new Error("self-signed certificate in certificate chain"), {
+          code: "SELF_SIGNED_CERT_IN_CHAIN",
+        }),
+      }),
+    );
     vi.stubGlobal("fetch", fetch);
-    await expect(downloadManagedRuntime(request)).rejects.toThrow("synthetic transport failure");
+    await expect(downloadManagedRuntime(request)).rejects.toThrow(
+      "A proxy or security program may be intercepting the connection.",
+    );
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it("does not retry a truncated successful response", async () => {
+  it("retries a download that was cut off", async () => {
     const request = await input();
-    const fetch = vi.fn().mockResolvedValue(new Response("o"));
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("o"))
+      .mockResolvedValueOnce(new Response("ok"));
     vi.stubGlobal("fetch", fetch);
-    await expect(downloadManagedRuntime(request)).rejects.toThrow("size does not match");
+    await downloadManagedRuntime(request);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe("ok");
+  });
+
+  it("does not retry when the file cannot be written", async () => {
+    const request = await input();
+    await NodeFSP.writeFile(request.destination, "taken");
+    const fetch = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response("ok", { headers: { "content-length": "2" } })),
+      );
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).rejects.toMatchObject({ code: "EEXIST" });
     expect(fetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("downloads with Scient's own copy first", () => {
+  const mirror = "https://downloads.scientfactory.com/scient-agent/v0.1.0/synthetic";
+  const ok = () => new Response("ok", { headers: { "content-length": "2" } });
+  async function twoSources() {
+    const request = await input();
+    return {
+      ...request,
+      url: mirror,
+      fallbackUrl: request.url,
+      allowedHosts: [...request.allowedHosts, "downloads.scientfactory.com"],
+      checksum: {
+        algorithm: "sha256" as const,
+        digest: NodeCrypto.createHash("sha256").update("ok").digest("hex"),
+      },
+    };
+  }
+  const urls = (fetch: ReturnType<typeof vi.fn>) => fetch.mock.calls.map(([url]) => String(url));
+
+  it.each([
+    ["is down", () => new Response("busy", { status: 504 })],
+    ["is missing", () => new Response("missing", { status: 404 })],
+    ["is damaged", () => new Response("ko", { headers: { "content-length": "2" } })],
+  ])("moves to GitHub at once when Scient's copy %s", async (_case, firstResponse) => {
+    const request = await twoSources();
+    const fetch = vi.fn().mockResolvedValueOnce(firstResponse()).mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    vi.mocked(NodeTimersPromises.setTimeout).mockClear();
+    await downloadManagedRuntime(request);
+    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl]);
+    expect(NodeTimersPromises.setTimeout).not.toHaveBeenCalled();
+    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe("ok");
+  });
+
+  it("keeps trying only GitHub once Scient's copy is ruled out", async () => {
+    const request = await twoSources();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("missing", { status: 404 }))
+      .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    await downloadManagedRuntime(request);
+    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl, request.fallbackUrl]);
+  });
+
+  it("gives GitHub its own time limit when Scient's copy runs out of time", async () => {
+    const request = await twoSources();
+    const limits: AbortController[] = [];
+    using _timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const limit = new AbortController();
+      limits.push(limit);
+      return limit.signal;
+    });
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(
+        (_url: URL, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+            // Scient's copy is still busy when its own ten minutes end.
+            limits[0]!.abort(new DOMException("time limit", "TimeoutError"));
+          }),
+      )
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    await downloadManagedRuntime(request);
+    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl]);
+    expect(limits).toHaveLength(2);
+  });
+
+  it("fails only when both copies fail, and names both", async () => {
+    const request = await twoSources();
+    const fetch = vi.fn().mockImplementation(async () => new Response("busy", { status: 504 }));
+    vi.stubGlobal("fetch", fetch);
+    const onRetry = vi.fn();
+    await expect(downloadManagedRuntime({ ...request, onRetry })).rejects.toThrow(
+      "Scient couldn't download it from either source after 10 tries. downloads.scientfactory.com returned HTTP 504. github.com returned HTTP 504.",
+    );
+    expect(onRetry).toHaveBeenCalledTimes(4);
+    expect(urls(fetch).slice(0, 4)).toEqual([
+      mirror,
+      request.fallbackUrl,
+      mirror,
+      request.fallbackUrl,
+    ]);
     await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
