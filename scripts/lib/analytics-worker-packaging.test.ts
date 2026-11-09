@@ -145,6 +145,14 @@ it("delivers from a relocated CLI chunk, preserves identity across restarts, and
       },
     });
     assert.ok((await NodeFSP.readdir(output)).some((name) => /^probe-.+\.mjs$/.test(name)));
+    // Runtime externals ship on disk beside the bundle, as the desktop stage installs them;
+    // source control's Cursor Origin client loads undici.
+    await NodeFSP.mkdir(NodePath.join(output, "node_modules"), { recursive: true });
+    await NodeFSP.symlink(
+      NodePath.dirname(serverRequire.resolve("undici/package.json")),
+      NodePath.join(output, "node_modules", "undici"),
+      "dir",
+    );
     const profile = NodePath.join(scratch, "synthetic profile");
     const run = (baseDir: string, mode: string) =>
       execFile(

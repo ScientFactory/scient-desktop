@@ -47,6 +47,7 @@ export interface ServerDerivedPaths {
   readonly computeDir: string;
   readonly latexDir: string;
   readonly worktreesDir: string;
+  readonly worktreeCheckoutCacheDir: string;
   readonly attachmentsDir: string;
   readonly documentArtifactsDir: string;
   readonly browserArtifactsDir: string;
@@ -186,6 +187,7 @@ export const deriveServerPaths = Effect.fn(function* (
     computeDir: join(stateDir, "compute"),
     latexDir: join(stateDir, "latex"),
     worktreesDir: join(baseDir, "worktrees"),
+    worktreeCheckoutCacheDir: join(providerStatusCacheDir, "worktree-checkouts"),
     attachmentsDir,
     documentArtifactsDir,
     browserArtifactsDir: join(stateDir, "browser-artifacts"),

@@ -14,6 +14,8 @@ export interface LocalOwnedProcessRequest {
    * back would undo sanitization. The default remains true for compatibility.
    */
   readonly extendEnv?: boolean;
+  /** `executable` is a complete, already escaped command line for the shell (Windows shims). */
+  readonly shell?: boolean;
 }
 
 export const LOCAL_OWNED_PROCESS_KILL_OPTIONS = {
@@ -124,7 +126,7 @@ export function makeLocalOwnedProcess(
     cwd: request.cwd,
     env: request.environment,
     extendEnv: request.extendEnv ?? true,
-    shell: false,
+    shell: request.shell ?? false,
     detached: platform !== "win32",
     ...LOCAL_OWNED_PROCESS_KILL_OPTIONS,
     // Nothing types into a run, so its input ends at once: a tool that reads input after its file,
