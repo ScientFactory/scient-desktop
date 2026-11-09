@@ -5,6 +5,7 @@
  */
 import { DuplexProcessId, type DuplexProcessHandle } from "@scientfactory/execution";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -22,6 +23,10 @@ const MAX_BACKLOG = 100;
 const MAX_LINE_CHARS = 32 * 1024 * 1024;
 const STDERR_TAIL_CHARS = 4_096;
 const STOPPED_CODE = -32001;
+/** What a connector's tool error starts with when the site ended its session. */
+const SIGN_IN_EXPIRED_MARKER = "SCIENT_SIGN_IN_EXPIRED";
+/** A replacement process answers the replayed handshake within this. */
+const RESTART_HANDSHAKE_MS = 30_000;
 
 export interface LocalConnectorIdentity {
   readonly connectorId: string;
@@ -40,6 +45,23 @@ export interface LocalStart {
   readonly launch: ResolvedLocalLaunch;
   /** Key values to remove from the program's error output before Scient shows it. */
   readonly hide: ReadonlyArray<string>;
+  /** Which sign-in the program's session files came from, for a connector that signs in. */
+  readonly signInGeneration?: number;
+}
+
+/**
+ * A connector that signs in to a website. When a tool says the site ended its session, the host
+ * holds that answer, has Scient sign in again, swaps in a fresh process inside the same agent
+ * session and sends the call once more.
+ */
+export interface LocalSignInHandler {
+  readonly expired: (
+    generation: number | undefined,
+  ) => Effect.Effect<
+    { readonly retry: true } | { readonly retry: false; readonly message: string }
+  >;
+  /** What the agent reads when the call still finds the session ended after a new sign-in. */
+  readonly stillExpired: Effect.Effect<string>;
 }
 
 export type LocalConnectorEvent =
@@ -47,7 +69,9 @@ export type LocalConnectorEvent =
   /** The program answered its first request. */
   | { readonly type: "ready"; readonly connectorId: string }
   | { readonly type: "failed"; readonly connectorId: string; readonly message: string }
-  | { readonly type: "stopped"; readonly connectorId: string };
+  | { readonly type: "stopped"; readonly connectorId: string }
+  /** Error output, with the program's keys already hidden. */
+  | { readonly type: "stderr"; readonly connectorId: string; readonly text: string };
 
 interface Channel {
   readonly write: (message: string) => void;
@@ -62,9 +86,10 @@ interface PostChannel extends Channel {
 interface Session {
   readonly id: string;
   readonly identity: LocalConnectorIdentity;
-  readonly scope: Scope.Closeable;
-  readonly process: DuplexProcessHandle;
-  readonly hide: ReadonlyArray<string>;
+  /** The current process's scope; a replacement process gets its own. */
+  scope: Scope.Closeable;
+  process: DuplexProcessHandle;
+  hide: ReadonlyArray<string>;
   readonly posts: Set<PostChannel>;
   get: Channel | undefined;
   readonly backlog: string[];
@@ -72,7 +97,33 @@ interface Session {
   initialized: boolean;
   stopping: boolean;
   stderr: string;
+  readonly start: Effect.Effect<LocalStart, LocalLaunchError>;
+  readonly signIn: LocalSignInHandler | undefined;
+  signInGeneration: number | undefined;
+  /** Requests written and not answered yet, resent to a replacement process. */
+  readonly inFlight: Map<string, JsonMessage>;
+  /** The agent's handshake, replayed to a replacement process. */
+  initialize: JsonMessage | undefined;
+  initializedNote: JsonMessage | undefined;
+  /** Calls already sent again after a new sign-in. */
+  readonly retried: Set<string>;
+  /** Calls whose "session ended" answer waits for the new sign-in. */
+  readonly awaiting: Set<string>;
+  /** Set while Scient signs in again: messages from the agent wait here. */
+  held: JsonMessage[] | undefined;
+  /** Answers Scient itself waits for (a replacement process's handshake). */
+  readonly internal: Map<string, Deferred.Deferred<JsonMessage>>;
 }
+
+type Routed =
+  | { readonly type: "none" }
+  | { readonly type: "ready" }
+  | { readonly type: "expired"; readonly key: string; readonly again: boolean }
+  | {
+      readonly type: "internal";
+      readonly waiter: Deferred.Deferred<JsonMessage>;
+      readonly message: JsonMessage;
+    };
 
 type JsonMessage = Readonly<Record<string, unknown>>;
 
@@ -101,6 +152,32 @@ const isMessage = (value: unknown): value is JsonMessage =>
 
 const isResponse = (message: JsonMessage) =>
   "id" in message && !("method" in message) && ("result" in message || "error" in message);
+
+const isRequest = (message: JsonMessage) => "method" in message && "id" in message;
+
+/** A tool result whose first text starts with the session-ended marker. */
+const signInExpired = (message: JsonMessage) => {
+  const result = message.result;
+  if (typeof result !== "object" || result === null || !("content" in result)) return false;
+  const content = result.content;
+  if (!Array.isArray(content)) return false;
+  const first: unknown = content.find(
+    (item: unknown) => typeof item === "object" && item !== null && "text" in item,
+  );
+  return (
+    typeof first === "object" &&
+    first !== null &&
+    "text" in first &&
+    typeof first.text === "string" &&
+    first.text.trimStart().startsWith(SIGN_IN_EXPIRED_MARKER)
+  );
+};
+
+const toolError = (id: unknown, text: string): JsonMessage => ({
+  jsonrpc: "2.0",
+  id,
+  result: { isError: true, content: [{ type: "text", text }] },
+});
 
 /** Lines that are not JSON objects (a program logging on stdout) are not messages. */
 const messageOf = (line: string): JsonMessage | undefined => {
@@ -158,11 +235,35 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
   const generations = new Map<string, number>();
   let sequence = 0;
 
-  /** Returns true when this is the program's first answer. */
-  const route = (session: Session, message: JsonMessage): boolean => {
-    const text = toJson(message);
+  /** Delivers one message from the program; says whether it was its first answer. */
+  const route = (session: Session, message: JsonMessage): Routed => {
     if (isResponse(message)) {
       const key = idKey(message.id);
+      const waiter = session.internal.get(key);
+      if (waiter !== undefined) {
+        session.internal.delete(key);
+        return { type: "internal", waiter, message };
+      }
+      const request = session.inFlight.get(key);
+      if (
+        request?.method === "tools/call" &&
+        session.signIn !== undefined &&
+        signInExpired(message)
+      ) {
+        return { type: "expired", key, again: session.retried.has(key) };
+      }
+      session.inFlight.delete(key);
+      session.retried.delete(key);
+      return deliver(session, message, key) ? { type: "ready" } : { type: "none" };
+    }
+    deliver(session, message, undefined);
+    return { type: "none" };
+  };
+
+  /** Returns true when this is the program's first answer. */
+  const deliver = (session: Session, message: JsonMessage, key: string | undefined): boolean => {
+    const text = toJson(message);
+    if (key !== undefined) {
       for (const post of session.posts) {
         if (!post.pending.has(key)) continue;
         post.write(text);
@@ -205,13 +306,20 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     if (session.stopping) return;
     session.stopping = true;
     sessions.delete(session.id);
+    session.inFlight.clear();
+    session.held = undefined;
     settle(session, message);
     yield* Scope.close(session.scope, Exit.void);
     yield* options.onEvent({ type: "stopped", connectorId: session.identity.connectorId });
   });
 
-  const exited = Effect.fn("LocalConnectorHost.exited")(function* (session: Session, code: number) {
-    if (session.stopping) return;
+  const exited = Effect.fn("LocalConnectorHost.exited")(function* (
+    session: Session,
+    process: DuplexProcessHandle,
+    code: number,
+  ) {
+    // A process replaced after a new sign-in ends on purpose.
+    if (session.stopping || session.process !== process) return;
     const detail = lastLine(hidden(session.stderr, session.hide));
     const reason = detail ? `: ${detail}` : ` (exit code ${code})`;
     const message = session.initialized
@@ -222,7 +330,10 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     yield* stopSession(session, message);
   });
 
-  const readStdout = Effect.fn("LocalConnectorHost.readStdout")(function* (session: Session) {
+  const readStdout = Effect.fn("LocalConnectorHost.readStdout")(function* (
+    session: Session,
+    process: DuplexProcessHandle,
+  ): Effect.fn.Return<void> {
     let buffer = "";
     const lines = Effect.fnUntraced(function* (chunk: string) {
       buffer += chunk;
@@ -231,7 +342,13 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       while (newline !== -1) {
         const message = messageOf(buffer.slice(0, newline).trim());
         buffer = buffer.slice(newline + 1);
-        if (message !== undefined && route(session, message)) ready = true;
+        const routed = message === undefined ? undefined : route(session, message);
+        if (routed?.type === "ready") ready = true;
+        else if (routed?.type === "internal")
+          yield* Deferred.succeed(routed.waiter, routed.message);
+        else if (routed?.type === "expired")
+          // Detached: signing in again replaces this process, which ends this reader.
+          yield* expired(session, routed.key, routed.again).pipe(Effect.forkDetach);
         newline = buffer.indexOf("\n");
       }
       if (buffer.length > MAX_LINE_CHARS) {
@@ -245,23 +362,36 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       if (ready)
         yield* options.onEvent({ type: "ready", connectorId: session.identity.connectorId });
     });
-    yield* session.process.stdout.pipe(
-      Stream.decodeText(),
-      Stream.runForEach(lines),
-      Effect.ignore,
-    );
+    yield* process.stdout.pipe(Stream.decodeText(), Stream.runForEach(lines), Effect.ignore);
   });
 
-  const readStderr = (session: Session) =>
-    session.process.stderr.pipe(
+  /** Whole lines go to the log, so a key split across two chunks is still hidden. */
+  const readStderr = (session: Session, process: DuplexProcessHandle) => {
+    let partial = "";
+    const emit = (text: string) =>
+      text.length === 0
+        ? Effect.void
+        : options.onEvent({
+            type: "stderr",
+            connectorId: session.identity.connectorId,
+            text: hidden(text, session.hide),
+          });
+    return process.stderr.pipe(
       Stream.decodeText(),
-      Stream.runForEach((chunk) =>
-        Effect.sync(() => {
-          session.stderr = (session.stderr + chunk).slice(-STDERR_TAIL_CHARS);
-        }),
-      ),
+      Stream.runForEach((chunk) => {
+        session.stderr = (session.stderr + chunk).slice(-STDERR_TAIL_CHARS);
+        partial += chunk;
+        const end = partial.lastIndexOf("\n");
+        if (end === -1 && partial.length < STDERR_TAIL_CHARS) return Effect.void;
+        const cut = end === -1 ? partial.length : end + 1;
+        const complete = partial.slice(0, cut);
+        partial = partial.slice(cut);
+        return emit(complete);
+      }),
+      Effect.ensuring(Effect.suspend(() => emit(partial))),
       Effect.ignore,
     );
+  };
 
   const countFor = (connectorId: string) =>
     [...sessions.values()].filter((session) => session.identity.connectorId === connectorId).length;
@@ -287,17 +417,16 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     return true;
   });
 
-  const startSession = Effect.fn("LocalConnectorHost.startSession")(function* (
+  /** Starts the program in a scope of its own. */
+  const spawn = Effect.fn("LocalConnectorHost.spawn")(function* (
     identity: LocalConnectorIdentity,
-    start: Effect.Effect<LocalStart, LocalLaunchError>,
+    prepared: LocalStart,
+    id: string,
   ) {
-    const generation = generations.get(identity.connectorId) ?? 0;
-    const prepared = yield* start;
     const scope = yield* Scope.make();
-    const id = `local-${++sequence}-${now().toString(36)}`;
     const process = yield* duplex
       .start({
-        processId: DuplexProcessId.make(id),
+        processId: DuplexProcessId.make(`${id}-${++sequence}`),
         executable: prepared.launch.executable,
         args: prepared.launch.args,
         cwd: prepared.launch.cwd,
@@ -312,6 +441,32 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
           message: `${identity.displayName} could not start: ${prepared.launch.executable} did not run.`,
         })),
       );
+    return { scope, process };
+  });
+
+  /** Readers live in the process's scope; the exit watch is detached and stops the session. */
+  const watch = Effect.fn("LocalConnectorHost.watch")(function* (
+    session: Session,
+  ): Effect.fn.Return<void> {
+    const { process, scope } = session;
+    yield* readStdout(session, process).pipe(Effect.forkIn(scope));
+    yield* readStderr(session, process).pipe(Effect.forkIn(scope));
+    yield* process.exitCode.pipe(
+      Effect.orElseSucceed(() => -1),
+      Effect.flatMap((code) => exited(session, process, code)),
+      Effect.forkDetach,
+    );
+  });
+
+  const startSession = Effect.fn("LocalConnectorHost.startSession")(function* (
+    identity: LocalConnectorIdentity,
+    start: Effect.Effect<LocalStart, LocalLaunchError>,
+    signIn: LocalSignInHandler | undefined,
+  ) {
+    const generation = generations.get(identity.connectorId) ?? 0;
+    const prepared = yield* start;
+    const id = `local-${++sequence}-${now().toString(36)}`;
+    const { scope, process } = yield* spawn(identity, prepared, id);
     if ((generations.get(identity.connectorId) ?? 0) !== generation) {
       yield* Scope.close(scope, Exit.void);
       return yield* Effect.fail({
@@ -331,31 +486,140 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       initialized: false,
       stopping: false,
       stderr: "",
+      start,
+      signIn,
+      signInGeneration: prepared.signInGeneration,
+      inFlight: new Map(),
+      initialize: undefined,
+      initializedNote: undefined,
+      retried: new Set(),
+      awaiting: new Set(),
+      held: undefined,
+      internal: new Map(),
     };
     sessions.set(id, session);
-    yield* readStdout(session).pipe(Effect.forkIn(scope));
-    yield* readStderr(session).pipe(Effect.forkIn(scope));
-    // Detached: a crash stops the session, which closes its scope.
-    yield* process.exitCode.pipe(
-      Effect.orElseSucceed(() => -1),
-      Effect.flatMap((code) => exited(session, code)),
-      Effect.forkDetach,
-    );
+    yield* watch(session);
     yield* options.onEvent({ type: "started", connectorId: identity.connectorId });
     return session;
   });
 
-  const write = (session: Session, messages: ReadonlyArray<JsonMessage>) =>
-    Effect.forEach(
-      messages,
-      (message) => session.process.write(encoder.encode(`${toJson(message)}\n`)),
-      { discard: true },
+  const writeTo = (process: DuplexProcessHandle, messages: ReadonlyArray<JsonMessage>) =>
+    Effect.forEach(messages, (message) => process.write(encoder.encode(`${toJson(message)}\n`)), {
+      discard: true,
+    });
+
+  /** Agent messages: requests are remembered until answered; while signing in they wait. */
+  const write = (session: Session, messages: ReadonlyArray<JsonMessage>) => {
+    for (const message of messages) {
+      if (isRequest(message)) session.inFlight.set(idKey(message.id), message);
+      if (message.method === "initialize") session.initialize = message;
+      else if (message.method === "notifications/initialized") session.initializedNote = message;
+    }
+    if (session.held !== undefined) {
+      session.held.push(...messages);
+      return Effect.void;
+    }
+    return writeTo(session.process, messages);
+  };
+
+  /** Answers every call waiting on the new sign-in with `text` instead. */
+  const answerAwaiting = (session: Session, text: string) => {
+    for (const key of session.awaiting) {
+      const request = session.inFlight.get(key);
+      session.inFlight.delete(key);
+      session.retried.delete(key);
+      if (request !== undefined) deliver(session, toolError(request.id, text), key);
+    }
+    session.awaiting.clear();
+  };
+
+  /**
+   * A fresh process for the session after a new sign-in: the agent's handshake is replayed
+   * before anything else reaches it.
+   */
+  const replaceProcess = Effect.fn("LocalConnectorHost.replaceProcess")(function* (
+    session: Session,
+  ): Effect.fn.Return<void, { readonly message: string }> {
+    const prepared = yield* session.start;
+    const next = yield* spawn(session.identity, prepared, session.id);
+    const previous = session.scope;
+    session.scope = next.scope;
+    session.process = next.process;
+    session.hide = prepared.hide.filter((secret) => secret.length > 0);
+    session.signInGeneration = prepared.signInGeneration;
+    session.stderr = "";
+    yield* Scope.close(previous, Exit.void);
+    yield* watch(session);
+    const handshake = session.initialize;
+    if (handshake === undefined) return;
+    const replayId = `scient-restart-${++sequence}`;
+    const answered = yield* Deferred.make<JsonMessage>();
+    session.internal.set(idKey(replayId), answered);
+    yield* writeTo(next.process, [{ ...handshake, id: replayId }]).pipe(
+      Effect.mapError(() => ({ message: `${session.identity.displayName} did not start again.` })),
     );
+    yield* Deferred.await(answered).pipe(
+      Effect.timeoutOrElse({
+        duration: RESTART_HANDSHAKE_MS,
+        orElse: () =>
+          Effect.fail({ message: `${session.identity.displayName} did not start again.` }),
+      }),
+    );
+    if (session.initializedNote !== undefined)
+      yield* writeTo(next.process, [session.initializedNote]).pipe(Effect.ignore);
+  });
+
+  const expired = Effect.fn("LocalConnectorHost.expired")(function* (
+    session: Session,
+    key: string,
+    again: boolean,
+  ): Effect.fn.Return<void> {
+    const signIn = session.signIn;
+    const request = session.inFlight.get(key);
+    if (signIn === undefined || request === undefined || session.stopping) return;
+    if (again) {
+      session.inFlight.delete(key);
+      session.retried.delete(key);
+      deliver(session, toolError(request.id, yield* signIn.stillExpired), key);
+      return;
+    }
+    session.retried.add(key);
+    session.awaiting.add(key);
+    // Another call already started the new sign-in; this one is sent again with the rest.
+    if (session.held !== undefined) return;
+    session.held = [];
+    const outcome = yield* signIn.expired(session.signInGeneration);
+    if (session.stopping) return;
+    const release = Effect.suspend(() => {
+      const waiting = session.held ?? [];
+      session.held = undefined;
+      return writeTo(session.process, waiting).pipe(Effect.ignore);
+    });
+    if (!outcome.retry) {
+      answerAwaiting(session, outcome.message);
+      yield* release;
+      return;
+    }
+    const replaced = yield* replaceProcess(session).pipe(Effect.result);
+    if (replaced._tag === "Failure") {
+      const message = `${session.identity.displayName} could not start again after signing in: ${replaced.failure.message}`;
+      answerAwaiting(session, message);
+      yield* stopSession(session, message);
+      return;
+    }
+    session.awaiting.clear();
+    // Everything the old process left unanswered goes first, then what waited, in order.
+    const waiting = new Set(session.held);
+    const unanswered = [...session.inFlight.values()].filter((message) => !waiting.has(message));
+    session.held = [...unanswered, ...waiting];
+    yield* release;
+  });
 
   const post = Effect.fn("LocalConnectorHost.post")(function* (
     identity: LocalConnectorIdentity,
     request: LocalExchange,
     start: Effect.Effect<LocalStart, LocalLaunchError>,
+    signIn: LocalSignInHandler | undefined,
   ) {
     const parsed = parseJson(new TextDecoder().decode(request.body ?? new Uint8Array()));
     if (Exit.isFailure(parsed)) return jsonResponse(400, { error: "The request is not JSON." });
@@ -380,7 +644,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
         );
       }
       const generation = generations.get(identity.connectorId) ?? 0;
-      const started = yield* startSession(identity, start).pipe(Effect.result);
+      const started = yield* startSession(identity, start, signIn).pipe(Effect.result);
       if (started._tag === "Failure") {
         const message = started.failure.message;
         // A stop the user asked for while it started is not the program's failure.
@@ -432,8 +696,9 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     identity: LocalConnectorIdentity,
     request: LocalExchange,
     start: Effect.Effect<LocalStart, LocalLaunchError>,
+    signIn?: LocalSignInHandler,
   ) {
-    if (request.method === "POST") return yield* post(identity, request, start);
+    if (request.method === "POST") return yield* post(identity, request, start, signIn);
     const session = request.sessionId === undefined ? undefined : sessions.get(request.sessionId);
     if (session === undefined || session.identity.connectorId !== identity.connectorId) {
       return request.method === "GET"
@@ -491,3 +756,5 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
 
   return { exchange, stop, sweepIdle, running: countFor };
 });
+
+export type LocalConnectorHost = Effect.Success<ReturnType<typeof makeLocalConnectorHost>>;

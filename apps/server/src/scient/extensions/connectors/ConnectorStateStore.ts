@@ -82,6 +82,14 @@ export const LocalLaunchRecord = Schema.Struct({
   imported: Schema.optional(
     Schema.Struct({ source: LocalImportSource, name: TrimmedNonEmptyString }),
   ),
+  /** Who last changed its folder: the user, or an agent through `scient_connector_save`. */
+  changedBy: Schema.optional(Schema.Literals(["you", "agent"])),
+  /** The bundle this folder is the user's own copy of, by name. */
+  forkedFrom: Schema.optional(TrimmedNonEmptyString),
+  /** The Accounts website or university sign-in (`account:<id>`) for the manifest's site. */
+  signIn: Schema.optional(TrimmedNonEmptyString),
+  /** Signing in again needed the person; cleared by their next sign-in. */
+  signInNeedsUser: Schema.optional(Schema.Boolean),
 });
 export type LocalLaunchRecord = typeof LocalLaunchRecord.Type;
 

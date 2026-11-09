@@ -6,12 +6,15 @@
 import type {
   ConnectorAddInput,
   ConnectorAddResult,
+  ConnectorExport,
+  ConnectorExportInput,
   ConnectorId,
   ConnectorRemoveInput,
   ConnectorStartSignInInput,
   ConnectorStartSignInResult,
   ConnectorSummary,
   ConnectorTestInput,
+  ConnectorUndoInput,
   LocalBundleInspectInput,
   LocalImportablesResult,
   LocalInspection,
@@ -42,6 +45,17 @@ import type * as Option from "effect/Option";
 import type * as Stream from "effect/Stream";
 
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import type {
+  CheckInput,
+  CheckResult,
+  LocalConnectorAuthoring,
+} from "./connectors/LocalConnectorAuthoring.ts";
+
+/** Where an agent's chat runs, for a connector that runs in the project folder. */
+export interface ConnectorLocation {
+  readonly projectId: ProjectId;
+  readonly worktreePath: string | null;
+}
 
 /** A connector eligible for a session before adapter transport checks. */
 export interface EligibleConnector {
@@ -157,6 +171,33 @@ export interface ConnectorRuntimeShape {
   }) => Effect.Effect<boolean>;
   /** Forward one MCP HTTP exchange with the vendor credential applied. Never fails: errors become JSON-RPC responses. */
   readonly forward: (request: ConnectorForwardRequest) => Effect.Effect<ConnectorForwardResponse>;
+  /** Agents: a connector (or the template) copied into the chat's folder to change. */
+  readonly copyForAgent: (input: {
+    readonly workingFolder: string;
+    readonly connector?: string | undefined;
+    readonly name?: string | undefined;
+  }) => Effect.Effect<
+    Omit<Effect.Success<ReturnType<LocalConnectorAuthoring["copy"]>>, "variant">,
+    ExtensionsError
+  >;
+  /** Agents: start a folder as a connector, list its tools and call some, then stop it. */
+  readonly checkFolder: (
+    input: CheckInput,
+    location: ConnectorLocation | undefined,
+  ) => Effect.Effect<CheckResult, ExtensionsError>;
+  /** Agents: save a checked folder as the user's own connector, with Undo. */
+  readonly saveFolder: (
+    input: { readonly folder: string; readonly connector?: string | undefined },
+    location: ConnectorLocation | undefined,
+  ) => Effect.Effect<
+    { readonly connector: ConnectorSummary; readonly tools: ReadonlyArray<string> },
+    ExtensionsError
+  >;
+  /** Undoes the last change to a local connector's folder, a removal included. */
+  readonly undo: (input: ConnectorUndoInput) => Effect.Effect<void, ExtensionsError>;
+  readonly exportLocal: (
+    input: ConnectorExportInput,
+  ) => Effect.Effect<ConnectorExport, ExtensionsError>;
 }
 
 export class ConnectorRuntime extends Context.Service<ConnectorRuntime, ConnectorRuntimeShape>()(

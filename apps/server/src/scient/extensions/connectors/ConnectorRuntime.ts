@@ -38,6 +38,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { AccountsService } from "../../accounts/AccountsService.ts";
+import { makeConnectorSessions } from "../../accounts/connectorSessions.ts";
+import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
+import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
+import * as Cause from "effect/Cause";
 import * as ServerConfig from "../../../config.ts";
 import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
@@ -104,7 +109,9 @@ import {
 } from "./ConnectorStateStore.ts";
 import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
-import { makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
+import { makeConnectorLogs } from "./ConnectorLogs.ts";
+import { makeLocalConnectorAuthoring } from "./LocalConnectorAuthoring.ts";
+import { type LocalSignInHandler, makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
 import { makeLocalConnectors } from "./LocalConnectors.ts";
 
 const MAX_CONNECTORS = 30;
@@ -136,6 +143,8 @@ const FORBIDDEN_CREDENTIAL_HEADERS: Readonly<Record<string, true>> = {
 
 export interface ConnectorRuntimeOptions {
   readonly stateDir: string;
+  /** Owner-only files: a signed-in connector's session. */
+  readonly secretsDir?: string;
 }
 
 type Credential =
@@ -521,9 +530,61 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     if (changed) yield* publishChange;
   });
 
+  const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
+  /** `feature.used` with outcome and timing; facts are fixed codes and counts, never names. */
+  const observed =
+    (feature: string, facts: Record<string, string | number | boolean> = {}) =>
+    <A, E extends { readonly reason?: string }, R>(
+      effect: Effect.Effect<A, E, R>,
+      more?: (value: A) => Record<string, string | number | boolean>,
+    ): Effect.Effect<A, E, R> => {
+      if (analytics === undefined) return effect;
+      return Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
+        effect.pipe(
+          Effect.onExit((exit) =>
+            Effect.flatMap(Clock.currentTimeMillis, (finishedAt) =>
+              analytics.record("feature.used", {
+                feature,
+                ...facts,
+                ...(Exit.isSuccess(exit)
+                  ? { outcome: "ok", ...more?.(exit.value) }
+                  : {
+                      outcome: Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "error",
+                      failureClass: Option.match(Cause.findErrorOption(exit.cause), {
+                        onNone: () => "unknown",
+                        onSome: (error) => error.reason ?? "unknown",
+                      }),
+                    }),
+                durationMs: finishedAt - startedAt,
+              }),
+            ).pipe(Effect.ignoreCause()),
+          ),
+        ),
+      );
+    };
+  const logs = yield* makeConnectorLogs(options.stateDir);
+  const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
+  const environment = yield* Effect.serviceOption(ServerEnvironment);
+  const signInSessions =
+    options.secretsDir !== undefined &&
+    Option.isSome(accounts) &&
+    Option.isSome(broker) &&
+    Option.isSome(environment)
+      ? Option.some(
+          yield* makeConnectorSessions({ secretsDir: options.secretsDir }).pipe(
+            Effect.provideService(AccountsService, accounts.value),
+            Effect.provideService(PreviewAutomationBroker, broker.value),
+            Effect.provideService(ServerEnvironment, environment.value),
+          ),
+        )
+      : Option.none();
   const localHost = yield* makeLocalConnectorHost({
     onEvent: (event) => {
       switch (event.type) {
+        case "stderr":
+          return logs.append(event.connectorId, event.text, {
+            keep: !event.connectorId.startsWith("check_"),
+          });
         case "started":
         case "stopped":
           return publishChange;
@@ -547,6 +608,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     stateDir: options.stateDir,
     accounts,
     projects,
+    sessions: signInSessions,
   });
   /** One connector as clients see it; a local one reads its manifest for what it needs. */
   const summarizeWith =
@@ -554,7 +616,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     (record: ConnectorRecord): Effect.Effect<ConnectorSummary> =>
       record.local === undefined
         ? Effect.succeed(toSummary(record))
-        : localConnectors.summarize(record.local, names).pipe(
+        : localConnectors.summarize(record, record.local, names).pipe(
             Effect.map((local) => ({
               ...toSummary(record),
               local: { ...local, running: localHost.running(record.connectorId) },
@@ -566,6 +628,72 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       : Effect.succeed(new Map<VaultSecretRef, string>());
   const summaryOf = (record: ConnectorRecord) =>
     Effect.flatMap(keyNamesFor([record]), (names) => summarizeWith(names)(record));
+
+  const authoring = makeLocalConnectorAuthoring({
+    local: localConnectors,
+    host: localHost,
+    logs,
+    sessions: signInSessions,
+    records: Effect.map(store.read, (state) => state.connectors),
+    summaryOf: (record) => summaryOf(record),
+    newConnectorId: Effect.suspend(() => newConnectorId),
+    add: (record) => commitNewRecord(record).pipe(Effect.tap(() => publishChange)),
+    update: (connectorId, change) => updateRecord(connectorId, change),
+    drop: (record) => Effect.suspend(() => removeRecord(record, { keepCopy: false })),
+    revive: (connectorId) => {
+      removed.delete(connectorId);
+    },
+    isoNow,
+  });
+
+  /** Marks whether signing in again needs the person; the connector page shows Sign in. */
+  const markNeedsUser = (connectorId: string, needsUser: boolean) =>
+    updateRecord(connectorId, (current, updatedAt) =>
+      current.local === undefined || (current.local.signInNeedsUser === true) === needsUser
+        ? current
+        : {
+            ...current,
+            local: needsUser
+              ? { ...current.local, signInNeedsUser: true }
+              : (({ signInNeedsUser: _dropped, ...rest }) => rest)(current.local),
+            updatedAt,
+          },
+    ).pipe(Effect.ignore);
+
+  /** The site ended a signed-in connector's session: sign in again, or say who must. */
+  const signInHandler = (record: ConnectorRecord): LocalSignInHandler => ({
+    expired: (generation) =>
+      observed("connectors.session.refresh")(
+        Effect.gen(function* () {
+          const current = (yield* findRecord(record.connectorId)) ?? record;
+          const renewed = yield* localConnectors.signInAgain(current, generation);
+          yield* markNeedsUser(record.connectorId, renewed.type === "needs-user");
+          return renewed;
+        }),
+        (renewed) =>
+          renewed.type === "signed-in"
+            ? {}
+            : { outcome: renewed.type === "needs-user" ? "needs-user" : "error" },
+      ).pipe(
+        Effect.map((renewed) =>
+          renewed.type === "signed-in"
+            ? ({ retry: true } as const)
+            : ({
+                retry: false,
+                message:
+                  renewed.type === "needs-user"
+                    ? `${renewed.message} Tell the user; there is a Sign in button on the connector's page.`
+                    : `${record.displayName} could not sign in again: ${renewed.message}`,
+              } as const),
+        ),
+      ),
+    stillExpired: Effect.gen(function* () {
+      yield* markNeedsUser(record.connectorId, true);
+      const site = yield* localConnectors.signInSiteOf(record.local!);
+      const host = site !== undefined && URL.canParse(site) ? new URL(site).host : "The site";
+      return `${host} still ended the session right after Scient signed in again. The connector may not send the session the way the site expects; fix it with scient_connector_copy, or ask the user to sign in on the connector's page.`;
+    }),
+  });
 
   const exchangeLocal = Effect.fn("ConnectorRuntime.exchangeLocal")(function* (
     record: ConnectorRecord,
@@ -592,6 +720,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       { connectorId: record.connectorId, displayName: record.displayName },
       request,
       localConnectors.start(record, record.serverName, location),
+      record.local?.signIn === undefined ? undefined : signInHandler(record),
     );
     return {
       type: "response",
@@ -1572,6 +1701,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   const removeRecord = Effect.fn("ConnectorRuntime.removeRecord")(function* (
     record: ConnectorRecord,
+    options: { readonly keepCopy?: boolean } = {},
   ) {
     const connectorId = record.connectorId;
     // Fence first: in-flight refreshes, exchanges and proxied requests are
@@ -1617,8 +1747,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
                 ),
               );
           }
-          // Its keys are Accounts keys the user may use elsewhere, so they stay.
-          if (record.local !== undefined) yield* localConnectors.discard(record.local);
+          // Its keys are Accounts keys the user may use elsewhere, so they stay. A local connector's
+          // folder and record are kept so Undo can bring it back.
+          if (record.local !== undefined) {
+            if (options.keepCopy === false) yield* localConnectors.discard(record.local);
+            else yield* authoring.keepRemoved(record);
+          }
           const session = oauth?.material.session;
           if (session !== undefined) yield* revokeLater(record, session);
         }),
@@ -2362,15 +2496,26 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         local = yield* localConnectors.setup(record, input.localSetup);
       }
       const restarts = input.restart === true || local !== undefined;
-      yield* updateRecord(input.connectorId, (current, updatedAt) => ({
-        ...current,
-        ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-        ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-        ...(availability === undefined ? {} : { availability }),
-        ...(local === undefined ? {} : { local }),
-        ...(restarts ? { lastError: undefined } : {}),
-        updatedAt,
-      }));
+      yield* updateRecord(input.connectorId, (current, updatedAt) => {
+        const nextLocal = local ?? current.local;
+        return {
+          ...current,
+          ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+          ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+          ...(availability === undefined ? {} : { availability }),
+          // A restart asked for after the person signed in starts with the new session.
+          ...(nextLocal === undefined
+            ? {}
+            : {
+                local:
+                  input.restart === true && nextLocal.signInNeedsUser
+                    ? (({ signInNeedsUser: _dropped, ...rest }) => rest)(nextLocal)
+                    : nextLocal,
+              }),
+          ...(restarts ? { lastError: undefined } : {}),
+          updatedAt,
+        };
+      });
       // Turned off, set up again or restarted: running copies stop; the next request starts anew.
       if (restarts || input.enabled === false) {
         yield* localHost.stop(
@@ -2381,6 +2526,42 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
     remove: Effect.fn("ConnectorRuntime.remove")(function* (input) {
       yield* removeRecord(yield* requireRecord(input.connectorId));
+    }),
+    copyForAgent: Effect.fn("ConnectorRuntime.copyForAgent")(function* (input) {
+      const { variant: _variant, ...copied } = yield* observed("connectors.agent.copy")(
+        authoring.copy(input),
+        (result) => ({ variant: result.variant }),
+      );
+      return copied;
+    }),
+    checkFolder: Effect.fn("ConnectorRuntime.checkFolder")(function* (input, location) {
+      return yield* observed("connectors.agent.check", {
+        variant: input.connector === undefined ? "new" : "fix",
+      })(authoring.check(input, location), (checked) => ({
+        checked: checked.ok,
+        tools: checked.tools.length,
+        missing: checked.missing.length,
+        calls: checked.calls.length,
+      }));
+    }),
+    saveFolder: Effect.fn("ConnectorRuntime.saveFolder")(function* (input, location) {
+      const saved = yield* observed("connectors.agent.save")(
+        authoring.save(input, location),
+        (result) => ({
+          variant: result.variant,
+          tools: result.tools.length,
+          missing: result.summary.local?.missing.length ?? 0,
+        }),
+      );
+      return { connector: saved.summary, tools: saved.tools };
+    }),
+    undo: Effect.fn("ConnectorRuntime.undo")(function* (input) {
+      yield* observed("connectors.undo")(authoring.undo(input.connectorId), (undone) => ({
+        variant: undone.kind,
+      }));
+    }),
+    exportLocal: Effect.fn("ConnectorRuntime.exportLocal")(function* (input) {
+      return yield* observed("connectors.export")(authoring.exportBundle(input.connectorId));
     }),
     test,
     inspectLocal: localConnectors.inspect,
@@ -2430,6 +2611,9 @@ export const layer = Layer.effect(
   ConnectorRuntime,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return yield* makeConnectorRuntime({ stateDir: config.stateDir });
+    return yield* makeConnectorRuntime({
+      stateDir: config.stateDir,
+      secretsDir: config.secretsDir,
+    });
   }),
 ).pipe(Layer.provide(LocalDuplexProcess.layer));
