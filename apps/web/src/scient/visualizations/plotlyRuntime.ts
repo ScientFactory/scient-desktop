@@ -64,6 +64,71 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const MAPBOX_TRACE_RENAMES: Readonly<Record<string, string>> = {
+  choroplethmapbox: "choroplethmap",
+  densitymapbox: "densitymap",
+  scattermapbox: "scattermap",
+};
+
+function migrateMapboxTraces(traces: unknown): void {
+  if (!Array.isArray(traces)) return;
+  for (const trace of traces) {
+    if (!isRecord(trace)) continue;
+    const renamed =
+      typeof trace.type === "string"
+        ? MAPBOX_TRACE_RENAMES[trace.type.trim().toLowerCase()]
+        : undefined;
+    if (renamed != null) trace.type = renamed;
+    if (typeof trace.subplot === "string") {
+      trace.subplot = trace.subplot.replace(/^mapbox(\d*)$/u, "map$1");
+    }
+  }
+}
+
+function migrateMapboxLayout(layout: unknown): void {
+  if (!isRecord(layout)) return;
+  for (const key of Object.keys(layout)) {
+    const match = /^mapbox(\d*)$/u.exec(key);
+    const value = layout[key];
+    if (match == null || !isRecord(value)) continue;
+    const { accesstoken: _accessToken, ...map } = value;
+    layout[`map${match[1]}`] ??= map;
+    delete layout[key];
+  }
+}
+
+/**
+ * Plotly 4 removed the Mapbox traces and subplot; their `map` replacements read the same
+ * attributes. Older notebooks and plotly.py 5/6 output still carry them, so the render copy
+ * is renamed and the saved source is left as written.
+ */
+function migrateMapboxFigure(figure: PlotlyRuntimeFigure): void {
+  migrateMapboxTraces(figure.data);
+  migrateMapboxLayout(figure.layout);
+  const template = (figure.layout as Record<string, unknown>).template;
+  if (isRecord(template)) {
+    migrateMapboxLayout(template.layout);
+    if (isRecord(template.data)) {
+      for (const [type, traces] of Object.entries(template.data)) {
+        migrateMapboxTraces(traces);
+        const renamed = MAPBOX_TRACE_RENAMES[type];
+        if (renamed != null) {
+          template.data[renamed] ??= traces;
+          delete template.data[type];
+        }
+      }
+    }
+  }
+  for (const frame of figure.frames) {
+    migrateMapboxTraces(frame.data);
+    migrateMapboxLayout(frame.layout);
+  }
+}
+
 function scientPlotlyTemplate(theme: PlotlyTheme): Record<string, unknown> {
   const dark = theme === "dark";
   const foreground = dark ? "#e5e5e5" : "#262626";
@@ -164,8 +229,6 @@ function runtimeFigureFromDocument(
   mutableConfig.editable = false;
   mutableConfig.responsive = true;
   mutableConfig.scrollZoom = surface === "expanded";
-  mutableConfig.showEditInChartStudio = false;
-  mutableConfig.showLink = false;
   mutableConfig.showSendToCloud = false;
   mutableConfig.staticPlot = false;
   mutableConfig.plotGlPixelRatio = Math.min(
@@ -173,12 +236,14 @@ function runtimeFigureFromDocument(
     Math.max(1, typeof devicePixelRatio === "number" ? devicePixelRatio : 1),
   );
 
-  return {
+  const figure: PlotlyRuntimeFigure = {
     config,
     data: clone(document.data) as Data[],
     frames: clone(document.frames) as Array<Partial<Frame>>,
     layout,
   };
+  migrateMapboxFigure(figure);
+  return figure;
 }
 
 export function preparePlotlyRuntimeFigure(
@@ -220,13 +285,33 @@ function isTypedArrayIssue(figure: PlotlyRuntimeFigure, issue: PlotlyValidationI
   return typeof value === "object" && value !== null && "bdata" in value;
 }
 
+/**
+ * Plotly's `validate` throws when one trace sits beside a `legend` object, which every
+ * one-series Plotly Express figure has, so it is retried without the legend.
+ */
+function validateFigure(
+  runtime: PlotlyRuntime,
+  figure: PlotlyRuntimeFigure,
+): NonNullable<ReturnType<PlotlyRuntime["validate"]>> {
+  // Plotly's runtime returns `undefined` when validation finds no issues even
+  // though its public TypeScript declaration promises an array.
+  try {
+    return runtime.validate(figure.data, figure.layout) ?? [];
+  } catch {
+    const { legend: _legend, ...layout } = figure.layout as Record<string, unknown>;
+    try {
+      return runtime.validate(figure.data, layout as Partial<Layout>) ?? [];
+    } catch {
+      return [];
+    }
+  }
+}
+
 function normalizedValidationIssues(
   runtime: PlotlyRuntime,
   figure: PlotlyRuntimeFigure,
 ): ReturnType<PlotlyRuntime["validate"]> {
-  // Plotly's runtime returns `undefined` when validation finds no issues even
-  // though its public TypeScript declaration promises an array.
-  let issues = runtime.validate(figure.data, figure.layout) ?? [];
+  let issues = validateFigure(runtime, figure);
   let repairedTitle = false;
   for (const issue of issues) {
     const path = plotlyIssuePath(issue);
@@ -253,7 +338,7 @@ function normalizedValidationIssues(
     parent.title = { text: title };
     repairedTitle = true;
   }
-  if (repairedTitle) issues = runtime.validate(figure.data, figure.layout) ?? [];
+  if (repairedTitle) issues = validateFigure(runtime, figure);
   issues = issues.filter((issue) => !isTypedArrayIssue(figure, issue));
   return issues;
 }
@@ -274,7 +359,9 @@ function validationWarnings(
       issue.container === "layout" &&
       (path[0] === "sliders" || path[0] === "updatemenus") &&
       path.includes("args");
-    if (isCommandArgumentNoise) return [];
+    // Plotly's Python library writes attributes a trace type ignores, so every
+    // figure it makes would otherwise carry "did not get coerced" warnings.
+    if (isCommandArgumentNoise || issue.code === "unused") return [];
     const message = issue.msg.trim();
     return message.length > 0 ? [message] : [];
   });

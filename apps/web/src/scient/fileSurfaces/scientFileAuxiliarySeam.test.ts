@@ -55,4 +55,18 @@ describe("Scient file surface seams", () => {
     expect(figure).toContain("toggleStaticArtifactFloating");
     expect(artifactActions).toContain("openScientArtifact");
   });
+
+  it("routes inherited TIFF decoding to Scient's range-reading decoder", () => {
+    const decoder = NodeFS.readFileSync(
+      new URL("../../components/files/decodeImagePreview.ts", import.meta.url),
+      "utf8",
+    );
+    const viewer = NodeFS.readFileSync(
+      new URL("../../components/files/PreviewImageContent.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(decoder).toMatch(/if \(!heif\) return await decodeScientTiffPreview\(src, signal\);/u);
+    expect(viewer).toContain("useTiffPreview({");
+    expect(viewer).toContain("<TiffPreviewSummary");
+  });
 });

@@ -7,6 +7,7 @@
 export const DISCOVERY_VARIABLES = [
   "ASDF_DATA_DIR",
   "CARGO_HOME",
+  "CMDSTAN",
   "CONDA_EXE",
   "ELAN_HOME",
   "JULIAUP_DEPOT_PATH",
@@ -126,12 +127,13 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
       win32: ["%ProgramFiles%\\SASHome\\SASFoundation\\*\\sas.exe"],
     },
   },
+  // cmdstanpy and cmdstanr both install in ~/.cmdstan unless CMDSTAN names another, as conda's does.
   stan: {
     commands: ["stanc"],
     places: {
-      darwin: ["~/.cmdstan/cmdstan-*/bin/stanc"],
-      linux: ["~/.cmdstan/cmdstan-*/bin/stanc"],
-      win32: ["~/.cmdstan/cmdstan-*/bin/stanc.exe"],
+      darwin: ["%CMDSTAN%/bin/stanc", "~/.cmdstan/cmdstan-*/bin/stanc"],
+      linux: ["%CMDSTAN%/bin/stanc", "~/.cmdstan/cmdstan-*/bin/stanc"],
+      win32: ["%CMDSTAN%\\bin\\stanc.exe", "~/.cmdstan/cmdstan-*/bin/stanc.exe"],
     },
   },
   "imagej-macro": {
