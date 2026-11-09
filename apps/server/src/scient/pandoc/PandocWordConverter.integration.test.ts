@@ -633,4 +633,134 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     ),
   );
+  describe("local font size and family", () => {
+    const exportMarkdown = (name: string, markdown: string) =>
+      withConverter(({ converter, directory }) =>
+        Effect.gen(function* () {
+          const { docx, result } = yield* convertTo(converter, directory, name, {
+            bundle: makeBundle({ markdown }),
+          });
+          return {
+            document: docx.text("word/document.xml"),
+            styles: docx.text("word/styles.xml"),
+            warnings: result.warnings.map((warning) => warning.message).join("\n"),
+          };
+        }),
+      );
+
+    it.live("applies a recognised size span as a Word character style", () =>
+      Effect.gen(function* () {
+        const { document, styles, warnings } = yield* exportMarkdown(
+          "font-size-span",
+          'Some <span style="font-size:1.2em">big</span> words.',
+        );
+        expect(document).toMatch(
+          /<w:rStyle w:val="ScientSize120"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u,
+        );
+        expect(styles).toMatch(/w:styleId="ScientSize120"[\s\S]*?<w:sz w:val="26"\s*\/>/u);
+        expect(warnings).not.toContain("Raw HTML");
+        expect(document).not.toContain("&lt;span");
+      }),
+    );
+
+    it.live("applies a recognised family span as a Word character style", () =>
+      Effect.gen(function* () {
+        const { document, styles } = yield* exportMarkdown(
+          "font-family-span",
+          'Some <span style="font-family:monospace">code</span> words.',
+        );
+        expect(document).toMatch(/<w:rStyle w:val="ScientFontmonospace"\s*\/>[\s\S]*?code/u);
+        expect(styles).toMatch(/w:styleId="ScientFontmonospace"[\s\S]*?Consolas/u);
+      }),
+    );
+
+    it.live("keeps both when a size span and a family span are nested", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportMarkdown(
+          "font-nested",
+          'Some <span style="font-size:1.2em">big <span style="font-family:sans-serif">words</span></span> here.',
+        );
+        const sizeRun = /<w:r>(?:(?!<\/w:r>)[\s\S])*?big/u.exec(document)?.[0] ?? "";
+        const wordsRun = /<w:r>(?:(?!<\/w:r>)[\s\S])*?words/u.exec(document)?.[0] ?? "";
+        expect(sizeRun).toContain("ScientSize120");
+        expect(wordsRun).toContain("ScientSize120Fontsansserif");
+      }),
+    );
+
+    it.live("still drops every other span", () =>
+      Effect.gen(function* () {
+        const { document, warnings } = yield* exportMarkdown(
+          "font-other-span",
+          'Some <span style="color:red">plain</span> words.',
+        );
+        expect(document).toContain("plain");
+        expect(document).not.toContain("ScientSize");
+        expect(document).not.toContain("color");
+        expect(warnings).toContain("Raw HTML was left out");
+      }),
+    );
+
+    it.live("sets the base font and scales local sizes from the front matter", () =>
+      Effect.gen(function* () {
+        const { styles } = yield* exportMarkdown(
+          "font-front-matter",
+          '---\nfont-size: 12pt\nfont-family: serif\n---\n\nText with <span style="font-size:1.2em">size</span>.\n',
+        );
+        expect(styles).toMatch(/<w:docDefaults>[\s\S]*?Cambria[\s\S]*?<w:sz w:val="24"\s*\/>/u);
+        expect(styles).toMatch(/w:styleId="ScientSize120"[\s\S]*?<w:sz w:val="29"\s*\/>/u);
+      }),
+    );
+    const exportLatex = (name: string, tex: string) =>
+      withConverter(({ converter, directory }) =>
+        Effect.gen(function* () {
+          const paper = NodePath.join(directory, "paper");
+          NodeFS.mkdirSync(paper, { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(paper, "main.tex"), tex);
+          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), directory);
+          const { docx } = yield* convertTo(converter, directory, name, {
+            bundle: makeBundle({ markdown: "" }),
+            latex,
+            files: { baseDirectory: paper, allowRoots: [paper] },
+          });
+          return { document: docx.text("word/document.xml"), styles: docx.text("word/styles.xml") };
+        }),
+      );
+
+    it.live("keeps LaTeX size groups and family commands as Word character styles", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportLatex(
+          "latex-font",
+          [
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "A {\\Large big \\textsf{both}} and \\textrm{roman} and {\\small tiny}.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        const run = (text: string) =>
+          new RegExp(`<w:r>(?:(?!</w:r>)[\\s\\S])*?${text}`, "u").exec(document)?.[0] ?? "";
+        expect(run("big")).toContain("ScientSize144");
+        expect(run("both")).toContain("ScientSize144Fontsansserif");
+        expect(run("roman")).toContain("ScientFontserif");
+        expect(run("tiny")).toContain("ScientSize90");
+        expect(document).not.toContain("scient-size");
+      }),
+    );
+
+    it.live("takes the base font from the LaTeX class option and \\familydefault", () =>
+      Effect.gen(function* () {
+        const { styles } = yield* exportLatex(
+          "latex-base-font",
+          [
+            "\\documentclass[12pt]{article}",
+            "\\renewcommand{\\familydefault}{\\rmdefault}",
+            "\\begin{document}",
+            "Text.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        expect(styles).toMatch(/<w:docDefaults>[\s\S]*?Cambria[\s\S]*?<w:sz w:val="24"\s*\/>/u);
+      }),
+    );
+  });
 });
