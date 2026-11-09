@@ -40,9 +40,9 @@ import {
 
 import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEntries";
 import { useNowMinute } from "~/hooks/useNowMinute";
+import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
-import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
 import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
@@ -553,7 +553,7 @@ function GuestThread({
             cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
             footer={
               unplaced.length === 0 ? null : (
-                <ol ref={footerRef} className="chat-content-lane flex flex-col gap-4 pb-4">
+                <ol className="chat-content-lane flex flex-col gap-4 pb-4">
                   {unplaced.map((message) => (
                     <li key={message.id}>
                       <UnplacedGuestMessage shareId={shareId} message={message} />
@@ -582,7 +582,7 @@ function GuestThread({
         {/* SCIENT-FORK:END */}
       </div>
       <div className={cn(LANE, "shrink-0 pb-4")}>
-        <GuestComposer shareId={shareId} model={model} />
+        <GuestComposer shareId={shareId} model={model} onSent={() => follow.scrollToEnd(true)} />
       </div>
     </>
   );
@@ -690,9 +690,12 @@ function StagedImage({ file }: { readonly file: File }) {
 function GuestComposer({
   shareId,
   model,
+  onSent,
 }: {
   readonly shareId: GuestShareView["shareId"];
   readonly model: GuestThreadModel;
+  /** The guest's own message comes into view even if they had scrolled up, as the owner's does. */
+  readonly onSent: () => void;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<ReadonlyArray<StagedFile>>([]);
@@ -728,6 +731,7 @@ function GuestComposer({
     setError(failure);
     // Keep anything typed or attached while the request was in flight.
     if (failure === null) {
+      onSent();
       setText((current) => (current.trim() === trimmed ? "" : current));
       setFiles((current) => current.filter((staged) => !sentFiles.includes(staged)));
     }

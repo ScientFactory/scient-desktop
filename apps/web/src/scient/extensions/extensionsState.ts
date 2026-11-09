@@ -186,6 +186,16 @@ export function createExtensionsAtoms<R, E>(
       tag: WS_METHODS.extensionsConnectorStartSignIn,
       concurrency: perConnector,
     }),
+    /** Local servers other apps on that computer run, for Add local connector. */
+    listImportableConnectors: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:importable-connectors",
+      tag: WS_METHODS.extensionsConnectorImportable,
+    }),
+    /** Reads a bundle's manifest for the add form; changes nothing. */
+    inspectLocalBundle: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:inspect-local-bundle",
+      tag: WS_METHODS.extensionsConnectorInspectLocal,
+    }),
     testConnector: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:test-connector",
       tag: WS_METHODS.extensionsConnectorTest,
@@ -253,6 +263,8 @@ export const removeScientPlugin = extensionsAtoms.removeScientPlugin;
 export const setScientPluginEnabled = extensionsAtoms.setScientPluginEnabled;
 export const startConnectorSignIn = extensionsAtoms.startConnectorSignIn;
 export const testConnector = extensionsAtoms.testConnector;
+export const inspectLocalBundle = extensionsAtoms.inspectLocalBundle;
+export const listImportableConnectors = extensionsAtoms.listImportableConnectors;
 export const actOnProviderPlugin = extensionsAtoms.actOnProviderPlugin;
 
 export const extensionsProviderStorePage = extensionsAtoms.providerStorePage;

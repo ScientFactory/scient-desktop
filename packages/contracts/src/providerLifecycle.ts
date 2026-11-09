@@ -182,6 +182,11 @@ export const ProviderRuntimeOperation = Schema.Struct({
    * clients keep decoding the operation.
    */
   waitingForIdle: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The download failed in a way that is usually temporary and is waiting to
+   * try again; `message` says why and which try. Optional for older clients.
+   */
+  retrying: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderRuntimeOperation = typeof ProviderRuntimeOperation.Type;
 

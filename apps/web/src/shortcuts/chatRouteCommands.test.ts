@@ -30,13 +30,11 @@ describe("new thread commands", () => {
     { mode: "boring", count: 2, command: "chat.new", picker: true },
     // SCIENT-FORK: the picker opens with one project too, so Add project stays one step away.
     { mode: "boring", count: 1, command: "chat.new", picker: true },
-    { mode: "legacy", count: 2, command: "chat.new", picker: false },
     { mode: "boring", count: 2, command: "chat.newLocal", picker: false },
   ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
     using _settings = vi.spyOn(settings, "getClientSettings").mockReturnValue({
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",
-      legacySidebarEnabled: scenario.mode === "legacy",
     });
     using _projects = vi
       .spyOn(entities, "readProjects")

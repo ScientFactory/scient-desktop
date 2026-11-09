@@ -29,6 +29,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
 import { GitHubConnect, type SourceControlLogin } from "./GitHubConnect";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
@@ -73,9 +74,9 @@ interface Draft {
   readonly accountId: string;
 }
 
-function emptyDraft(entry: DiscoverEntry | null): Draft {
+function emptyDraft(entry: DiscoverEntry | null, initialUrl = ""): Draft {
   return {
-    url: "",
+    url: initialUrl,
     remoteUrl: entry?.address ? "" : entry ? (installableRemotes(entry)[0]?.url ?? "") : "",
     displayName: entry?.title ?? "",
     authMode: entryNeedsToken(entry) || entry?.apiKey ? "api-key" : "automatic",
@@ -190,25 +191,47 @@ function invalidProps(fieldId: string, message: string | undefined) {
   return message ? { "aria-invalid": true as const, "aria-describedby": `${fieldId}-error` } : {};
 }
 
-export function AddConnectorDialog({
-  open,
-  onOpenChange,
-  environmentId,
-  entry,
-  callbackOrigin,
-}: {
+interface AddConnectorDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   /** Prefills a registry target; null adds by URL. */
   readonly entry: DiscoverEntry | null;
   readonly callbackOrigin: string | null;
-}) {
+  /** A web address already given, from Add your own. */
+  readonly initialUrl?: string;
+  /** Shows Back instead of Cancel, returning to Add your own. */
+  readonly onBack?: () => void;
+}
+
+/** A registry entry that only runs locally gets the local form. */
+export function AddConnectorDialog(props: AddConnectorDialogProps) {
+  return props.entry?.localPackage === undefined ? (
+    <RemoteConnectorDialog {...props} />
+  ) : (
+    <AddLocalConnectorDialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      environmentId={props.environmentId}
+      entry={props.entry}
+    />
+  );
+}
+
+function RemoteConnectorDialog({
+  open,
+  onOpenChange,
+  environmentId,
+  entry,
+  callbackOrigin,
+  initialUrl,
+  onBack,
+}: AddConnectorDialogProps) {
   const github = entryNeedsToken(entry) === true;
   const [githubToken, setGithubToken] = useState(false);
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
-  const [draft, setDraft] = useState(() => emptyDraft(entry));
+  const [draft, setDraft] = useState(() => emptyDraft(entry, initialUrl));
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -377,7 +400,9 @@ export function AddConnectorDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>{entry ? `Add ${entry.title ?? entry.name}` : "Add by URL"}</DialogTitle>
+              <DialogTitle>
+                {entry ? `Add ${entry.title ?? entry.name}` : "Add from a web address"}
+              </DialogTitle>
               <DialogDescription>
                 {github
                   ? "Connect GitHub to work with your repositories, issues and pull requests."
@@ -386,7 +411,7 @@ export function AddConnectorDialog({
             </DialogHeader>
             <DialogPanel>
               <form
-                className="grid gap-4"
+                className="grid grid-cols-1 gap-4 [overflow-wrap:anywhere]"
                 noValidate
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -643,8 +668,13 @@ export function AddConnectorDialog({
               </form>
             </DialogPanel>
             <DialogFooter variant="bare">
-              <Button variant="outline" onClick={close}>
-                Cancel
+              <Button
+                variant="outline"
+                // Back unmounts this form, so it waits for a pending Add to answer here.
+                disabled={onBack !== undefined && submitting}
+                onClick={onBack ?? close}
+              >
+                {onBack ? "Back" : "Cancel"}
               </Button>
               <Button disabled={submitting} onClick={() => void submit()}>
                 {submitting ? "Adding…" : "Add"}

@@ -50,7 +50,6 @@ describe("getTraitsSectionVisibility", () => {
         ],
         modelOptions: undefined,
         promptUltrathink: "none",
-        planModeEnabled: false,
       }).hasAnyControls,
     ).toBe(true);
   });
@@ -82,10 +81,8 @@ describe("withoutPromptInjectedOptions", () => {
   });
 });
 
-const CODEX = ProviderDriverKind.make("codex");
 function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
   return buildTraitsTriggerDisplay({
-    provider: CODEX,
     descriptors,
     primarySelectDescriptorId: "reasoningEffort",
     ultrathinkPromptControlled: false,

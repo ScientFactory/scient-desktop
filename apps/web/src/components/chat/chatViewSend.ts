@@ -3,7 +3,6 @@ import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
-  type ProviderInteractionMode,
   type ScopedThreadRef,
   type ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -291,7 +290,6 @@ export function restoreComposerDraft(
 export interface MultipleModelTarget {
   readonly selection: ModelSelection;
   readonly text: string;
-  readonly interactionMode: ProviderInteractionMode;
 }
 
 /**

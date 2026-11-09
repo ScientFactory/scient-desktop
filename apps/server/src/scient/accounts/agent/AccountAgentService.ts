@@ -40,6 +40,7 @@ import { continueWaitingPapers } from "../../papers/getPaper.ts";
 import { userRunInvocation } from "../checkAccounts.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
+import { setUpConnector } from "./connectorSetup.ts";
 import { previewInvoker } from "./broker.ts";
 import { getPaper, paperStatus, queuePapers } from "../../papers/getPaper.ts";
 
@@ -375,6 +376,7 @@ export const accountAgentOperations = {
     );
   }),
   scient_account_add: addAccount,
+  scient_connector_setup: setUpConnector,
   scient_paper_get: getPaper,
   scient_papers_queue: queuePapers,
   scient_papers_status: paperStatus,

@@ -1,0 +1,15 @@
+diff --git a/legacy/web/pdf_viewer.mjs b/legacy/web/pdf_viewer.mjs
+index 001fdcab4aa0966a555ffcde3f3881e80ac5c299..011218c924b2c83dc952fbe49f15a2ae3e34f0b4 100644
+--- a/legacy/web/pdf_viewer.mjs
++++ b/legacy/web/pdf_viewer.mjs
+@@ -11228,7 +11228,9 @@ class TextLayerBuilder {
+     this.#selectionChangeAC = new AbortController();
+     const signal = globalAbortSignal ? AbortSignal.any([this.#selectionChangeAC.signal, globalAbortSignal]) : this.#selectionChangeAC.signal;
+     const reset = (end, textLayer) => {
+-      textLayer.append(end);
++      if (textLayer.lastChild !== end) {
++        textLayer.append(end);
++      }
+       end.style.width = "";
+       end.style.height = "";
+       textLayer.classList.remove("selecting");

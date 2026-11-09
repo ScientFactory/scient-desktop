@@ -12,6 +12,9 @@ import type {
   ConnectorStartSignInResult,
   ConnectorSummary,
   ConnectorTestInput,
+  LocalBundleInspectInput,
+  LocalImportablesResult,
+  LocalInspection,
   ConnectorTestResult,
   ConnectorUpdateInput,
   DiscoverCatalog,
@@ -72,6 +75,8 @@ export interface ConnectorForwardRequest {
   readonly body: Uint8Array | undefined;
   /** Server-derived caller identity; never request-supplied. */
   readonly scope: McpInvocationScope;
+  /** The calling thread's place; local connectors run in its worktree or project folder. */
+  readonly location?: { readonly projectId: ProjectId; readonly worktreePath: string | null };
 }
 
 export interface ConnectorForwardResponse {
@@ -135,6 +140,12 @@ export interface ConnectorRuntimeShape {
   readonly update: (input: ConnectorUpdateInput) => Effect.Effect<void, ExtensionsError>;
   readonly remove: (input: ConnectorRemoveInput) => Effect.Effect<void, ExtensionsError>;
   readonly test: (input: ConnectorTestInput) => Effect.Effect<ConnectorTestResult, ExtensionsError>;
+  /** Reads a bundle file or folder on this computer for the add form. */
+  readonly inspectLocal: (
+    input: LocalBundleInspectInput,
+  ) => Effect.Effect<LocalInspection, ExtensionsError>;
+  /** Local servers other apps on this computer run, by name; values stay on the server. */
+  readonly importables: () => Effect.Effect<LocalImportablesResult, ExtensionsError>;
   /** Connectors a new session in this project may receive, plus user-facing skips. */
   readonly resolveDelivery: (input: {
     readonly projectId: ProjectId | undefined;

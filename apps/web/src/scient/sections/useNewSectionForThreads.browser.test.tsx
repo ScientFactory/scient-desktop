@@ -17,6 +17,13 @@ const mocks = vi.hoisted(() => ({
     readonly onSubmit: (name: string) => Promise<boolean>;
     readonly onOpenChange: (open: boolean) => void;
   },
+  pickerProps: null as null | {
+    readonly open: boolean;
+    readonly threadRefs: readonly unknown[];
+    readonly anchor: unknown;
+    readonly onCreate: (name: string) => Promise<boolean>;
+    readonly onOpenChange: (open: boolean) => void;
+  },
 }));
 vi.mock("./catalog", () => ({
   useThreadSectionCatalogs: () => ({ catalogs: mocks.catalogs, create: mocks.create }),
@@ -42,6 +49,12 @@ vi.mock("../../components/ui/toast", () => ({
 vi.mock("./NewSectionPopover", () => ({
   NewSectionPopover: (props: NonNullable<typeof mocks.popoverProps>) => {
     mocks.popoverProps = props;
+    return null;
+  },
+}));
+vi.mock("./SectionPickerPopover", () => ({
+  SectionPickerPopover: (props: NonNullable<typeof mocks.pickerProps>) => {
+    mocks.pickerProps = props;
     return null;
   },
 }));
@@ -78,6 +91,7 @@ async function _setupFixture0(_fixture: _Fixture) {
   vi.clearAllMocks();
   mocks.catalogs = [{ environmentId: "local" }, { environmentId: "remote" }];
   mocks.popoverProps = null;
+  mocks.pickerProps = null;
   await mount(_fixture);
 }
 async function _cleanupFixture1(_fixture: _Fixture) {
@@ -94,6 +108,15 @@ async function submit(name: string) {
   return submitted;
 }
 
+/** The picker's Create row, which threads open instead of the name form. */
+async function createFromPicker(name: string) {
+  let created: boolean | undefined;
+  await act(async () => {
+    created = await mocks.pickerProps!.onCreate(name);
+  });
+  return created;
+}
+
 it("creates the section on the thread's environment and files it there", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -106,10 +129,9 @@ it("creates the section on the thread's environment and files it there", async (
   mocks.create.mockResolvedValue(design);
   mocks.moveThreadsToSection.mockResolvedValue(true);
   await act(() => _fixture.hook.request([threadRef], { x: 20, y: 100 }));
-  // Threads decide the environment, so there is nothing to choose.
-  expect(mocks.popoverProps).toMatchObject({ open: true, threadCount: 1, environmentPicker: null });
+  expect(mocks.pickerProps).toMatchObject({ open: true, threadRefs: [threadRef] });
 
-  expect(await submit("Design")).toBe(true);
+  expect(await createFromPicker("Design")).toBe(true);
   // Recorded for the selected project on this environment and the thread's own.
   expect(mocks.create).toHaveBeenCalledWith(LOCAL, "Design", {
     environmentIds: ["local"],
@@ -136,8 +158,7 @@ it("gives threads from two environments a section on each of theirs", async () =
   }));
   mocks.moveThreadsToSection.mockResolvedValue(true);
   await act(() => _fixture.hook.request([threadRef, second], { x: 20, y: 100 }));
-  expect(mocks.popoverProps).toMatchObject({ threadCount: 2 });
-  expect(await submit("Design")).toBe(true);
+  expect(await createFromPicker("Design")).toBe(true);
   expect(mocks.create.mock.calls.map((call) => call[0]).toSorted()).toEqual(["local", "remote"]);
   expect(mocks.moveThreadsToSection).toHaveBeenCalledWith([threadRef], {
     environmentId: LOCAL,
@@ -159,7 +180,7 @@ it("reports the environments where the section could not be created", async () =
   );
   mocks.moveThreadsToSection.mockResolvedValue(true);
   await act(() => _fixture.hook.request([threadRef, second], { x: 20, y: 100 }));
-  expect(await submit("Design")).toBe(true);
+  expect(await createFromPicker("Design")).toBe(true);
   expect(mocks.moveThreadsToSection).toHaveBeenCalledTimes(1);
   expect(toastManager.add).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -176,7 +197,7 @@ it("files nothing and reports failure when the section cannot be created", async
 
   mocks.create.mockResolvedValue(null);
   await act(() => _fixture.hook.request([threadRef], { x: 20, y: 100 }));
-  expect(await submit("Design")).toBe(false);
+  expect(await createFromPicker("Design")).toBe(false);
   expect(mocks.moveThreadsToSection).not.toHaveBeenCalled();
 });
 
@@ -216,22 +237,22 @@ it("creates an empty section on the only environment that stores sections withou
   expect(mocks.create).toHaveBeenCalledWith(REMOTE, "Later", expect.anything());
 });
 
-it("does not let an old form close a newer creation request", async () => {
+it("does not let an old picker close a newer request", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   await act(() => _fixture.hook.request([threadRef], { x: 20, y: 100 }));
-  const oldForm = mocks.popoverProps!;
+  const oldPicker = mocks.pickerProps!;
   await act(() => _fixture.hook.request([threadRef, second], { x: 80, y: 200 }));
-  await act(() => oldForm.onOpenChange(false));
-  expect(mocks.popoverProps).toMatchObject({
+  await act(() => oldPicker.onOpenChange(false));
+  expect(mocks.pickerProps).toMatchObject({
     open: true,
-    threadCount: 2,
+    threadRefs: [threadRef, second],
     anchor: { x: 80, y: 200 },
   });
-  await act(() => mocks.popoverProps!.onOpenChange(false));
-  expect(mocks.popoverProps).toMatchObject({ open: false, anchor: { x: 80, y: 200 } });
+  await act(() => mocks.pickerProps!.onOpenChange(false));
+  expect(mocks.pickerProps).toMatchObject({ open: false, anchor: { x: 80, y: 200 } });
 });
 
 // The shared create-and-file step.
