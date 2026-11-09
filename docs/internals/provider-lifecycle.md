@@ -533,7 +533,8 @@ have outages: on 2026-11-09 GitHub returned 504 to anonymous release downloads f
 A family can also name Scient's own copy of its releases (`mirrorUrlPrefix`; Scient Agent's is
 `downloads.scientfactory.com/scient-agent/v<version>/`, on Cloudflare R2). That copy is tried first
 and the official release second. Any problem with one copy, including a missing file, a wrong size
-or a digest mismatch, moves straight to the other without waiting; only both failing ends the
+or a digest mismatch, moves straight to the other without waiting. Each copy has its own time limit,
+so a slow copy cannot use up the other's; only both failing ends the
 download, and the message names both. The catalog still names only the official release, so older
 apps are unaffected. The release workflow uploads the copy, publication of a new catalog entry
 requires every copy to match its digest (`scripts/check-managed-runtime-mirror.ts --full`), and every
