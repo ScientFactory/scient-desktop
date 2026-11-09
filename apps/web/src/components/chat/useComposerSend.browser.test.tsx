@@ -2,7 +2,6 @@ import { AsyncResult } from "effect/reactivity";
 import {
   EnvironmentId,
   MessageId,
-  PlanId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -35,7 +34,6 @@ import type { ChatComposerHandle } from "./ChatComposer";
 import { draftSendState } from "./chatViewSend";
 import { useComposerSend, type ComposerSendInput } from "./useComposerSend";
 import { useComposerResume } from "./useComposerResume";
-import { useImplementPlanInNewThread } from "./useProposedPlanSend";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 import {
   countPreparingComposerImages,
@@ -43,11 +41,9 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import * as imageCompression from "../../lib/imageCompression";
-import type { ChatMessage } from "../../types";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { composerSubmissionMatchesDraft } from "../../scient/threadQueue/submission";
 import { toastManager } from "../ui/toast";
-import * as chatViewLogic from "../ChatView.logic";
 
 const bindings = vi.hoisted(() => ({
   command: vi.fn<
@@ -181,8 +177,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       selectedProvider: ProviderDriverKind.make("codex"),
       selectedModel: modelSelection.model,
       selectedProviderModels: [],
-      interactionMode: "default",
-      interactionModeEnabled: true,
       shownPendingApprovalIds: [],
     };
     const noop = () => {};
@@ -256,7 +250,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         updatedAt: "2026-10-20T00:00:00Z",
       },
       activeProjectDefaultModelSelection: null,
-      activeProposedPlan: null,
       activeMessageCount: 1,
       isServerThread: true,
       isLocalDraftThread: false,
@@ -282,7 +275,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       keepFullHistory: true,
       freshSessionAvailable: false,
       resumeCompactionTokens: null,
-      showPlanFollowUpPrompt: false,
       usageLimitsKey: null,
       usageLimitsOffered: false,
       openUsageLimits: () => false,
@@ -307,7 +299,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       setThreadError: vi.fn(),
       setKeepFullHistory: noop,
       acknowledgeActiveThreadWoke: noop,
-      handleInteractionModeChange: noop,
       handleNewThreadInActiveProject: noop,
       persistThreadSettingsForNextTurn: async () => AsyncResult.success(undefined),
       ...overrides,
@@ -318,7 +309,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       | ReturnType<typeof useComposerAttachmentIntake>["addComposerAttachments"]
       | undefined;
     let fanout: ReturnType<typeof useMultipleModelSend> | undefined;
-    let implement: ReturnType<typeof useImplementPlanInNewThread> | undefined;
     let preparingImages: ReturnType<typeof usePreparingComposerImages> = [];
     let removeImage:
       | ReturnType<typeof useComposerAttachmentIntake>["removeComposerImage"]
@@ -329,10 +319,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       const readyImages = useComposerThreadDraft(target).images;
       const onSend = useComposerSend(input).onSend;
       const sendMultiple = useMultipleModelSend(input);
-      const implementPlan = useImplementPlanInNewThread({
-        ...input,
-        defaultRuntimeMode: "full-access",
-      });
       const { addComposerAttachments, removeComposerImage } = useComposerAttachmentIntake({
         environmentId,
         attachmentDraftTarget: target,
@@ -373,7 +359,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         ...input,
         resumableRunId: RunId.make("resume"),
         runtimeMode: "full-access",
-        interactionMode: "default",
         scrollToEnd: noop,
       });
       useLayoutEffect(() => {
@@ -383,16 +368,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         removeImage = removeComposerImage;
         preparingImages = preparing;
         fanout = sendMultiple;
-        implement = implementPlan;
-      }, [
-        onSend,
-        onResume,
-        addComposerAttachments,
-        removeComposerImage,
-        preparing,
-        sendMultiple,
-        implementPlan,
-      ]);
+      }, [onSend, onResume, addComposerAttachments, removeComposerImage, preparing, sendMultiple]);
       // The attachment strip keys ready and preparing tiles by image id.
       useLayoutEffect(() => {
         const duplicated = readyImages.flatMap((image) =>
@@ -404,7 +380,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     }
     // Navigation is a command adapter here, not the fixture router.
     stack.use(await render(<Owner />, { router: false }));
-    if (!send || !resume || !intake || !fanout || !implement || !removeImage)
+    if (!send || !resume || !intake || !fanout || !removeImage)
       throw new Error("The composer owners did not render");
     stack.defer(() => {
       removePreparingComposerImages(
@@ -420,7 +396,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       resume,
       intake,
       fanout,
-      implement,
       navigate,
       removeImage,
       get preparingImages() {
@@ -457,7 +432,7 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
     project,
     branch: "main",
     selections: [selection],
-    targets: [{ selection, text: fixture.context.prompt, interactionMode: "default" }],
+    targets: [{ selection, text: fixture.context.prompt }],
     sendSnapshot: {
       images: [],
       files: [],
@@ -634,13 +609,11 @@ describe("mounted composer send admission owner", () => {
     ).toBe(before);
   });
 
-  // /plan and /default take the same interaction-mode branch; /fork takes its own.
-  it.each(["/plan", "/fork"])(
+  it.each(["/fork"])(
     "runs the local %s command without declining a shown feedback request",
     async (prompt) => {
       const requestId = RuntimeRequestId.make("local-command-feedback");
       const respond = vi.fn();
-      const handleInteractionModeChange = vi.fn();
       const onForkConversation = vi.fn();
       await using fixture = await setup({
         pendingApprovals: [
@@ -653,7 +626,6 @@ describe("mounted composer send admission owner", () => {
           },
         ],
         onRespondToApproval: respond,
-        handleInteractionModeChange,
         onForkConversation,
       });
       fixture.context = { ...fixture.context, prompt, shownPendingApprovalIds: [requestId] };
@@ -662,10 +634,7 @@ describe("mounted composer send admission owner", () => {
       await fixture.send();
       expect(respond).not.toHaveBeenCalled();
       expect(fixture.command).not.toHaveBeenCalled();
-      expect(onForkConversation).toHaveBeenCalledTimes(prompt === "/fork" ? 1 : 0);
-      expect(handleInteractionModeChange.mock.calls).toEqual(
-        prompt === "/fork" ? [] : [[prompt.slice(1)]],
-      );
+      expect(onForkConversation).toHaveBeenCalledTimes(1);
       expect(
         useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
           ?.prompt ?? "",
@@ -884,124 +853,6 @@ describe("mounted composer send admission owner", () => {
     "fences a transferred draft and replays its frozen native admission after a lost ACK (shown feedback request: %s)",
     replaysFrozenAdmissionAfterLostAck,
   );
-  it.each([false, true])(
-    "waits for implementation visibility before navigating and keeps the authored draft (visible: %s)",
-    async (visible) => {
-      await using fixture = await setup({
-        activeProposedPlan: {
-          id: PlanId.make("plan"),
-          createdAt: "2026-10-20T00:00:00Z",
-          updatedAt: "2026-10-20T00:00:00Z",
-          runId: null,
-          planMarkdown: "Implement this plan",
-          status: "completed",
-        },
-      });
-      const entered = Promise.withResolvers<void>();
-      const visibility = Promise.withResolvers<boolean>();
-      using wait = vi.spyOn(chatViewLogic, "waitForStartedServerThread").mockImplementation(() => {
-        entered.resolve();
-        return visibility.promise;
-      });
-      const implementing = fixture.implement();
-      await entered.promise;
-      const packet = fixture.command.mock.calls[0]?.[0];
-      if (!packet) throw new Error("Implementation command missing");
-      expect(wait).toHaveBeenCalledWith(
-        scopeThreadRef(fixture.input.environmentId, packet.input.threadId),
-      );
-      expect(fixture.navigate).not.toHaveBeenCalled();
-      expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(true);
-      useComposerDraftStore
-        .getState()
-        .setPrompt(fixture.input.composerDraftTarget, "New authoring while the shell catches up");
-      const newer = useComposerDraftStore
-        .getState()
-        .getComposerDraft(fixture.input.composerDraftTarget);
-      visibility.resolve(visible);
-      await implementing;
-      expect(fixture.navigate).toHaveBeenCalledExactlyOnceWith({
-        to: "/$environmentId/$threadId",
-        params: { environmentId: fixture.input.environmentId, threadId: packet.input.threadId },
-      });
-      expect(
-        useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
-      ).toBe(newer);
-      expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
-    },
-  );
-  it("does not navigate an implementation after its source route leaves during the projection wait", async () => {
-    await using fixture = await setup({
-      activeProposedPlan: {
-        id: PlanId.make("plan"),
-        createdAt: "2026-10-20T00:00:00Z",
-        updatedAt: "2026-10-20T00:00:00Z",
-        runId: null,
-        planMarkdown: "Implement this plan",
-        status: "completed",
-      },
-    });
-    const entered = Promise.withResolvers<void>();
-    const visibility = Promise.withResolvers<boolean>();
-    using _wait = vi.spyOn(chatViewLogic, "waitForStartedServerThread").mockImplementation(() => {
-      entered.resolve();
-      return visibility.promise;
-    });
-    const implementing = fixture.implement();
-    await entered.promise;
-    fixture.route.current = "another-environment:another-thread";
-    visibility.resolve(true);
-    await implementing;
-    expect(fixture.navigate).not.toHaveBeenCalled();
-    expect(fixture.command).toHaveBeenCalledTimes(1);
-    expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
-  });
-  it("retains an ambiguous new-thread implementation without deleting it or consuming the draft", async () => {
-    await using fixture = await setup({
-      activeProposedPlan: {
-        id: PlanId.make("plan"),
-        createdAt: "2026-10-20T00:00:00Z",
-        updatedAt: "2026-10-20T00:00:00Z",
-        runId: null,
-        planMarkdown: "Implement the $untrusted proposed plan",
-        status: "completed",
-      },
-    });
-    using _toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-implementation-toast");
-    const entered = Promise.withResolvers<void>();
-    const receipt = Promise.withResolvers<AtomCommandResult<{ queued: boolean }, unknown>>();
-    fixture.command.mockImplementationOnce(() => {
-      entered.resolve();
-      return receipt.promise;
-    });
-    const implementing = fixture.implement();
-    await entered.promise;
-    useComposerDraftStore
-      .getState()
-      .setPrompt(fixture.input.composerDraftTarget, "Unrelated newer authoring");
-    const newer = useComposerDraftStore
-      .getState()
-      .getComposerDraft(fixture.input.composerDraftTarget);
-    const failure = await settlePromise(async () => {
-      throw new Error("Lost implementation acknowledgement");
-    });
-    if (failure._tag !== "Failure") throw new Error("Expected a synthetic failure");
-    receipt.resolve(failure);
-    await implementing;
-    await fixture.implement();
-    expect(fixture.command).toHaveBeenCalledTimes(1);
-    expect(fixture.command.mock.calls[0]?.[0].input).toMatchObject({
-      selectedScientSkillNames: [],
-      modelSelection: { model: "gpt-5.4" },
-      sourceProposedPlan: { threadId: fixture.input.activeThread?.id, planId: PlanId.make("plan") },
-      bootstrap: { createThread: { projectId: fixture.input.activeProject?.id } },
-    });
-    expect(fixture.navigate).not.toHaveBeenCalled();
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
-    ).toBe(newer);
-    expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
-  });
   it("carries captured settings and skills through fanout without releasing its parent's lock", async () => {
     await using fixture = await setup();
     using _toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-fanout-toast");
@@ -1063,36 +914,6 @@ describe("mounted composer send admission owner", () => {
     expect(
       useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)?.prompt,
     ).toBe("Newer fanout draft");
-  });
-  it("keeps a queued plan follow-up in the admission strip without framing it", async () => {
-    let optimistic: ChatMessage[] = [];
-    const frameSubmittedMessage = vi.fn();
-    await using fixture = await setup({
-      phase: "running",
-      showPlanFollowUpPrompt: true,
-      frameSubmittedMessage,
-      activeProposedPlan: {
-        id: PlanId.make("plan"),
-        createdAt: "2026-10-20T00:00:00Z",
-        updatedAt: "2026-10-20T00:00:00Z",
-        runId: null,
-        planMarkdown: "A proposed plan",
-        status: "completed",
-      },
-      setOptimisticUserMessages: (next) => {
-        optimistic = typeof next === "function" ? next(optimistic) : next;
-      },
-    });
-    fixture.command.mockResolvedValueOnce(AsyncResult.success({ queued: true }));
-    await fixture.send();
-    expect(fixture.command).toHaveBeenCalledTimes(1);
-    expect(frameSubmittedMessage).not.toHaveBeenCalled();
-    expect(optimistic).toEqual([
-      expect.objectContaining({
-        text: expect.stringContaining("$captured"),
-        queueAdmission: { threadKey: fixture.input.routeThreadKey, accepted: true },
-      }),
-    ]);
   });
   it("holds one admission lock and keeps settings and skills captured before recovery yields", async () => {
     await using fixture = await setup();
@@ -1224,69 +1045,29 @@ describe("mounted composer send admission owner", () => {
       ),
     ).toBe(false);
   });
-  it.each(["ordinary", "plan"] as const)(
-    "keeps a newer draft when a %s acknowledgement arrives late",
-    async (kind) => {
-      await using fixture = await setup({
-        showPlanFollowUpPrompt: kind === "plan",
-        activeProposedPlan: {
-          id: PlanId.make("plan"),
-          createdAt: "2026-10-20T00:00:00Z",
-          updatedAt: "2026-10-20T00:00:00Z",
-          runId: null,
-          planMarkdown: "A proposed plan",
-          status: "completed",
-        },
-      });
-      const admitted = Promise.withResolvers<void>();
-      const receipt = Promise.withResolvers<AtomCommandResult<{ queued: boolean }, unknown>>();
-      fixture.command.mockImplementationOnce(() => {
-        admitted.resolve();
-        return receipt.promise;
-      });
-      const sending = fixture.send();
-      await admitted.promise;
-      useComposerDraftStore
-        .getState()
-        .setPrompt(fixture.input.composerDraftTarget, "Newer question");
-      const newerDraft = useComposerDraftStore
-        .getState()
-        .getComposerDraft(fixture.input.composerDraftTarget);
-      receipt.resolve(AsyncResult.success({ queued: false }));
-      await sending;
-      expect(
-        useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
-          ?.prompt,
-      ).toBe("Newer question");
-      expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
-      expect(
-        useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
-      ).toBe(newerDraft);
-    },
-  );
-
-  it("implements an empty-draft plan with provenance but no assistant-selected skills", async () => {
-    await using fixture = await setup({
-      showPlanFollowUpPrompt: true,
-      activeProposedPlan: {
-        id: PlanId.make("plan"),
-        createdAt: "2026-10-20T00:00:00Z",
-        updatedAt: "2026-10-20T00:00:00Z",
-        runId: null,
-        planMarkdown: "Use $not-a-user-selection in the implementation",
-        status: "completed",
-      },
+  it("keeps a newer draft when an ordinary acknowledgement arrives late", async () => {
+    await using fixture = await setup({});
+    const admitted = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<AtomCommandResult<{ queued: boolean }, unknown>>();
+    fixture.command.mockImplementationOnce(() => {
+      admitted.resolve();
+      return receipt.promise;
     });
-    fixture.context = { ...fixture.context, prompt: "" };
-    fixture.input.promptRef.current = "";
-    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, "");
-    await fixture.send();
-    expect(fixture.command).toHaveBeenCalledTimes(1);
-    expect(fixture.command.mock.calls[0]?.[0].input).toMatchObject({
-      interactionMode: "default",
-      selectedScientSkillNames: [],
-      sourceProposedPlan: { threadId: "thread", planId: "plan" },
-    });
+    const sending = fixture.send();
+    await admitted.promise;
+    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, "Newer question");
+    const newerDraft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(fixture.input.composerDraftTarget);
+    receipt.resolve(AsyncResult.success({ queued: false }));
+    await sending;
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)?.prompt,
+    ).toBe("Newer question");
+    expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
+    ).toBe(newerDraft);
   });
 
   it("releases the resume lock when settings fail before dispatch", async () => {
@@ -1414,35 +1195,5 @@ describe("mounted composer send admission owner", () => {
     expect(countPreparingComposerImages(composerTargetKey(fixture.input.composerDraftTarget))).toBe(
       0,
     );
-  });
-
-  it("admits a plan follow-up under the same lock and clears only its matching draft", async () => {
-    await using fixture = await setup({
-      showPlanFollowUpPrompt: true,
-      activeProposedPlan: {
-        id: PlanId.make("plan"),
-        createdAt: "2026-10-20T00:00:00Z",
-        updatedAt: "2026-10-20T00:00:00Z",
-        runId: null,
-        planMarkdown: "A proposed plan",
-        status: "completed",
-      },
-    });
-    await fixture.send();
-    expect(
-      fixture.command,
-      JSON.stringify(vi.mocked(fixture.input.setThreadError).mock.calls),
-    ).toHaveBeenCalledTimes(1);
-    expect(fixture.command.mock.calls[0]?.[0].input).toMatchObject({
-      interactionMode: "plan",
-      runtimeMode: "full-access",
-      selectedScientSkillNames: ["captured"],
-      modelSelection: { model: "gpt-5.4" },
-    });
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
-        ?.prompt ?? "",
-    ).toBe("");
-    expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
   });
 });

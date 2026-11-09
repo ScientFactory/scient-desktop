@@ -3,12 +3,15 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { providerClients, resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import { ProviderPackageIcon } from "./ProviderPackageIcon";
 import {
+  AnthropicIcon,
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
   DroidIcon,
   PiIcon,
   OhMyPiIcon,
+  OllamaIcon,
+  OpenRouterIcon,
   ScientAgentIcon,
   OpenAI,
 } from "../Icons";
@@ -37,6 +40,11 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("omp")]: OhMyPiIcon,
   [ProviderDriverKind.make("scient")]: ScientAgentIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
+  // Text generators, by the service they reach (see textGeneratorBrand).
+  [ProviderDriverKind.make("openai")]: OpenAI,
+  [ProviderDriverKind.make("anthropic")]: AnthropicIcon,
+  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
+  [ProviderDriverKind.make("ollama")]: OllamaIcon,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {

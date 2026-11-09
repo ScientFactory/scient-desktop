@@ -7,7 +7,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
-  downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
@@ -220,7 +219,6 @@ export const makeQualifiedManagedScientAgentRuntime = Effect.fn(
     qualification,
     dependencies: {
       ...input.dependencies,
-      download: input.dependencies?.download ?? downloadManagedScientAgentRuntime,
       smoke,
     },
   });

@@ -777,6 +777,8 @@ export function ServerBrowserSurface(props: {
       {/* SCIENT-FORK:START — who drives the page, only when an agent or another window is involved */}
       <BrowserControlChip
         control={control}
+        environmentId={environmentId}
+        threadId={threadId}
         position={controlPosition}
         onTake={() => send({ type: "takeControl" })}
         onRelease={() => send({ type: "releaseControl" })}

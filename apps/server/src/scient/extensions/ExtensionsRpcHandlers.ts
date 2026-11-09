@@ -320,6 +320,18 @@ export const makeExtensionsRpcHandlers = ({
         connectorRuntime.test(input),
         traceAttributes,
       ),
+    [WS_METHODS.extensionsConnectorInspectLocal]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorInspectLocal,
+        connectorRuntime.inspectLocal(input),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsConnectorImportable]: () =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorImportable,
+        connectorRuntime.importables(),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsDiscoverSearch]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsDiscoverSearch,

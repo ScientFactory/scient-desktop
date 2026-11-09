@@ -13,6 +13,7 @@ import { useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalogs } from "./catalog";
 import type { SectionOrigin, SectionRef } from "./logic";
 import { NewSectionPopover, type SectionCreateAnchor } from "./NewSectionPopover";
+import { SectionPickerPopover } from "./SectionPickerPopover";
 import { readSidebarSectionScope } from "./sidebarScope";
 
 /**
@@ -120,10 +121,9 @@ function defaultSectionEnvironment(
 }
 
 /**
- * "New section…" from a thread menu or the sidebar: asks for a name, creates
- * the section (or reuses one with that name) and files the threads into it in
- * one step. A section started empty asks which environment holds it when
- * several can.
+ * Move to section from a thread menu opens the section picker, which files the
+ * threads into a section or creates one by name. The sidebar's New section
+ * starts one empty and asks which environment holds it when several can.
  */
 export function useNewSectionForThreads(
   options: {
@@ -199,34 +199,46 @@ export function useNewSectionForThreads(
 
   const pickEnvironment =
     pending !== null && pending.threadRefs.length === 0 && environmentChoices.length > 1;
+  const onOpenChange = (open: boolean) => {
+    if (!open)
+      setPending((current) =>
+        current && current === pending ? { ...current, open: false } : current,
+      );
+  };
 
   return {
     request,
     close: () => setPending((current) => (current ? { ...current, open: false } : current)),
-    popover: (
-      <NewSectionPopover
-        open={pending?.open ?? false}
-        requestKey={requestKey}
-        threadCount={pending?.threadRefs.length ?? 0}
-        anchor={pending?.anchor ?? null}
-        environmentPicker={
-          pickEnvironment
-            ? {
-                choices: environmentChoices,
-                value: pending.environmentId,
-                onChange: (environmentId) =>
-                  setPending((current) => (current ? { ...current, environmentId } : current)),
-              }
-            : null
-        }
-        onOpenChange={(open) => {
-          if (!open)
-            setPending((current) =>
-              current && current === pending ? { ...current, open: false } : current,
-            );
-        }}
-        onSubmit={submit}
-      />
-    ),
+    popover:
+      pending !== null && pending.threadRefs.length > 0 ? (
+        <SectionPickerPopover
+          open={pending.open}
+          requestKey={requestKey}
+          threadRefs={pending.threadRefs}
+          anchor={pending.anchor}
+          onOpenChange={onOpenChange}
+          onMove={(section) => void moveThreadsToSection(pending.threadRefs, section)}
+          onCreate={submit}
+        />
+      ) : (
+        <NewSectionPopover
+          open={pending?.open ?? false}
+          requestKey={requestKey}
+          threadCount={pending?.threadRefs.length ?? 0}
+          anchor={pending?.anchor ?? null}
+          environmentPicker={
+            pickEnvironment
+              ? {
+                  choices: environmentChoices,
+                  value: pending.environmentId,
+                  onChange: (environmentId) =>
+                    setPending((current) => (current ? { ...current, environmentId } : current)),
+                }
+              : null
+          }
+          onOpenChange={onOpenChange}
+          onSubmit={submit}
+        />
+      ),
   };
 }

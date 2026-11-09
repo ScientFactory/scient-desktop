@@ -64,6 +64,7 @@ const CORE_WHEN_VARIABLES = [
   "markdownFocus",
   "pdfFocus",
   "textInputFocus",
+  "previewOpen",
   "isWeb",
   "isDesktop",
   "true",

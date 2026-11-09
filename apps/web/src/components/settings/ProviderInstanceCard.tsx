@@ -66,6 +66,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
+import { ProviderFailureInfo } from "../../scient/providerConnection/ProviderFailureInfo";
 import { ProviderSettingsLifecycleAction } from "../../scient/providerConnection/ProviderSettingsLifecycleAction";
 // SCIENT-FORK:START — the presentation reads this client's in-flight sign-in starts.
 import { useProviderSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
@@ -108,7 +109,9 @@ function ProviderStatusDiagnostic({
 }
 
 let environmentVariableDraftId = 0;
-const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
+const DRAFT_ROW_ID_PREFIX = "provider-env-";
+const nextEnvironmentVariableDraftId = () =>
+  `${DRAFT_ROW_ID_PREFIX}${environmentVariableDraftId++}`;
 
 type EnvironmentDraftRow = {
   readonly id: string;
@@ -365,12 +368,23 @@ export function ProviderEnvironmentSection(props: {
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
   );
-  const draft = reconcileRowsDraft(
+  let draft = reconcileRowsDraft(
     storedDraft,
     props.environment,
     providerEnvironmentsEqual,
     toEnvironmentDraftRows,
   );
+  if (draft.rows !== storedDraft.rows) {
+    // Keep rows the server never acknowledged, even across an external reseed.
+    const acknowledged = new Set(storedDraft.seen.map((variable) => variable.name));
+    const unpublished = storedDraft.rows.filter(
+      (row) =>
+        row.id.startsWith(DRAFT_ROW_ID_PREFIX) &&
+        !acknowledged.has(row.name) &&
+        !draft.rows.some((incoming) => incoming.name === row.name),
+    );
+    if (unpublished.length > 0) draft = { ...draft, rows: [...draft.rows, ...unpublished] };
+  }
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
   const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) =>
@@ -981,6 +995,14 @@ export function ProviderInstanceCard({
     statusKey === "warning" || statusKey === "error" || connectionPresentation.kind === "failed" ? (
       <span className={cn("size-1.5 shrink-0 rounded-full", statusDotStyle.dot)} aria-hidden />
     ) : null;
+  // Why it failed stays behind a small info button beside the status.
+  const failureInfoNode =
+    connectionPresentation.kind === "failed" && connectionPresentation.detail ? (
+      <ProviderFailureInfo
+        title={connectionPresentation.statusLabel ?? "Setup failed"}
+        detail={connectionPresentation.detail}
+      />
+    ) : null;
   // SCIENT-FORK:END
   // Pi's model inventory lives in the Models tab. Keep routine setup copy out
   // of its header, but preserve failed probes and runtime recovery details.
@@ -1020,12 +1042,23 @@ export function ProviderInstanceCard({
         {inlineStatusDetail ? (
           <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
+        {/* SCIENT-FORK:START — a failed update stays visible while signed in. */}
+        {failureInfoNode ? (
+          <>
+            <span>· {connectionPresentation.statusLabel}</span>
+            {failureInfoNode}
+          </>
+        ) : null}
+        {/* SCIENT-FORK:END */}
       </div>
     </div>
   ) : (
     <>
       {statusDotNode}
       <span>{statusHeadline}</span>
+      {/* SCIENT-FORK:START — why it failed. */}
+      {failureInfoNode}
+      {/* SCIENT-FORK:END */}
       {inlineStatusDetail ? (
         <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
       ) : null}

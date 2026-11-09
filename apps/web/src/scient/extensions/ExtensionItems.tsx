@@ -179,6 +179,11 @@ function ConnectorMenuItems({
       >
         {connector.enabled ? "Turn off" : "Turn on"}
       </MenuItem>
+      {connector.local !== undefined ? (
+        <MenuItem disabled={actions.locked} onClick={() => void actions.restart()}>
+          Restart
+        </MenuItem>
+      ) : null}
       <MenuSeparator />
       <MenuItem
         variant="destructive"
@@ -206,7 +211,12 @@ export function ConnectorItem({
       target={target}
       name={entry ? entryName(entry) : connector.displayName}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
-      tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
+      tagline={
+        (entry ? entryTagline(entry) : undefined) ??
+        connector.description ??
+        connector.local?.commandLine ??
+        connector.url
+      }
       facts={connectorFacts(entry, connector).join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={

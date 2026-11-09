@@ -48,6 +48,7 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   t3_account_fill: tool(["Fill", "Filling", "Filled", "a saved field"], "scient-accounts"),
   t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
+  t3_connector_setup: tool(["Set up", "Setting up", "Set up", "a connector"], "scient-accounts"),
   t3_paper_get: tool(["Get", "Getting", "Got", "a paper's PDF"], "scient-accounts"),
   t3_papers_queue: tool(["Queue", "Queueing", "Queued", "papers to fetch"], "scient-accounts"),
   t3_papers_status: tool(["Check", "Checking", "Checked", "queued papers"], "scient-accounts"),

@@ -152,6 +152,7 @@ import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 // SCIENT-FORK:START — file links use the canonical workspace-file lookup key.
 import {
   markdownLinkLookupKey,
+  isLocalEditorFileHref,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -212,6 +213,7 @@ import { useChatContentDirection } from "../scient/bidi/useChatContentDirection"
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import {
+  preloadScientRichFenceRuntime,
   resolveScientRichFenceKind,
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
@@ -505,6 +507,7 @@ function markdownUrlTransform(href: string) {
   if (parseComposerContextHref(href)) return href;
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
+  if (isLocalEditorFileHref(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
 }
 
@@ -1183,8 +1186,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <div {...props}>{children}</div>;
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, threadRef)}</p>;
+    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    return (
+      <p {...props}>
+        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
+      </p>
+    );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
     const alert =
@@ -1219,12 +1226,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
-    const { skills, threadRef } = use(ChatMarkdownRendererContext);
+    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
     // Resolve checkbox markers by offset to avoid rerendering list items on every streamed token.
     const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
       <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
-        {renderSkillInlineMarkdownChildren(children, skills, threadRef)}
+        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
       </li>
     );
   },
@@ -1916,16 +1923,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     // SCIENT-FORK:START — the code block is Scient's (scient/presentation/MarkdownCodeBlock.tsx).
-    // Complete Mermaid fences may render during streaming, but unfinished source stays readable.
-    // Other visual grammars still wait for the settled message.
+    // A visual fence renders once it closes, even mid-stream; unfinished source stays readable
+    // while its renderer loads.
     const fenceMeta = extractPreCodeMeta(node);
     const fenceTitle = extractFenceTitle(fenceMeta);
     const richFenceKind = resolveScientRichFenceKind(language);
-    if (
-      richFenceKind != null &&
-      (!isStreaming ||
-        (richFenceKind === "mermaid" && isClosedCodeFence(node, text, codeBlock.code)))
-    ) {
+    const richFenceReady =
+      richFenceKind != null && (!isStreaming || isClosedCodeFence(node, text, codeBlock.code));
+    if (richFenceKind != null && !richFenceReady) preloadScientRichFenceRuntime(richFenceKind);
+    if (richFenceReady) {
       return (
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, codeBlock.className, diffThemeName, isStreaming]}

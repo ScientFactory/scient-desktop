@@ -12,6 +12,12 @@ their project, including when you connect to more than one environment.
 
 To require confirmation before unpinning, enable **Settings → General → Unpin confirmation**. The
 confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
+On web and desktop, **New thread** opens the project picker when you have more than one
+open project in the default or project-grouped sidebar. Archived projects don't count. **Shift-click** to start in
+the current project, or use a project's own new-thread action. A new thread carries
+your model and mode selections, unless the destination project has its own model default.
+Its branch and workspace mode come from your configured defaults. To continue in
+an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
@@ -245,12 +251,15 @@ On web and desktop, sections let you group related threads by topic, such as **T
 **Research**, across projects. A thread belongs to at most one section. Sections only organize the
 list: filing a thread never pins, settles, snoozes, or reorders it, and does not count as activity.
 
-Right-click a thread and choose **Section**, next to Pin, Settle and Snooze, to file it. The
-current section is checked. Choose **New section…** to name a section and file the thread in one
-step; the name field says which threads it is for. Choose **General** to take it out of its
-section. A fork of a thread in a section starts in the same section.
-With several threads selected, **Move to section** files them together. Each move shows
-**Undo** in the sidebar, and `mod+z` restores the previous section.
+Right-click a thread and choose **Move to section…**, next to Pin, Settle and Snooze, to file
+it. A picker opens with a search field: type to find a section, then press Enter or click it. The
+current section is checked. **General**, which takes the thread out of its section, comes first,
+then the sections by name; when there are many, the ones you used most recently lead the list.
+If no section has the name you typed, choose **Create “name”** to make it and file the thread in
+one step. With one project selected, the picker lists that project's sections; searching also
+finds other projects' sections, under **Other projects**. A fork of a thread in a section starts
+in the same section. With several threads selected, **Move to section** files them together.
+Each move shows **Undo** in the sidebar, and `mod+z` restores the previous section.
 
 Click **Group by section** next to search to see the sidebar by section; the button stays
 highlighted while it is on. Click it again to return to the default Pinned and Active layout. In the
@@ -265,8 +274,10 @@ Sections view:
   header to file it at the top of that section, including an empty or collapsed one. Only a
   header that the drop would change is highlighted. Drag a section header to reorder sections, or
   drag a thread onto the **Settled** header to settle it. Dragging never unpins a thread.
-- Click a header to collapse it. A collapsed section's arrow points right; it shows a dot while
-  one of its threads is working, and still shows the thread you have open. An open section's
+- Click a header to collapse it. A collapsed section's arrow points right, and it still shows the
+  thread you have open. A dot shows its most urgent thread state, in the project folder colors:
+  needs you, failed, done but not yet opened, or working; a hollow ring means a thread is
+  waiting. Hover the dot for the count of each. An open section's
   arrow points down and appears when you hover the header. Double-click a header to rename it.
 - Each header's buttons start a **New thread in section** and open the section menu, which also
   offers **Rename**, **Move up**, **Move down**, and **Delete section**.
@@ -351,9 +362,8 @@ project's folder comes last and shows only while it has active threads. Click a 
 close it. A closed folder shows how many threads it holds, and a dot when one of them
 needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-cannot drag threads, and the Working section is off. Each device keeps its own choice.
-Folders replace the default Pinned and Active layout; with **Group by section** on, the Sections
-view shows instead.
+can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
+section is off. Each device keeps its own choice.
 
 ## Settle finished work
 
@@ -397,9 +407,10 @@ resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
-choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
-**Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
-is disabled.
+choose **Auto-settle behavior**, and pick **Never**. The current option is checked. Pick
+**Follow settings** to return to the rules in **Settings → Threads**. While those rules are off,
+a thread on **Follow settings** does not settle automatically either. Manual settle, snooze, and
+archive still work while it is set to **Never**.
 
 Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the

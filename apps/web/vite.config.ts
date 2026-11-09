@@ -150,6 +150,11 @@ const browserTestProject = {
       "pdfjs-dist",
       "sql.js",
       "tiff",
+      // SCIENT-FORK:START — Scient's lazy Plotly, MathJax and TIFF preview dependencies.
+      "plotly.js-strict-dist-min",
+      "mathjax/es5/tex-svg.js",
+      "geotiff",
+      // SCIENT-FORK:END
     ],
   },
   test: {
