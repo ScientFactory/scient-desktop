@@ -346,6 +346,7 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/scient/threadSections \
             apps/server/src/sourceControl/sourceControlDefinitions.ts \
@@ -416,6 +417,7 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/background \
             apps/server/src/git \
@@ -489,6 +491,7 @@ jobs:
             apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/auth \
             apps/server/src/provider \
             apps/server/src/scient/providerLifecycle \
@@ -586,6 +589,7 @@ jobs:
             packages/provider-fx \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
+            apps/server/src/scient/accounts/removedAgentKeys.ts \
             apps/server/src/settingsDirectoryWatch.ts \
             apps/server/src/settingsSecrets.ts \
             apps/server/src/statFingerprint.ts \
