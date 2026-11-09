@@ -1309,87 +1309,93 @@ const make = Effect.gen(function* () {
         if (blocked !== null) return keep(blocked);
         // Size is an estimate; provider startup must not wait for directory traversal.
         const bytes = yield* measureWorktree(worktreePath);
-        const blockedWhileMeasuring = yield* blockedSinceCheck();
-        if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed since check");
-        if (
-          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-          head.commitSha
-        )
-          return keep("commit changed since check");
-        const finalChanges = yield* localChangesReason(worktreePath);
-        if (finalChanges !== null) return keep(finalChanges);
-        const currentSettings = yield* settingsService.getSettings;
-        const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
-        if (
-          currentSettings.autoResumeLimitedThreads !== serverSettings.autoResumeLimitedThreads ||
-          currentSettings.snoozeLimitedThreads !== serverSettings.snoozeLimitedThreads ||
-          Object.keys(settings).some(
-            (key) =>
-              current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-          )
-        )
-          return keep("settings changed since check");
-        const submodules = yield* submoduleRemoval(worktreePath);
-        if (submodules.reason !== null) return keep(submodules.reason);
-        // SCIENT-FORK:START preserve-racing-submodule-files — Git cannot isolate populated submodules.
-        if (submodules.force) return keep("submodule worktree cannot be isolated safely");
-        // SCIENT-FORK:END preserve-racing-submodule-files
-        // SCIENT-FORK:START preserve-racing-worktree-files — isolate, inspect, then remove.
-        // An unfinished Overleaf sync in the worktree keeps it (overleaf-checkout-barrier).
-        const isolationChanges = yield* checkoutBarrier
-          .bulk(
-            worktreePath,
-            removeIsolatedWorktree(
-              project.workspaceRoot,
-              worktreePath,
-              thread.branch!,
-              head.commitSha,
-            ).pipe(Effect.uninterruptible),
-            { missing: "skip" },
-          )
-          .pipe(
-            Effect.catchTags({
-              CheckoutRecoveryRequiredError: (error) =>
-                Effect.succeed(
-                  error.reason === "unreadable-record"
-                    ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
-                    : error.reason === "newer-unfinished-record"
-                      ? "a newer version of Scient left an Overleaf sync unfinished; finish it there"
-                      : "an unfinished Overleaf sync needs recovery first",
-                ),
-              CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
-            }),
-          );
-        if (isolationChanges !== null) return keep(isolationChanges);
-        // SCIENT-FORK:END preserve-racing-worktree-files
-        entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
-        yield* gitManager.invalidateStatus(project.workspaceRoot);
-
-        yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
-      }).pipe(
+        // The lease covers only the final checks and removal, so a turn starting meanwhile waits
+        // briefly and its new activity cancels removal.
         // SCIENT-FORK:START compute-worktree-retention — physical owners block removal.
-        (effect) => {
-          let admitted = false;
-          return withWorkspaceLease(
+        let admitted = false;
+        yield* withWorkspaceLease(
+          worktreePath,
+          withoutComputeWorkspaceOwners(
             worktreePath,
-            withoutComputeWorkspaceOwners(
-              worktreePath,
-              effect.pipe(
-                Effect.tap(() => {
-                  admitted = true;
-                  return Effect.void;
-                }),
-              ),
-            ).pipe(
-              Effect.map(() => {
-                if (!admitted) keep("Compute workspace is still owned or removal is in progress");
-              }),
-            ),
-          );
-        },
+            Effect.gen(function* () {
+              admitted = true;
+              const pathReason = yield* worktreePathReason(worktreePath);
+              if (pathReason !== null) return keep(pathReason);
+              const blockedWhileMeasuring = yield* blockedSinceCheck();
+              if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
+              if (yield* branchChanged(worktreePath, thread.branch))
+                return keep("repository or branch changed since check");
+              if (
+                (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+                head.commitSha
+              )
+                return keep("commit changed since check");
+              const finalChanges = yield* localChangesReason(worktreePath);
+              if (finalChanges !== null) return keep(finalChanges);
+              const currentSettings = yield* settingsService.getSettings;
+              const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
+              if (
+                currentSettings.autoResumeLimitedThreads !==
+                  serverSettings.autoResumeLimitedThreads ||
+                currentSettings.snoozeLimitedThreads !== serverSettings.snoozeLimitedThreads ||
+                Object.keys(settings).some(
+                  (key) =>
+                    current[key as keyof typeof settings] !==
+                    settings[key as keyof typeof settings],
+                )
+              )
+                return keep("settings changed since check");
+              const submodules = yield* submoduleRemoval(worktreePath);
+              if (submodules.reason !== null) return keep(submodules.reason);
+              // SCIENT-FORK:START preserve-racing-submodule-files — Git cannot isolate populated submodules.
+              if (submodules.force) return keep("submodule worktree cannot be isolated safely");
+              // SCIENT-FORK:END preserve-racing-submodule-files
+              // SCIENT-FORK:START preserve-racing-worktree-files — isolate, inspect, then remove.
+              // An unfinished Overleaf sync in the worktree keeps it (overleaf-checkout-barrier).
+              const isolationChanges = yield* checkoutBarrier
+                .bulk(
+                  worktreePath,
+                  removeIsolatedWorktree(
+                    project.workspaceRoot,
+                    worktreePath,
+                    thread.branch!,
+                    head.commitSha,
+                  ).pipe(Effect.uninterruptible),
+                  { missing: "skip" },
+                )
+                .pipe(
+                  Effect.catchTags({
+                    CheckoutRecoveryRequiredError: (error) =>
+                      Effect.succeed(
+                        error.reason === "unreadable-record"
+                          ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
+                          : error.reason === "newer-unfinished-record"
+                            ? "a newer version of Scient left an Overleaf sync unfinished; finish it there"
+                            : "an unfinished Overleaf sync needs recovery first",
+                      ),
+                    CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
+                  }),
+                );
+              if (isolationChanges !== null) return keep(isolationChanges);
+              // SCIENT-FORK:END preserve-racing-worktree-files
+              entries.push({
+                ...entry,
+                outcome: "removed",
+                reason: sentence(removalReason),
+                bytes,
+              });
+              yield* gitManager.invalidateStatus(project.workspaceRoot);
+
+              yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
+            }),
+          ).pipe(
+            Effect.map(() => {
+              if (!admitted) keep("Compute workspace is still owned or removal is in progress");
+            }),
+          ),
+        );
         // SCIENT-FORK:END compute-worktree-retention
+      }).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
             entries.push({
